@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, SeparationResult, Workspace } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -192,6 +192,10 @@ function TimelineEditor({ session, setSession }: { session: ScratchSession; setS
   return <section className="section-card timeline-editor"><header><div><span className="eyebrow">CLIP INSPECTOR</span><h2>Non-destructive edits</h2></div><small>Source WAVs remain unchanged</small></header>{session.timeline.map((clip) => <div className={`timeline-edit-row ${clip.muted ? "muted" : ""}`} key={clip.id}><div className="timeline-edit-name"><strong>{clip.name}</strong><small>{clip.assetPath}</small></div><label><span>Start ms</span><input type="number" min="0" step="1" value={clip.startMs} onChange={(event) => updateClip(clip.id, "startMs", Number(event.target.value))} /></label><label><span>Length ms</span><input type="number" min="1" step="1" value={clip.durationMs} onChange={(event) => updateClip(clip.id, "durationMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={clip.gainDb} onChange={(event) => updateClip(clip.id, "gainDb", Number(event.target.value))} /></label><button className="text-button" onClick={() => toggleMuted(clip.id)}>{clip.muted ? "Unmute" : "Mute"}</button><button className="text-button danger" onClick={() => removeClip(clip.id)}>Remove</button></div>)}</section>;
 }
 
+function TimelineRenderControls({ session, result, message, onRender }: { session: ScratchSession; result: RenderResult | null; message: string; onRender: () => void }) {
+  return <section className="section-card timeline-render"><header><div><span className="eyebrow">OFFLINE RENDER</span><h2>Export audible timeline</h2></div><button className="text-button" disabled={!session.timeline.some((clip) => !clip.muted)} onClick={onRender}>Render WAV</button></header><p className="inspector-copy">Writes a new stereo float WAV with clip position, gain and mute state. Source assets are never flattened.</p>{result ? <div className="render-result"><strong>{result.durationMs / 1000}s · {result.clipCount} clips</strong><code>{result.path}</code></div> : <small className="render-message">{message}</small>}</section>;
+}
+
 function ReferenceCompare({ analysis, recordings, references, referenceId, onSelect }: { analysis: AudioAnalysis | null; recordings: RecordingAsset[]; references: Record<string, AudioAnalysis>; referenceId: string | null; onSelect: (recording: RecordingAsset) => void }) {
   const reference = recordings.find((recording) => recording.id === referenceId) ?? null;
   const comparison = analysis && reference ? compareAnalyses(analysis, references[reference.id] ?? analysis) : null;
@@ -223,6 +227,8 @@ function App() {
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
   const [separationBusy, setSeparationBusy] = useState<string | null>(null);
   const [separationMessage, setSeparationMessage] = useState("Ready for a local stereo channel split.");
+  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  const [renderMessage, setRenderMessage] = useState("Timeline render has not been requested.");
   const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState("Autosave remains the primary session copy.");
   const [midi, setMidi] = useState<MidiProbe>({ inputs: [], outputs: [], refreshedAtMs: 0, message: "MIDI device list has not been refreshed." });
@@ -359,6 +365,18 @@ function App() {
     }
     setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
     setSeparationMessage(result.message);
+  }, []);
+
+  const runTimelineRender = useCallback(async () => {
+    setRenderResult(null);
+    setRenderMessage("Rendering a new stereo WAV…");
+    const result = await renderTimeline();
+    if (!result) {
+      setRenderMessage("Render failed; source clips and the session remain unchanged.");
+      return;
+    }
+    setRenderResult(result);
+    setRenderMessage(result.message);
   }, []);
 
   const previewSamplePad = useCallback(async (pad: ScratchSession["samplePads"][number]) => {
@@ -526,7 +544,7 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
-        {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /></>}
+        {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} /></>}
         {session.workspace === "separate" && <WorkspaceSeparate recordings={recordings} results={separations} busyId={separationBusy} message={separationMessage} onSeparate={(recording) => void runSeparation(recording)} />}

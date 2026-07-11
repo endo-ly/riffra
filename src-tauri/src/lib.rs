@@ -4,6 +4,7 @@ mod native_audio;
 mod plugins;
 mod projects;
 mod recordings;
+mod render;
 mod separation;
 mod storage;
 
@@ -119,6 +120,18 @@ fn list_separations(
     state: State<'_, AppState>,
 ) -> Result<Vec<separation::SeparationResult>, String> {
     separation::list(&state.data_root)
+}
+
+#[tauri::command]
+async fn render_timeline(state: State<'_, AppState>) -> Result<render::RenderResult, String> {
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    let data_root = state.data_root.clone();
+    let created_at_ms = now_ms();
+    tauri::async_runtime::spawn_blocking(move || {
+        render::render_timeline(&data_root, &session, created_at_ms)
+    })
+    .await
+    .map_err(|error| format!("Timeline render task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -365,6 +378,7 @@ pub fn run() {
             analyze_audio,
             separate_channels,
             list_separations,
+            render_timeline,
             load_plugin,
             clear_plugin,
             preview_sample,

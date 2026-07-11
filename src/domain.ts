@@ -223,6 +223,17 @@ export interface ProjectExport {
   exportedAtMs: number;
 }
 
+export interface RenderResult {
+  id: string;
+  path: string;
+  sampleRate: number;
+  frames: number;
+  durationMs: number;
+  clipCount: number;
+  state: string;
+  message: string;
+}
+
 export const defaultSession = (): ScratchSession => ({
   formatVersion: 1,
   sessionId: "scratch-browser-preview",
