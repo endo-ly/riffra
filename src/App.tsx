@@ -32,7 +32,7 @@ function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
   return <span className={`meter ${danger ? "meter-danger" : ""}`}><i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} /></span>;
 }
 
-function WorkspaceHome({ state, onWorkspace, onQuickRecord }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void }) {
+function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean }) {
   return (
     <div className="workspace-scroll home-grid">
       <section className="hero-card">
@@ -43,7 +43,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord }: { state: Bootstrap
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => onWorkspace("play")}><Icon name="play" />Playへ</button>
-          <button className="quiet" onClick={onQuickRecord}><span className="record-dot" />Quick Record</button>
+          <button className={`quiet ${recordingActive ? "recording" : ""}`} onClick={onQuickRecord}><span className="record-dot" />{recordingActive ? "Stop Recording" : "Quick Record"}</button>
         </div>
       </section>
 
@@ -204,7 +204,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} />}
+        {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} />}
         {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
@@ -219,12 +219,12 @@ function App() {
       </aside>
 
       <footer className="transport">
-        <div className="transport-left"><button><Icon name="loop" /></button><button>◀</button><button className="play-button"><Icon name="play" /></button><button><Icon name="stop" /></button><button className="record-button"><Icon name="record" /></button></div>
+        <div className="transport-left"><button aria-label="Toggle loop"><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label="Play"><Icon name="play" /></button><button aria-label="Stop"><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={42} /><span>OUT</span><Meter value={56} /></div>
         <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => setSession({ ...session, masterDb: Number(event.target.value) })} /></div>
-        <div className="status-line"><span className={`status-dot ${audio.state}`} />{audio.message}</div>
+        <div className="status-line"><span className={`status-dot ${audio.recording.active ? "recording" : audio.state}`} />{audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
       </footer>
 
       {focusMode && <button className="exit-focus" onClick={() => setFocusMode(false)}>Exit Focus <kbd>Esc</kbd></button>}
