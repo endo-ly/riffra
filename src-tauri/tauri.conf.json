@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Riffra",
+  "version": "0.1.0",
+  "identifier": "com.riffra.workbench",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Riffra",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "backgroundColor": "#090b0e",
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "externalBin": ["binaries/riffra-audio", "binaries/riffra-plugin-scan"],
+    "shortDescription": "Hear, shape, capture, compare, and reuse.",
+    "longDescription": "A Windows-first integrated music production workbench."
+  }
+}
