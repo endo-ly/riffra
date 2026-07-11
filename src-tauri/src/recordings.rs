@@ -76,7 +76,30 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .state
             .clone()
             .unwrap_or_else(|| "recoverable".into());
-        let search_text = format!("{} {} {}", name, state, path.to_string_lossy()).to_lowercase();
+        let provenance = read_provenance(&path.join("provenance.json"));
+        let provenance_text = provenance
+            .as_ref()
+            .map(|item| {
+                format!(
+                    "{} {} {}",
+                    item.session_id,
+                    item.workspace,
+                    item.rack
+                        .iter()
+                        .map(|device| device.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
+            .unwrap_or_default();
+        let search_text = format!(
+            "{} {} {} {}",
+            name,
+            state,
+            path.to_string_lossy(),
+            provenance_text
+        )
+        .to_lowercase();
         if !query.is_empty() && !search_text.contains(&query) {
             continue;
         }
@@ -102,7 +125,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             sample_rate: manifest.sample_rate,
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
-            provenance: read_provenance(&path.join("provenance.json")),
+            provenance,
         });
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -187,7 +210,7 @@ mod tests {
             source: "raw DI".into(),
         };
         save_provenance(&take, &provenance).unwrap();
-        let results = list(&root, Some("provenance")).unwrap();
+        let results = list(&root, Some("scratch-42")).unwrap();
         assert_eq!(
             results[0]
                 .provenance
