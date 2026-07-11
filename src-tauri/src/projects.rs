@@ -1,5 +1,5 @@
 use crate::model::ScratchSession;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
 #[derive(Clone, Debug, Serialize)]
@@ -16,6 +16,13 @@ struct ProjectManifest<'a> {
     manifest_version: u32,
     exported_at_ms: u64,
     session: &'a ScratchSession,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectManifestOwned {
+    manifest_version: u32,
+    session: ScratchSession,
 }
 
 pub fn export(
@@ -59,6 +66,20 @@ pub fn export(
     })
 }
 
+pub fn import(path: &Path) -> Result<ScratchSession, String> {
+    let payload =
+        fs::read(path).map_err(|error| format!("Project manifest could not be read: {error}"))?;
+    let manifest = serde_json::from_slice::<ProjectManifestOwned>(&payload)
+        .map_err(|error| format!("Project manifest is invalid: {error}"))?;
+    if manifest.manifest_version != 1 {
+        return Err(format!(
+            "Unsupported project manifest version {}.",
+            manifest.manifest_version
+        ));
+    }
+    manifest.session.validate_and_normalize()
+}
+
 fn safe_name(value: &str) -> String {
     let mut result = value
         .chars()
@@ -95,6 +116,8 @@ mod tests {
         let payload = fs::read_to_string(&exported.path).unwrap();
         assert!(payload.contains("manifestVersion"));
         assert!(payload.contains("scratch-"));
+        let imported = import(Path::new(&exported.path)).unwrap();
+        assert_eq!(imported.session_id, session.session_id);
         let _ = fs::remove_dir_all(root);
     }
 }

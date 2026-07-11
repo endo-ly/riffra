@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -33,7 +33,7 @@ function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
   return <span className={`meter ${danger ? "meter-danger" : ""}`}><i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} /></span>;
 }
 
-function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice, onExportProject, exportMessage }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void; onExportProject: () => void; exportMessage: string }) {
+function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice, onExportProject, onImportProject, exportMessage }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void; onExportProject: () => void; onImportProject: () => void; exportMessage: string }) {
   return (
     <div className="workspace-scroll home-grid">
       <section className="hero-card">
@@ -46,6 +46,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
           <button className="primary" onClick={() => onWorkspace("play")}><Icon name="play" />Playへ</button>
           <button className={`quiet ${recordingActive ? "recording" : ""}`} onClick={onQuickRecord}><span className="record-dot" />{recordingActive ? "Stop Recording" : "Quick Record"}</button>
           <button className="quiet" onClick={onExportProject}>Export Manifest</button>
+          <button className="quiet" onClick={onImportProject}>Import Manifest</button>
         </div>
         <small className="export-message">{exportMessage}</small>
       </section>
@@ -481,6 +482,21 @@ function App() {
     setExportMessage(result ? `Exported manifest: ${result.path}` : "Export failed; the current session remains safe.");
   }, []);
 
+  const importSession = useCallback(async () => {
+    const path = window.prompt("Path to a Riffra project.json manifest");
+    if (!path) return;
+    const imported = await importScratchSession(path.trim());
+    if (!imported) {
+      setExportMessage("Import failed; the current session remains safe.");
+      return;
+    }
+    setSession(imported);
+    setBoot((current) => current ? { ...current, session: imported, recoveredFromGeneration: false } : current);
+    setUndoStack([]);
+    setRedoStack([]);
+    setExportMessage(`Imported session: ${imported.projectName ?? imported.sessionId}`);
+  }, []);
+
   const toggleMute = useCallback(async () => {
     if (!session) return;
     const muted = !(session.emergencyMuted || audio.state === "muted");
@@ -542,7 +558,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
+        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}

@@ -33,6 +33,14 @@ export async function exportScratchSession(): Promise<ProjectExport | null> {
   }
 }
 
+export async function importScratchSession(path: string): Promise<ScratchSession | null> {
+  try {
+    return await invoke<ScratchSession>("import_scratch_session", { path });
+  } catch {
+    return null;
+  }
+}
+
 export async function scanVst3Folder(path?: string): Promise<ScanReport> {
   try {
     return await invoke<ScanReport>("scan_vst3_folder", { path: path ?? null });

@@ -59,6 +59,19 @@ fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::Projec
 }
 
 #[tauri::command]
+fn import_scratch_session(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<ScratchSession, String> {
+    let session = projects::import(&PathBuf::from(path))?;
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| format!("Imported project could not be persisted: {error}"))?;
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
+}
+
+#[tauri::command]
 async fn scan_vst3_folder(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -373,6 +386,7 @@ pub fn run() {
             get_bootstrap_state,
             save_scratch_session,
             export_scratch_session,
+            import_scratch_session,
             scan_vst3_folder,
             list_recordings,
             analyze_audio,
