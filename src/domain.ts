@@ -177,6 +177,9 @@ export interface AudioStatus {
   plugin?: PluginStatus | null;
   midiInputs: string[];
   midiOutputs: string[];
+  midiInputActive: boolean;
+  midiMessages: number;
+  lastMidiNote: number | null;
   inputPeak: number;
   outputPeak: number;
   invalidSamples: number;

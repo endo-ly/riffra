@@ -225,6 +225,19 @@ fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioS
     state.audio.set_audio_driver(driver.trim())
 }
 
+#[tauri::command]
+fn open_midi_input(name: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if name.trim().is_empty() {
+        return Err("MIDI input name must not be empty.".into());
+    }
+    state.audio.open_midi_input(name.trim())
+}
+
+#[tauri::command]
+fn close_midi_input(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.close_midi_input()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeMidiProbe {
@@ -364,6 +377,8 @@ pub fn run() {
             set_plugin_bypassed,
             recover_audio_device,
             set_audio_driver,
+            open_midi_input,
+            close_midi_input,
             probe_midi_devices
         ])
         .run(tauri::generate_context!())

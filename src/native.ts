@@ -154,6 +154,9 @@ export async function getAudioStatus(): Promise<AudioStatus> {
       },
       midiInputs: [],
       midiOutputs: [],
+      midiInputActive: false,
+      midiMessages: 0,
+      lastMidiNote: null,
       inputPeak: 0,
       outputPeak: 0,
       invalidSamples: 0,
@@ -183,6 +186,9 @@ export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
       },
       midiInputs: [],
       midiOutputs: [],
+      midiInputActive: false,
+      midiMessages: 0,
+      lastMidiNote: null,
       inputPeak: 0,
       outputPeak: 0,
       invalidSamples: 0,
@@ -226,6 +232,22 @@ export async function recoverAudioDevice(): Promise<AudioStatus> {
 export async function setAudioDriver(driver: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_audio_driver", { driver });
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
+export async function openMidiInput(name: string): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("open_midi_input", { name });
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
+export async function closeMidiInput(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("close_midi_input");
   } catch {
     return await getAudioStatus();
   }

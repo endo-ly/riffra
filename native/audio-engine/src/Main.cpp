@@ -14,6 +14,25 @@ namespace {
 using riffra::SafetyAudioCallback;
 using riffra::PluginRack;
 
+class MidiMonitor final : public juce::MidiInputCallback {
+public:
+    void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override {
+        messageCount.fetch_add(1, std::memory_order_relaxed);
+        if (message.isNoteOn() || message.isNoteOff())
+            lastNote.store(message.getNoteNumber(), std::memory_order_release);
+    }
+
+    void setActive(const bool value) noexcept { active.store(value, std::memory_order_release); }
+    [[nodiscard]] bool isActive() const noexcept { return active.load(std::memory_order_acquire); }
+    [[nodiscard]] std::uint64_t getMessageCount() const noexcept { return messageCount.load(std::memory_order_acquire); }
+    [[nodiscard]] int getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
+
+private:
+    std::atomic<bool> active { false };
+    std::atomic<std::uint64_t> messageCount { 0 };
+    std::atomic<int> lastNote { -1 };
+};
+
 juce::var makeError(const juce::String& scope, const juce::String& message) {
     auto* object = new juce::DynamicObject();
     object->setProperty("type", "error");
@@ -68,7 +87,7 @@ juce::var probeAudioDevices() {
     return juce::var(result);
 }
 
-juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCallback& callback, const PluginRack* rack = nullptr) {
+juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCallback& callback, const PluginRack* rack = nullptr, const MidiMonitor* midi = nullptr) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     status->setProperty("state", callback.isEmergencyMuted() ? "muted" : "ready");
@@ -78,6 +97,11 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     status->setProperty("outputPeak", callback.getOutputPeak());
     status->setProperty("invalidSamples", static_cast<juce::int64>(callback.getInvalidSampleCount()));
     status->setProperty("previewing", callback.isPreviewing());
+    if (midi != nullptr) {
+        status->setProperty("midiInputActive", midi->isActive());
+        status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
+        status->setProperty("lastMidiNote", midi->getLastNote());
+    }
     status->setProperty("recording", callback.recordingStatus());
 
     juce::Array<juce::var> midiInputs;
@@ -119,6 +143,8 @@ int serve() {
     formatManager.registerBasicFormats();
     SafetyAudioCallback callback;
     PluginRack rack;
+    MidiMonitor midiMonitor;
+    std::unique_ptr<juce::MidiInput> midiInput;
     callback.setPluginRack(&rack);
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
@@ -130,7 +156,7 @@ int serve() {
     }
 
     manager.addAudioCallback(&callback);
-    writeJson(currentStatus(manager, callback, &rack));
+    writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -145,12 +171,12 @@ int serve() {
             break;
         if (type == "setEmergencyMute") {
             callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "setMasterGainDb") {
             callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "loadPlugin") {
@@ -166,16 +192,50 @@ int serve() {
                     path.isEmpty() ? "VST3 path is required." : pluginError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "clearPlugin") {
             rack.clear();
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "probeMidiDevices") {
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
+        if (type == "openMidiInput") {
+            const auto name = command.getProperty("name", {}).toString();
+            const auto devices = juce::MidiInput::getAvailableDevices();
+            const auto device = std::find_if(devices.begin(), devices.end(), [&name](const auto& item) {
+                return item.name == name;
+            });
+            if (device == devices.end()) {
+                writeJson(makeError("midi", "The requested MIDI input is no longer available."));
+                continue;
+            }
+            if (midiInput != nullptr) {
+                midiInput->stop();
+                midiInput.reset();
+            }
+            midiMonitor.setActive(false);
+            midiInput = juce::MidiInput::openDevice(device->identifier, &midiMonitor);
+            if (midiInput == nullptr) {
+                writeJson(makeError("midi", "Windows could not open the requested MIDI input."));
+                continue;
+            }
+            midiInput->start();
+            midiMonitor.setActive(true);
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
+        if (type == "closeMidiInput") {
+            midiMonitor.setActive(false);
+            if (midiInput != nullptr) {
+                midiInput->stop();
+                midiInput.reset();
+            }
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "previewSample") {
@@ -227,17 +287,17 @@ int serve() {
                 writeJson(makeError("preview", previewError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "stopPreview") {
             callback.stopPreview();
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "setPluginBypassed") {
             rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "recoverAudioDevice") {
@@ -250,7 +310,7 @@ int serve() {
                 continue;
             }
             manager.addAudioCallback(&callback);
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "setAudioDriver") {
@@ -281,7 +341,7 @@ int serve() {
                 continue;
             }
             manager.addAudioCallback(&callback);
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "startRecording") {
@@ -291,7 +351,7 @@ int serve() {
                 writeJson(makeError("recording", directory.isEmpty() ? "Recording directory is required." : recordingError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "stopRecording") {
@@ -300,17 +360,22 @@ int serve() {
                 writeJson(makeError("recording", recordingError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "status") {
-            writeJson(currentStatus(manager, callback, &rack));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         writeJson(makeError("protocol", "Unsupported command: " + type));
     }
 
     callback.setEmergencyMuted(true);
+    midiMonitor.setActive(false);
+    if (midiInput != nullptr) {
+        midiInput->stop();
+        midiInput.reset();
+    }
     manager.removeAudioCallback(&callback);
     manager.closeAudioDevice();
     return 0;

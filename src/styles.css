@@ -326,6 +326,9 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .midi-led { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px rgba(138,238,232,.55); }
 .midi-led.output { background: var(--cyan); box-shadow: 0 0 8px rgba(82,201,220,.55); }
 .midi-message { display: block; margin-top: 12px; color: var(--muted); font-size: 9px; }
+.midi-monitor { margin-top: 12px; }
+.midi-monitor-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid #27313a; }
+.midi-monitor-row strong { color: #cbd3dc; font-size: 10px; }
 .sample-editor { margin-top: 12px; }
 .sample-editor header > small { color: var(--muted); font-size: 9px; }
 .sample-edit-row { display: grid; grid-template-columns: minmax(120px, 1fr) 90px 90px auto; align-items: end; gap: 10px; padding: 9px 0; border-top: 1px solid #27313a; }
