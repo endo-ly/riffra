@@ -18,8 +18,6 @@ pub struct AudioSupervisor {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeStatus {
-    #[serde(rename = "type")]
-    message_type: String,
     state: String,
     driver: Option<String>,
     sample_rate: Option<f64>,
@@ -92,11 +90,7 @@ impl AudioSupervisor {
             while let Some(event) = receiver.recv().await {
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        if let Ok(native) = serde_json::from_slice::<NativeStatus>(&bytes) {
-                            if native.message_type == "audioStatus" {
-                                update_from_native(&event_status, native);
-                            }
-                        }
+                        handle_native_stdout(&event_status, &bytes);
                     }
                     CommandEvent::Stderr(bytes) => {
                         let detail = String::from_utf8_lossy(&bytes);
@@ -298,9 +292,94 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
     }
 }
 
+fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) {
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return;
+    };
+    match payload.get("type").and_then(serde_json::Value::as_str) {
+        Some("audioStatus") => {
+            if let Ok(native) = serde_json::from_value::<NativeStatus>(payload) {
+                update_from_native(status, native);
+            }
+        }
+        Some("error") => {
+            let scope = payload
+                .get("scope")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("protocol");
+            let message = payload
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Unknown native error.");
+            if scope == "audioDevice" {
+                set_faulted(
+                    status,
+                    format!("Native audio device error: {message}. Saved data remains safe."),
+                );
+            } else {
+                set_command_error(
+                    status,
+                    format!(
+                        "Native {scope} command failed: {message}. Audio and saved data remain safe."
+                    ),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn set_command_error(status: &Arc<Mutex<AudioStatus>>, message: String) {
+    if let Ok(mut current) = status.lock() {
+        current.message = message;
+    }
+}
+
 fn set_faulted(status: &Arc<Mutex<AudioStatus>>, message: String) {
     if let Ok(mut current) = status.lock() {
         current.state = AudioState::Faulted;
         current.message = message;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_status() -> Arc<Mutex<AudioStatus>> {
+        Arc::new(Mutex::new(AudioStatus {
+            state: AudioState::Ready,
+            driver: Some("Test".into()),
+            sample_rate: Some(44_100),
+            buffer_size: Some(441),
+            round_trip_ms: Some(20.0),
+            recording: RecordingStatus::default(),
+            plugin: None,
+            message: "ready".into(),
+        }))
+    }
+
+    #[test]
+    fn plugin_error_preserves_audio_state() {
+        let status = test_status();
+        handle_native_stdout(
+            &status,
+            br#"{"type":"error","scope":"plugin","message":"load failed","dataSafe":true}"#,
+        );
+        let current = status.lock().unwrap();
+        assert!(matches!(current.state, AudioState::Ready));
+        assert!(current.message.contains("plugin"));
+    }
+
+    #[test]
+    fn audio_device_error_faults_audio_state() {
+        let status = test_status();
+        handle_native_stdout(
+            &status,
+            br#"{"type":"error","scope":"audioDevice","message":"device missing","dataSafe":true}"#,
+        );
+        let current = status.lock().unwrap();
+        assert!(matches!(current.state, AudioState::Faulted));
+        assert!(current.message.contains("device missing"));
     }
 }
