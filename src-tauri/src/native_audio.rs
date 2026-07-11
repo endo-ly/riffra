@@ -472,4 +472,19 @@ mod tests {
         assert!(matches!(current.state, AudioState::Faulted));
         assert!(current.message.contains("device missing"));
     }
+
+    #[test]
+    fn midi_status_updates_without_affecting_audio_state() {
+        let status = test_status();
+        handle_native_stdout(
+            &status,
+            br#"{"type":"audioStatus","state":"ready","midiInputActive":true,"midiMessages":12,"lastMidiNote":60,"inputPeak":0.2,"outputPeak":0.3}"#,
+        );
+        let current = status.lock().unwrap();
+        assert!(matches!(current.state, AudioState::Ready));
+        assert!(current.midi_input_active);
+        assert_eq!(current.midi_messages, 12);
+        assert_eq!(current.last_midi_note, Some(60));
+        assert_eq!(current.output_peak, 0.3);
+    }
 }
