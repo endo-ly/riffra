@@ -129,6 +129,11 @@ function WorkspaceArrange({ session, recordings, onPlaceRecording }: { session: 
   return <div className="workspace-scroll arrange-view"><section className="play-header"><div><span className="eyebrow">NON-DESTRUCTIVE TIMELINE</span><h1>Arrange ideas without moving sources</h1></div><span className="status-tag">{session.timeline.length} CLIPS</span></section><section className="section-card timeline-card"><div className="timeline-ruler"><span>00:00</span><span>{(timelineEnd / 1000).toFixed(1)} s</span></div><div className="timeline-lane">{session.timeline.length === 0 && <small>InboxのRecordingを右側からTimelineへ配置できます。</small>}{session.timeline.map((clip) => <article className={`timeline-clip ${clip.muted ? "muted" : ""}`} key={clip.id} style={{ left: `${(clip.startMs / timelineEnd) * 100}%`, width: `${Math.max(8, (clip.durationMs / timelineEnd) * 100)}%` }}><strong>{clip.name}</strong><small>{clip.gainDb.toFixed(1)} dB · {clip.muted ? "Muted" : "Source linked"}</small></article>)}</div></section><section className="section-card arrange-sources"><header><div><span className="eyebrow">INBOX SOURCES</span><h2>素材を配置</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">まだ録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onPlaceRecording(recording)}>Place</button></div>)}</section></div>;
 }
 
+function WorkspaceSample({ session, recordings, onCreateSamplePad }: { session: ScratchSession; recordings: RecordingAsset[]; onCreateSamplePad: (recording: RecordingAsset) => void }) {
+  const pads = Array.from({ length: 16 }, (_, index) => session.samplePads[index] ?? null);
+  return <div className="workspace-scroll sample-view"><section className="play-header"><div><span className="eyebrow">SAMPLE INSTRUMENT</span><h1>Audio → Pad / Keyboard</h1></div><span className="status-tag">SOURCE MAPPING</span></section><section className="section-card pad-card"><header><div><span className="eyebrow">PADS</span><h2>{session.samplePads.length} mapped</h2></div><small>Playback engine follows this mapping gate</small></header><div className="pad-grid">{pads.map((pad, index) => <button className={`sample-pad ${pad ? "filled" : "empty"}`} key={pad?.id ?? `empty-${index}`}><strong>{pad?.name ?? `Pad ${index + 1}`}</strong><small>{pad ? `MIDI ${pad.midiKey}` : "Empty"}</small></button>)}</div></section><section className="section-card sample-sources"><header><div><span className="eyebrow">SOURCES</span><h2>録音をPadへ割り当てる</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onCreateSamplePad(recording)}>Map to Pad</button></div>)}</section></div>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
@@ -220,6 +225,21 @@ function App() {
       ...session,
       timeline: [...session.timeline, { id: `clip:${recording.id}`, assetPath, name: recording.name, startMs, durationMs, gainDb: 0, muted: false }],
       workspace: "arrange",
+    });
+  }, [session]);
+
+  const createSamplePad = useCallback((recording: RecordingAsset) => {
+    if (!session) return;
+    const assetPath = recording.processedPath ?? recording.rawPath;
+    if (!assetPath || session.samplePads.some((pad) => pad.assetPath === assetPath)) return;
+    const index = session.samplePads.length;
+    const endMs = recording.sampleRate && recording.samplesWritten
+      ? Math.max(1, Math.round((recording.samplesWritten / recording.sampleRate) * 1000))
+      : 1_000;
+    setSession({
+      ...session,
+      samplePads: [...session.samplePads, { id: `pad:${recording.id}`, name: recording.name, assetPath, startMs: 0, endMs, midiKey: 36 + index }],
+      workspace: "sample",
     });
   }, [session]);
 
@@ -317,8 +337,9 @@ function App() {
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} />}
+        {session.workspace === "sample" && <WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} />}
         {session.workspace === "analyze" && <WorkspaceAnalyze analysis={analysis} />}
-        {!(["home", "play", "arrange", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
+        {!(["home", "play", "arrange", "sample", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
       <aside className="inspector-panel">

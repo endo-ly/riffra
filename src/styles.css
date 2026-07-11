@@ -262,6 +262,17 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .source-row strong, .source-row small { display: block; }
 .source-row strong { color: #cbd3dc; font-size: 10px; }
 .source-row small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.pad-card { margin-bottom: 12px; }
+.pad-card header, .sample-sources header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.pad-card h2, .sample-sources h2 { margin: 4px 0 0; font-size: 16px; font-weight: 500; }
+.pad-card header > small, .sample-sources header > small { color: var(--muted); font-size: 9px; }
+.pad-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sample-pad { min-height: 72px; display: grid; align-content: center; gap: 5px; padding: 8px; text-align: left; border: 1px solid #2d3a43; border-radius: 6px; }
+.sample-pad.empty { color: var(--muted); background: #0c1116; }
+.sample-pad.filled { color: #071216; background: linear-gradient(145deg, #8aeee8, #52c9dc); border-color: #8aeee8; }
+.sample-pad strong, .sample-pad small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-pad strong { font-size: 10px; }
+.sample-pad small { font: 8px "DM Mono", Consolas, monospace; opacity: .8; }
 
 .focus-mode { grid-template-columns: 0 minmax(520px, 1fr) 0; }
 .focus-mode .library-panel, .focus-mode .inspector-panel { visibility: hidden; }

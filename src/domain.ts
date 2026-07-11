@@ -30,6 +30,15 @@ export interface TimelineClip {
   muted: boolean;
 }
 
+export interface SamplePad {
+  id: string;
+  name: string;
+  assetPath: string;
+  startMs: number;
+  endMs: number;
+  midiKey: number;
+}
+
 export interface ScratchSession {
   formatVersion: number;
   sessionId: string;
@@ -41,6 +50,7 @@ export interface ScratchSession {
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
   timeline: TimelineClip[];
+  samplePads: SamplePad[];
   note: string;
 }
 
@@ -153,5 +163,6 @@ export const defaultSession = (): ScratchSession => ({
   ],
   snapshots: [],
   timeline: [],
+  samplePads: [],
   note: "",
 });

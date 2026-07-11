@@ -123,7 +123,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DeviceKind, RackDevice, SessionSnapshot, TimelineClip};
+    use crate::model::{DeviceKind, RackDevice, SamplePad, SessionSnapshot, TimelineClip};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -214,5 +214,21 @@ mod tests {
             decoded.timeline[0].asset_path,
             r"C:\recordings\take-1\processed.wav"
         );
+    }
+
+    #[test]
+    fn preserves_sample_pad_mapping() {
+        let mut session = ScratchSession::new(now_ms());
+        session.sample_pads.push(SamplePad {
+            id: "pad:take-1".into(),
+            name: "take-1".into(),
+            asset_path: r"C:\recordings\take-1\processed.wav".into(),
+            start_ms: 0,
+            end_ms: 1_000,
+            midi_key: 36,
+        });
+        let normalized = session.validate_and_normalize().unwrap();
+        assert_eq!(normalized.sample_pads[0].midi_key, 36);
+        assert_eq!(normalized.sample_pads[0].end_ms, 1_000);
     }
 }

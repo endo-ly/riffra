@@ -39,6 +39,17 @@ pub struct TimelineClip {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SamplePad {
+    pub id: String,
+    pub name: String,
+    pub asset_path: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub midi_key: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Input,
@@ -73,6 +84,8 @@ pub struct ScratchSession {
     pub snapshots: Vec<SessionSnapshot>,
     #[serde(default)]
     pub timeline: Vec<TimelineClip>,
+    #[serde(default)]
+    pub sample_pads: Vec<SamplePad>,
     pub note: String,
 }
 
@@ -114,6 +127,7 @@ impl ScratchSession {
             ],
             snapshots: Vec::new(),
             timeline: Vec::new(),
+            sample_pads: Vec::new(),
             note: String::new(),
         }
     }
@@ -141,6 +155,9 @@ impl ScratchSession {
         }
         if self.timeline.len() > 512 {
             return Err("A timeline cannot contain more than 512 clips.".into());
+        }
+        if self.sample_pads.len() > 128 {
+            return Err("A sample instrument cannot contain more than 128 pads.".into());
         }
         for device in &mut self.rack {
             if device.id.trim().is_empty() || device.name.trim().is_empty() {
@@ -184,6 +201,20 @@ impl ScratchSession {
                 ));
             }
             clip.gain_db = clip.gain_db.clamp(-90.0, 24.0);
+        }
+        for pad in &self.sample_pads {
+            if pad.id.trim().is_empty()
+                || pad.name.trim().is_empty()
+                || pad.asset_path.trim().is_empty()
+            {
+                return Err("Sample pads require ids, names and source paths.".into());
+            }
+            if pad.end_ms <= pad.start_ms {
+                return Err(format!(
+                    "Sample pad '{}' has an invalid slice range.",
+                    pad.name
+                ));
+            }
         }
         Ok(self)
     }
