@@ -273,6 +273,15 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .source-row strong, .source-row small { display: block; }
 .source-row strong { color: #cbd3dc; font-size: 10px; }
 .source-row small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.timeline-editor { margin-top: 12px; }
+.timeline-editor header > small { color: var(--muted); font-size: 9px; }
+.timeline-edit-row { display: grid; grid-template-columns: minmax(150px, 1fr) 84px 84px 76px auto auto; align-items: end; gap: 8px; padding: 9px 0; border-top: 1px solid #27313a; }
+.timeline-edit-row.muted { opacity: .6; }
+.timeline-edit-name strong, .timeline-edit-name small, .timeline-edit-row label span { display: block; }
+.timeline-edit-name strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-edit-name small, .timeline-edit-row label span { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.timeline-edit-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-edit-row input { width: 100%; margin-top: 4px; padding: 5px 6px; color: #dfe5eb; font: 9px "DM Mono", Consolas, monospace; background: #0c1116; border: 1px solid #2d3a43; border-radius: 4px; }
 .pad-card { margin-bottom: 12px; }
 .pad-card header, .sample-sources header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .pad-card h2, .sample-sources h2 { margin: 4px 0 0; font-size: 16px; font-weight: 500; }

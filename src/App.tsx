@@ -156,6 +156,22 @@ function SamplePadEditor({ session, setSession }: { session: ScratchSession; set
   return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
 }
 
+function TimelineEditor({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
+  if (!session.timeline.length) return null;
+  const updateClip = (id: string, field: "startMs" | "durationMs" | "gainDb", value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    setSession({ ...session, timeline: session.timeline.map((clip) => {
+      if (clip.id !== id) return clip;
+      if (field === "gainDb") return { ...clip, gainDb: Math.max(-90, Math.min(24, safeValue)) };
+      if (field === "durationMs") return { ...clip, durationMs: Math.max(1, Math.round(safeValue)) };
+      return { ...clip, startMs: Math.max(0, Math.round(safeValue)) };
+    }) });
+  };
+  const toggleMuted = (id: string) => setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === id ? { ...clip, muted: !clip.muted } : clip) });
+  const removeClip = (id: string) => setSession({ ...session, timeline: session.timeline.filter((clip) => clip.id !== id) });
+  return <section className="section-card timeline-editor"><header><div><span className="eyebrow">CLIP INSPECTOR</span><h2>Non-destructive edits</h2></div><small>Source WAVs remain unchanged</small></header>{session.timeline.map((clip) => <div className={`timeline-edit-row ${clip.muted ? "muted" : ""}`} key={clip.id}><div className="timeline-edit-name"><strong>{clip.name}</strong><small>{clip.assetPath}</small></div><label><span>Start ms</span><input type="number" min="0" step="1" value={clip.startMs} onChange={(event) => updateClip(clip.id, "startMs", Number(event.target.value))} /></label><label><span>Length ms</span><input type="number" min="1" step="1" value={clip.durationMs} onChange={(event) => updateClip(clip.id, "durationMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={clip.gainDb} onChange={(event) => updateClip(clip.id, "gainDb", Number(event.target.value))} /></label><button className="text-button" onClick={() => toggleMuted(clip.id)}>{clip.muted ? "Unmute" : "Mute"}</button><button className="text-button danger" onClick={() => removeClip(clip.id)}>Remove</button></div>)}</section>;
+}
+
 function ReferenceCompare({ analysis, recordings, references, referenceId, onSelect }: { analysis: AudioAnalysis | null; recordings: RecordingAsset[]; references: Record<string, AudioAnalysis>; referenceId: string | null; onSelect: (recording: RecordingAsset) => void }) {
   const reference = recordings.find((recording) => recording.id === referenceId) ?? null;
   const comparison = analysis && reference ? compareAnalyses(analysis, references[reference.id] ?? analysis) : null;
@@ -415,7 +431,7 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
-        {session.workspace === "arrange" && <WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} />}
+        {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceCompare analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} onSelect={(recording) => void selectReference(recording)} /></>}
         {!(["home", "play", "arrange", "sample", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
