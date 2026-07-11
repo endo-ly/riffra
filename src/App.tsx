@@ -177,7 +177,11 @@ function App() {
   const [libraryQuery, setLibraryQuery] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [undoStack, setUndoStack] = useState<ScratchSession[]>([]);
+  const [redoStack, setRedoStack] = useState<ScratchSession[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
+  const previousSession = useRef<ScratchSession | null>(null);
+  const historySkip = useRef(false);
 
   const loadPluginIntoRack = useCallback(async (plugin: PluginEntry) => {
     const nextAudio = await loadPlugin(plugin.path);
@@ -208,6 +212,24 @@ function App() {
   const recoverAudio = useCallback(async () => {
     setAudio(await recoverAudioDevice());
   }, []);
+
+  const undo = useCallback(() => {
+    if (!session || undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    historySkip.current = true;
+    setUndoStack(undoStack.slice(0, -1));
+    setRedoStack([...redoStack, session].slice(-40));
+    setSession(previous);
+  }, [redoStack, session, undoStack]);
+
+  const redo = useCallback(() => {
+    if (!session || redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    historySkip.current = true;
+    setRedoStack(redoStack.slice(0, -1));
+    setUndoStack([...undoStack, session].slice(-40));
+    setSession(next);
+  }, [redoStack, session, undoStack]);
 
   const captureSnapshot = useCallback((slot: "A" | "B") => {
     if (!session) return;
@@ -308,6 +330,19 @@ function App() {
 
   useEffect(() => {
     if (!session) return;
+    const previous = previousSession.current;
+    if (previous && JSON.stringify(previous) !== JSON.stringify(session)) {
+      if (historySkip.current) historySkip.current = false;
+      else {
+        setUndoStack((stack) => [...stack, previous].slice(-40));
+        setRedoStack([]);
+      }
+    }
+    previousSession.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => void saveScratch({ ...session, updatedAtMs: Date.now() }), 750);
     return () => window.clearTimeout(saveTimer.current);
@@ -335,13 +370,15 @@ function App() {
       const target = event.target as HTMLElement | null;
       const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
       if (event.ctrlKey && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen((open) => !open); return; }
+      if (event.ctrlKey && !typing && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+      if (event.ctrlKey && !typing && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "m") { event.preventDefault(); void toggleMute(); return; }
       if (!typing && event.key >= "1" && event.key <= "6") switchWorkspace(workspaces[Number(event.key) - 1].id);
       if (event.key === "Escape") setCommandOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [switchWorkspace, toggleMute]);
+  }, [redo, switchWorkspace, toggleMute, undo]);
 
   const selectedPlugin = useMemo(() => plugins[0] ?? null, [plugins]);
   const query = libraryQuery.trim().toLowerCase();
@@ -355,7 +392,7 @@ function App() {
       <header className="global-bar">
         <div className="brand"><span className="logo-mark">R</span><strong>RIFFRA</strong></div>
         <button className="session-title"><span className="save-light" />{session.projectName ?? "Untitled Scratch"}<small>Auto-saved</small><Icon name="chevron" /></button>
-        <div className="history-controls"><button disabled>↶</button><button disabled>↷</button></div>
+        <div className="history-controls"><button aria-label="Undo" title="Undo (Ctrl+Z)" disabled={undoStack.length === 0} onClick={undo}>↶</button><button aria-label="Redo" title="Redo (Ctrl+Y)" disabled={redoStack.length === 0} onClick={redo}>↷</button></div>
         <nav className="workspace-tabs" aria-label="Workspace">
           {workspaces.map((item) => <button key={item.id} className={session.workspace === item.id ? "active" : ""} onClick={() => switchWorkspace(item.id)}>{item.label}<kbd>{item.key}</kbd></button>)}
         </nav>

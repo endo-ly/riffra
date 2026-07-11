@@ -20,6 +20,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 - App opens directly into a Scratch Session without a project dialog.
 - Session state is written atomically and at least five previous generations are kept.
 - Corrupt `current.json` falls back to the newest valid generation.
+- Session edits expose bounded Undo/Redo (40 in-memory revisions) while autosave and generation recovery remain the durable safety net.
 - Home, Play, Arrange, Sample, Analyze and Separate share transport and selection state.
 - Emergency mute is reachable by pointer and keyboard from every workspace.
 - The default VST3 folder is discovered without blocking initial UI rendering.
