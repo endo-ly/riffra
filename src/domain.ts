@@ -75,6 +75,19 @@ export interface RecordingStatus {
   droppedBlocks: number;
 }
 
+export interface RecordingAsset {
+  id: string;
+  name: string;
+  path: string;
+  state: "recording" | "completed" | "recoverable" | string;
+  startedAt: string | null;
+  updatedAt: string | null;
+  rawFile: string | null;
+  processedFile: string | null;
+  samplesWritten: number;
+  droppedBlocks: number;
+}
+
 export interface PluginStatus {
   loaded: boolean;
   bypassed: boolean;

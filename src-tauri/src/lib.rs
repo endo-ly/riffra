@@ -1,6 +1,7 @@
 mod model;
 mod native_audio;
 mod plugins;
+mod recordings;
 mod storage;
 
 use model::{AudioStatus, BootstrapState, ScratchSession};
@@ -67,6 +68,14 @@ async fn scan_vst3_folder(
         }
         report
     }).await.map_err(|error| format!("Plugin catalog task failed: {error}"))?)
+}
+
+#[tauri::command]
+fn list_recordings(
+    state: State<'_, AppState>,
+    query: Option<String>,
+) -> Result<Vec<recordings::RecordingAsset>, String> {
+    recordings::list(&state.data_root, query.as_deref())
 }
 
 #[tauri::command]
@@ -145,6 +154,7 @@ pub fn run() {
             get_bootstrap_state,
             save_scratch_session,
             scan_vst3_folder,
+            list_recordings,
             load_plugin,
             get_audio_status,
             set_emergency_mute,

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioStatus, BootstrapState, ScanReport, ScratchSession } from "./domain";
+import type { AudioStatus, BootstrapState, RecordingAsset, ScanReport, ScratchSession } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -38,6 +38,14 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
     };
   }
 
+}
+
+export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
+  try {
+    return await invoke<RecordingAsset[]>("list_recordings", { query: query ?? null });
+  } catch {
+    return [];
+  }
 }
 
 export async function loadPlugin(path: string): Promise<AudioStatus> {
