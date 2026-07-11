@@ -9,6 +9,17 @@ export interface RackDevice {
   gainDb: number;
 }
 
+export interface SessionSnapshot {
+  id: string;
+  name: string;
+  createdAtMs: number;
+  description: string;
+  tag: string | null;
+  parentId: string | null;
+  masterDb: number;
+  rack: RackDevice[];
+}
+
 export interface ScratchSession {
   formatVersion: number;
   sessionId: string;
@@ -18,6 +29,7 @@ export interface ScratchSession {
   masterDb: number;
   emergencyMuted: boolean;
   rack: RackDevice[];
+  snapshots: SessionSnapshot[];
   note: string;
 }
 
@@ -97,5 +109,6 @@ export const defaultSession = (): ScratchSession => ({
     { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0 },
     { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18 },
   ],
+  snapshots: [],
   note: "",
 });

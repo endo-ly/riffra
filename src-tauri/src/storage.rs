@@ -123,7 +123,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DeviceKind, RackDevice};
+    use crate::model::{DeviceKind, RackDevice, SessionSnapshot};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -175,5 +175,23 @@ mod tests {
                 .and_then(|device| device.path.as_deref()),
             Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3")
         );
+    }
+
+    #[test]
+    fn preserves_a_b_snapshot_state() {
+        let mut session = ScratchSession::new(now_ms());
+        session.snapshots.push(SessionSnapshot {
+            id: "snapshot:A".into(),
+            name: "A".into(),
+            created_at_ms: now_ms(),
+            description: "Clean reference".into(),
+            tag: Some("reference".into()),
+            parent_id: None,
+            master_db: -18.0,
+            rack: session.rack.clone(),
+        });
+        let normalized = session.validate_and_normalize().unwrap();
+        assert_eq!(normalized.snapshots[0].name, "A");
+        assert_eq!(normalized.snapshots[0].rack.len(), 3);
     }
 }

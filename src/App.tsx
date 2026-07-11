@@ -73,15 +73,17 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
   );
 }
 
-function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void }) {
+function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
   const persistedPlugins = session.rack
     .filter((device) => device.kind === "plugin")
     .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: "validated" } as PluginEntry));
   const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
   const loadedBypassed = session.rack.find((device) => device.kind === "plugin")?.bypassed ?? false;
+  const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === "snapshot:A");
+  const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === "snapshot:B");
   return (
     <div className="workspace-scroll play-view">
-      <section className="play-header"><div><span className="eyebrow">LIVE SIGNAL</span><h1>Input → Tone → Output</h1></div><div className="snapshot-tabs"><button className="active">A</button><button>B</button><button>＋</button></div></section>
+      <section className="play-header"><div><span className="eyebrow">LIVE SIGNAL</span><h1>Input → Tone → Output</h1></div><div className="snapshot-tabs"><button className={hasSnapshotA ? "active" : ""} onClick={() => onRecallSnapshot("A")}>A</button><button className={hasSnapshotB ? "active" : ""} onClick={() => onRecallSnapshot("B")}>B</button><button onClick={() => onCaptureSnapshot(hasSnapshotA ? "B" : "A")}>＋</button></div></section>
       <div className="signal-line" />
       <section className="rack-flow">
         <article className="rack-device input-device"><span className="device-order">IN</span><div className="device-face"><Meter value={45} /><Meter value={40} /></div><h3>Input 1</h3><small>Mono · −12.4 dB</small></article>
@@ -150,6 +152,34 @@ function App() {
   const recoverAudio = useCallback(async () => {
     setAudio(await recoverAudioDevice());
   }, []);
+
+  const captureSnapshot = useCallback((slot: "A" | "B") => {
+    if (!session) return;
+    const id = `snapshot:${slot}`;
+    const snapshot = {
+      id,
+      name: slot,
+      createdAtMs: Date.now(),
+      description: "",
+      tag: null,
+      parentId: null,
+      masterDb: session.masterDb,
+      rack: session.rack.map((device) => ({ ...device })),
+    };
+    setSession({
+      ...session,
+      snapshots: [...session.snapshots.filter((item) => item.id !== id), snapshot],
+    });
+  }, [session]);
+
+  const recallSnapshot = useCallback(async (slot: "A" | "B") => {
+    if (!session) return;
+    const snapshot = session.snapshots.find((item) => item.id === `snapshot:${slot}`);
+    if (!snapshot) return;
+    setSession({ ...session, masterDb: snapshot.masterDb, rack: snapshot.rack.map((device) => ({ ...device })) });
+    const plugin = snapshot.rack.find((device) => device.kind === "plugin");
+    if (plugin) setAudio(await setPluginBypassed(plugin.bypassed));
+  }, [session]);
 
   useEffect(() => {
     void bootstrap().then((state) => {
@@ -237,7 +267,7 @@ function App() {
 
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
-        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} />}
+        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 

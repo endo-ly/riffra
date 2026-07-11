@@ -14,6 +14,19 @@ pub struct RackDevice {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSnapshot {
+    pub id: String,
+    pub name: String,
+    pub created_at_ms: u64,
+    pub description: String,
+    pub tag: Option<String>,
+    pub parent_id: Option<String>,
+    pub master_db: f64,
+    pub rack: Vec<RackDevice>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Input,
@@ -44,6 +57,8 @@ pub struct ScratchSession {
     pub master_db: f64,
     pub emergency_muted: bool,
     pub rack: Vec<RackDevice>,
+    #[serde(default)]
+    pub snapshots: Vec<SessionSnapshot>,
     pub note: String,
 }
 
@@ -83,6 +98,7 @@ impl ScratchSession {
                     gain_db: -18.0,
                 },
             ],
+            snapshots: Vec::new(),
             note: String::new(),
         }
     }
@@ -105,6 +121,9 @@ impl ScratchSession {
         if self.rack.len() > 256 {
             return Err("A rack cannot contain more than 256 devices.".into());
         }
+        if self.snapshots.len() > 16 {
+            return Err("A session cannot contain more than 16 snapshots.".into());
+        }
         for device in &mut self.rack {
             if device.id.trim().is_empty() || device.name.trim().is_empty() {
                 return Err("Rack devices require non-empty ids and names.".into());
@@ -113,6 +132,25 @@ impl ScratchSession {
                 return Err(format!("Device '{}' has an invalid gain.", device.name));
             }
             device.gain_db = device.gain_db.clamp(-90.0, 24.0);
+        }
+        for snapshot in &mut self.snapshots {
+            if snapshot.id.trim().is_empty() || snapshot.name.trim().is_empty() {
+                return Err("Snapshots require non-empty ids and names.".into());
+            }
+            if !snapshot.master_db.is_finite() {
+                return Err(format!(
+                    "Snapshot '{}' has an invalid master gain.",
+                    snapshot.name
+                ));
+            }
+            snapshot.master_db = snapshot.master_db.clamp(-90.0, 0.0);
+            snapshot.description.truncate(16_384);
+            if snapshot.rack.len() > 256 {
+                return Err(format!(
+                    "Snapshot '{}' contains too many rack devices.",
+                    snapshot.name
+                ));
+            }
         }
         Ok(self)
     }
