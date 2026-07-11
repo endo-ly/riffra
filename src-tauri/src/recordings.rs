@@ -15,6 +15,8 @@ pub struct RecordingAsset {
     pub updated_at: Option<String>,
     pub raw_file: Option<String>,
     pub processed_file: Option<String>,
+    pub raw_path: Option<String>,
+    pub processed_path: Option<String>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
 }
@@ -62,6 +64,14 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         if !query.is_empty() && !search_text.contains(&query) {
             continue;
         }
+        let raw_path = manifest
+            .raw_file
+            .as_ref()
+            .map(|file| path.join(file).to_string_lossy().into_owned());
+        let processed_path = manifest
+            .processed_file
+            .as_ref()
+            .map(|file| path.join(file).to_string_lossy().into_owned());
         assets.push(RecordingAsset {
             id: format!("recording:{}", path.to_string_lossy()),
             name,
@@ -71,6 +81,8 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             updated_at: manifest.updated_at,
             raw_file: manifest.raw_file,
             processed_file: manifest.processed_file,
+            raw_path,
+            processed_path,
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
         });

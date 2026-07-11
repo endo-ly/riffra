@@ -84,8 +84,24 @@ export interface RecordingAsset {
   updatedAt: string | null;
   rawFile: string | null;
   processedFile: string | null;
+  rawPath: string | null;
+  processedPath: string | null;
   samplesWritten: number;
   droppedBlocks: number;
+}
+
+export interface AudioAnalysis {
+  path: string;
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number;
+  samples: number;
+  durationMs: number;
+  peakDb: number;
+  rmsDb: number;
+  zeroCrossings: number;
+  phaseCorrelation: number | null;
+  spectrumPeakHz: number | null;
 }
 
 export interface PluginStatus {

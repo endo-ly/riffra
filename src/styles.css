@@ -240,6 +240,9 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .status-line { max-width: 170px; display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--faint); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .status-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--amber); }
 .status-dot.ready { background: var(--teal); }.status-dot.muted, .status-dot.faulted, .status-dot.recording { background: var(--red); }
+.analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.analysis-grid h2 { margin: 8px 0 4px; color: #d9e3eb; font-size: 22px; font-weight: 500; }
+.analysis-grid p { margin: 0; color: var(--muted); font-size: 10px; }
 
 .focus-mode { grid-template-columns: 0 minmax(520px, 1fr) 0; }
 .focus-mode .library-panel, .focus-mode .inspector-panel { visibility: hidden; }

@@ -9,7 +9,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 | C. Capture | audio sidecar + recording journal | In progress | JUCE threaded Raw/Processed WAV, completed/recoverable manifest, Inbox recording index, synthetic self-test; hardware interruption matrix remains |
 | D. Arrange | timeline engine + offline render | Planned | non-destructive audio/MIDI edit, PDC, stem/master export |
 | E. Sample | sampler engine | Planned | slice, pad/key map, MIDI play/record, reusable instrument |
-| F. Analyze | analysis workers | Planned | waveform, spectrum, loudness, phase and matched reference |
+| F. Analyze | analysis workers | In progress | offline WAV peak/RMS, duration, zero crossings, simple spectrum peak and stereo phase correlation; waveform/reference comparison remains |
 | G. Separate | background job provider | Planned | cancellable/recoverable stems and synchronized comparison |
 | H. AI | Rust ChangeSet service | Planned | context preview, partial apply, one-step undo, external-send control |
 | I. Creative Memory | SQLite library + preview bus | In progress | VST3 catalog and recording-manifest search/listing started; SQLite cross-asset provenance, related assets and non-destructive preview remain |

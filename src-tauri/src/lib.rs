@@ -1,3 +1,4 @@
+mod analysis;
 mod model;
 mod native_audio;
 mod plugins;
@@ -76,6 +77,14 @@ fn list_recordings(
     query: Option<String>,
 ) -> Result<Vec<recordings::RecordingAsset>, String> {
     recordings::list(&state.data_root, query.as_deref())
+}
+
+#[tauri::command]
+async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> {
+    let path = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || analysis::analyze(&path))
+        .await
+        .map_err(|error| format!("Audio analysis task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -160,6 +169,7 @@ pub fn run() {
             save_scratch_session,
             scan_vst3_folder,
             list_recordings,
+            analyze_audio,
             load_plugin,
             clear_plugin,
             get_audio_status,

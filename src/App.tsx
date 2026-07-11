@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioStatus, BootstrapState, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
-import { bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import type { AudioAnalysis, AudioStatus, BootstrapState, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
+import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -117,12 +117,20 @@ function EmptyWorkspace({ workspace }: { workspace: Workspace }) {
   return <div className="empty-workspace"><span className={`empty-orbit orbit-${workspace}`}><i /><b /></span><span className="eyebrow">{workspace.toUpperCase()} WORKSPACE</span><h1>{item.title}</h1><p>{item.body}</p><button className="primary"><Icon name="plus" />{item.action}</button><small>このワークスペースの処理エンジンは後続ゲートで接続されます。Scratch Sessionは維持されます。</small></div>;
 }
 
+function WorkspaceAnalyze({ analysis }: { analysis: AudioAnalysis | null }) {
+  if (!analysis) {
+    return <div className="empty-workspace"><span className="empty-orbit orbit-analyze"><i /><b /></span><span className="eyebrow">ANALYZE WORKSPACE</span><h1>測定して、理解する</h1><p>LibraryのRecordingsからProcessed WAVを選ぶと、音量・位相・簡易スペクトルを確認できます。</p><small>解析はオフラインで実行され、元の録音ファイルは変更されません。</small></div>;
+  }
+  return <div className="workspace-scroll analysis-view"><section className="play-header"><div><span className="eyebrow">ANALYSIS RESULT</span><h1>{analysis.path.split("\\").pop() ?? "Audio"}</h1></div><span className="status-tag">READ ONLY</span></section><section className="analysis-grid"><article className="section-card"><span className="eyebrow">LEVEL</span><h2>{analysis.rmsDb.toFixed(1)} dB RMS</h2><p>Peak {analysis.peakDb.toFixed(1)} dBFS · {analysis.samples.toLocaleString()} samples</p></article><article className="section-card"><span className="eyebrow">SPECTRUM</span><h2>{analysis.spectrumPeakHz ? `${analysis.spectrumPeakHz.toFixed(1)} Hz` : "—"}</h2><p>簡易スペクトルピーク</p></article><article className="section-card"><span className="eyebrow">PHASE</span><h2>{analysis.phaseCorrelation == null ? "Mono" : analysis.phaseCorrelation.toFixed(3)}</h2><p>{analysis.phaseCorrelation == null ? "ステレオ相関なし" : "Left / Right correlation"}</p></article><article className="section-card"><span className="eyebrow">TIMING</span><h2>{(analysis.durationMs / 1000).toFixed(2)} s</h2><p>{analysis.sampleRate} Hz · {analysis.channels} ch · {analysis.bitsPerSample} bit</p></article></section></div>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
+  const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [scanMessage, setScanMessage] = useState("VST3を検出中…");
   const [librarySection, setLibrarySection] = useState("Plugins");
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -187,6 +195,13 @@ function App() {
     const plugin = snapshot.rack.find((device) => device.kind === "plugin");
     if (plugin) setAudio(await setPluginBypassed(plugin.bypassed));
   }, [session]);
+
+  const openRecordingAnalysis = useCallback(async (recording: RecordingAsset) => {
+    const path = recording.processedPath ?? recording.rawPath;
+    if (!path) return;
+    setAnalysis(await analyzeAudio(path));
+    setSession((current) => current ? { ...current, workspace: "analyze" } : current);
+  }, []);
 
   useEffect(() => {
     void bootstrap().then((state) => {
@@ -273,7 +288,7 @@ function App() {
         <nav>{librarySections.map((section) => <button key={section} className={librarySection === section ? "active" : ""} onClick={() => setLibrarySection(section)}><span className={`nav-glyph glyph-${section.toLowerCase()}`} />{section}<small>{section === "Plugins" ? plugins.length : ""}</small></button>)}</nav>
         <div className="library-content">
           <span className="eyebrow">{librarySection.toUpperCase()}</span>
-          {librarySection === "Plugins" ? <><small className="scan-message">{visiblePlugins.length}件を表示</small>{visiblePlugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}{visiblePlugins.length === 0 && <div className="library-empty"><span>一致するVST3がありません</span><small>検索語を変えるか、VST3フォルダを確認してください。</small></div>}</> : librarySection === "Recordings" ? <>{visibleRecordings.slice(0, 12).map((recording) => <button className="plugin-row recording-row" key={recording.id} title={recording.path}><span>{recording.state === "completed" ? "✓" : "!"}</span><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><i className={`stability ${recording.state === "completed" ? "validated" : "quarantined"}`} /></button>)}{visibleRecordings.length === 0 && <div className="library-empty"><span>まだ録音がありません</span><small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small></div>}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
+          {librarySection === "Plugins" ? <><small className="scan-message">{visiblePlugins.length}件を表示</small>{visiblePlugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}{visiblePlugins.length === 0 && <div className="library-empty"><span>一致するVST3がありません</span><small>検索語を変えるか、VST3フォルダを確認してください。</small></div>}</> : librarySection === "Recordings" ? <>{visibleRecordings.slice(0, 12).map((recording) => <button className="plugin-row recording-row" key={recording.id} onClick={() => void openRecordingAnalysis(recording)} title={recording.path}><span>{recording.state === "completed" ? "✓" : "!"}</span><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><i className={`stability ${recording.state === "completed" ? "validated" : "quarantined"}`} /></button>)}{visibleRecordings.length === 0 && <div className="library-empty"><span>まだ録音がありません</span><small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small></div>}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
         </div>
         <button className="inbox-button" onClick={() => setLibrarySection("Recordings")}><span className="inbox-icon">↓</span><div><strong>Inbox</strong><small>{recordings.length} items</small></div></button>
       </aside>
@@ -281,7 +296,8 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
-        {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
+        {session.workspace === "analyze" && <WorkspaceAnalyze analysis={analysis} />}
+        {!(["home", "play", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
       <aside className="inspector-panel">
