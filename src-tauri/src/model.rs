@@ -27,6 +27,18 @@ pub struct SessionSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineClip {
+    pub id: String,
+    pub asset_path: String,
+    pub name: String,
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    pub gain_db: f64,
+    pub muted: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Input,
@@ -59,6 +71,8 @@ pub struct ScratchSession {
     pub rack: Vec<RackDevice>,
     #[serde(default)]
     pub snapshots: Vec<SessionSnapshot>,
+    #[serde(default)]
+    pub timeline: Vec<TimelineClip>,
     pub note: String,
 }
 
@@ -99,6 +113,7 @@ impl ScratchSession {
                 },
             ],
             snapshots: Vec::new(),
+            timeline: Vec::new(),
             note: String::new(),
         }
     }
@@ -123,6 +138,9 @@ impl ScratchSession {
         }
         if self.snapshots.len() > 16 {
             return Err("A session cannot contain more than 16 snapshots.".into());
+        }
+        if self.timeline.len() > 512 {
+            return Err("A timeline cannot contain more than 512 clips.".into());
         }
         for device in &mut self.rack {
             if device.id.trim().is_empty() || device.name.trim().is_empty() {
@@ -151,6 +169,21 @@ impl ScratchSession {
                     snapshot.name
                 ));
             }
+        }
+        for clip in &mut self.timeline {
+            if clip.id.trim().is_empty()
+                || clip.asset_path.trim().is_empty()
+                || clip.name.trim().is_empty()
+            {
+                return Err("Timeline clips require ids, source paths and names.".into());
+            }
+            if !clip.gain_db.is_finite() {
+                return Err(format!(
+                    "Timeline clip '{}' has an invalid gain.",
+                    clip.name
+                ));
+            }
+            clip.gain_db = clip.gain_db.clamp(-90.0, 24.0);
         }
         Ok(self)
     }

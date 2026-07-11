@@ -17,6 +17,7 @@ pub struct RecordingAsset {
     pub processed_file: Option<String>,
     pub raw_path: Option<String>,
     pub processed_path: Option<String>,
+    pub sample_rate: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
 }
@@ -29,6 +30,7 @@ struct RecordingManifest {
     updated_at: Option<String>,
     raw_file: Option<String>,
     processed_file: Option<String>,
+    sample_rate: Option<u32>,
     samples_written: Option<u64>,
     dropped_blocks: Option<u64>,
 }
@@ -83,6 +85,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_file: manifest.processed_file,
             raw_path,
             processed_path,
+            sample_rate: manifest.sample_rate,
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
         });

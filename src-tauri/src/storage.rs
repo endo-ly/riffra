@@ -123,7 +123,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DeviceKind, RackDevice, SessionSnapshot};
+    use crate::model::{DeviceKind, RackDevice, SessionSnapshot, TimelineClip};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -193,5 +193,26 @@ mod tests {
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.snapshots[0].name, "A");
         assert_eq!(normalized.snapshots[0].rack.len(), 3);
+    }
+
+    #[test]
+    fn preserves_non_destructive_timeline_clip() {
+        let mut session = ScratchSession::new(now_ms());
+        session.timeline.push(TimelineClip {
+            id: "clip:take-1".into(),
+            asset_path: r"C:\recordings\take-1\processed.wav".into(),
+            name: "take-1".into(),
+            start_ms: 250,
+            duration_ms: 1_000,
+            gain_db: 0.0,
+            muted: false,
+        });
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.timeline[0].start_ms, 250);
+        assert_eq!(
+            decoded.timeline[0].asset_path,
+            r"C:\recordings\take-1\processed.wav"
+        );
     }
 }

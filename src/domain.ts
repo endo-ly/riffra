@@ -20,6 +20,16 @@ export interface SessionSnapshot {
   rack: RackDevice[];
 }
 
+export interface TimelineClip {
+  id: string;
+  assetPath: string;
+  name: string;
+  startMs: number;
+  durationMs: number;
+  gainDb: number;
+  muted: boolean;
+}
+
 export interface ScratchSession {
   formatVersion: number;
   sessionId: string;
@@ -30,6 +40,7 @@ export interface ScratchSession {
   emergencyMuted: boolean;
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
+  timeline: TimelineClip[];
   note: string;
 }
 
@@ -86,6 +97,7 @@ export interface RecordingAsset {
   processedFile: string | null;
   rawPath: string | null;
   processedPath: string | null;
+  sampleRate: number | null;
   samplesWritten: number;
   droppedBlocks: number;
 }
@@ -140,5 +152,6 @@ export const defaultSession = (): ScratchSession => ({
     { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18 },
   ],
   snapshots: [],
+  timeline: [],
   note: "",
 });

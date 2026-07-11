@@ -246,6 +246,22 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .waveform-analysis i { flex: 1; min-width: 1px; background: linear-gradient(180deg, #8aeee8, #3e93ad); border-radius: 2px; opacity: .82; }
 .analysis-grid h2 { margin: 8px 0 4px; color: #d9e3eb; font-size: 22px; font-weight: 500; }
 .analysis-grid p { margin: 0; color: var(--muted); font-size: 10px; }
+.timeline-card { margin-bottom: 12px; }
+.timeline-ruler { display: flex; justify-content: space-between; color: var(--muted); font: 9px "DM Mono", Consolas, monospace; }
+.timeline-lane { position: relative; min-height: 120px; margin-top: 10px; padding: 12px; background: #0c1116; border: 1px solid #27313a; border-radius: 6px; }
+.timeline-lane > small { color: var(--muted); }
+.timeline-clip { position: absolute; top: 24px; min-height: 58px; display: grid; align-content: center; gap: 4px; overflow: hidden; padding: 8px; color: #071216; background: linear-gradient(135deg, #8aeee8, #52c9dc); border-radius: 5px; box-shadow: 0 4px 16px rgba(53,190,207,.16); }
+.timeline-clip.muted { opacity: .45; filter: saturate(.5); }
+.timeline-clip strong, .timeline-clip small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-clip strong { font-size: 10px; }
+.timeline-clip small { font: 8px "DM Mono", Consolas, monospace; }
+.arrange-sources header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.arrange-sources h2 { margin: 4px 0 0; font-size: 16px; font-weight: 500; }
+.arrange-sources header > small { color: var(--muted); font-size: 9px; }
+.source-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-top: 1px solid #27313a; }
+.source-row strong, .source-row small { display: block; }
+.source-row strong { color: #cbd3dc; font-size: 10px; }
+.source-row small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 
 .focus-mode { grid-template-columns: 0 minmax(520px, 1fr) 0; }
 .focus-mode .library-panel, .focus-mode .inspector-panel { visibility: hidden; }

@@ -124,6 +124,11 @@ function WorkspaceAnalyze({ analysis }: { analysis: AudioAnalysis | null }) {
   return <div className="workspace-scroll analysis-view"><section className="play-header"><div><span className="eyebrow">ANALYSIS RESULT</span><h1>{analysis.path.split("\\").pop() ?? "Audio"}</h1></div><span className="status-tag">READ ONLY</span></section><section className="section-card waveform-card"><span className="eyebrow">WAVEFORM</span><div className="waveform-analysis">{analysis.waveform.map((value, index) => <i key={index} style={{ height: `${Math.max(4, value * 100)}%` }} />)}</div></section><section className="analysis-grid"><article className="section-card"><span className="eyebrow">LEVEL</span><h2>{analysis.rmsDb.toFixed(1)} dB RMS</h2><p>Peak {analysis.peakDb.toFixed(1)} dBFS · {analysis.samples.toLocaleString()} samples</p></article><article className="section-card"><span className="eyebrow">SPECTRUM</span><h2>{analysis.spectrumPeakHz ? `${analysis.spectrumPeakHz.toFixed(1)} Hz` : "—"}</h2><p>簡易スペクトルピーク</p></article><article className="section-card"><span className="eyebrow">PHASE</span><h2>{analysis.phaseCorrelation == null ? "Mono" : analysis.phaseCorrelation.toFixed(3)}</h2><p>{analysis.phaseCorrelation == null ? "ステレオ相関なし" : "Left / Right correlation"}</p></article><article className="section-card"><span className="eyebrow">TIMING</span><h2>{(analysis.durationMs / 1000).toFixed(2)} s</h2><p>{analysis.sampleRate} Hz · {analysis.channels} ch · {analysis.bitsPerSample} bit</p></article></section></div>;
 }
 
+function WorkspaceArrange({ session, recordings, onPlaceRecording }: { session: ScratchSession; recordings: RecordingAsset[]; onPlaceRecording: (recording: RecordingAsset) => void }) {
+  const timelineEnd = Math.max(10_000, ...session.timeline.map((clip) => clip.startMs + clip.durationMs));
+  return <div className="workspace-scroll arrange-view"><section className="play-header"><div><span className="eyebrow">NON-DESTRUCTIVE TIMELINE</span><h1>Arrange ideas without moving sources</h1></div><span className="status-tag">{session.timeline.length} CLIPS</span></section><section className="section-card timeline-card"><div className="timeline-ruler"><span>00:00</span><span>{(timelineEnd / 1000).toFixed(1)} s</span></div><div className="timeline-lane">{session.timeline.length === 0 && <small>InboxのRecordingを右側からTimelineへ配置できます。</small>}{session.timeline.map((clip) => <article className={`timeline-clip ${clip.muted ? "muted" : ""}`} key={clip.id} style={{ left: `${(clip.startMs / timelineEnd) * 100}%`, width: `${Math.max(8, (clip.durationMs / timelineEnd) * 100)}%` }}><strong>{clip.name}</strong><small>{clip.gainDb.toFixed(1)} dB · {clip.muted ? "Muted" : "Source linked"}</small></article>)}</div></section><section className="section-card arrange-sources"><header><div><span className="eyebrow">INBOX SOURCES</span><h2>素材を配置</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">まだ録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onPlaceRecording(recording)}>Place</button></div>)}</section></div>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
@@ -202,6 +207,21 @@ function App() {
     setAnalysis(await analyzeAudio(path));
     setSession((current) => current ? { ...current, workspace: "analyze" } : current);
   }, []);
+
+  const placeRecording = useCallback((recording: RecordingAsset) => {
+    if (!session) return;
+    const assetPath = recording.processedPath ?? recording.rawPath;
+    if (!assetPath || session.timeline.some((clip) => clip.assetPath === assetPath)) return;
+    const startMs = session.timeline.reduce((end, clip) => Math.max(end, clip.startMs + clip.durationMs), 0);
+    const durationMs = recording.sampleRate && recording.samplesWritten
+      ? Math.max(1, Math.round((recording.samplesWritten / recording.sampleRate) * 1000))
+      : 1_000;
+    setSession({
+      ...session,
+      timeline: [...session.timeline, { id: `clip:${recording.id}`, assetPath, name: recording.name, startMs, durationMs, gainDb: 0, muted: false }],
+      workspace: "arrange",
+    });
+  }, [session]);
 
   useEffect(() => {
     void bootstrap().then((state) => {
@@ -296,8 +316,9 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
+        {session.workspace === "arrange" && <WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} />}
         {session.workspace === "analyze" && <WorkspaceAnalyze analysis={analysis} />}
-        {!(["home", "play", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
+        {!(["home", "play", "arrange", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
       <aside className="inspector-panel">

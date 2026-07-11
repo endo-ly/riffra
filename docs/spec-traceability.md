@@ -7,7 +7,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 | A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, muted device recovery with rack reprepare, validated rack restoration request; cold/warm timing remains |
 | B. Tone Design | plugin workers + rack engine | In progress | isolated real VST3 load/process, persisted rack path, explicit safety-preserving bypass and session A/B rack snapshots; plugin parameter state, macro/parallel rack and matched A/B remain |
 | C. Capture | audio sidecar + recording journal | In progress | JUCE threaded Raw/Processed WAV, completed/recoverable manifest, Inbox recording index, synthetic self-test; hardware interruption matrix remains |
-| D. Arrange | timeline engine + offline render | Planned | non-destructive audio/MIDI edit, PDC, stem/master export |
+| D. Arrange | timeline engine + offline render | In progress | non-destructive Inbox audio clip references with saved position/gain/mute; MIDI edit, PDC and stem/master export remain |
 | E. Sample | sampler engine | Planned | slice, pad/key map, MIDI play/record, reusable instrument |
 | F. Analyze | analysis workers | In progress | offline WAV 128-bin waveform, peak/RMS, duration, zero crossings, simple spectrum peak and stereo phase correlation; reference comparison remains |
 | G. Separate | background job provider | Planned | cancellable/recoverable stems and synchronized comparison |
