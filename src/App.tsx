@@ -185,7 +185,7 @@ function WorkspaceSeparate({ recordings, results, busyId, message, onSeparate }:
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
-  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], message: "Audio supervisor is starting." });
+  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
@@ -475,7 +475,7 @@ function App() {
         <div className="transport-left"><button aria-label="Toggle loop"><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label="Play"><Icon name="play" /></button><button aria-label="Stop"><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
-        <div className="transport-meter"><span>IN</span><Meter value={42} /><span>OUT</span><Meter value={56} /></div>
+        <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
         <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => setSession({ ...session, masterDb: Number(event.target.value) })} /></div>
         <div className="status-line"><span className={`status-dot ${audio.recording.active ? "recording" : audio.state}`} />{audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
       </footer>

@@ -122,6 +122,9 @@ export async function getAudioStatus(): Promise<AudioStatus> {
       },
       midiInputs: [],
       midiOutputs: [],
+      inputPeak: 0,
+      outputPeak: 0,
+      invalidSamples: 0,
       message: "Native audio sidecar is not connected.",
     };
   }
@@ -148,6 +151,9 @@ export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
       },
       midiInputs: [],
       midiOutputs: [],
+      inputPeak: 0,
+      outputPeak: 0,
+      invalidSamples: 0,
       message: muted ? "Emergency mute is engaged." : "Native audio sidecar is not connected.",
     };
   }

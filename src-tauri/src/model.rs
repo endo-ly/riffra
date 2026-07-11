@@ -265,6 +265,9 @@ pub struct AudioStatus {
     pub plugin: Option<PluginStatus>,
     pub midi_inputs: Vec<String>,
     pub midi_outputs: Vec<String>,
+    pub input_peak: f64,
+    pub output_peak: f64,
+    pub invalid_samples: u64,
     pub message: String,
 }
 
