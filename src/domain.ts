@@ -62,6 +62,15 @@ export interface RecordingStatus {
   droppedBlocks: number;
 }
 
+export interface PluginStatus {
+  loaded: boolean;
+  path: string | null;
+  name: string | null;
+  sampleRate: number | null;
+  blockSize: number | null;
+  bypassedBlocks: number;
+}
+
 export interface AudioStatus {
   state: "offline" | "starting" | "ready" | "muted" | "faulted";
   driver: string | null;
@@ -69,6 +78,7 @@ export interface AudioStatus {
   bufferSize: number | null;
   roundTripMs: number | null;
   recording: RecordingStatus;
+  plugin?: PluginStatus | null;
   message: string;
 }
 

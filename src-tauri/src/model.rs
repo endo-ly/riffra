@@ -137,6 +137,17 @@ pub struct RecordingStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginStatus {
+    pub loaded: bool,
+    pub path: Option<String>,
+    pub name: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub block_size: Option<u32>,
+    pub bypassed_blocks: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioStatus {
     pub state: AudioState,
     pub driver: Option<String>,
@@ -144,6 +155,7 @@ pub struct AudioStatus {
     pub buffer_size: Option<u32>,
     pub round_trip_ms: Option<f64>,
     pub recording: RecordingStatus,
+    pub plugin: Option<PluginStatus>,
     pub message: String,
 }
 

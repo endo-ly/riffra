@@ -126,12 +126,12 @@ int serve() {
             break;
         if (type == "setEmergencyMute") {
             callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
-            writeJson(currentStatus(manager, callback));
+            writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
         if (type == "setMasterGainDb") {
             callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
-            writeJson(currentStatus(manager, callback));
+            writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
         if (type == "loadPlugin") {
@@ -162,7 +162,7 @@ int serve() {
                 writeJson(makeError("recording", directory.isEmpty() ? "Recording directory is required." : recordingError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback));
+            writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
         if (type == "stopRecording") {
@@ -171,11 +171,11 @@ int serve() {
                 writeJson(makeError("recording", recordingError));
                 continue;
             }
-            writeJson(currentStatus(manager, callback));
+            writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
         if (type == "status") {
-            writeJson(currentStatus(manager, callback));
+            writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
         writeJson(makeError("protocol", "Unsupported command: " + type));

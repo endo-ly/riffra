@@ -1,4 +1,4 @@
-use crate::model::{AudioState, AudioStatus, RecordingStatus};
+use crate::model::{AudioState, AudioStatus, PluginStatus, RecordingStatus};
 use serde::Deserialize;
 use std::{
     path::Path,
@@ -26,6 +26,7 @@ struct NativeStatus {
     buffer_size: Option<u32>,
     round_trip_ms: Option<f64>,
     recording: Option<NativeRecordingStatus>,
+    plugin: Option<NativePluginStatus>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +41,17 @@ struct NativeRecordingStatus {
     dropped_blocks: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePluginStatus {
+    loaded: bool,
+    path: Option<String>,
+    name: Option<String>,
+    sample_rate: Option<f64>,
+    block_size: Option<u32>,
+    bypassed_blocks: Option<u64>,
+}
+
 impl AudioSupervisor {
     pub fn start<R: Runtime>(app: &AppHandle<R>) -> Self {
         let status = Arc::new(Mutex::new(AudioStatus {
@@ -49,6 +61,7 @@ impl AudioSupervisor {
             buffer_size: None,
             round_trip_ms: None,
             recording: RecordingStatus::default(),
+            plugin: None,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
 
@@ -245,6 +258,16 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
                 dropped_blocks: recording.dropped_blocks.unwrap_or_default(),
             })
             .unwrap_or_default();
+        current.plugin = native.plugin.map(|plugin| PluginStatus {
+            loaded: plugin.loaded,
+            path: plugin.path.filter(|path| !path.is_empty()),
+            name: plugin.name.filter(|name| !name.is_empty()),
+            sample_rate: plugin
+                .sample_rate
+                .and_then(|rate| u32::try_from(rate.round() as i64).ok()),
+            block_size: plugin.block_size,
+            bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
+        });
         current.message = match current.state {
             AudioState::Ready => "Native audio is ready through the safety chain.".into(),
             AudioState::Muted => "Native audio is connected and emergency-muted.".into(),
