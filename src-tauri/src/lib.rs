@@ -102,6 +102,11 @@ fn load_plugin(path: String, state: State<'_, AppState>) -> Result<AudioStatus, 
 }
 
 #[tauri::command]
+fn clear_plugin(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.clear_plugin()
+}
+
+#[tauri::command]
 fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     let inbox = state.data_root.join("recordings").join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|error| {
@@ -156,6 +161,7 @@ pub fn run() {
             scan_vst3_folder,
             list_recordings,
             load_plugin,
+            clear_plugin,
             get_audio_status,
             set_emergency_mute,
             start_recording,

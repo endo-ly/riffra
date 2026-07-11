@@ -56,6 +56,14 @@ export async function loadPlugin(path: string): Promise<AudioStatus> {
   }
 }
 
+export async function clearPlugin(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("clear_plugin");
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
 export async function getAudioStatus(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("get_audio_status");

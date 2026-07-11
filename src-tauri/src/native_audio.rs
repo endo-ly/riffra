@@ -168,6 +168,13 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn clear_plugin(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "clearPlugin"}),
+            "VST3 removed from the isolated rack; the safety path remains active.",
+        )
+    }
+
     pub fn start_recording(&self, directory: &Path) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({"type": "startRecording", "directory": directory.to_string_lossy()}),

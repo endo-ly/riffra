@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioStatus, BootstrapState, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
-import { bootstrap, getAudioStatus, listRecordings, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import { bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -73,7 +73,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
   );
 }
 
-function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
+function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
   const persistedPlugins = session.rack
     .filter((device) => device.kind === "plugin")
     .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: "validated" } as PluginEntry));
@@ -88,7 +88,7 @@ function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onC
       <section className="rack-flow">
         <article className="rack-device input-device"><span className="device-order">IN</span><div className="device-face"><Meter value={45} /><Meter value={40} /></div><h3>Input 1</h3><small>Mono · −12.4 dB</small></article>
         {(visiblePlugins.length ? visiblePlugins : [{ id: "placeholder", name: "Add a VST3", vendor: null } as PluginEntry]).map((plugin, index) => (
-          <article className="rack-device" key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button onClick={() => onTogglePluginBypass(!loadedBypassed)}>{loadedBypassed ? "Enable" : "Bypass"}</button><strong>0.0 dB</strong></div></article>
+          <article className="rack-device" key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button onClick={() => onTogglePluginBypass(!loadedBypassed)}>{loadedBypassed ? "Enable" : "Bypass"}</button><button onClick={onClearPlugin}>Remove</button><strong>0.0 dB</strong></div></article>
         ))}
         <button className="add-device"><Icon name="plus" /><span>Add Device</span></button>
         <article className="rack-device output-device"><span className="device-order">OUT</span><div className="device-face"><Meter value={58} /><Meter value={51} /></div><h3>Main Out</h3><small>Safety limited</small></article>
@@ -140,6 +140,11 @@ function App() {
         { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed: false, gainDb: 0 },
       ],
     } : current);
+  }, []);
+
+  const clearPluginFromRack = useCallback(async () => {
+    setAudio(await clearPlugin());
+    setSession((current) => current ? { ...current, rack: current.rack.filter((device) => device.kind !== "plugin") } : current);
   }, []);
 
   const togglePluginBypass = useCallback(async (bypassed: boolean) => {
@@ -275,7 +280,7 @@ function App() {
 
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
-        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
+        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
