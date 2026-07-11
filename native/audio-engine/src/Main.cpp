@@ -155,6 +155,11 @@ int serve() {
             writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
+        if (type == "setPluginBypassed") {
+            rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
         if (type == "startRecording") {
             const auto directory = command.getProperty("directory", {}).toString();
             juce::String recordingError;

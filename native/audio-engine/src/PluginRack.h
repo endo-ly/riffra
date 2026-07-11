@@ -12,6 +12,7 @@ public:
     bool load(const juce::String& path, double sampleRate, int blockSize, juce::String& error);
     void clear() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
+    void setBypassed(bool shouldBypass) noexcept;
     void process(
         const float* const* inputChannelData,
         int numInputChannels,
@@ -29,6 +30,7 @@ private:
     juce::String pluginPath;
     juce::String pluginName;
     std::atomic<std::uint64_t> bypassedBlocks { 0 };
+    std::atomic<bool> bypassed { false };
 };
 
 } // namespace riffra

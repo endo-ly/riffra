@@ -143,6 +143,7 @@ pub struct RecordingStatus {
 #[serde(rename_all = "camelCase")]
 pub struct PluginStatus {
     pub loaded: bool,
+    pub bypassed: bool,
     pub path: Option<String>,
     pub name: Option<String>,
     pub sample_rate: Option<u32>,

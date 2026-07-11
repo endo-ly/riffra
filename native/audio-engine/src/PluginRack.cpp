@@ -38,6 +38,7 @@ bool PluginRack::load(
     preparedSampleRate = sampleRate;
     preparedBlockSize = blockSize;
     plugin = std::move(candidate);
+    bypassed.store(false, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
     return true;
 }
@@ -49,6 +50,7 @@ void PluginRack::clear() noexcept {
     plugin.reset();
     pluginPath.clear();
     pluginName.clear();
+    bypassed.store(false, std::memory_order_release);
 }
 
 void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept {
@@ -57,6 +59,10 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
     preparedBlockSize = blockSize;
     if (plugin != nullptr)
         plugin->prepareToPlay(sampleRate, blockSize);
+}
+
+void PluginRack::setBypassed(const bool shouldBypass) noexcept {
+    bypassed.store(shouldBypass, std::memory_order_release);
 }
 
 void PluginRack::process(
@@ -77,7 +83,8 @@ void PluginRack::process(
     }
 
     const juce::SpinLock::ScopedTryLockType lock(pluginLock);
-    if (!lock.isLocked() || plugin == nullptr || numOutputChannels <= 0 || numSamples <= 0) {
+    if (!lock.isLocked() || plugin == nullptr || bypassed.load(std::memory_order_acquire)
+        || numOutputChannels <= 0 || numSamples <= 0) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -93,6 +100,7 @@ juce::var PluginRack::status() const {
     result->setProperty("loaded", plugin != nullptr);
     result->setProperty("path", pluginPath);
     result->setProperty("name", pluginName);
+    result->setProperty("bypassed", bypassed.load(std::memory_order_acquire));
     result->setProperty("sampleRate", preparedSampleRate);
     result->setProperty("blockSize", preparedBlockSize);
     result->setProperty(

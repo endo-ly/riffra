@@ -111,3 +111,11 @@ export async function stopRecording(): Promise<AudioStatus> {
     return await getAudioStatus();
   }
 }
+
+export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("set_plugin_bypassed", { bypassed });
+  } catch {
+    return await getAudioStatus();
+  }
+}

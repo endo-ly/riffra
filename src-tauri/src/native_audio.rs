@@ -45,6 +45,7 @@ struct NativeRecordingStatus {
 #[serde(rename_all = "camelCase")]
 struct NativePluginStatus {
     loaded: bool,
+    bypassed: bool,
     path: Option<String>,
     name: Option<String>,
     sample_rate: Option<f64>,
@@ -187,6 +188,17 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_plugin_bypassed(&self, bypassed: bool) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "setPluginBypassed", "bypassed": bypassed}),
+            if bypassed {
+                "VST3 bypassed; the safety copy path remains active."
+            } else {
+                "VST3 processing resumed through the safety limiter."
+            },
+        )
+    }
+
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
         let command = format!("{{\"type\":\"setEmergencyMute\",\"muted\":{muted}}}\n");
         let mut child_slot = self
@@ -260,6 +272,7 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
             .unwrap_or_default();
         current.plugin = native.plugin.map(|plugin| PluginStatus {
             loaded: plugin.loaded,
+            bypassed: plugin.bypassed,
             path: plugin.path.filter(|path| !path.is_empty()),
             name: plugin.name.filter(|name| !name.is_empty()),
             sample_rate: plugin

@@ -65,6 +65,7 @@ export interface RecordingStatus {
 
 export interface PluginStatus {
   loaded: boolean;
+  bypassed: boolean;
   path: string | null;
   name: string | null;
   sampleRate: number | null;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioStatus, BootstrapState, PluginEntry, ScratchSession, Workspace } from "./domain";
-import { bootstrap, getAudioStatus, loadPlugin, saveScratch, scanVst3Folder, setEmergencyMute, startRecording, stopRecording } from "./native";
+import { bootstrap, getAudioStatus, loadPlugin, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -73,11 +73,12 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive }: {
   );
 }
 
-function WorkspacePlay({ session, plugins, setSession }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void }) {
+function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void }) {
   const persistedPlugins = session.rack
     .filter((device) => device.kind === "plugin")
     .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: "validated" } as PluginEntry));
   const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
+  const loadedBypassed = session.rack.find((device) => device.kind === "plugin")?.bypassed ?? false;
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header"><div><span className="eyebrow">LIVE SIGNAL</span><h1>Input → Tone → Output</h1></div><div className="snapshot-tabs"><button className="active">A</button><button>B</button><button>＋</button></div></section>
@@ -85,7 +86,7 @@ function WorkspacePlay({ session, plugins, setSession }: { session: ScratchSessi
       <section className="rack-flow">
         <article className="rack-device input-device"><span className="device-order">IN</span><div className="device-face"><Meter value={45} /><Meter value={40} /></div><h3>Input 1</h3><small>Mono · −12.4 dB</small></article>
         {(visiblePlugins.length ? visiblePlugins : [{ id: "placeholder", name: "Add a VST3", vendor: null } as PluginEntry]).map((plugin, index) => (
-          <article className="rack-device" key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button>Bypass</button><strong>0.0 dB</strong></div></article>
+          <article className="rack-device" key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button onClick={() => onTogglePluginBypass(!loadedBypassed)}>{loadedBypassed ? "Enable" : "Bypass"}</button><strong>0.0 dB</strong></div></article>
         ))}
         <button className="add-device"><Icon name="plus" /><span>Add Device</span></button>
         <article className="rack-device output-device"><span className="device-order">OUT</span><div className="device-face"><Meter value={58} /><Meter value={51} /></div><h3>Main Out</h3><small>Safety limited</small></article>
@@ -134,6 +135,15 @@ function App() {
         ...current.rack.filter((device) => device.kind !== "plugin"),
         { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed: false, gainDb: 0 },
       ],
+    } : current);
+  }, []);
+
+  const togglePluginBypass = useCallback(async (bypassed: boolean) => {
+    const nextAudio = await setPluginBypassed(bypassed);
+    setAudio(nextAudio);
+    setSession((current) => current ? {
+      ...current,
+      rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, bypassed } : device),
     } : current);
   }, []);
 
@@ -223,7 +233,7 @@ function App() {
 
       <section className="workspace">
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} />}
-        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} />}
+        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} />}
         {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
@@ -231,7 +241,7 @@ function App() {
         <div className="panel-heading"><span>INSPECTOR</span><button onClick={() => setFocusMode(true)}>×</button></div>
         <div className="inspector-identity"><span className="inspector-art">{selectedPlugin?.name.slice(0, 2).toUpperCase() ?? "SS"}</span><div><span className="eyebrow">{selectedPlugin ? "PLUGIN" : "SESSION"}</span><h3>{selectedPlugin?.name ?? "Scratch Session"}</h3><small>{selectedPlugin?.vendor ?? "Always preserved"}</small></div></div>
         <section><header><strong>Signal</strong><Icon name="chevron" /></header><dl><div><dt>Input</dt><dd>Mono</dd></div><div><dt>Gain</dt><dd>0.0 dB</dd></div><div><dt>State</dt><dd className="safe-label">Safe</dd></div></dl></section>
-        <section><header><strong>Tone engine</strong><Icon name="chevron" /></header><dl><div><dt>Rack</dt><dd className={audio.plugin?.loaded ? "safe-label" : ""}>{audio.plugin?.loaded ? "Loaded" : "Empty"}</dd></div><div><dt>VST3</dt><dd>{audio.plugin?.name ?? "—"}</dd></div><div><dt>Bypassed</dt><dd>{audio.plugin?.bypassedBlocks ?? 0}</dd></div></dl></section>
+        <section><header><strong>Tone engine</strong><Icon name="chevron" /></header><dl><div><dt>Rack</dt><dd className={audio.plugin?.loaded ? "safe-label" : ""}>{audio.plugin?.loaded ? "Loaded" : "Empty"}</dd></div><div><dt>VST3</dt><dd>{audio.plugin?.name ?? "—"}</dd></div><div><dt>State</dt><dd>{audio.plugin?.bypassed ? "Bypassed" : "Active"}</dd></div><div><dt>Bypassed blocks</dt><dd>{audio.plugin?.bypassedBlocks ?? 0}</dd></div></dl></section>
         <section><header><strong>Provenance</strong><Icon name="chevron" /></header><dl><div><dt>Session</dt><dd>Scratch</dd></div><div><dt>Updated</dt><dd>{new Date(session.updatedAtMs).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</dd></div></dl></section>
         <section><header><strong>Data safety</strong><Icon name="chevron" /></header><p className="inspector-copy">世代付き自動保存が有効です。現在の作業はプロジェクトへ昇格しなくても保持されます。</p><small className="path-copy">{boot.dataRoot}</small></section>
         <button className="focus-button" onClick={() => setFocusMode(!focusMode)}>{focusMode ? "Exit Focus Mode" : "Focus Mode"}</button>
