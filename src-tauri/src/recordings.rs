@@ -1,6 +1,8 @@
+use crate::model::RackDevice;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
+    fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -20,6 +22,18 @@ pub struct RecordingAsset {
     pub sample_rate: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
+    pub provenance: Option<RecordingProvenance>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingProvenance {
+    pub recorded_at_ms: u64,
+    pub session_id: String,
+    pub workspace: String,
+    pub master_db: f64,
+    pub rack: Vec<RackDevice>,
+    pub source: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -88,6 +102,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             sample_rate: manifest.sample_rate,
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
+            provenance: read_provenance(&path.join("provenance.json")),
         });
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -97,6 +112,33 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
 fn read_manifest(path: &PathBuf) -> Option<RecordingManifest> {
     let payload = fs::read(path).ok()?;
     serde_json::from_slice(&payload).ok()
+}
+
+fn read_provenance(path: &Path) -> Option<RecordingProvenance> {
+    let payload = fs::read(path).ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
+pub fn save_provenance(directory: &Path, provenance: &RecordingProvenance) -> std::io::Result<()> {
+    fs::create_dir_all(directory)?;
+    let path = directory.join("provenance.json");
+    let temporary = directory.join(format!(".provenance-{}.tmp", std::process::id()));
+    let payload = serde_json::to_vec_pretty(provenance)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    {
+        let mut file = File::create(&temporary)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+    }
+    if let Err(error) = fs::rename(&temporary, &path) {
+        if path.exists() {
+            fs::remove_file(&path)?;
+            fs::rename(&temporary, &path)?;
+        } else {
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -127,6 +169,32 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].state, "completed");
         assert_eq!(results[0].samples_written, 44_100);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn indexes_recording_provenance_when_present() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-provenance");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(take.join("manifest.json"), br#"{"state":"completed"}"#).unwrap();
+        let provenance = RecordingProvenance {
+            recorded_at_ms: 42,
+            session_id: "scratch-42".into(),
+            workspace: "play".into(),
+            master_db: -18.0,
+            rack: Vec::new(),
+            source: "raw DI".into(),
+        };
+        save_provenance(&take, &provenance).unwrap();
+        let results = list(&root, Some("provenance")).unwrap();
+        assert_eq!(
+            results[0]
+                .provenance
+                .as_ref()
+                .map(|item| item.session_id.as_str()),
+            Some("scratch-42")
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -110,6 +110,16 @@ export interface RecordingAsset {
   sampleRate: number | null;
   samplesWritten: number;
   droppedBlocks: number;
+  provenance: RecordingProvenance | null;
+}
+
+export interface RecordingProvenance {
+  recordedAtMs: number;
+  sessionId: string;
+  workspace: string;
+  masterDb: number;
+  rack: RackDevice[];
+  source: string;
 }
 
 export interface AudioAnalysis {

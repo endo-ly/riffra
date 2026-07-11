@@ -147,7 +147,31 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
         format!("Recording Inbox could not be created; no audio was started: {error}")
     })?;
     let directory = inbox.join(format!("take-{}", now_ms()));
-    state.audio.start_recording(&directory)
+    let mut status = state.audio.start_recording(&directory)?;
+    let provenance = state
+        .session
+        .lock()
+        .ok()
+        .map(|session| recordings::RecordingProvenance {
+            recorded_at_ms: now_ms(),
+            session_id: session.session_id.clone(),
+            workspace: format!("{:?}", session.workspace).to_lowercase(),
+            master_db: session.master_db,
+            rack: session.rack.clone(),
+            source: "raw DI + processed safety path".into(),
+        });
+    if let Some(provenance) = provenance {
+        if let Err(error) = recordings::save_provenance(&directory, &provenance) {
+            status.message = format!(
+                "Recording started, but provenance could not be saved: {error}. Audio files remain active."
+            );
+        }
+    } else {
+        status.message =
+            "Recording started, but session provenance was unavailable; audio files remain active."
+                .into();
+    }
+    Ok(status)
 }
 
 #[tauri::command]

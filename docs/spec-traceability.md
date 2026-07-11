@@ -12,7 +12,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 | F. Analyze | analysis workers | In progress | offline WAV 128-bin waveform, peak/RMS, duration, zero crossings, simple spectrum peak, stereo phase correlation and read-only Reference delta/loudness-match metrics; synchronized reference playback remains |
 | G. Separate | background job provider | In progress | manifest-backed offline stereo channel split with immutable Left/Right WAV outputs; model-based cancellable stems and synchronized comparison remain |
 | H. AI | Rust ChangeSet service | Planned | context preview, partial apply, one-step undo, external-send control |
-| I. Creative Memory | SQLite library + preview bus | In progress | VST3 catalog and recording-manifest search/listing started; SQLite cross-asset provenance, related assets and non-destructive preview remain |
+| I. Creative Memory | library catalog + provenance manifests | In progress | VST3 catalog, recording-manifest search/listing and rack/session provenance sidecars are available; SQLite cross-asset index, related assets and non-destructive preview remain |
 | J. Recovery | supervisor + autosave generations | In progress | corrupted current save fallback, safe mode, missing dependency open |
 
 ## Gate 1 acceptance checks
