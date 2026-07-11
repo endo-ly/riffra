@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
+import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, listSeparations, loadPlugin, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, separateChannels, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -178,12 +178,19 @@ function ReferenceCompare({ analysis, recordings, references, referenceId, onSel
   return <section className="section-card reference-card"><header><div><span className="eyebrow">REFERENCE COMPARE</span><h2>Loudness-matched read-only view</h2></div><span className="status-tag">OFFLINE</span></header>{!analysis ? <p className="inspector-copy">Analyze a recording first, then choose a reference.</p> : <><div className="reference-source-list">{recordings.length === 0 ? <small className="inspector-copy">No Inbox recordings are available.</small> : recordings.slice(0, 8).map((recording) => <button className={`reference-source ${recording.id === referenceId ? "active" : ""}`} key={recording.id} onClick={() => onSelect(recording)}><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></button>)}</div>{comparison && <div className="comparison-grid"><div><span className="eyebrow">RMS DELTA</span><strong>{comparison.rmsDeltaDb >= 0 ? "+" : ""}{comparison.rmsDeltaDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">PEAK DELTA</span><strong>{comparison.peakDeltaDb >= 0 ? "+" : ""}{comparison.peakDeltaDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">MATCH GAIN</span><strong>{comparison.loudnessMatchGainDb >= 0 ? "+" : ""}{comparison.loudnessMatchGainDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">DURATION</span><strong>{comparison.durationDeltaMs >= 0 ? "+" : ""}{(comparison.durationDeltaMs / 1000).toFixed(2)} s</strong></div></div>}</>}</section>;
 }
 
+function WorkspaceSeparate({ recordings, results, busyId, message, onSeparate }: { recordings: RecordingAsset[]; results: SeparationResult[]; busyId: string | null; message: string; onSeparate: (recording: RecordingAsset) => void }) {
+  return <div className="workspace-scroll separate-view"><section className="play-header"><div><span className="eyebrow">SEPARATE WORKSPACE</span><h1>Preserve the source, derive channel assets</h1></div><span className="status-tag">CHANNEL SPLIT FALLBACK</span></section><section className="section-card separate-card"><header><div><span className="eyebrow">OFFLINE JOB</span><h2>Stereo channel split</h2></div><small>Creates immutable Left / Right WAV assets</small></header><p className="inspector-copy">This local fallback separates stereo channels without claiming vocal or instrument stems. The original WAV is never overwritten.</p>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" disabled={busyId === recording.id} onClick={() => onSeparate(recording)}>{busyId === recording.id ? "Running…" : "Split stereo"}</button></div>)}<small className="separate-message">{message}</small></section><section className="section-card separate-results"><header><div><span className="eyebrow">DERIVED ASSETS</span><h2>{results.length} completed jobs</h2></div><small>Manifest-backed provenance</small></header>{results.length === 0 ? <p className="inspector-copy">No separation result has been created yet.</p> : results.slice(0, 8).map((result) => <article className="separation-result" key={result.id}><div><strong>{result.sourcePath.split("\\").pop() ?? result.sourcePath}</strong><small>{new Date(result.createdAtMs).toLocaleString("ja-JP")} · {result.state}</small></div><div className="separation-paths"><span>LEFT <code>{result.leftPath}</code></span><span>RIGHT <code>{result.rightPath}</code></span></div></article>)}</section></div>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
+  const [separations, setSeparations] = useState<SeparationResult[]>([]);
+  const [separationBusy, setSeparationBusy] = useState<string | null>(null);
+  const [separationMessage, setSeparationMessage] = useState("Ready for a local stereo channel split.");
   const [midi, setMidi] = useState<MidiProbe>({ inputs: [], outputs: [], refreshedAtMs: 0, message: "MIDI device list has not been refreshed." });
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [referenceId, setReferenceId] = useState<string | null>(null);
@@ -292,6 +299,21 @@ function App() {
     if (next) setReferenceAnalyses((current) => ({ ...current, [recording.id]: next }));
   }, [referenceAnalyses]);
 
+  const runSeparation = useCallback(async (recording: RecordingAsset) => {
+    const path = recording.processedPath ?? recording.rawPath;
+    if (!path) return;
+    setSeparationBusy(recording.id);
+    setSeparationMessage("Writing Left / Right WAV assets…");
+    const result = await separateChannels(path);
+    setSeparationBusy(null);
+    if (!result) {
+      setSeparationMessage("Separation failed; the source and saved session remain unchanged.");
+      return;
+    }
+    setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
+    setSeparationMessage(result.message);
+  }, []);
+
   const placeRecording = useCallback((recording: RecordingAsset) => {
     if (!session) return;
     const assetPath = recording.processedPath ?? recording.rawPath;
@@ -335,6 +357,7 @@ function App() {
       });
     });
     void listRecordings().then(setRecordings);
+    void listSeparations().then(setSeparations);
     void probeMidiDevices().then(setMidi);
     const refreshAudio = () => void getAudioStatus().then(setAudio);
     refreshAudio();
@@ -434,7 +457,8 @@ function App() {
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceCompare analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} onSelect={(recording) => void selectReference(recording)} /></>}
-        {!(["home", "play", "arrange", "sample", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
+        {session.workspace === "separate" && <WorkspaceSeparate recordings={recordings} results={separations} busyId={separationBusy} message={separationMessage} onSeparate={(recording) => void runSeparation(recording)} />}
+        {!(["home", "play", "arrange", "sample", "analyze", "separate"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
       <aside className="inspector-panel">

@@ -177,6 +177,16 @@ export interface MidiProbe {
   message: string;
 }
 
+export interface SeparationResult {
+  id: string;
+  sourcePath: string;
+  leftPath: string;
+  rightPath: string;
+  state: string;
+  createdAtMs: number;
+  message: string;
+}
+
 export const defaultSession = (): ScratchSession => ({
   formatVersion: 1,
   sessionId: "scratch-browser-preview",

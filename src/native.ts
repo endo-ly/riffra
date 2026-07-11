@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, RecordingAsset, ScanReport, ScratchSession } from "./domain";
+import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, RecordingAsset, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -66,6 +66,22 @@ export async function probeMidiDevices(): Promise<MidiProbe> {
       refreshedAtMs: Date.now(),
       message: "MIDI probe is unavailable in browser preview.",
     };
+  }
+}
+
+export async function listSeparations(): Promise<SeparationResult[]> {
+  try {
+    return await invoke<SeparationResult[]>("list_separations");
+  } catch {
+    return [];
+  }
+}
+
+export async function separateChannels(path: string): Promise<SeparationResult | null> {
+  try {
+    return await invoke<SeparationResult>("separate_channels", { path });
+  } catch {
+    return null;
   }
 }
 

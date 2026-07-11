@@ -20,13 +20,13 @@ pub struct AudioAnalysis {
     pub waveform: Vec<f64>,
 }
 
-struct WavData {
-    format: u16,
-    channels: u16,
-    sample_rate: u32,
-    bits_per_sample: u16,
-    data_offset: usize,
-    data_len: usize,
+pub(crate) struct WavData {
+    pub(crate) format: u16,
+    pub(crate) channels: u16,
+    pub(crate) sample_rate: u32,
+    pub(crate) bits_per_sample: u16,
+    pub(crate) data_offset: usize,
+    pub(crate) data_len: usize,
 }
 
 pub fn analyze(path: &Path) -> Result<AudioAnalysis, String> {
@@ -146,7 +146,7 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     })
 }
 
-fn parse_wav(bytes: &[u8]) -> Result<WavData, String> {
+pub(crate) fn parse_wav(bytes: &[u8]) -> Result<WavData, String> {
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err("Audio file is not a RIFF/WAVE file.".into());
     }
@@ -188,7 +188,7 @@ fn parse_wav(bytes: &[u8]) -> Result<WavData, String> {
     })
 }
 
-fn decode_sample(bytes: &[u8], format: u16, bits: u16) -> Result<f64, String> {
+pub(crate) fn decode_sample(bytes: &[u8], format: u16, bits: u16) -> Result<f64, String> {
     let sample = if format == 3 {
         f32::from_le_bytes(bytes.try_into().map_err(|_| "Invalid float sample.")?) as f64
     } else {

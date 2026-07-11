@@ -3,6 +3,7 @@ mod model;
 mod native_audio;
 mod plugins;
 mod recordings;
+mod separation;
 mod storage;
 
 use model::{AudioStatus, BootstrapState, MidiProbe, ScratchSession};
@@ -87,6 +88,28 @@ async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> 
     tauri::async_runtime::spawn_blocking(move || analysis::analyze(&path))
         .await
         .map_err(|error| format!("Audio analysis task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn separate_channels(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<separation::SeparationResult, String> {
+    let source = PathBuf::from(path);
+    let output_root = state.data_root.join("separations");
+    let created_at_ms = now_ms();
+    tauri::async_runtime::spawn_blocking(move || {
+        separation::separate_channels(&source, &output_root, created_at_ms)
+    })
+    .await
+    .map_err(|error| format!("Separation task failed: {error}"))?
+}
+
+#[tauri::command]
+fn list_separations(
+    state: State<'_, AppState>,
+) -> Result<Vec<separation::SeparationResult>, String> {
+    separation::list(&state.data_root)
 }
 
 #[tauri::command]
@@ -230,6 +253,8 @@ pub fn run() {
             scan_vst3_folder,
             list_recordings,
             analyze_audio,
+            separate_channels,
+            list_separations,
             load_plugin,
             clear_plugin,
             get_audio_status,
