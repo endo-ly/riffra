@@ -25,6 +25,8 @@ struct NativeStatus {
     round_trip_ms: Option<f64>,
     recording: Option<NativeRecordingStatus>,
     plugin: Option<NativePluginStatus>,
+    midi_inputs: Option<Vec<String>>,
+    midi_outputs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +63,8 @@ impl AudioSupervisor {
             round_trip_ms: None,
             recording: RecordingStatus::default(),
             plugin: None,
+            midi_inputs: Vec::new(),
+            midi_outputs: Vec::new(),
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
 
@@ -289,6 +293,8 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
             block_size: plugin.block_size,
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
         });
+        current.midi_inputs = native.midi_inputs.unwrap_or_default();
+        current.midi_outputs = native.midi_outputs.unwrap_or_default();
         current.message = match current.state {
             AudioState::Ready => "Native audio is ready through the safety chain.".into(),
             AudioState::Muted => "Native audio is connected and emergency-muted.".into(),
@@ -362,6 +368,8 @@ mod tests {
             round_trip_ms: Some(20.0),
             recording: RecordingStatus::default(),
             plugin: None,
+            midi_inputs: Vec::new(),
+            midi_outputs: Vec::new(),
             message: "ready".into(),
         }))
     }

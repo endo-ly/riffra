@@ -263,6 +263,17 @@ pub struct AudioStatus {
     pub round_trip_ms: Option<f64>,
     pub recording: RecordingStatus,
     pub plugin: Option<PluginStatus>,
+    pub midi_inputs: Vec<String>,
+    pub midi_outputs: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiProbe {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub refreshed_at_ms: u64,
     pub message: String,
 }
 

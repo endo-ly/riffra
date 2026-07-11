@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioAnalysis, AudioStatus, BootstrapState, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
+import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -134,12 +134,34 @@ function WorkspaceSample({ session, recordings, onCreateSamplePad }: { session: 
   return <div className="workspace-scroll sample-view"><section className="play-header"><div><span className="eyebrow">SAMPLE INSTRUMENT</span><h1>Audio → Pad / Keyboard</h1></div><span className="status-tag">SOURCE MAPPING</span></section><section className="section-card pad-card"><header><div><span className="eyebrow">PADS</span><h2>{session.samplePads.length} mapped</h2></div><small>Playback engine follows this mapping gate</small></header><div className="pad-grid">{pads.map((pad, index) => <button className={`sample-pad ${pad ? "filled" : "empty"}`} key={pad?.id ?? `empty-${index}`}><strong>{pad?.name ?? `Pad ${index + 1}`}</strong><small>{pad ? `MIDI ${pad.midiKey}` : "Empty"}</small></button>)}</div></section><section className="section-card sample-sources"><header><div><span className="eyebrow">SOURCES</span><h2>録音をPadへ割り当てる</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onCreateSamplePad(recording)}>Map to Pad</button></div>)}</section></div>;
 }
 
+function MidiDevices({ probe, onRefresh }: { probe: MidiProbe; onRefresh: () => void }) {
+  return <section className="section-card midi-card"><header><div><span className="eyebrow">MIDI DEVICES</span><h2>Input / Output ports</h2></div><button className="text-button" onClick={onRefresh}>Refresh</button></header><div className="midi-port-grid"><div><span className="eyebrow">INPUTS</span>{probe.inputs.length ? probe.inputs.map((name) => <div className="midi-port" key={`in:${name}`}><i className="midi-led" /><strong>{name}</strong></div>) : <small className="inspector-copy">No MIDI input is visible.</small>}</div><div><span className="eyebrow">OUTPUTS</span>{probe.outputs.length ? probe.outputs.map((name) => <div className="midi-port" key={`out:${name}`}><i className="midi-led output" /><strong>{name}</strong></div>) : <small className="inspector-copy">No MIDI output is visible.</small>}</div></div><small className="midi-message">{probe.message}</small></section>;
+}
+
+function SamplePadEditor({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
+  if (!session.samplePads.length) return null;
+  const updateRange = (id: string, field: "startMs" | "endMs", value: number) => {
+    const safeValue = Math.max(0, Math.round(Number.isFinite(value) ? value : 0));
+    setSession({ ...session, samplePads: session.samplePads.map((pad) => {
+      if (pad.id !== id) return pad;
+      const startMs = field === "startMs" ? safeValue : pad.startMs;
+      const endMs = field === "endMs" ? Math.max(1, safeValue) : pad.endMs;
+      return field === "startMs"
+        ? { ...pad, startMs, endMs: Math.max(endMs, startMs + 1) }
+        : { ...pad, startMs: Math.min(startMs, Math.max(0, endMs - 1)), endMs };
+    }) });
+  };
+  const removePad = (id: string) => setSession({ ...session, samplePads: session.samplePads.filter((pad) => pad.id !== id) });
+  return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
-  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, message: "Audio supervisor is starting." });
+  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
+  const [midi, setMidi] = useState<MidiProbe>({ inputs: [], outputs: [], refreshedAtMs: 0, message: "MIDI device list has not been refreshed." });
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [scanMessage, setScanMessage] = useState("VST3を検出中…");
   const [librarySection, setLibrarySection] = useState("Plugins");
@@ -256,6 +278,7 @@ function App() {
       });
     });
     void listRecordings().then(setRecordings);
+    void probeMidiDevices().then(setMidi);
     const refreshAudio = () => void getAudioStatus().then(setAudio);
     refreshAudio();
     const audioPoll = window.setInterval(refreshAudio, 1000);
@@ -337,7 +360,7 @@ function App() {
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} />}
-        {session.workspace === "sample" && <WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} />}
+        {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
         {session.workspace === "analyze" && <WorkspaceAnalyze analysis={analysis} />}
         {!(["home", "play", "arrange", "sample", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>

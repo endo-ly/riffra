@@ -145,6 +145,15 @@ export interface AudioStatus {
   roundTripMs: number | null;
   recording: RecordingStatus;
   plugin?: PluginStatus | null;
+  midiInputs: string[];
+  midiOutputs: string[];
+  message: string;
+}
+
+export interface MidiProbe {
+  inputs: string[];
+  outputs: string[];
+  refreshedAtMs: number;
   message: string;
 }
 

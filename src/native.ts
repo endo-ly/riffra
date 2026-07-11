@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioStatus, BootstrapState, RecordingAsset, ScanReport, ScratchSession } from "./domain";
+import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, RecordingAsset, ScanReport, ScratchSession } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -56,6 +56,19 @@ export async function analyzeAudio(path: string): Promise<AudioAnalysis | null> 
   }
 }
 
+export async function probeMidiDevices(): Promise<MidiProbe> {
+  try {
+    return await invoke<MidiProbe>("probe_midi_devices");
+  } catch {
+    return {
+      inputs: [],
+      outputs: [],
+      refreshedAtMs: Date.now(),
+      message: "MIDI probe is unavailable in browser preview.",
+    };
+  }
+}
+
 export async function loadPlugin(path: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("load_plugin", { path });
@@ -91,6 +104,8 @@ export async function getAudioStatus(): Promise<AudioStatus> {
         samplesWritten: 0,
         droppedBlocks: 0,
       },
+      midiInputs: [],
+      midiOutputs: [],
       message: "Native audio sidecar is not connected.",
     };
   }
@@ -115,6 +130,8 @@ export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
         samplesWritten: 0,
         droppedBlocks: 0,
       },
+      midiInputs: [],
+      midiOutputs: [],
       message: muted ? "Emergency mute is engaged." : "Native audio sidecar is not connected.",
     };
   }

@@ -11,7 +11,7 @@
         {
           "name": "riffra-audio",
           "sidecar": true,
-          "args": ["--serve"]
+          "args": [{ "validator": "--(serve|probe)" }]
         },
         {
           "name": "riffra-plugin-scan",

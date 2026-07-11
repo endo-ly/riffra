@@ -273,6 +273,22 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .sample-pad strong, .sample-pad small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sample-pad strong { font-size: 10px; }
 .sample-pad small { font: 8px "DM Mono", Consolas, monospace; opacity: .8; }
+.midi-card { margin-top: 12px; }
+.midi-port-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.midi-port-grid > div { min-width: 0; }
+.midi-port { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 7px 0; border-top: 1px solid #27313a; }
+.midi-port strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.midi-led { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px rgba(138,238,232,.55); }
+.midi-led.output { background: var(--cyan); box-shadow: 0 0 8px rgba(82,201,220,.55); }
+.midi-message { display: block; margin-top: 12px; color: var(--muted); font-size: 9px; }
+.sample-editor { margin-top: 12px; }
+.sample-editor header > small { color: var(--muted); font-size: 9px; }
+.sample-edit-row { display: grid; grid-template-columns: minmax(120px, 1fr) 90px 90px auto; align-items: end; gap: 10px; padding: 9px 0; border-top: 1px solid #27313a; }
+.sample-edit-name strong, .sample-edit-name small, .sample-edit-row label span { display: block; }
+.sample-edit-name strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.sample-edit-name small, .sample-edit-row label span { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.sample-edit-row input { width: 100%; margin-top: 4px; padding: 5px 6px; color: #dfe5eb; font: 9px "DM Mono", Consolas, monospace; background: #0c1116; border: 1px solid #2d3a43; border-radius: 4px; }
+.text-button.danger { color: #f28b94; }
 
 .focus-mode { grid-template-columns: 0 minmax(520px, 1fr) 0; }
 .focus-mode .library-panel, .focus-mode .inspector-panel { visibility: hidden; }

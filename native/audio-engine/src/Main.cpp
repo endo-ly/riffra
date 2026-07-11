@@ -77,6 +77,15 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     status->setProperty("invalidSamples", static_cast<juce::int64>(callback.getInvalidSampleCount()));
     status->setProperty("recording", callback.recordingStatus());
 
+    juce::Array<juce::var> midiInputs;
+    for (const auto& device : juce::MidiInput::getAvailableDevices())
+        midiInputs.add(device.name);
+    juce::Array<juce::var> midiOutputs;
+    for (const auto& device : juce::MidiOutput::getAvailableDevices())
+        midiOutputs.add(device.name);
+    status->setProperty("midiInputs", midiInputs);
+    status->setProperty("midiOutputs", midiOutputs);
+
     if (auto* device = manager.getCurrentAudioDevice()) {
         status->setProperty("driver", device->getTypeName());
         status->setProperty("inputDevice", device->getName());
@@ -157,6 +166,10 @@ int serve() {
         }
         if (type == "clearPlugin") {
             rack.clear();
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
+        if (type == "probeMidiDevices") {
             writeJson(currentStatus(manager, callback, &rack));
             continue;
         }

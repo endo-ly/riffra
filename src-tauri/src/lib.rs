@@ -5,11 +5,13 @@ mod plugins;
 mod recordings;
 mod storage;
 
-use model::{AudioStatus, BootstrapState, ScratchSession};
+use model::{AudioStatus, BootstrapState, MidiProbe, ScratchSession};
 use native_audio::AudioSupervisor;
+use serde::Deserialize;
 use std::{path::PathBuf, sync::Mutex};
 use storage::{SessionStore, now_ms};
 use tauri::{Manager, State};
+use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
@@ -140,6 +142,64 @@ fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, Strin
     state.audio.recover_audio_device()
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMidiProbe {
+    #[serde(rename = "type")]
+    message_type: String,
+    #[serde(default)]
+    midi_inputs: Vec<String>,
+    #[serde(default)]
+    midi_outputs: Vec<String>,
+}
+
+#[tauri::command]
+async fn probe_midi_devices(app: tauri::AppHandle) -> Result<MidiProbe, String> {
+    let command = app
+        .shell()
+        .sidecar("riffra-audio")
+        .map_err(|error| format!("MIDI probe sidecar could not be prepared: {error}"))?
+        .args(["--probe"]);
+    let output = command.output().await.map_err(|error| {
+        format!("MIDI probe could not start; no device state was changed: {error}")
+    })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!(
+                "MIDI probe exited with code {:?}; no device state was changed.",
+                output.status.code()
+            )
+        } else {
+            format!("MIDI probe failed: {detail}")
+        });
+    }
+    let probe = parse_midi_probe(&output.stdout)?;
+    let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
+    Ok(MidiProbe {
+        inputs: probe.midi_inputs,
+        outputs: probe.midi_outputs,
+        refreshed_at_ms: now_ms(),
+        message: if empty {
+            "No MIDI devices are currently visible to Windows.".into()
+        } else {
+            "MIDI device list refreshed.".into()
+        },
+    })
+}
+
+fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
+    let probe = stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .find_map(|line| serde_json::from_slice::<NativeMidiProbe>(line).ok())
+        .ok_or_else(|| "MIDI probe returned no readable device list.".to_string())?;
+    if probe.message_type != "audioDeviceProbe" {
+        return Err("MIDI probe returned an unexpected response.".into());
+    }
+    Ok(probe)
+}
+
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("An internal state lock was poisoned: {error}")
 }
@@ -177,10 +237,32 @@ pub fn run() {
             start_recording,
             stop_recording,
             set_plugin_bypassed,
-            recover_audio_device
+            recover_audio_device,
+            probe_midi_devices
         ])
         .run(tauri::generate_context!())
         .expect("Riffra failed to run");
 }
 mod plugin_catalog;
 mod plugin_validation;
+
+#[cfg(test)]
+mod tests {
+    use super::parse_midi_probe;
+
+    #[test]
+    fn parses_midi_probe_with_unicode_device_names() {
+        let probe = parse_midi_probe(
+            br#"{"type":"audioDeviceProbe","midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
+        )
+        .unwrap();
+        assert_eq!(probe.midi_inputs, ["Keyboard"]);
+        assert_eq!(probe.midi_outputs, ["Microsoft GS Wavetable Synth"]);
+    }
+
+    #[test]
+    fn rejects_non_probe_messages() {
+        let error = parse_midi_probe(br#"{"type":"audioStatus"}"#).unwrap_err();
+        assert!(error.contains("unexpected"));
+    }
+}
