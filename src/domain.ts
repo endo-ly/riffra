@@ -190,6 +190,20 @@ export interface MidiProbe {
   message: string;
 }
 
+export interface AudioDriverInfo {
+  name: string;
+  inputs: string[];
+  outputs: string[];
+}
+
+export interface AudioDeviceProbe {
+  drivers: AudioDriverInfo[];
+  midiInputs: string[];
+  midiOutputs: string[];
+  refreshedAtMs: number;
+  message: string;
+}
+
 export interface SeparationResult {
   id: string;
   sourcePath: string;

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, ProjectExport, RecordingAsset, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, ProjectExport, RecordingAsset, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -74,6 +74,14 @@ export async function probeMidiDevices(): Promise<MidiProbe> {
       refreshedAtMs: Date.now(),
       message: "MIDI probe is unavailable in browser preview.",
     };
+  }
+}
+
+export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
+  try {
+    return await invoke<AudioDeviceProbe>("probe_audio_devices");
+  } catch {
+    return { drivers: [], midiInputs: [], midiOutputs: [], refreshedAtMs: Date.now(), message: "Audio device probe is unavailable in browser preview." };
   }
 }
 

@@ -7,7 +7,9 @@ mod recordings;
 mod separation;
 mod storage;
 
-use model::{AudioStatus, BootstrapState, MidiProbe, ScratchSession};
+use model::{
+    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, ScratchSession,
+};
 use native_audio::AudioSupervisor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Mutex};
@@ -224,30 +226,23 @@ struct NativeMidiProbe {
     midi_inputs: Vec<String>,
     #[serde(default)]
     midi_outputs: Vec<String>,
+    #[serde(default)]
+    drivers: Vec<NativeAudioDriver>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeAudioDriver {
+    name: String,
+    #[serde(default)]
+    inputs: Vec<String>,
+    #[serde(default)]
+    outputs: Vec<String>,
 }
 
 #[tauri::command]
 async fn probe_midi_devices(app: tauri::AppHandle) -> Result<MidiProbe, String> {
-    let command = app
-        .shell()
-        .sidecar("riffra-audio")
-        .map_err(|error| format!("MIDI probe sidecar could not be prepared: {error}"))?
-        .args(["--probe"]);
-    let output = command.output().await.map_err(|error| {
-        format!("MIDI probe could not start; no device state was changed: {error}")
-    })?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            format!(
-                "MIDI probe exited with code {:?}; no device state was changed.",
-                output.status.code()
-            )
-        } else {
-            format!("MIDI probe failed: {detail}")
-        });
-    }
-    let probe = parse_midi_probe(&output.stdout)?;
+    let probe = run_native_probe(app).await?;
     let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
     Ok(MidiProbe {
         inputs: probe.midi_inputs,
@@ -259,6 +254,49 @@ async fn probe_midi_devices(app: tauri::AppHandle) -> Result<MidiProbe, String> 
             "MIDI device list refreshed.".into()
         },
     })
+}
+
+#[tauri::command]
+async fn probe_audio_devices(app: tauri::AppHandle) -> Result<AudioDeviceProbe, String> {
+    let probe = run_native_probe(app).await?;
+    Ok(AudioDeviceProbe {
+        drivers: probe
+            .drivers
+            .into_iter()
+            .map(|driver| AudioDriverInfo {
+                name: driver.name,
+                inputs: driver.inputs,
+                outputs: driver.outputs,
+            })
+            .collect(),
+        midi_inputs: probe.midi_inputs,
+        midi_outputs: probe.midi_outputs,
+        refreshed_at_ms: now_ms(),
+        message: "Audio and MIDI device list refreshed.".into(),
+    })
+}
+
+async fn run_native_probe(app: tauri::AppHandle) -> Result<NativeMidiProbe, String> {
+    let command = app
+        .shell()
+        .sidecar("riffra-audio")
+        .map_err(|error| format!("Device probe sidecar could not be prepared: {error}"))?
+        .args(["--probe"]);
+    let output = command.output().await.map_err(|error| {
+        format!("Device probe could not start; no device state was changed: {error}")
+    })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!(
+                "Device probe exited with code {:?}; no device state was changed.",
+                output.status.code()
+            )
+        } else {
+            format!("Device probe failed: {detail}")
+        });
+    }
+    parse_midi_probe(&output.stdout)
 }
 
 fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
@@ -310,6 +348,7 @@ pub fn run() {
             clear_plugin,
             preview_sample,
             stop_preview,
+            probe_audio_devices,
             get_audio_status,
             set_emergency_mute,
             start_recording,

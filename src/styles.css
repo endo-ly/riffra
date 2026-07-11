@@ -112,6 +112,11 @@ h1, h2, h3, p { margin-top: 0; }
 .hero-card p { max-width: 600px; margin: 0; color: #8e99a5; font-size: 11px; line-height: 1.75; }
 .hero-actions { display: flex; flex-direction: column; gap: 8px; flex: 0 0 128px; }
 .export-message { display: block; max-width: 70%; margin-top: 8px; overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.audio-device-list { grid-column: 1 / -1; }
+.audio-driver-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid #27313a; }
+.audio-driver-row strong { color: #cbd3dc; font-size: 10px; }
+.audio-driver-row small, .device-probe-message { color: var(--muted); font-size: 8px; }
+.device-probe-message { display: block; margin-top: 8px; }
 .primary, .quiet { min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border-radius: 6px; font-size: 10px; font-weight: 600; }
 .primary { color: #071216; background: linear-gradient(135deg, #8aeee8, #52c9dc); box-shadow: inset 0 1px rgba(255,255,255,.45), 0 6px 20px rgba(53,190,207,.14); }
 .primary:hover { filter: brightness(1.08); }

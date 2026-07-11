@@ -280,6 +280,24 @@ pub struct MidiProbe {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDriverInfo {
+    pub name: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDeviceProbe {
+    pub drivers: Vec<AudioDriverInfo>,
+    pub midi_inputs: Vec<String>,
+    pub midi_outputs: Vec<String>,
+    pub refreshed_at_ms: u64,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioState {
