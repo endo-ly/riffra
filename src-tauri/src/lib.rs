@@ -394,9 +394,10 @@ mod tests {
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
         let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
         )
         .unwrap();
+        assert_eq!(probe.drivers[0].name, "ASIO");
         assert_eq!(probe.midi_inputs, ["Keyboard"]);
         assert_eq!(probe.midi_outputs, ["Microsoft GS Wavetable Synth"]);
     }
