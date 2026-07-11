@@ -245,6 +245,13 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_audio_driver(&self, driver: &str) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "setAudioDriver", "driver": driver}),
+            "Audio driver switch requested; output remains muted until the new device is ready.",
+        )
+    }
+
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
         let command = format!("{{\"type\":\"setEmergencyMute\",\"muted\":{muted}}}\n");
         let mut child_slot = self

@@ -117,6 +117,13 @@ h1, h2, h3, p { margin-top: 0; }
 .audio-driver-row strong { color: #cbd3dc; font-size: 10px; }
 .audio-driver-row small, .device-probe-message { color: var(--muted); font-size: 8px; }
 .device-probe-message { display: block; margin-top: 8px; }
+.audio-driver-picker { grid-column: 1 / -1; }
+.audio-driver-picker header > small { color: var(--muted); font-size: 8px; }
+.driver-picker-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.driver-choice { display: grid; gap: 5px; padding: 9px; text-align: left; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
+.driver-choice.active { background: #122d32; border-color: var(--teal); }
+.driver-choice strong { overflow: hidden; color: #cbd3dc; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.driver-choice small { color: var(--muted); font-size: 8px; }
 .primary, .quiet { min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border-radius: 6px; font-size: 10px; font-weight: 600; }
 .primary { color: #071216; background: linear-gradient(135deg, #8aeee8, #52c9dc); box-shadow: inset 0 1px rgba(255,255,255,.45), 0 6px 20px rgba(53,190,207,.14); }
 .primary:hover { filter: brightness(1.08); }

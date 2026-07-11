@@ -253,6 +253,37 @@ int serve() {
             writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
+        if (type == "setAudioDriver") {
+            const auto driver = command.getProperty("driver", {}).toString();
+            if (driver.isEmpty()) {
+                writeJson(makeError("audioDevice", "An audio driver name is required."));
+                continue;
+            }
+            manager.removeAudioCallback(&callback);
+            manager.closeAudioDevice();
+            callback.setEmergencyMuted(true);
+            manager.setCurrentAudioDeviceType(driver, true);
+            juce::AudioDeviceManager::AudioDeviceSetup setup;
+            setup.inputDeviceName = command.getProperty("inputDevice", {}).toString();
+            setup.outputDeviceName = command.getProperty("outputDevice", {}).toString();
+            setup.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
+            setup.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
+            setup.useDefaultInputChannels = true;
+            setup.useDefaultOutputChannels = true;
+            auto setupError = setup.inputDeviceName.isEmpty() && setup.outputDeviceName.isEmpty()
+                ? initialiseDefaultAudio(manager)
+                : manager.setAudioDeviceSetup(setup, true);
+            if (setupError.isNotEmpty()) {
+                const auto fallbackError = initialiseDefaultAudio(manager);
+                if (fallbackError.isEmpty())
+                    manager.addAudioCallback(&callback);
+                writeJson(makeError("audioDevice", setupError + ". The previous device was not changed in the session."));
+                continue;
+            }
+            manager.addAudioCallback(&callback);
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
         if (type == "startRecording") {
             const auto directory = command.getProperty("directory", {}).toString();
             juce::String recordingError;

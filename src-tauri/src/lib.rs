@@ -217,6 +217,14 @@ fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, Strin
     state.audio.recover_audio_device()
 }
 
+#[tauri::command]
+fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if driver.trim().is_empty() {
+        return Err("Audio driver name must not be empty.".into());
+    }
+    state.audio.set_audio_driver(driver.trim())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeMidiProbe {
@@ -355,6 +363,7 @@ pub fn run() {
             stop_recording,
             set_plugin_bypassed,
             recover_audio_device,
+            set_audio_driver,
             probe_midi_devices
         ])
         .run(tauri::generate_context!())

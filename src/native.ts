@@ -222,3 +222,11 @@ export async function recoverAudioDevice(): Promise<AudioStatus> {
     return await getAudioStatus();
   }
 }
+
+export async function setAudioDriver(driver: string): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("set_audio_driver", { driver });
+  } catch {
+    return await getAudioStatus();
+  }
+}
