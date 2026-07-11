@@ -4,8 +4,8 @@ This is the living completion ledger for specification version 2.0. `Implemented
 
 | Product acceptance area | Owning subsystem | Current gate | Evidence required |
 | --- | --- | --- | --- |
-| A. Instant Play | audio sidecar + session recovery | In progress | cold/warm startup timing, safe gain, device recovery, restored rack |
-| B. Tone Design | plugin workers + rack engine | In progress | isolated real VST3 load/process, plugin status and bypass-on-lock-miss; macro/snapshot/parallel rack and matched A/B remain |
+| A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, validated rack restoration request; cold/warm timing and device recovery remain |
+| B. Tone Design | plugin workers + rack engine | In progress | isolated real VST3 load/process, persisted rack path, plugin status and bypass-on-lock-miss; macro/snapshot/parallel rack and matched A/B remain |
 | C. Capture | audio sidecar + recording journal | In progress | JUCE threaded Raw/Processed WAV, completed/recoverable manifest, synthetic self-test; hardware interruption matrix remains |
 | D. Arrange | timeline engine + offline render | Planned | non-destructive audio/MIDI edit, PDC, stem/master export |
 | E. Sample | sampler engine | Planned | slice, pad/key map, MIDI play/record, reusable instrument |
@@ -28,4 +28,3 @@ This is the living completion ledger for specification version 2.0. `Implemented
 ## Quality accounting
 
 Each later feature must add its own automated unit/integration tests and a manual hardware matrix entry. Performance claims must record driver, interface, sample rate, buffer size, plugin set, Windows build and test duration.
-

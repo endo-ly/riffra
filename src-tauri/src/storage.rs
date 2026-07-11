@@ -123,6 +123,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{DeviceKind, RackDevice};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -152,5 +153,27 @@ mod tests {
         session.master_db = 12.0;
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.master_db, 0.0);
+    }
+
+    #[test]
+    fn preserves_persisted_plugin_path() {
+        let mut session = ScratchSession::new(now_ms());
+        session.rack.push(RackDevice {
+            id: "plugin:amplitube".into(),
+            name: "AmpliTube 5".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+        });
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(
+            decoded
+                .rack
+                .last()
+                .and_then(|device| device.path.as_deref()),
+            Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3")
+        );
     }
 }

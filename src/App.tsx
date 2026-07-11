@@ -74,7 +74,10 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive }: {
 }
 
 function WorkspacePlay({ session, plugins, setSession }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void }) {
-  const visiblePlugins = plugins.slice(0, 3);
+  const persistedPlugins = session.rack
+    .filter((device) => device.kind === "plugin")
+    .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: "validated" } as PluginEntry));
+  const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header"><div><span className="eyebrow">LIVE SIGNAL</span><h1>Input → Tone → Output</h1></div><div className="snapshot-tabs"><button className="active">A</button><button>B</button><button>＋</button></div></section>
@@ -122,6 +125,18 @@ function App() {
   const [focusMode, setFocusMode] = useState(false);
   const saveTimer = useRef<number | undefined>(undefined);
 
+  const loadPluginIntoRack = useCallback(async (plugin: PluginEntry) => {
+    const nextAudio = await loadPlugin(plugin.path);
+    setAudio(nextAudio);
+    setSession((current) => current ? {
+      ...current,
+      rack: [
+        ...current.rack.filter((device) => device.kind !== "plugin"),
+        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed: false, gainDb: 0 },
+      ],
+    } : current);
+  }, []);
+
   useEffect(() => {
     void bootstrap().then((state) => {
       setBoot(state);
@@ -129,6 +144,9 @@ function App() {
       void scanVst3Folder(state.vst3Root).then((report) => {
         setPlugins(report.plugins);
         setScanMessage(report.issues.length ? `${report.plugins.length}件 · ${report.issues.length}件の注意` : `${report.plugins.length}件を検出`);
+        const persisted = state.session.rack.find((device) => device.kind === "plugin" && device.path);
+        const restored = persisted && report.plugins.find((plugin) => plugin.path === persisted.path && plugin.scanState === "validated");
+        if (restored) void loadPluginIntoRack(restored);
       });
     });
     const refreshAudio = () => void getAudioStatus().then(setAudio);
@@ -198,7 +216,7 @@ function App() {
         <nav>{librarySections.map((section) => <button key={section} className={librarySection === section ? "active" : ""} onClick={() => setLibrarySection(section)}><span className={`nav-glyph glyph-${section.toLowerCase()}`} />{section}<small>{section === "Plugins" ? plugins.length : ""}</small></button>)}</nav>
         <div className="library-content">
           <span className="eyebrow">{librarySection.toUpperCase()}</span>
-          {librarySection === "Plugins" ? <><small className="scan-message">{scanMessage}</small>{plugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPlugin(plugin.path).then(setAudio)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
+          {librarySection === "Plugins" ? <><small className="scan-message">{scanMessage}</small>{plugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
         </div>
         <button className="inbox-button"><span className="inbox-icon">↓</span><div><strong>Inbox</strong><small>0 items</small></div></button>
       </aside>

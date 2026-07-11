@@ -4,6 +4,7 @@ export interface RackDevice {
   id: string;
   name: string;
   kind: "input" | "plugin" | "utility" | "output";
+  path?: string | null;
   bypassed: boolean;
   gainDb: number;
 }
