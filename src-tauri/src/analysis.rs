@@ -1,8 +1,7 @@
 use serde::Serialize;
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
+
+const WAVEFORM_BINS: usize = 128;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +17,7 @@ pub struct AudioAnalysis {
     pub zero_crossings: u64,
     pub phase_correlation: Option<f64>,
     pub spectrum_peak_hz: Option<f64>,
+    pub waveform: Vec<f64>,
 }
 
 struct WavData {
@@ -65,6 +65,8 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     let mut left_sq = 0.0_f64;
     let mut right_sq = 0.0_f64;
     let mut left_right = 0.0_f64;
+    let mut waveform_sum = vec![0.0_f64; WAVEFORM_BINS];
+    let mut waveform_count = vec![0_u64; WAVEFORM_BINS];
     let mut spectral_samples = Vec::with_capacity(frames.min(4096));
 
     for frame in 0..frames {
@@ -95,6 +97,9 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
             zero_crossings += 1;
         }
         previous_mono = mono;
+        let waveform_bin = frame * WAVEFORM_BINS / frames;
+        waveform_sum[waveform_bin] += mono.abs();
+        waveform_count[waveform_bin] += 1;
         if wav.channels >= 2 {
             left_sq += left * left;
             right_sq += right * right;
@@ -111,6 +116,20 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     } else {
         None
     };
+    let waveform = waveform_sum
+        .into_iter()
+        .zip(waveform_count)
+        .map(|(sum, count)| if count == 0 { 0.0 } else { sum / count as f64 })
+        .collect::<Vec<_>>();
+    let waveform_peak = waveform.iter().copied().fold(0.0_f64, f64::max);
+    let waveform = if waveform_peak > 0.0 {
+        waveform
+            .into_iter()
+            .map(|value| (value / waveform_peak).clamp(0.0, 1.0))
+            .collect()
+    } else {
+        waveform
+    };
     Ok(AudioAnalysis {
         path: path.to_string_lossy().into_owned(),
         sample_rate: wav.sample_rate,
@@ -123,6 +142,7 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
         zero_crossings,
         phase_correlation,
         spectrum_peak_hz: spectrum_peak(&spectral_samples, wav.sample_rate),
+        waveform,
     })
 }
 
@@ -281,6 +301,7 @@ mod tests {
         assert_eq!(result.samples, u64::from(samples));
         assert!(result.peak_db > -1.0);
         assert!(result.spectrum_peak_hz.is_some());
+        assert_eq!(result.waveform.len(), WAVEFORM_BINS);
         let _ = fs::remove_file(root);
     }
 }

@@ -102,6 +102,7 @@ export interface AudioAnalysis {
   zeroCrossings: number;
   phaseCorrelation: number | null;
   spectrumPeakHz: number | null;
+  waveform: number[];
 }
 
 export interface PluginStatus {
