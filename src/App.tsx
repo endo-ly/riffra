@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, listSeparations, loadPlugin, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, separateChannels, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, listSeparations, loadPlugin, previewSample, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, separateChannels, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -156,6 +156,11 @@ function SamplePadEditor({ session, setSession }: { session: ScratchSession; set
   return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
 }
 
+function SamplePreviewControls({ session, playingId, onPreview, onStop }: { session: ScratchSession; playingId: string | null; onPreview: (pad: ScratchSession["samplePads"][number]) => void; onStop: () => void }) {
+  if (!session.samplePads.length) return null;
+  return <section className="section-card sample-preview"><header><div><span className="eyebrow">PREVIEW BUS</span><h2>Audition mapped regions</h2></div><button className="text-button" disabled={!playingId} onClick={onStop}>Stop</button></header>{session.samplePads.map((pad) => <div className="sample-preview-row" key={pad.id}><div><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.startMs}–{pad.endMs} ms</small></div><button className={`text-button ${playingId === pad.id ? "active" : ""}`} onClick={() => onPreview(pad)}>{playingId === pad.id ? "Playing" : "Preview"}</button></div>)}</section>;
+}
+
 function TimelineEditor({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
   if (!session.timeline.length) return null;
   const updateClip = (id: string, field: "startMs" | "durationMs" | "gainDb", value: number) => {
@@ -191,6 +196,7 @@ function App() {
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
   const [separationBusy, setSeparationBusy] = useState<string | null>(null);
   const [separationMessage, setSeparationMessage] = useState("Ready for a local stereo channel split.");
+  const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [midi, setMidi] = useState<MidiProbe>({ inputs: [], outputs: [], refreshedAtMs: 0, message: "MIDI device list has not been refreshed." });
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [referenceId, setReferenceId] = useState<string | null>(null);
@@ -312,6 +318,17 @@ function App() {
     }
     setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
     setSeparationMessage(result.message);
+  }, []);
+
+  const previewSamplePad = useCallback(async (pad: ScratchSession["samplePads"][number]) => {
+    const nextAudio = await previewSample(pad.assetPath, pad.startMs, pad.endMs);
+    setAudio(nextAudio);
+    setPreviewPadId(pad.id);
+  }, []);
+
+  const stopPreview = useCallback(async () => {
+    setAudio(await stopSamplePreview());
+    setPreviewPadId(null);
   }, []);
 
   const placeRecording = useCallback((recording: RecordingAsset) => {
@@ -455,7 +472,7 @@ function App() {
         {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /></>}
-        {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
+        {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceCompare analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} onSelect={(recording) => void selectReference(recording)} /></>}
         {session.workspace === "separate" && <WorkspaceSeparate recordings={recordings} results={separations} busyId={separationBusy} message={separationMessage} onSeparate={(recording) => void runSeparation(recording)} />}
         {!(["home", "play", "arrange", "sample", "analyze", "separate"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}

@@ -319,6 +319,14 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .sample-edit-name small, .sample-edit-row label span { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .sample-edit-row input { width: 100%; margin-top: 4px; padding: 5px 6px; color: #dfe5eb; font: 9px "DM Mono", Consolas, monospace; background: #0c1116; border: 1px solid #2d3a43; border-radius: 4px; }
 .text-button.danger { color: #f28b94; }
+.sample-preview { margin-top: 12px; }
+.sample-preview header > small { color: var(--muted); font-size: 9px; }
+.sample-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid #27313a; }
+.sample-preview-row > div { min-width: 0; }
+.sample-preview-row strong, .sample-preview-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-preview-row strong { color: #cbd3dc; font-size: 10px; }
+.sample-preview-row small { margin-top: 3px; color: var(--muted); font: 8px "DM Mono", Consolas, monospace; }
+.sample-preview-row .text-button.active { color: #071216; background: var(--teal); }
 
 .focus-mode { grid-template-columns: 0 minmax(520px, 1fr) 0; }
 .focus-mode .library-panel, .focus-mode .inspector-panel { visibility: hidden; }

@@ -19,6 +19,8 @@ The first safety chain is deliberately small and auditable: immediate emergency 
 {"type":"setPluginBypassed","bypassed":true}
 {"type":"recoverAudioDevice"}
 {"type":"clearPlugin"}
+{"type":"previewSample","path":"C:\\path\\to\\processed.wav","startMs":0,"endMs":1000,"gain":1.0}
+{"type":"stopPreview"}
 {"type":"startRecording","directory":"C:\\path\\to\\recording"}
 {"type":"stopRecording"}
 {"type":"shutdown"}

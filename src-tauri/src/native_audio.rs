@@ -210,6 +210,34 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn preview_sample(
+        &self,
+        path: &Path,
+        start_ms: u64,
+        end_ms: Option<u64>,
+    ) -> Result<AudioStatus, String> {
+        let mut command = serde_json::json!({
+            "type": "previewSample",
+            "path": path.to_string_lossy(),
+            "startMs": start_ms,
+            "gain": 1.0,
+        });
+        if let Some(end_ms) = end_ms {
+            command["endMs"] = serde_json::json!(end_ms);
+        }
+        self.send_command(
+            command,
+            "Sample preview queued through the safety limiter; output remains muted until unmuted.",
+        )
+    }
+
+    pub fn stop_preview(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "stopPreview"}),
+            "Sample preview stopped; the source file remains unchanged.",
+        )
+    }
+
     pub fn recover_audio_device(&self) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({"type": "recoverAudioDevice"}),

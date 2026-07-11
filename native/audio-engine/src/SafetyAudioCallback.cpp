@@ -103,6 +103,64 @@ juce::var SafetyAudioCallback::recordingStatus() const {
     return juce::var(status);
 }
 
+bool SafetyAudioCallback::startPreview(
+    juce::AudioBuffer<float>& buffer,
+    const int startSample,
+    const int endSample,
+    const float gain,
+    juce::String& error) {
+    const juce::ScopedLock lock(previewLock);
+    if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
+        error = "Preview source contains no audio samples.";
+        return false;
+    }
+    const auto safeStart = juce::jlimit(0, buffer.getNumSamples() - 1, startSample);
+    const auto safeEnd = juce::jlimit(safeStart + 1, buffer.getNumSamples(), endSample);
+    if (safeEnd <= safeStart) {
+        error = "Preview range is empty.";
+        return false;
+    }
+    previewBuffer.makeCopyOf(buffer, true);
+    previewCursor = safeStart;
+    previewEnd = safeEnd;
+    previewGain = juce::jlimit(0.0f, 2.0f, gain);
+    previewActive = true;
+    return true;
+}
+
+void SafetyAudioCallback::stopPreview() noexcept {
+    const juce::ScopedLock lock(previewLock);
+    previewActive = false;
+    previewCursor = 0;
+    previewEnd = 0;
+    previewBuffer.setSize(0, 0);
+}
+
+bool SafetyAudioCallback::isPreviewing() const noexcept {
+    const juce::ScopedLock lock(previewLock);
+    return previewActive;
+}
+
+void SafetyAudioCallback::mixPreview(
+    float* const* outputChannelData,
+    const int numOutputChannels,
+    const int numSamples) noexcept {
+    if (!previewActive || previewBuffer.getNumSamples() <= 0)
+        return;
+    const auto sourceChannels = previewBuffer.getNumChannels();
+    for (int sample = 0; sample < numSamples && previewCursor < previewEnd; ++sample, ++previewCursor) {
+        for (int channel = 0; channel < numOutputChannels; ++channel) {
+            auto* output = outputChannelData[channel];
+            if (output == nullptr)
+                continue;
+            const auto sourceChannel = juce::jmin(channel, sourceChannels - 1);
+            output[sample] += previewBuffer.getSample(sourceChannel, previewCursor) * previewGain;
+        }
+    }
+    if (previewCursor >= previewEnd)
+        previewActive = false;
+}
+
 void SafetyAudioCallback::writeRecording(
     const float* const* inputChannelData,
     const int numInputChannels,
@@ -172,6 +230,10 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             }
     }
 
+    const juce::ScopedTryLock previewTry(previewLock);
+    if (previewTry.isLocked())
+        mixPreview(outputChannelData, numOutputChannels, numSamples);
+
     for (int sample = 0; sample < numSamples; ++sample) {
         if (currentGainLinear < target)
             currentGainLinear = std::min(target, currentGainLinear + fadeStep);
@@ -229,6 +291,7 @@ void SafetyAudioCallback::audioDeviceStopped() {
     outputPeak.store(0.0f, std::memory_order_release);
     if (pluginRack != nullptr)
         pluginRack->release();
+    stopPreview();
     juce::String ignored;
     stopRecording(ignored);
     activeInputChannels.store(0, std::memory_order_release);

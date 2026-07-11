@@ -141,6 +141,25 @@ fn clear_plugin(state: State<'_, AppState>) -> Result<AudioStatus, String> {
 }
 
 #[tauri::command]
+fn preview_sample(
+    path: String,
+    start_ms: u64,
+    end_ms: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<AudioStatus, String> {
+    let path = PathBuf::from(path);
+    if !path.is_file() {
+        return Err("Sample preview source does not exist.".into());
+    }
+    state.audio.preview_sample(&path, start_ms, end_ms)
+}
+
+#[tauri::command]
+fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.stop_preview()
+}
+
+#[tauri::command]
 fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     let inbox = state.data_root.join("recordings").join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|error| {
@@ -281,6 +300,8 @@ pub fn run() {
             list_separations,
             load_plugin,
             clear_plugin,
+            preview_sample,
+            stop_preview,
             get_audio_status,
             set_emergency_mute,
             start_recording,

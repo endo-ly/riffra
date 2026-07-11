@@ -6,6 +6,8 @@
 
 #include <iostream>
 #include <memory>
+#include <cmath>
+#include <limits>
 
 namespace {
 
@@ -75,6 +77,7 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     status->setProperty("inputPeak", callback.getInputPeak());
     status->setProperty("outputPeak", callback.getOutputPeak());
     status->setProperty("invalidSamples", static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    status->setProperty("previewing", callback.isPreviewing());
     status->setProperty("recording", callback.recordingStatus());
 
     juce::Array<juce::var> midiInputs;
@@ -112,6 +115,8 @@ juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
 
 int serve() {
     juce::AudioDeviceManager manager;
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
     SafetyAudioCallback callback;
     PluginRack rack;
     callback.setPluginRack(&rack);
@@ -170,6 +175,63 @@ int serve() {
             continue;
         }
         if (type == "probeMidiDevices") {
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
+        if (type == "previewSample") {
+            const auto path = command.getProperty("path", {}).toString();
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                path.isEmpty() ? nullptr : formatManager.createReaderFor(juce::File(path)));
+            juce::String previewError;
+            const auto sampleRate = callback.getSampleRate();
+            if (reader == nullptr) {
+                previewError = "Preview source could not be opened as an audio file.";
+            } else if (sampleRate <= 0.0 || std::abs(reader->sampleRate - sampleRate) > 0.5) {
+                previewError = "Preview source sample rate does not match the active audio device.";
+            } else {
+                const auto length = juce::jmin<juce::int64>(
+                    reader->lengthInSamples,
+                    static_cast<juce::int64>(std::numeric_limits<int>::max()));
+                juce::AudioBuffer<float> buffer(reader->numChannels, static_cast<int>(length));
+                if (length <= 0 || !reader->read(
+                    &buffer,
+                    0,
+                    static_cast<int>(length),
+                    0,
+                    true,
+                    true)) {
+                    previewError = "Preview source contains no readable audio samples.";
+                } else {
+                    const auto startMs = static_cast<double>(command.getProperty("startMs", 0.0));
+                    const auto endMs = static_cast<double>(command.getProperty("endMs", -1.0));
+                    const auto start = juce::jlimit(
+                        0,
+                        static_cast<int>(length),
+                        static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
+                    const auto end = endMs <= 0.0
+                        ? static_cast<int>(length)
+                        : juce::jlimit(
+                            start + 1,
+                            static_cast<int>(length),
+                            static_cast<int>(std::llround(endMs * reader->sampleRate / 1000.0)));
+                    if (!callback.startPreview(
+                        buffer,
+                        start,
+                        end,
+                        static_cast<float>(static_cast<double>(command.getProperty("gain", 1.0))),
+                        previewError))
+                        previewError = previewError.isEmpty() ? "Preview range is invalid." : previewError;
+                }
+            }
+            if (previewError.isNotEmpty()) {
+                writeJson(makeError("preview", previewError));
+                continue;
+            }
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
+        if (type == "stopPreview") {
+            callback.stopPreview();
             writeJson(currentStatus(manager, callback, &rack));
             continue;
         }
