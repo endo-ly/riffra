@@ -119,3 +119,11 @@ export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus>
     return await getAudioStatus();
   }
 }
+
+export async function recoverAudioDevice(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("recover_audio_device");
+  } catch {
+    return await getAudioStatus();
+  }
+}

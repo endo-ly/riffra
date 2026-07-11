@@ -4,7 +4,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 
 | Product acceptance area | Owning subsystem | Current gate | Evidence required |
 | --- | --- | --- | --- |
-| A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, validated rack restoration request; cold/warm timing and device recovery remain |
+| A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, muted device recovery with rack reprepare, validated rack restoration request; cold/warm timing remains |
 | B. Tone Design | plugin workers + rack engine | In progress | isolated real VST3 load/process, persisted rack path, plugin status and explicit safety-preserving bypass; macro/snapshot/parallel rack and matched A/B remain |
 | C. Capture | audio sidecar + recording journal | In progress | JUCE threaded Raw/Processed WAV, completed/recoverable manifest, synthetic self-test; hardware interruption matrix remains |
 | D. Arrange | timeline engine + offline render | Planned | non-destructive audio/MIDI edit, PDC, stem/master export |

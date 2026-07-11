@@ -150,7 +150,7 @@ impl AudioSupervisor {
             .lock()
             .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
         let child = child_slot.as_mut().ok_or_else(|| {
-            "Native audio is unavailable; the requested recording command was not sent.".to_string()
+            "Native audio is unavailable; the requested audio command was not sent.".to_string()
         })?;
         child
             .write(format!("{payload}\n").as_bytes())
@@ -196,6 +196,13 @@ impl AudioSupervisor {
             } else {
                 "VST3 processing resumed through the safety limiter."
             },
+        )
+    }
+
+    pub fn recover_audio_device(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "recoverAudioDevice"}),
+            "Audio device recovery requested; output remains muted until the device is ready.",
         )
     }
 

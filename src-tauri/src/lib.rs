@@ -112,6 +112,11 @@ fn set_plugin_bypassed(bypassed: bool, state: State<'_, AppState>) -> Result<Aud
     state.audio.set_plugin_bypassed(bypassed)
 }
 
+#[tauri::command]
+fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.recover_audio_device()
+}
+
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("An internal state lock was poisoned: {error}")
 }
@@ -145,7 +150,8 @@ pub fn run() {
             set_emergency_mute,
             start_recording,
             stop_recording,
-            set_plugin_bypassed
+            set_plugin_bypassed,
+            recover_audio_device
         ])
         .run(tauri::generate_context!())
         .expect("Riffra failed to run");

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioStatus, BootstrapState, PluginEntry, ScratchSession, Workspace } from "./domain";
-import { bootstrap, getAudioStatus, loadPlugin, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
+import { bootstrap, getAudioStatus, loadPlugin, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -32,7 +32,7 @@ function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
   return <span className={`meter ${danger ? "meter-danger" : ""}`}><i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} /></span>;
 }
 
-function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean }) {
+function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void }) {
   return (
     <div className="workspace-scroll home-grid">
       <section className="hero-card">
@@ -49,7 +49,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive }: {
 
       <section className="section-card audio-setup">
         <header><div><span className="eyebrow">AUDIO DEVICE</span><h2>Sound First Setup</h2></div><span className="status-tag warning">ENGINE NEXT</span></header>
-        <div className="device-row"><div className="device-icon"><Icon name="bolt" /></div><div><strong>Native audio sidecar</strong><small>WASAPI / ASIO connection is the next delivery gate</small></div><button className="text-button">Configure</button></div>
+        <div className="device-row"><div className="device-icon"><Icon name="bolt" /></div><div><strong>Native audio sidecar</strong><small>WASAPI / ASIO connection is the next delivery gate</small></div><button className="text-button" onClick={onRecoverAudioDevice}>Recover device</button></div>
         <div className="safety-row"><span>Startup volume</span><strong>−18.0 dB</strong><Meter value={34} /><span className="safe-label">SAFE</span></div>
       </section>
 
@@ -147,6 +147,10 @@ function App() {
     } : current);
   }, []);
 
+  const recoverAudio = useCallback(async () => {
+    setAudio(await recoverAudioDevice());
+  }, []);
+
   useEffect(() => {
     void bootstrap().then((state) => {
       setBoot(state);
@@ -232,7 +236,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} />}
+        {session.workspace === "home" && <WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} />}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} />}
         {!(["home", "play"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>

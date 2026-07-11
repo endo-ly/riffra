@@ -11,6 +11,7 @@ class PluginRack final {
 public:
     bool load(const juce::String& path, double sampleRate, int blockSize, juce::String& error);
     void clear() noexcept;
+    void release() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
     void setBypassed(bool shouldBypass) noexcept;
     void process(

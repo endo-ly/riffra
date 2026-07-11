@@ -53,6 +53,12 @@ void PluginRack::clear() noexcept {
     bypassed.store(false, std::memory_order_release);
 }
 
+void PluginRack::release() noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin != nullptr)
+        plugin->releaseResources();
+}
+
 void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     preparedSampleRate = sampleRate;

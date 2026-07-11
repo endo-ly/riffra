@@ -94,6 +94,13 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     return juce::var(status);
 }
 
+juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
+    auto error = manager.initialiseWithDefaultDevices(2, 2);
+    if (error.isNotEmpty())
+        error = manager.initialiseWithDefaultDevices(0, 2);
+    return error;
+}
+
 int serve() {
     juce::AudioDeviceManager manager;
     SafetyAudioCallback callback;
@@ -102,9 +109,7 @@ int serve() {
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
 
-    auto error = manager.initialiseWithDefaultDevices(2, 2);
-    if (error.isNotEmpty())
-        error = manager.initialiseWithDefaultDevices(0, 2);
+    auto error = initialiseDefaultAudio(manager);
     if (error.isNotEmpty()) {
         writeJson(makeError("audioDevice", error));
         return 2;
@@ -157,6 +162,19 @@ int serve() {
         }
         if (type == "setPluginBypassed") {
             rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
+            writeJson(currentStatus(manager, callback, &rack));
+            continue;
+        }
+        if (type == "recoverAudioDevice") {
+            manager.removeAudioCallback(&callback);
+            manager.closeAudioDevice();
+            callback.setEmergencyMuted(true);
+            const auto recoveryError = initialiseDefaultAudio(manager);
+            if (recoveryError.isNotEmpty()) {
+                writeJson(makeError("audioDevice", recoveryError));
+                continue;
+            }
+            manager.addAudioCallback(&callback);
             writeJson(currentStatus(manager, callback, &rack));
             continue;
         }

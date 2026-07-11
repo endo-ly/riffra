@@ -16,6 +16,8 @@ The first safety chain is deliberately small and auditable: immediate emergency 
 {"type":"setEmergencyMute","muted":false}
 {"type":"setMasterGainDb","gainDb":-24.0}
 {"type":"loadPlugin","path":"C:\\Program Files\\Common Files\\VST3\\IK Multimedia\\AmpliTube 5\\AmpliTube 5.vst3"}
+{"type":"setPluginBypassed","bypassed":true}
+{"type":"recoverAudioDevice"}
 {"type":"clearPlugin"}
 {"type":"startRecording","directory":"C:\\path\\to\\recording"}
 {"type":"stopRecording"}

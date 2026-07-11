@@ -228,7 +228,7 @@ void SafetyAudioCallback::audioDeviceStopped() {
     inputPeak.store(0.0f, std::memory_order_release);
     outputPeak.store(0.0f, std::memory_order_release);
     if (pluginRack != nullptr)
-        pluginRack->clear();
+        pluginRack->release();
     juce::String ignored;
     stopRecording(ignored);
     activeInputChannels.store(0, std::memory_order_release);
