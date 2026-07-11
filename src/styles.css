@@ -246,6 +246,17 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .waveform-analysis i { flex: 1; min-width: 1px; background: linear-gradient(180deg, #8aeee8, #3e93ad); border-radius: 2px; opacity: .82; }
 .analysis-grid h2 { margin: 8px 0 4px; color: #d9e3eb; font-size: 22px; font-weight: 500; }
 .analysis-grid p { margin: 0; color: var(--muted); font-size: 10px; }
+.reference-card { margin-top: 12px; }
+.reference-card .status-tag { color: var(--muted); }
+.reference-source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.reference-source { display: grid; gap: 4px; padding: 8px; text-align: left; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
+.reference-source.active { background: #122d32; border-color: var(--teal); }
+.reference-source strong, .reference-source small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-source strong { color: #cbd3dc; font-size: 9px; }
+.reference-source small { color: var(--muted); font-size: 8px; }
+.comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.comparison-grid > div { display: grid; gap: 5px; padding: 9px; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
+.comparison-grid strong { color: #8aeee8; font: 13px "DM Mono", Consolas, monospace; }
 .timeline-card { margin-bottom: 12px; }
 .timeline-ruler { display: flex; justify-content: space-between; color: var(--muted); font: 9px "DM Mono", Consolas, monospace; }
 .timeline-lane { position: relative; min-height: 120px; margin-top: 10px; padding: 12px; background: #0c1116; border: 1px solid #27313a; border-radius: 6px; }

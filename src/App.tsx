@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, ScratchSession, Workspace } from "./domain";
+import { compareAnalyses } from "./domain";
 import { analyzeAudio, bootstrap, clearPlugin, getAudioStatus, listRecordings, loadPlugin, probeMidiDevices, recoverAudioDevice, saveScratch, scanVst3Folder, setEmergencyMute, setPluginBypassed, startRecording, stopRecording } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
@@ -155,6 +156,12 @@ function SamplePadEditor({ session, setSession }: { session: ScratchSession; set
   return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
 }
 
+function ReferenceCompare({ analysis, recordings, references, referenceId, onSelect }: { analysis: AudioAnalysis | null; recordings: RecordingAsset[]; references: Record<string, AudioAnalysis>; referenceId: string | null; onSelect: (recording: RecordingAsset) => void }) {
+  const reference = recordings.find((recording) => recording.id === referenceId) ?? null;
+  const comparison = analysis && reference ? compareAnalyses(analysis, references[reference.id] ?? analysis) : null;
+  return <section className="section-card reference-card"><header><div><span className="eyebrow">REFERENCE COMPARE</span><h2>Loudness-matched read-only view</h2></div><span className="status-tag">OFFLINE</span></header>{!analysis ? <p className="inspector-copy">Analyze a recording first, then choose a reference.</p> : <><div className="reference-source-list">{recordings.length === 0 ? <small className="inspector-copy">No Inbox recordings are available.</small> : recordings.slice(0, 8).map((recording) => <button className={`reference-source ${recording.id === referenceId ? "active" : ""}`} key={recording.id} onClick={() => onSelect(recording)}><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></button>)}</div>{comparison && <div className="comparison-grid"><div><span className="eyebrow">RMS DELTA</span><strong>{comparison.rmsDeltaDb >= 0 ? "+" : ""}{comparison.rmsDeltaDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">PEAK DELTA</span><strong>{comparison.peakDeltaDb >= 0 ? "+" : ""}{comparison.peakDeltaDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">MATCH GAIN</span><strong>{comparison.loudnessMatchGainDb >= 0 ? "+" : ""}{comparison.loudnessMatchGainDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">DURATION</span><strong>{comparison.durationDeltaMs >= 0 ? "+" : ""}{(comparison.durationDeltaMs / 1000).toFixed(2)} s</strong></div></div>}</>}</section>;
+}
+
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
@@ -163,6 +170,8 @@ function App() {
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [midi, setMidi] = useState<MidiProbe>({ inputs: [], outputs: [], refreshedAtMs: 0, message: "MIDI device list has not been refreshed." });
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
+  const [referenceId, setReferenceId] = useState<string | null>(null);
+  const [referenceAnalyses, setReferenceAnalyses] = useState<Record<string, AudioAnalysis>>({});
   const [scanMessage, setScanMessage] = useState("VST3を検出中…");
   const [librarySection, setLibrarySection] = useState("Plugins");
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -234,6 +243,16 @@ function App() {
     setAnalysis(await analyzeAudio(path));
     setSession((current) => current ? { ...current, workspace: "analyze" } : current);
   }, []);
+
+  const selectReference = useCallback(async (recording: RecordingAsset) => {
+    const path = recording.processedPath ?? recording.rawPath;
+    if (!path) return;
+    setReferenceId(recording.id);
+    const existing = referenceAnalyses[recording.id];
+    if (existing) return;
+    const next = await analyzeAudio(path);
+    if (next) setReferenceAnalyses((current) => ({ ...current, [recording.id]: next }));
+  }, [referenceAnalyses]);
 
   const placeRecording = useCallback((recording: RecordingAsset) => {
     if (!session) return;
@@ -361,7 +380,7 @@ function App() {
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} />}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /></>}
-        {session.workspace === "analyze" && <WorkspaceAnalyze analysis={analysis} />}
+        {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceCompare analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} onSelect={(recording) => void selectReference(recording)} /></>}
         {!(["home", "play", "arrange", "sample", "analyze"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
       </section>
 
