@@ -408,6 +408,14 @@ function App() {
     setSession((current) => current ? { ...current, workspace } : current);
   }, []);
 
+  const renameSession = useCallback(() => {
+    if (!session) return;
+    const next = window.prompt("Scratch Session name", session.projectName ?? "Untitled Scratch");
+    if (next == null) return;
+    const name = next.trim().slice(0, 160);
+    setSession({ ...session, projectName: name || null });
+  }, [session]);
+
   const toggleMute = useCallback(async () => {
     if (!session) return;
     const muted = !(session.emergencyMuted || audio.state === "muted");
@@ -447,7 +455,7 @@ function App() {
     <main className={`app-shell ${focusMode ? "focus-mode" : ""} ${isMuted ? "is-muted" : ""}`}>
       <header className="global-bar">
         <div className="brand"><span className="logo-mark">R</span><strong>RIFFRA</strong></div>
-        <button className="session-title"><span className="save-light" />{session.projectName ?? "Untitled Scratch"}<small>Auto-saved</small><Icon name="chevron" /></button>
+        <button className="session-title" onClick={renameSession} title="Rename Scratch Session"><span className="save-light" />{session.projectName ?? "Untitled Scratch"}<small>Auto-saved</small><Icon name="chevron" /></button>
         <div className="history-controls"><button aria-label="Undo" title="Undo (Ctrl+Z)" disabled={undoStack.length === 0} onClick={undo}>↶</button><button aria-label="Redo" title="Redo (Ctrl+Y)" disabled={redoStack.length === 0} onClick={redo}>↷</button></div>
         <nav className="workspace-tabs" aria-label="Workspace">
           {workspaces.map((item) => <button key={item.id} className={session.workspace === item.id ? "active" : ""} onClick={() => switchWorkspace(item.id)}>{item.label}<kbd>{item.key}</kbd></button>)}
