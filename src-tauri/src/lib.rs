@@ -2,6 +2,7 @@ mod analysis;
 mod model;
 mod native_audio;
 mod plugins;
+mod projects;
 mod recordings;
 mod separation;
 mod storage;
@@ -46,6 +47,12 @@ fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> 
         })?;
     *state.session.lock().map_err(lock_error)? = session;
     Ok(())
+}
+
+#[tauri::command]
+fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::ProjectExport, String> {
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    projects::export(&state.data_root, &session, now_ms())
 }
 
 #[tauri::command]
@@ -293,6 +300,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
             save_scratch_session,
+            export_scratch_session,
             scan_vst3_folder,
             list_recordings,
             analyze_audio,

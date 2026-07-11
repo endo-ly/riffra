@@ -200,6 +200,12 @@ export interface SeparationResult {
   message: string;
 }
 
+export interface ProjectExport {
+  path: string;
+  sessionId: string;
+  exportedAtMs: number;
+}
+
 export const defaultSession = (): ScratchSession => ({
   formatVersion: 1,
   sessionId: "scratch-browser-preview",

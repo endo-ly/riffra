@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, RecordingAsset, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioStatus, BootstrapState, MidiProbe, ProjectExport, RecordingAsset, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -22,6 +22,14 @@ export async function saveScratch(session: ScratchSession): Promise<void> {
     await invoke("save_scratch_session", { session });
   } catch {
     localStorage.setItem("riffra.preview.scratch", JSON.stringify(session));
+  }
+}
+
+export async function exportScratchSession(): Promise<ProjectExport | null> {
+  try {
+    return await invoke<ProjectExport>("export_scratch_session");
+  } catch {
+    return null;
   }
 }
 
