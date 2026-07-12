@@ -370,6 +370,7 @@ function App() {
   const [separationMessage, setSeparationMessage] = useState("Ready for a local stereo channel split.");
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [renderPreviewing, setRenderPreviewing] = useState(false);
+  const [transportPlaying, setTransportPlaying] = useState(false);
   const [renderMessage, setRenderMessage] = useState("Timeline render has not been requested.");
   const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState("Autosave remains the primary session copy.");
@@ -542,10 +543,29 @@ function App() {
     if (!renderResult) return;
     setAudio(await previewSample(renderResult.path, 0, 0));
     setRenderPreviewing(true);
+    setTransportPlaying(true);
   }, [renderResult]);
 
   const stopTimelinePreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
+    setRenderPreviewing(false);
+    setTransportPlaying(false);
+  }, []);
+
+  const playTransport = useCallback(async () => {
+    let result = renderResult;
+    if (!result) {
+      result = await renderTimeline({ rangeStartMs: 0, rangeEndMs: null, normalize: false, trackId: null });
+      if (!result) return;
+      setRenderResult(result);
+    }
+    setAudio(await previewSample(result.path, 0, 0));
+    setTransportPlaying(true);
+  }, [renderResult]);
+
+  const stopTransport = useCallback(async () => {
+    setAudio(await stopSamplePreview());
+    setTransportPlaying(false);
     setRenderPreviewing(false);
   }, []);
 
@@ -845,7 +865,7 @@ function App() {
       </aside>
 
       <footer className="transport">
-        <div className="transport-left"><button aria-label="Toggle loop"><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label="Play"><Icon name="play" /></button><button aria-label="Stop"><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
+        <div className="transport-left"><button aria-label="Toggle loop"><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label={transportPlaying ? "Stop playback" : "Play"} onClick={() => void (transportPlaying ? stopTransport() : playTransport())}><Icon name={transportPlaying ? "stop" : "play"} /></button><button aria-label="Stop" onClick={() => void stopTransport()}><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
