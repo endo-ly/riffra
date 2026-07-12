@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, ProjectExport, RecordingAsset, RenderResult, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, ProjectExport, RecordingAsset, RenderResult, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -60,6 +60,15 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
   try {
     return await invoke<RecordingAsset[]>("list_recordings", { query: query ?? null });
+  } catch {
+    return [];
+  }
+}
+
+export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
+  if (!query.trim()) return [];
+  try {
+    return await invoke<LibraryAsset[]>("search_library", { query });
   } catch {
     return [];
   }

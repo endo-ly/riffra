@@ -1,4 +1,5 @@
 mod analysis;
+mod library;
 mod model;
 mod native_audio;
 mod plugins;
@@ -39,6 +40,14 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
     })
 }
 
+fn queue_session_index(data_root: &std::path::Path, session: &ScratchSession) {
+    let data_root = data_root.to_path_buf();
+    let session = session.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = library::sync_session(&data_root, &session);
+    });
+}
+
 #[tauri::command]
 fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> Result<(), String> {
     let mut session = session.validate_and_normalize()?;
@@ -50,6 +59,7 @@ fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> 
                 "Scratch Session could not be saved; the in-memory session is unchanged: {error}"
             )
         })?;
+    queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session;
     Ok(())
 }
@@ -69,6 +79,7 @@ fn import_scratch_session(
     SessionStore::new(&state.data_root)
         .save(&session)
         .map_err(|error| format!("Imported project could not be persisted: {error}"))?;
+    queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session.clone();
     Ok(session)
 }
@@ -109,6 +120,12 @@ async fn scan_vst3_folder(
                 message: format!("Plugin catalog could not be saved: {error}. Scan results remain usable for this session."),
             });
         }
+        if let Err(error) = library::sync_plugins(&data_root, &report.plugins) {
+            report.issues.push(plugins::ScanIssue {
+                path: data_root.to_string_lossy().into_owned(),
+                message: format!("Library index could not be updated: {error}. Scan results remain usable for this session."),
+            });
+        }
         report
     }).await.map_err(|error| format!("Plugin catalog task failed: {error}"))?)
 }
@@ -118,7 +135,20 @@ fn list_recordings(
     state: State<'_, AppState>,
     query: Option<String>,
 ) -> Result<Vec<recordings::RecordingAsset>, String> {
-    recordings::list(&state.data_root, query.as_deref())
+    let assets = recordings::list(&state.data_root, query.as_deref())?;
+    let _ = library::sync_recordings(&state.data_root, &assets);
+    Ok(assets)
+}
+
+#[tauri::command]
+async fn search_library(
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<library::LibraryAsset>, String> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || library::search(&data_root, &query))
+        .await
+        .map_err(|error| format!("Library search task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -460,6 +490,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_root)?;
             let (mut session, recovered_from_generation) =
                 SessionStore::new(&data_root).load_or_create()?;
+            let _ = library::sync_session(&data_root, &session);
             session.emergency_muted = true;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -484,6 +515,7 @@ pub fn run() {
             import_scratch_session,
             scan_vst3_folder,
             list_recordings,
+            search_library,
             analyze_audio,
             separate_channels,
             list_separations,

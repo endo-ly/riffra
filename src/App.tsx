@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, MidiProbe, PluginEntry, RecordingAsset, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, PluginEntry, RecordingAsset, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -256,6 +256,7 @@ function App() {
   const [scanMessage, setScanMessage] = useState("VST3を検出中…");
   const [librarySection, setLibrarySection] = useState("Plugins");
   const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [undoStack, setUndoStack] = useState<ScratchSession[]>([]);
@@ -550,6 +551,17 @@ function App() {
   const query = libraryQuery.trim().toLowerCase();
   const visiblePlugins = query ? plugins.filter((plugin) => `${plugin.name} ${plugin.vendor ?? ""} ${plugin.path}`.toLowerCase().includes(query)) : plugins;
   const visibleRecordings = query ? recordings.filter((recording) => `${recording.name} ${recording.state} ${recording.path}`.toLowerCase().includes(query)) : recordings;
+  useEffect(() => {
+    let active = true;
+    if (!query) {
+      setLibraryResults([]);
+      return () => { active = false; };
+    }
+    void searchLibrary(query).then((results) => {
+      if (active) setLibraryResults(results);
+    });
+    return () => { active = false; };
+  }, [query]);
   if (!boot || !session) return <div className="boot-screen"><span className="logo-mark">R</span><strong>Riffra</strong><small>Recovering your creative memory…</small></div>;
 
   const isMuted = session.emergencyMuted || audio.state === "muted";
@@ -573,6 +585,7 @@ function App() {
         <nav>{librarySections.map((section) => <button key={section} className={librarySection === section ? "active" : ""} onClick={() => setLibrarySection(section)}><span className={`nav-glyph glyph-${section.toLowerCase()}`} />{section}<small>{section === "Plugins" ? plugins.length : ""}</small></button>)}</nav>
         <div className="library-content">
           <span className="eyebrow">{librarySection.toUpperCase()}</span>
+          {query && <section className="library-search-results"><span className="eyebrow">CROSS-ASSET SEARCH · {libraryResults.length}</span>{libraryResults.slice(0, 8).map((asset) => <div className="library-search-row" key={asset.id}><span className="nav-glyph" /><div><strong>{asset.name}</strong><small>{asset.kind} · {asset.stability}{asset.tag ? ` · ${asset.tag}` : ""}</small></div></div>)}{libraryResults.length === 0 && <small className="library-search-empty">No indexed asset matches yet.</small>}</section>}
           {librarySection === "Plugins" ? <><small className="scan-message">{visiblePlugins.length}件を表示</small>{visiblePlugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}{visiblePlugins.length === 0 && <div className="library-empty"><span>一致するVST3がありません</span><small>検索語を変えるか、VST3フォルダを確認してください。</small></div>}</> : librarySection === "Recordings" ? <>{visibleRecordings.slice(0, 12).map((recording) => <button className="plugin-row recording-row" key={recording.id} onClick={() => void openRecordingAnalysis(recording)} title={recording.path}><span>{recording.state === "completed" ? "✓" : "!"}</span><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><i className={`stability ${recording.state === "completed" ? "validated" : "quarantined"}`} /></button>)}{visibleRecordings.length === 0 && <div className="library-empty"><span>まだ録音がありません</span><small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small></div>}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
         </div>
         <button className="inbox-button" onClick={() => setLibrarySection("Recordings")}><span className="inbox-icon">↓</span><div><strong>Inbox</strong><small>{recordings.length} items</small></div></button>

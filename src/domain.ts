@@ -224,6 +224,18 @@ export interface ProjectExport {
   exportedAtMs: number;
 }
 
+export interface LibraryAsset {
+  id: string;
+  name: string;
+  kind: string;
+  path: string | null;
+  tag: string | null;
+  note: string | null;
+  createdAtMs: number | null;
+  updatedAtMs: number | null;
+  stability: string;
+}
+
 export interface RenderResult {
   id: string;
   path: string;
