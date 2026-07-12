@@ -77,6 +77,8 @@ pub struct ScratchSession {
     pub updated_at_ms: u64,
     pub project_name: Option<String>,
     pub workspace: Workspace,
+    #[serde(default)]
+    pub audio_driver: Option<String>,
     pub master_db: f64,
     pub emergency_muted: bool,
     pub rack: Vec<RackDevice>,
@@ -97,6 +99,7 @@ impl ScratchSession {
             updated_at_ms: now_ms,
             project_name: None,
             workspace: Workspace::Home,
+            audio_driver: None,
             master_db: -18.0,
             emergency_muted: true,
             rack: vec![
@@ -146,6 +149,10 @@ impl ScratchSession {
             return Err("Master gain must be finite.".into());
         }
         self.master_db = self.master_db.clamp(-90.0, 0.0);
+        self.audio_driver = self
+            .audio_driver
+            .map(|value| value.trim().chars().take(128).collect())
+            .filter(|value: &String| !value.is_empty());
         self.note.truncate(16_384);
         if self.rack.len() > 256 {
             return Err("A rack cannot contain more than 256 devices.".into());

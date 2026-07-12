@@ -45,6 +45,7 @@ export interface ScratchSession {
   updatedAtMs: number;
   projectName: string | null;
   workspace: Workspace;
+  audioDriver: string | null;
   masterDb: number;
   emergencyMuted: boolean;
   rack: RackDevice[];
@@ -266,6 +267,7 @@ export const defaultSession = (): ScratchSession => ({
   updatedAtMs: Date.now(),
   projectName: null,
   workspace: "home",
+  audioDriver: null,
   masterDb: -18,
   emergencyMuted: true,
   rack: [

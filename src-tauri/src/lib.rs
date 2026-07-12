@@ -332,7 +332,19 @@ fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioS
     if driver.trim().is_empty() {
         return Err("Audio driver name must not be empty.".into());
     }
-    state.audio.set_audio_driver(driver.trim())
+    let driver = driver.trim().to_owned();
+    let audio = state.audio.set_audio_driver(&driver)?;
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    session.audio_driver = Some(driver);
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| {
+            format!("Audio driver changed, but the session preference could not be saved: {error}")
+        })?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session;
+    Ok(audio)
 }
 
 #[tauri::command]
@@ -538,6 +550,11 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle())
             };
+            if !safe_mode {
+                if let Some(driver) = session.audio_driver.as_deref() {
+                    let _ = audio.set_audio_driver(driver);
+                }
+            }
             app.manage(AppState {
                 data_root,
                 session: Mutex::new(session),

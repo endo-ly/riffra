@@ -299,6 +299,7 @@ function App() {
 
   const selectAudioDriver = useCallback(async (driver: string) => {
     setAudio(await setAudioDriver(driver));
+    setSession((current) => current ? { ...current, audioDriver: driver } : current);
   }, []);
 
   const connectMidiInput = useCallback(async (name: string) => {

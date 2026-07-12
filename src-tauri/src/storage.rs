@@ -226,6 +226,15 @@ mod tests {
     }
 
     #[test]
+    fn preserves_audio_driver_preference() {
+        let mut session = ScratchSession::new(now_ms());
+        session.audio_driver = Some("ASIO".into());
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.audio_driver.as_deref(), Some("ASIO"));
+    }
+
+    #[test]
     fn preserves_persisted_plugin_path() {
         let mut session = ScratchSession::new(now_ms());
         session.rack.push(RackDevice {
