@@ -331,7 +331,7 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .timeline-editor { margin-top: 12px; }
 .timeline-editor header > small { color: var(--muted); font-size: 9px; }
 .timeline-edit-row { display: grid; grid-template-columns: minmax(150px, 1fr) 84px 84px 76px auto auto; align-items: end; gap: 8px; padding: 9px 0; border-top: 1px solid #27313a; }
-.timeline-edit-row-expanded { grid-template-columns: minmax(145px, 1fr) repeat(8, minmax(54px, 68px)) auto auto auto auto auto; }
+.timeline-edit-row-expanded { grid-template-columns: minmax(145px, 1fr) repeat(9, minmax(54px, 68px)) auto auto auto auto auto; }
 .timeline-edit-row.muted { opacity: .6; }
 .timeline-edit-name strong, .timeline-edit-name small, .timeline-edit-row label span { display: block; }
 .timeline-edit-name strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -357,6 +357,10 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .midi-note-row { display: grid; grid-template-columns: repeat(5, minmax(58px, 1fr)) auto; align-items: end; gap: 6px; }
 .midi-note-row label { display: grid; gap: 3px; color: var(--muted); font-size: 8px; }
 .midi-note-row input { width: 100%; min-width: 0; }
+.track-mixer { margin-bottom: 12px; }
+.track-mixer-grid { display: grid; gap: 7px; }
+.track-mixer-row { display: grid; grid-template-columns: minmax(120px, 1fr) 120px auto auto; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #27313a; }
+.track-mixer-row small { color: var(--muted); font-size: 9px; }
 .render-message { display: block; color: var(--muted); font-size: 9px; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }

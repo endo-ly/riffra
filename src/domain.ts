@@ -24,6 +24,7 @@ export interface TimelineClip {
   id: string;
   assetPath: string;
   name: string;
+  trackId: string;
   startMs: number;
   durationMs: number;
   sourceInMs: number;
@@ -34,6 +35,15 @@ export interface TimelineClip {
   fadeOutMs: number;
   pan: number;
   muted: boolean;
+}
+
+export interface TimelineTrack {
+  id: string;
+  name: string;
+  gainDb: number;
+  pan: number;
+  muted: boolean;
+  solo: boolean;
 }
 
 export interface MidiNote {
@@ -75,6 +85,7 @@ export interface ScratchSession {
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
   timeline: TimelineClip[];
+  tracks: TimelineTrack[];
   midiClips: MidiClip[];
   samplePads: SamplePad[];
   note: string;
@@ -320,6 +331,7 @@ export const defaultSession = (): ScratchSession => ({
   ],
   snapshots: [],
   timeline: [],
+  tracks: [{ id: "main", name: "Main", gainDb: 0, pan: 0, muted: false, solo: false }],
   midiClips: [],
   samplePads: [],
   note: "",

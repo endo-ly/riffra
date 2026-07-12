@@ -281,6 +281,7 @@ mod tests {
             id: "clip:take-1".into(),
             asset_path: r"C:\recordings\take-1\processed.wav".into(),
             name: "take-1".into(),
+            track_id: "main".into(),
             start_ms: 250,
             duration_ms: 1_000,
             source_in_ms: 0,

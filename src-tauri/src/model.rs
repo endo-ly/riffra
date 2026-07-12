@@ -32,6 +32,8 @@ pub struct TimelineClip {
     pub id: String,
     pub asset_path: String,
     pub name: String,
+    #[serde(default = "default_track_id")]
+    pub track_id: String,
     pub start_ms: u64,
     pub duration_ms: u64,
     #[serde(default)]
@@ -48,6 +50,25 @@ pub struct TimelineClip {
     #[serde(default)]
     pub pan: f64,
     pub muted: bool,
+}
+
+fn default_track_id() -> String {
+    "main".into()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineTrack {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub gain_db: f64,
+    #[serde(default)]
+    pub pan: f64,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub solo: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -122,11 +143,24 @@ pub struct ScratchSession {
     pub snapshots: Vec<SessionSnapshot>,
     #[serde(default)]
     pub timeline: Vec<TimelineClip>,
+    #[serde(default = "default_tracks")]
+    pub tracks: Vec<TimelineTrack>,
     #[serde(default)]
     pub midi_clips: Vec<MidiClip>,
     #[serde(default)]
     pub sample_pads: Vec<SamplePad>,
     pub note: String,
+}
+
+fn default_tracks() -> Vec<TimelineTrack> {
+    vec![TimelineTrack {
+        id: "main".into(),
+        name: "Main".into(),
+        gain_db: 0.0,
+        pan: 0.0,
+        muted: false,
+        solo: false,
+    }]
 }
 
 impl ScratchSession {
@@ -168,6 +202,7 @@ impl ScratchSession {
             ],
             snapshots: Vec::new(),
             timeline: Vec::new(),
+            tracks: default_tracks(),
             midi_clips: Vec::new(),
             sample_pads: Vec::new(),
             note: String::new(),
@@ -201,6 +236,25 @@ impl ScratchSession {
         }
         if self.timeline.len() > 512 {
             return Err("A timeline cannot contain more than 512 clips.".into());
+        }
+        if self.tracks.is_empty() {
+            self.tracks = default_tracks();
+        }
+        if self.tracks.len() > 128 {
+            return Err("A session cannot contain more than 128 timeline tracks.".into());
+        }
+        for track in &mut self.tracks {
+            if track.id.trim().is_empty() || track.name.trim().is_empty() {
+                return Err("Timeline tracks require non-empty ids and names.".into());
+            }
+            if !track.gain_db.is_finite() || !track.pan.is_finite() {
+                return Err(format!(
+                    "Timeline track '{}' has invalid mix values.",
+                    track.name
+                ));
+            }
+            track.gain_db = track.gain_db.clamp(-90.0, 24.0);
+            track.pan = track.pan.clamp(-1.0, 1.0);
         }
         if self.midi_clips.len() > 256 {
             return Err("A session cannot contain more than 256 MIDI clips.".into());
@@ -240,6 +294,7 @@ impl ScratchSession {
             if clip.id.trim().is_empty()
                 || clip.asset_path.trim().is_empty()
                 || clip.name.trim().is_empty()
+                || clip.track_id.trim().is_empty()
             {
                 return Err("Timeline clips require ids, source paths and names.".into());
             }

@@ -44,10 +44,20 @@ pub fn render_timeline_with_options(
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<RenderResult, String> {
+    let has_solo = session.tracks.iter().any(|track| track.solo);
     let clips = session
         .timeline
         .iter()
         .filter(|clip| !clip.muted)
+        .filter(|clip| {
+            let track = session
+                .tracks
+                .iter()
+                .find(|track| track.id == clip.track_id);
+            track
+                .map(|track| !track.muted && (!has_solo || track.solo))
+                .unwrap_or(true)
+        })
         .collect::<Vec<_>>();
     if clips.is_empty() {
         return Err("Timeline has no audible clips to render.".into());
@@ -170,8 +180,14 @@ pub fn render_timeline_with_options(
         if source_range == 0 {
             continue;
         }
-        let gain = 10.0_f32.powf((clip.gain_db as f32) / 20.0);
-        let pan = clip.pan as f32;
+        let track = session
+            .tracks
+            .iter()
+            .find(|track| track.id == clip.track_id);
+        let track_gain_db = track.map(|track| track.gain_db).unwrap_or_default();
+        let track_pan = track.map(|track| track.pan).unwrap_or_default();
+        let gain = 10.0_f32.powf(((clip.gain_db + track_gain_db) as f32) / 20.0);
+        let pan = (clip.pan + track_pan).clamp(-1.0, 1.0) as f32;
         let render_frames = if clip.loop_enabled {
             requested
         } else {
@@ -347,6 +363,7 @@ mod tests {
             id: "clip:test".into(),
             asset_path: source.to_string_lossy().into_owned(),
             name: "source".into(),
+            track_id: "main".into(),
             start_ms: 100,
             duration_ms: 200,
             source_in_ms: 0,
@@ -388,6 +405,7 @@ mod tests {
             id: "clip:loop".into(),
             asset_path: source.to_string_lossy().into_owned(),
             name: "loop".into(),
+            track_id: "main".into(),
             start_ms: 0,
             duration_ms: 200,
             source_in_ms: 0,
@@ -416,6 +434,7 @@ mod tests {
             id: "clip:range".into(),
             asset_path: source.to_string_lossy().into_owned(),
             name: "range".into(),
+            track_id: "main".into(),
             start_ms: 0,
             duration_ms: 200,
             source_in_ms: 0,

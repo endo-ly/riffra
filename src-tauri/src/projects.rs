@@ -229,6 +229,7 @@ mod tests {
             id: "clip:source".into(),
             asset_path: source.to_string_lossy().into_owned(),
             name: "source".into(),
+            track_id: "main".into(),
             start_ms: 0,
             duration_ms: 100,
             source_in_ms: 0,
