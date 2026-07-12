@@ -20,6 +20,8 @@ pub struct RenderOptions {
     pub range_end_ms: Option<u64>,
     #[serde(default)]
     pub normalize: bool,
+    #[serde(default)]
+    pub track_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -34,6 +36,7 @@ pub struct RenderResult {
     pub range_start_ms: u64,
     pub range_end_ms: u64,
     pub normalized: bool,
+    pub track_id: Option<String>,
     pub state: String,
     pub message: String,
 }
@@ -49,6 +52,13 @@ pub fn render_timeline_with_options(
         .timeline
         .iter()
         .filter(|clip| !clip.muted)
+        .filter(|clip| {
+            options
+                .track_id
+                .as_deref()
+                .map(|track_id| track_id == clip.track_id)
+                .unwrap_or(true)
+        })
         .filter(|clip| {
             let track = session
                 .tracks
@@ -273,6 +283,7 @@ pub fn render_timeline_with_options(
         range_start_ms: render_start_frame * 1_000 / u64::from(sample_rate),
         range_end_ms: render_end_frame * 1_000 / u64::from(sample_rate),
         normalized: options.normalize,
+        track_id: options.track_id.clone(),
         state: "completed".into(),
         message:
             if options.normalize {
@@ -454,6 +465,7 @@ mod tests {
                 range_start_ms: 25,
                 range_end_ms: Some(75),
                 normalize: true,
+                track_id: None,
             },
         )
         .unwrap();

@@ -305,6 +305,7 @@ export interface RenderResult {
   rangeStartMs: number;
   rangeEndMs: number;
   normalized: boolean;
+  trackId: string | null;
   state: string;
   message: string;
 }
@@ -313,6 +314,7 @@ export interface RenderOptions {
   rangeStartMs: number;
   rangeEndMs: number | null;
   normalize: boolean;
+  trackId: string | null;
 }
 
 export const defaultSession = (): ScratchSession => ({
