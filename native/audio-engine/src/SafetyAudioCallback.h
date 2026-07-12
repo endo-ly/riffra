@@ -29,6 +29,9 @@ public:
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
+    void startSynthNote(int note, float velocity) noexcept;
+    void stopSynthNote(int note) noexcept;
+    void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
 
@@ -55,6 +58,7 @@ private:
         int numOutputChannels,
         int numSamples) noexcept;
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
+    void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
 
     static constexpr float kMaximumGainDb = 0.0f;
@@ -92,6 +96,16 @@ private:
     static constexpr std::size_t kPreviewVoiceCount = 8;
     std::array<PreviewVoice, kPreviewVoiceCount> previewVoices;
     std::uint64_t previewSequence = 0;
+    struct SynthVoice {
+        int note = -1;
+        float phase = 0.0f;
+        float level = 0.0f;
+        float targetLevel = 0.0f;
+        bool active = false;
+        bool releasing = false;
+    };
+    static constexpr std::size_t kSynthVoiceCount = 16;
+    std::array<SynthVoice, kSynthVoiceCount> synthVoices;
     PluginRack* pluginRack = nullptr;
 
     juce::CriticalSection errorLock;

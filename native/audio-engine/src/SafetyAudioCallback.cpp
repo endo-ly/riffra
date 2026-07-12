@@ -16,6 +16,8 @@ void SafetyAudioCallback::setPluginRack(PluginRack* const rack) noexcept {
 
 
 void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
+    if (shouldMute)
+        allNotesOff();
     emergencyMuted.store(shouldMute, std::memory_order_release);
     if (!shouldMute)
         currentGainLinear = 0.0f;
@@ -183,6 +185,50 @@ void SafetyAudioCallback::stopPreviewForKey(const int voiceKey) noexcept {
     }
 }
 
+void SafetyAudioCallback::startSynthNote(const int note, const float velocity) noexcept {
+    if (note < 0 || note > 127)
+        return;
+    const juce::ScopedLock lock(previewLock);
+    SynthVoice* target = nullptr;
+    for (auto& voice : synthVoices) {
+        if (voice.active && voice.note == note) {
+            target = &voice;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        for (auto& voice : synthVoices) {
+            if (!voice.active) {
+                target = &voice;
+                break;
+            }
+        }
+    }
+    if (target == nullptr)
+        target = &synthVoices.front();
+    target->note = note;
+    target->phase = 0.0f;
+    target->level = 0.0f;
+    target->targetLevel = juce::jlimit(0.02f, 0.18f, velocity) * 0.8f;
+    target->active = true;
+    target->releasing = false;
+}
+
+void SafetyAudioCallback::stopSynthNote(const int note) noexcept {
+    const juce::ScopedLock lock(previewLock);
+    for (auto& voice : synthVoices) {
+        if (voice.active && voice.note == note)
+            voice.releasing = true;
+    }
+}
+
+void SafetyAudioCallback::allNotesOff() noexcept {
+    const juce::ScopedLock lock(previewLock);
+    for (auto& voice : synthVoices) {
+        voice.releasing = true;
+    }
+}
+
 bool SafetyAudioCallback::isPreviewing() const noexcept {
     const juce::ScopedLock lock(previewLock);
     for (const auto& voice : previewVoices) {
@@ -217,6 +263,41 @@ void SafetyAudioCallback::mixPreview(
                 output[sample] += voice.buffer.getSample(sourceChannel, voice.cursor) * voice.gain;
             }
             ++voice.cursor;
+        }
+    }
+}
+
+void SafetyAudioCallback::mixSynth(
+    float* const* outputChannelData,
+    const int numOutputChannels,
+    const int numSamples) noexcept {
+    const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
+    if (sampleRate <= 0.0 || numOutputChannels <= 0)
+        return;
+    constexpr float twoPi = 6.2831853071795864769f;
+    for (auto& voice : synthVoices) {
+        if (!voice.active)
+            continue;
+        const auto frequency = 440.0 * std::pow(2.0, (static_cast<double>(voice.note) - 69.0) / 12.0);
+        const auto phaseStep = static_cast<float>(twoPi * frequency / sampleRate);
+        for (int sample = 0; sample < numSamples && voice.active; ++sample) {
+            if (voice.releasing) {
+                voice.level *= 0.995f;
+                if (voice.level < 0.0001f) {
+                    voice.active = false;
+                    break;
+                }
+            } else {
+                voice.level = std::min(voice.targetLevel, voice.level + 0.004f);
+            }
+            const auto value = std::sin(voice.phase) * voice.level;
+            voice.phase += phaseStep;
+            if (voice.phase >= twoPi)
+                voice.phase -= twoPi;
+            for (int channel = 0; channel < numOutputChannels; ++channel) {
+                if (outputChannelData[channel] != nullptr)
+                    outputChannelData[channel][sample] += value;
+            }
         }
     }
 }
@@ -291,8 +372,10 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     }
 
     const juce::ScopedTryLock previewTry(previewLock);
-    if (previewTry.isLocked())
+    if (previewTry.isLocked()) {
         mixPreview(outputChannelData, numOutputChannels, numSamples);
+        mixSynth(outputChannelData, numOutputChannels, numSamples);
+    }
 
     for (int sample = 0; sample < numSamples; ++sample) {
         if (currentGainLinear < target)
@@ -352,6 +435,7 @@ void SafetyAudioCallback::audioDeviceStopped() {
     if (pluginRack != nullptr)
         pluginRack->release();
     stopPreview();
+    allNotesOff();
     juce::String ignored;
     stopRecording(ignored);
     activeInputChannels.store(0, std::memory_order_release);

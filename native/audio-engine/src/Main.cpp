@@ -105,8 +105,10 @@ public:
 
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
         if (message.isNoteOff()) {
-            if (audioCallback != nullptr)
+            if (audioCallback != nullptr) {
                 audioCallback->stopPreviewForKey(message.getNoteNumber());
+                audioCallback->stopSynthNote(message.getNoteNumber());
+            }
             return;
         }
 
@@ -126,8 +128,13 @@ public:
                 loop = found->second.loop;
             }
         }
-        if (audioCallback == nullptr || buffer == nullptr)
+        if (audioCallback == nullptr)
             return;
+
+        if (buffer == nullptr) {
+            audioCallback->startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
+            return;
+        }
 
         juce::String error;
         if (audioCallback->startPreview(
@@ -450,6 +457,7 @@ int serve() {
         if (type == "closeMidiInput") {
             midiMonitor.setActive(false);
             callback.stopPreview();
+            callback.allNotesOff();
             if (midiInput != nullptr) {
                 midiInput->stop();
                 midiInput.reset();
@@ -513,6 +521,7 @@ int serve() {
         }
         if (type == "stopPreview") {
             callback.stopPreview();
+            callback.allNotesOff();
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
