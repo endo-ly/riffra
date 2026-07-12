@@ -264,8 +264,17 @@ export interface RenderResult {
   frames: number;
   durationMs: number;
   clipCount: number;
+  rangeStartMs: number;
+  rangeEndMs: number;
+  normalized: boolean;
   state: string;
   message: string;
+}
+
+export interface RenderOptions {
+  rangeStartMs: number;
+  rangeEndMs: number | null;
+  normalize: boolean;
 }
 
 export const defaultSession = (): ScratchSession => ({

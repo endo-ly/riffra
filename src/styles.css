@@ -340,6 +340,11 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .timeline-edit-row input { width: 100%; margin-top: 4px; padding: 5px 6px; color: #dfe5eb; font: 9px "DM Mono", Consolas, monospace; background: #0c1116; border: 1px solid #2d3a43; border-radius: 4px; }
 .timeline-render { margin-top: 12px; }
 .timeline-render header > small { color: var(--muted); font-size: 9px; }
+.render-options { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 12px; }
+.render-options label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+.render-options input[type="number"] { width: 118px; }
+.render-normalize { display: flex !important; align-items: center; gap: 6px !important; padding-bottom: 7px; }
+.render-normalize input { accent-color: var(--accent); }
 .render-message { display: block; color: var(--muted); font-size: 9px; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }

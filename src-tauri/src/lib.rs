@@ -225,12 +225,20 @@ fn list_separations(
 }
 
 #[tauri::command]
-async fn render_timeline(state: State<'_, AppState>) -> Result<render::RenderResult, String> {
+async fn render_timeline(
+    options: Option<render::RenderOptions>,
+    state: State<'_, AppState>,
+) -> Result<render::RenderResult, String> {
     let session = state.session.lock().map_err(lock_error)?.clone();
     let data_root = state.data_root.clone();
     let created_at_ms = now_ms();
     tauri::async_runtime::spawn_blocking(move || {
-        render::render_timeline(&data_root, &session, created_at_ms)
+        render::render_timeline_with_options(
+            &data_root,
+            &session,
+            created_at_ms,
+            options.unwrap_or_default(),
+        )
     })
     .await
     .map_err(|error| format!("Timeline render task failed: {error}"))?

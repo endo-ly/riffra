@@ -2,7 +2,7 @@ use crate::{
     analysis::{decode_sample, parse_wav},
     model::ScratchSession,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, BufWriter, Write},
@@ -10,6 +10,17 @@ use std::{
 };
 
 const MAX_RENDER_MINUTES: u64 = 30;
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderOptions {
+    #[serde(default)]
+    pub range_start_ms: u64,
+    #[serde(default)]
+    pub range_end_ms: Option<u64>,
+    #[serde(default)]
+    pub normalize: bool,
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,14 +31,18 @@ pub struct RenderResult {
     pub frames: u64,
     pub duration_ms: u64,
     pub clip_count: usize,
+    pub range_start_ms: u64,
+    pub range_end_ms: u64,
+    pub normalized: bool,
     pub state: String,
     pub message: String,
 }
 
-pub fn render_timeline(
+pub fn render_timeline_with_options(
     data_root: &Path,
     session: &ScratchSession,
     created_at_ms: u64,
+    options: RenderOptions,
 ) -> Result<RenderResult, String> {
     let clips = session
         .timeline
@@ -102,8 +117,26 @@ pub fn render_timeline(
             "Timeline render is limited to {MAX_RENDER_MINUTES} minutes."
         ));
     }
+    let render_start_frame = options
+        .range_start_ms
+        .saturating_mul(u64::from(sample_rate))
+        / 1_000;
+    let requested_end_frame = options
+        .range_end_ms
+        .filter(|end| *end > options.range_start_ms)
+        .map(|end| end.saturating_mul(u64::from(sample_rate)) / 1_000)
+        .unwrap_or(total_frames);
+    let render_end_frame = requested_end_frame.min(total_frames);
+    if render_start_frame >= render_end_frame {
+        return Err("Render range does not overlap the audible timeline.".into());
+    }
+    let output_frames = render_end_frame.saturating_sub(render_start_frame);
     let frames =
-        usize::try_from(total_frames).map_err(|_| "Timeline render is too large.".to_string())?;
+        usize::try_from(output_frames).map_err(|_| "Timeline render is too large.".to_string())?;
+    let render_start_frame_usize = usize::try_from(render_start_frame)
+        .map_err(|_| "Timeline render range is too large.".to_string())?;
+    let render_end_frame_usize = usize::try_from(render_end_frame)
+        .map_err(|_| "Timeline render range is too large.".to_string())?;
     let mut output = vec![
         0.0_f32;
         frames
@@ -144,7 +177,16 @@ pub fn render_timeline(
         } else {
             requested.min(source_range)
         };
-        for frame in 0..render_frames.min(frames.saturating_sub(start_frame)) {
+        for frame in 0..render_frames {
+            let absolute_frame = start_frame.saturating_add(frame);
+            if absolute_frame < render_start_frame_usize || absolute_frame >= render_end_frame_usize
+            {
+                continue;
+            }
+            let output_frame = absolute_frame.saturating_sub(render_start_frame_usize);
+            if output_frame >= frames {
+                continue;
+            }
             let source_frame = if clip.loop_enabled {
                 source_start_frame + frame % source_range
             } else {
@@ -183,13 +225,16 @@ pub fn render_timeline(
             let right_pan = (1.0 + pan).clamp(0.0, 1.0);
             let left = left * gain * envelope * left_pan;
             let right = right * gain * envelope * right_pan;
-            let output_start = (start_frame + frame) * 2;
+            let output_start = output_frame * 2;
             output[output_start] = (output[output_start] + left).clamp(-1.0, 1.0);
             output[output_start + 1] = (output[output_start + 1] + right).clamp(-1.0, 1.0);
         }
     }
 
     apply_master_gain(&mut output, session.master_db);
+    if options.normalize {
+        normalize_peak(&mut output);
+    }
 
     let directory = data_root
         .join("exports")
@@ -206,13 +251,20 @@ pub fn render_timeline(
         id: format!("render:{created_at_ms}"),
         path: path.to_string_lossy().into_owned(),
         sample_rate,
-        frames: total_frames,
-        duration_ms: total_frames * 1_000 / u64::from(sample_rate),
+        frames: output_frames,
+        duration_ms: output_frames * 1_000 / u64::from(sample_rate),
         clip_count: clips.len(),
+        range_start_ms: render_start_frame * 1_000 / u64::from(sample_rate),
+        range_end_ms: render_end_frame * 1_000 / u64::from(sample_rate),
+        normalized: options.normalize,
         state: "completed".into(),
         message:
-            "Timeline rendered to a new stereo WAV with master gain; source clips remain unchanged."
-                .into(),
+            if options.normalize {
+                "Timeline rendered to a normalized stereo WAV with master gain; source clips remain unchanged."
+            } else {
+                "Timeline rendered to a new stereo WAV with master gain; source clips remain unchanged."
+            }
+            .into(),
     };
     let manifest = directory.join("render.json");
     fs::write(
@@ -231,6 +283,24 @@ fn apply_master_gain(samples: &mut [f32], gain_db: f64) {
         } else {
             *sample = (*sample * gain).clamp(-1.0, 1.0);
         }
+    }
+}
+
+fn normalize_peak(samples: &mut [f32]) {
+    let peak = samples
+        .iter()
+        .filter_map(|sample| sample.is_finite().then_some(sample.abs()))
+        .fold(0.0_f32, f32::max);
+    if peak <= 0.0 {
+        return;
+    }
+    let gain = (0.98 / peak).min(1.0);
+    for sample in samples {
+        *sample = if sample.is_finite() {
+            (*sample * gain).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
     }
 }
 
@@ -288,7 +358,8 @@ mod tests {
             pan: 0.0,
             muted: false,
         });
-        let result = render_timeline(&root, &session, 42).unwrap();
+        let result =
+            render_timeline_with_options(&root, &session, 42, RenderOptions::default()).unwrap();
         assert_eq!(result.clip_count, 1);
         let analysis = analyze(Path::new(&result.path)).unwrap();
         assert_eq!(analysis.channels, 2);
@@ -328,8 +399,48 @@ mod tests {
             pan: 0.0,
             muted: false,
         });
-        let result = render_timeline(&root, &session, 43).unwrap();
+        let result =
+            render_timeline_with_options(&root, &session, 43, RenderOptions::default()).unwrap();
         assert_eq!(result.frames, 8_820);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn renders_only_the_requested_timeline_range() {
+        let root = std::env::temp_dir().join(format!("riffra-render-range-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.wav");
+        write_mono_test_wav(&source);
+        let mut session = ScratchSession::new(now_ms());
+        session.timeline.push(crate::model::TimelineClip {
+            id: "clip:range".into(),
+            asset_path: source.to_string_lossy().into_owned(),
+            name: "range".into(),
+            start_ms: 0,
+            duration_ms: 200,
+            source_in_ms: 0,
+            source_out_ms: 0,
+            loop_enabled: false,
+            gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
+            muted: false,
+        });
+        let result = render_timeline_with_options(
+            &root,
+            &session,
+            44,
+            RenderOptions {
+                range_start_ms: 25,
+                range_end_ms: Some(75),
+                normalize: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.frames, 2_205);
+        assert_eq!(result.duration_ms, 50);
+        assert!(result.normalized);
         let _ = fs::remove_dir_all(root);
     }
 
