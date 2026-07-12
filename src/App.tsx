@@ -513,7 +513,7 @@ function App() {
   useEffect(() => {
     if (!session || !boot || boot.safeMode) return;
     void configureSamplePads(session.samplePads).then(setAudio);
-  }, [boot, session?.samplePads]);
+  }, [audio.state, boot, session?.samplePads]);
 
   useEffect(() => {
     if (!session) return;
