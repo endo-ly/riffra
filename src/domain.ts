@@ -105,6 +105,8 @@ export interface ScratchSession {
   midiClips: MidiClip[];
   samplePads: SamplePad[];
   note: string;
+  aiPermission: "Explain" | "Suggest" | "Apply";
+  aiContext: string[];
 }
 
 export interface PluginEntry {
@@ -379,4 +381,6 @@ export const defaultSession = (): ScratchSession => ({
   midiClips: [],
   samplePads: [],
   note: "",
+  aiPermission: "Suggest",
+  aiContext: ["analysis", "selectedClip"],
 });

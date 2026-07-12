@@ -297,6 +297,12 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .suggestion-card { margin-top: 12px; padding: 16px 19px; }
 .suggestion-card h2 { margin: 5px 0 0; color: #dfe5eb; font-size: 13px; }
 .suggestion-card p { margin: 6px 0 0; color: #b9c5ce; font-size: 10px; }
+.ai-context-card { margin-bottom: 12px; }
+.ai-permission { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+.ai-context-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.ai-context-list label { display: flex; align-items: center; gap: 5px; color: #cbd3dc; font-size: 9px; }
+.ai-context-list input { accent-color: var(--cyan); }
+.ai-context-warning { margin-top: 12px; padding: 10px 19px; border-color: rgba(219, 166, 77, .36); }
 .changeset-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0 10px; }
 .changeset-grid > div { padding: 9px; background: #0d1115; border: 1px solid #242b33; border-radius: 5px; }
 .changeset-grid strong { display: block; margin-top: 5px; overflow: hidden; color: #cbd3dc; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }

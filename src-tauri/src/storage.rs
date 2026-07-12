@@ -235,6 +235,28 @@ mod tests {
     }
 
     #[test]
+    fn preserves_ai_permission_and_context_preferences() {
+        let mut session = ScratchSession::new(now_ms());
+        session.ai_permission = "Apply".into();
+        session.ai_context = vec!["selectedRack".into(), "analysis".into()];
+        let normalized = session.validate_and_normalize().unwrap();
+        assert_eq!(normalized.ai_permission, "Apply");
+        assert_eq!(normalized.ai_context, vec!["selectedRack", "analysis"]);
+    }
+
+    #[test]
+    fn rejects_unknown_ai_permission_and_context() {
+        let mut session = ScratchSession::new(now_ms());
+        session.ai_permission = "Auto".into();
+        assert!(session.validate_and_normalize().is_err());
+
+        let mut session = ScratchSession::new(now_ms());
+        session.ai_context = vec!["unknown".into(), "analysis".into(), "analysis".into()];
+        let normalized = session.validate_and_normalize().unwrap();
+        assert_eq!(normalized.ai_context, vec!["analysis"]);
+    }
+
+    #[test]
     fn preserves_persisted_plugin_path() {
         let mut session = ScratchSession::new(now_ms());
         session.rack.push(RackDevice {

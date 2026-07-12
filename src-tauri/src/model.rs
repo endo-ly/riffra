@@ -179,6 +179,10 @@ pub struct ScratchSession {
     #[serde(default)]
     pub sample_pads: Vec<SamplePad>,
     pub note: String,
+    #[serde(default = "default_ai_permission")]
+    pub ai_permission: String,
+    #[serde(default = "default_ai_context")]
+    pub ai_context: Vec<String>,
 }
 
 fn default_tracks() -> Vec<TimelineTrack> {
@@ -204,6 +208,26 @@ fn default_macros() -> Vec<RackMacro> {
         })
         .collect()
 }
+
+fn default_ai_permission() -> String {
+    "Suggest".into()
+}
+
+fn default_ai_context() -> Vec<String> {
+    vec!["analysis".into(), "selectedClip".into()]
+}
+
+const AI_CONTEXT_IDS: &[&str] = &[
+    "selectedRack",
+    "parameterList",
+    "analysis",
+    "selectedClip",
+    "project",
+    "userNote",
+    "snapshot",
+    "previewAudio",
+    "errorLog",
+];
 
 impl ScratchSession {
     pub fn new(now_ms: u64) -> Self {
@@ -258,6 +282,8 @@ impl ScratchSession {
             midi_clips: Vec::new(),
             sample_pads: Vec::new(),
             note: String::new(),
+            ai_permission: default_ai_permission(),
+            ai_context: default_ai_context(),
         }
     }
 
@@ -290,6 +316,14 @@ impl ScratchSession {
             }
         }
         self.note.truncate(16_384);
+        if !matches!(self.ai_permission.as_str(), "Explain" | "Suggest" | "Apply") {
+            return Err("AI permission must be Explain, Suggest, or Apply.".into());
+        }
+        self.ai_context.truncate(16);
+        self.ai_context.retain(|item| {
+            !item.trim().is_empty() && item.len() <= 64 && AI_CONTEXT_IDS.contains(&item.as_str())
+        });
+        self.ai_context.dedup();
         if self.rack.len() > 256 {
             return Err("A rack cannot contain more than 256 devices.".into());
         }
