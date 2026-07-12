@@ -219,8 +219,8 @@ function TimelineClipInspector({ session, setSession }: { session: ScratchSessio
   return <section className="section-card timeline-editor"><header><div><span className="eyebrow">CLIP INSPECTOR</span><h2>Non-destructive edits</h2></div><small>Source WAVs remain unchanged</small></header>{session.timeline.map((clip) => <div className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? "muted" : ""}`} key={clip.id}><div className="timeline-edit-name"><strong>{clip.name}</strong><small>{clip.assetPath}</small></div><label><span>Start ms</span><input type="number" min="0" value={clip.startMs} onChange={(event) => update(clip.id, "startMs", Number(event.target.value))} /></label><label><span>Length ms</span><input type="number" min="1" value={clip.durationMs} onChange={(event) => update(clip.id, "durationMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={clip.gainDb} onChange={(event) => update(clip.id, "gainDb", Number(event.target.value))} /></label><label><span>Fade in</span><input type="number" min="0" value={clip.fadeInMs} onChange={(event) => update(clip.id, "fadeInMs", Number(event.target.value))} /></label><label><span>Fade out</span><input type="number" min="0" value={clip.fadeOutMs} onChange={(event) => update(clip.id, "fadeOutMs", Number(event.target.value))} /></label><label><span>Pan</span><input type="number" min="-1" max="1" step="0.05" value={clip.pan} onChange={(event) => update(clip.id, "pan", Number(event.target.value))} /></label><button className="text-button" onClick={() => toggleMute(clip.id)}>{clip.muted ? "Unmute" : "Mute"}</button><button className="text-button danger" onClick={() => remove(clip.id)}>Remove</button></div>)}</section>;
 }
 
-function TimelineRenderControls({ session, result, message, onRender }: { session: ScratchSession; result: RenderResult | null; message: string; onRender: () => void }) {
-  return <section className="section-card timeline-render"><header><div><span className="eyebrow">OFFLINE RENDER</span><h2>Export audible timeline</h2></div><button className="text-button" disabled={!session.timeline.some((clip) => !clip.muted)} onClick={onRender}>Render WAV</button></header><p className="inspector-copy">Writes a new stereo float WAV with clip position, gain and mute state. Source assets are never flattened.</p>{result ? <div className="render-result"><strong>{result.durationMs / 1000}s · {result.clipCount} clips</strong><code>{result.path}</code></div> : <small className="render-message">{message}</small>}</section>;
+function TimelineRenderControls({ session, result, message, onRender, onPreview, onStop, previewing }: { session: ScratchSession; result: RenderResult | null; message: string; onRender: () => void; onPreview: () => void; onStop: () => void; previewing: boolean }) {
+  return <section className="section-card timeline-render"><header><div><span className="eyebrow">OFFLINE RENDER</span><h2>Export audible timeline</h2></div><div><button className="text-button" disabled={!session.timeline.some((clip) => !clip.muted)} onClick={onRender}>Render WAV</button>{result && <button className="text-button" onClick={previewing ? onStop : onPreview}>{previewing ? "Stop preview" : "Preview"}</button>}</div></header><p className="inspector-copy">Writes a new stereo float WAV with clip position, gain, fade, pan and mute state. Source assets are never flattened.</p>{result ? <div className="render-result"><strong>{result.durationMs / 1000}s · {result.clipCount} clips</strong><code>{result.path}</code></div> : <small className="render-message">{message}</small>}</section>;
 }
 
 function ReferenceCompare({ analysis, recordings, references, referenceId, onSelect }: { analysis: AudioAnalysis | null; recordings: RecordingAsset[]; references: Record<string, AudioAnalysis>; referenceId: string | null; onSelect: (recording: RecordingAsset) => void }) {
@@ -269,6 +269,7 @@ function App() {
   const [separationBusy, setSeparationBusy] = useState<string | null>(null);
   const [separationMessage, setSeparationMessage] = useState("Ready for a local stereo channel split.");
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  const [renderPreviewing, setRenderPreviewing] = useState(false);
   const [renderMessage, setRenderMessage] = useState("Timeline render has not been requested.");
   const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState("Autosave remains the primary session copy.");
@@ -413,6 +414,7 @@ function App() {
 
   const runTimelineRender = useCallback(async () => {
     setRenderResult(null);
+    setRenderPreviewing(false);
     setRenderMessage("Rendering a new stereo WAV…");
     const result = await renderTimeline();
     if (!result) {
@@ -421,6 +423,17 @@ function App() {
     }
     setRenderResult(result);
     setRenderMessage(result.message);
+  }, []);
+
+  const previewTimelineRender = useCallback(async () => {
+    if (!renderResult) return;
+    setAudio(await previewSample(renderResult.path, 0, 0));
+    setRenderPreviewing(true);
+  }, [renderResult]);
+
+  const stopTimelinePreview = useCallback(async () => {
+    setAudio(await stopSamplePreview());
+    setRenderPreviewing(false);
   }, []);
 
   const previewSamplePad = useCallback(async (pad: ScratchSession["samplePads"][number]) => {
@@ -700,7 +713,7 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
-        {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
+        {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} /></>}
         {session.workspace === "separate" && <WorkspaceSeparate recordings={recordings} results={separations} busyId={separationBusy} message={separationMessage} onSeparate={(recording) => void runSeparation(recording)} />}
