@@ -10,7 +10,8 @@ mod separation;
 mod storage;
 
 use model::{
-    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, ScratchSession,
+    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, SamplePad,
+    ScratchSession,
 };
 use native_audio::AudioSupervisor;
 use serde::Deserialize;
@@ -336,6 +337,28 @@ fn close_midi_input(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     state.audio.close_midi_input()
 }
 
+#[tauri::command]
+fn configure_sample_pads(
+    pads: Vec<SamplePad>,
+    state: State<'_, AppState>,
+) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err("Safe Mode keeps MIDI-triggered pad playback isolated.".into());
+    }
+    if pads.len() > 128 {
+        return Err("A sample instrument cannot contain more than 128 pads.".into());
+    }
+    for pad in &pads {
+        if pad.asset_path.trim().is_empty() || pad.end_ms <= pad.start_ms {
+            return Err(format!(
+                "Sample pad '{}' has an invalid source or slice.",
+                pad.name
+            ));
+        }
+    }
+    state.audio.configure_sample_pads(&pads)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeMidiProbe {
@@ -534,6 +557,7 @@ pub fn run() {
             set_audio_driver,
             open_midi_input,
             close_midi_input,
+            configure_sample_pads,
             probe_midi_devices
         ])
         .run(tauri::generate_context!())

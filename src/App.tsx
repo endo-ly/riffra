@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, PluginEntry, RecordingAsset, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, recoverAudioDevice, renderTimeline, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -154,7 +154,7 @@ function MidiDevices({ probe, onRefresh }: { probe: MidiProbe; onRefresh: () => 
 }
 
 function MidiMonitor({ probe, audio, onOpen, onClose }: { probe: MidiProbe; audio: AudioStatus; onOpen: (name: string) => void; onClose: () => void }) {
-  return <section className="section-card midi-monitor"><header><div><span className="eyebrow">MIDI MONITOR</span><h2>{audio.midiInputActive ? "Listening" : "Input is closed"}</h2></div><button className="text-button" disabled={!audio.midiInputActive} onClick={onClose}>Close</button></header>{probe.inputs.length === 0 ? <p className="inspector-copy">No MIDI input port is visible to Windows.</p> : probe.inputs.map((name) => <div className="midi-monitor-row" key={name}><strong>{name}</strong><button className="text-button" disabled={audio.midiInputActive} onClick={() => onOpen(name)}>Open</button></div>)}<small className="midi-message">Messages {audio.midiMessages} · Last note {audio.lastMidiNote == null ? "—" : audio.lastMidiNote}</small></section>;
+  return <section className="section-card midi-monitor"><header><div><span className="eyebrow">MIDI MONITOR</span><h2>{audio.midiInputActive ? "Listening" : "Input is closed"}</h2></div><button className="text-button" disabled={!audio.midiInputActive} onClick={onClose}>Close</button></header>{probe.inputs.length === 0 ? <p className="inspector-copy">No MIDI input port is visible to Windows.</p> : probe.inputs.map((name) => <div className="midi-monitor-row" key={name}><strong>{name}</strong><button className="text-button" disabled={audio.midiInputActive} onClick={() => onOpen(name)}>Open</button></div>)}<small className="midi-message">Messages {audio.midiMessages} · Last note {audio.lastMidiNote == null ? "—" : audio.lastMidiNote} · Pads {audio.midiPadMappings} · Triggers {audio.midiPadTriggers}</small></section>;
 }
 
 function SamplePadEditor({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
@@ -237,7 +237,7 @@ function WorkspaceSeparate({ recordings, results, busyId, message, onSeparate }:
 function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
-  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], midiInputActive: false, midiMessages: 0, lastMidiNote: null, inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
+  const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], midiInputActive: false, midiMessages: 0, lastMidiNote: null, midiPadMappings: 0, midiPadTriggers: 0, inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
@@ -485,6 +485,11 @@ function App() {
     saveTimer.current = window.setTimeout(() => void saveScratch({ ...session, updatedAtMs: Date.now() }), 750);
     return () => window.clearTimeout(saveTimer.current);
   }, [session]);
+
+  useEffect(() => {
+    if (!session || !boot || boot.safeMode) return;
+    void configureSamplePads(session.samplePads).then(setAudio);
+  }, [boot, session?.samplePads]);
 
   const switchWorkspace = useCallback((workspace: Workspace) => {
     setSession((current) => current ? { ...current, workspace } : current);

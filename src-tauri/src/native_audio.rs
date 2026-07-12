@@ -1,4 +1,4 @@
-use crate::model::{AudioState, AudioStatus, PluginStatus, RecordingStatus};
+use crate::model::{AudioState, AudioStatus, PluginStatus, RecordingStatus, SamplePad};
 use serde::Deserialize;
 use std::{
     path::Path,
@@ -30,6 +30,8 @@ struct NativeStatus {
     midi_input_active: Option<bool>,
     midi_messages: Option<u64>,
     last_midi_note: Option<i32>,
+    midi_pad_mappings: Option<u32>,
+    midi_pad_triggers: Option<u64>,
     input_peak: Option<f64>,
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
@@ -75,6 +77,8 @@ impl AudioSupervisor {
                 midi_input_active: false,
                 midi_messages: 0,
                 last_midi_note: None,
+                midi_pad_mappings: 0,
+                midi_pad_triggers: 0,
                 input_peak: 0.0,
                 output_peak: 0.0,
                 invalid_samples: 0,
@@ -98,6 +102,8 @@ impl AudioSupervisor {
             midi_input_active: false,
             midi_messages: 0,
             last_midi_note: None,
+            midi_pad_mappings: 0,
+            midi_pad_triggers: 0,
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,
@@ -275,6 +281,15 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn configure_sample_pads(&self, pads: &[SamplePad]) -> Result<AudioStatus, String> {
+        let pads = serde_json::to_value(pads)
+            .map_err(|error| format!("Sample pad mapping could not be encoded: {error}"))?;
+        self.send_command(
+            serde_json::json!({"type": "configureSamplePads", "pads": pads}),
+            "Sample pad mappings were prepared for MIDI-triggered audition.",
+        )
+    }
+
     pub fn close_midi_input(&self) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({"type": "closeMidiInput"}),
@@ -385,6 +400,8 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
         current.last_midi_note = native
             .last_midi_note
             .and_then(|note| u8::try_from(note).ok());
+        current.midi_pad_mappings = native.midi_pad_mappings.unwrap_or_default();
+        current.midi_pad_triggers = native.midi_pad_triggers.unwrap_or_default();
         current.input_peak = native.input_peak.unwrap_or_default().clamp(0.0, 1.0);
         current.output_peak = native.output_peak.unwrap_or_default().clamp(0.0, 1.0);
         current.invalid_samples = native.invalid_samples.unwrap_or_default();
@@ -466,6 +483,8 @@ mod tests {
             midi_input_active: false,
             midi_messages: 0,
             last_midi_note: None,
+            midi_pad_mappings: 0,
+            midi_pad_triggers: 0,
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,

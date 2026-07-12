@@ -269,6 +269,8 @@ pub struct AudioStatus {
     pub midi_input_active: bool,
     pub midi_messages: u64,
     pub last_midi_note: Option<u8>,
+    pub midi_pad_mappings: u32,
+    pub midi_pad_triggers: u64,
     pub input_peak: f64,
     pub output_peak: f64,
     pub invalid_samples: u64,

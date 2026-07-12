@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, ProjectExport, RecordingAsset, RenderResult, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, ProjectExport, RecordingAsset, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -183,6 +183,8 @@ export async function getAudioStatus(): Promise<AudioStatus> {
       midiInputActive: false,
       midiMessages: 0,
       lastMidiNote: null,
+      midiPadMappings: 0,
+      midiPadTriggers: 0,
       inputPeak: 0,
       outputPeak: 0,
       invalidSamples: 0,
@@ -215,6 +217,8 @@ export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
       midiInputActive: false,
       midiMessages: 0,
       lastMidiNote: null,
+      midiPadMappings: 0,
+      midiPadTriggers: 0,
       inputPeak: 0,
       outputPeak: 0,
       invalidSamples: 0,
@@ -274,6 +278,14 @@ export async function openMidiInput(name: string): Promise<AudioStatus> {
 export async function closeMidiInput(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("close_midi_input");
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
+export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("configure_sample_pads", { pads });
   } catch {
     return await getAudioStatus();
   }

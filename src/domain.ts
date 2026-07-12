@@ -181,6 +181,8 @@ export interface AudioStatus {
   midiInputActive: boolean;
   midiMessages: number;
   lastMidiNote: number | null;
+  midiPadMappings: number;
+  midiPadTriggers: number;
   inputPeak: number;
   outputPeak: number;
   invalidSamples: number;

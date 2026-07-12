@@ -5,6 +5,7 @@
 #include "PluginRack.h"
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <cmath>
 #include <limits>
@@ -16,21 +17,74 @@ using riffra::PluginRack;
 
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
+    struct Pad {
+        std::shared_ptr<juce::AudioBuffer<float>> buffer;
+        int start = 0;
+        int end = 0;
+    };
+
+    void setAudioCallback(SafetyAudioCallback* const callback) noexcept { audioCallback = callback; }
+
+    void replacePads(std::map<int, Pad>&& next) {
+        const juce::ScopedLock lock(padLock);
+        pads = std::move(next);
+    }
+
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override {
         messageCount.fetch_add(1, std::memory_order_relaxed);
-        if (message.isNoteOn() || message.isNoteOff())
-            lastNote.store(message.getNoteNumber(), std::memory_order_release);
+        if (!message.isNoteOn() && !message.isNoteOff())
+            return;
+
+        lastNote.store(message.getNoteNumber(), std::memory_order_release);
+        if (message.isNoteOff()) {
+            if (audioCallback != nullptr)
+                audioCallback->stopPreview();
+            return;
+        }
+
+        std::shared_ptr<juce::AudioBuffer<float>> buffer;
+        int start = 0;
+        int end = 0;
+        {
+            const juce::ScopedLock lock(padLock);
+            const auto found = pads.find(message.getNoteNumber());
+            if (found != pads.end()) {
+                buffer = found->second.buffer;
+                start = found->second.start;
+                end = found->second.end;
+            }
+        }
+        if (audioCallback == nullptr || buffer == nullptr)
+            return;
+
+        juce::String error;
+        if (audioCallback->startPreview(
+                *buffer,
+                start,
+                end,
+                juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()),
+                error))
+            padTriggers.fetch_add(1, std::memory_order_relaxed);
     }
 
     void setActive(const bool value) noexcept { active.store(value, std::memory_order_release); }
     [[nodiscard]] bool isActive() const noexcept { return active.load(std::memory_order_acquire); }
     [[nodiscard]] std::uint64_t getMessageCount() const noexcept { return messageCount.load(std::memory_order_acquire); }
     [[nodiscard]] int getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
+    [[nodiscard]] int getPadMappingCount() const noexcept {
+        const juce::ScopedLock lock(padLock);
+        return static_cast<int>(pads.size());
+    }
+    [[nodiscard]] std::uint64_t getPadTriggerCount() const noexcept { return padTriggers.load(std::memory_order_acquire); }
 
 private:
     std::atomic<bool> active { false };
     std::atomic<std::uint64_t> messageCount { 0 };
     std::atomic<int> lastNote { -1 };
+    std::atomic<std::uint64_t> padTriggers { 0 };
+    SafetyAudioCallback* audioCallback = nullptr;
+    mutable juce::CriticalSection padLock;
+    std::map<int, Pad> pads;
 };
 
 juce::var makeError(const juce::String& scope, const juce::String& message) {
@@ -101,6 +155,8 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
         status->setProperty("midiInputActive", midi->isActive());
         status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
         status->setProperty("lastMidiNote", midi->getLastNote());
+        status->setProperty("midiPadMappings", midi->getPadMappingCount());
+        status->setProperty("midiPadTriggers", static_cast<juce::int64>(midi->getPadTriggerCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
 
@@ -146,6 +202,7 @@ int serve() {
     MidiMonitor midiMonitor;
     std::unique_ptr<juce::MidiInput> midiInput;
     callback.setPluginRack(&rack);
+    midiMonitor.setAudioCallback(&callback);
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
 
@@ -204,6 +261,74 @@ int serve() {
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
+        if (type == "configureSamplePads") {
+            const auto padsValue = command.getProperty("pads", {});
+            const auto sampleRate = callback.getSampleRate();
+            juce::String mappingError;
+            std::map<int, MidiMonitor::Pad> nextPads;
+            if (!padsValue.isArray()) {
+                mappingError = "Sample pad mappings must be an array.";
+            } else if (sampleRate <= 0.0) {
+                mappingError = "Sample pad mappings require an active audio device.";
+            } else {
+                for (const auto& item : *padsValue.getArray()) {
+                    const auto path = item.getProperty("assetPath", {}).toString();
+                    const auto midiKey = static_cast<int>(item.getProperty("midiKey", -1));
+                    if (path.isEmpty() || midiKey < 0 || midiKey > 127) {
+                        mappingError = "Each sample pad requires a source path and MIDI key 0-127.";
+                        break;
+                    }
+                    std::unique_ptr<juce::AudioFormatReader> reader(
+                        formatManager.createReaderFor(juce::File(path)));
+                    if (reader == nullptr) {
+                        mappingError = "A sample pad source could not be opened: " + path;
+                        break;
+                    }
+                    if (std::abs(reader->sampleRate - sampleRate) > 0.5) {
+                        mappingError = "A sample pad source sample rate does not match the active audio device: " + path;
+                        break;
+                    }
+                    const auto length = juce::jmin<juce::int64>(
+                        reader->lengthInSamples,
+                        static_cast<juce::int64>(std::numeric_limits<int>::max()));
+                    auto buffer = std::make_shared<juce::AudioBuffer<float>>(reader->numChannels, static_cast<int>(length));
+                    if (length <= 0 || buffer->getNumChannels() <= 0 || !reader->read(
+                            buffer.get(),
+                            0,
+                            static_cast<int>(length),
+                            0,
+                            true,
+                            true)) {
+                        mappingError = "A sample pad source contains no readable audio: " + path;
+                        break;
+                    }
+                    const auto startMs = static_cast<double>(item.getProperty("startMs", 0.0));
+                    const auto endMs = static_cast<double>(item.getProperty("endMs", -1.0));
+                    const auto start = juce::jlimit(
+                        0,
+                        static_cast<int>(length),
+                        static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
+                    const auto end = endMs <= 0.0
+                        ? static_cast<int>(length)
+                        : juce::jlimit(
+                            start + 1,
+                            static_cast<int>(length),
+                            static_cast<int>(std::llround(endMs * reader->sampleRate / 1000.0)));
+                    if (end <= start || nextPads.find(midiKey) != nextPads.end()) {
+                        mappingError = "Sample pad slice is empty or its MIDI key is duplicated.";
+                        break;
+                    }
+                    nextPads.emplace(midiKey, MidiMonitor::Pad { std::move(buffer), start, end });
+                }
+            }
+            if (mappingError.isNotEmpty()) {
+                writeJson(makeError("midi", mappingError));
+                continue;
+            }
+            midiMonitor.replacePads(std::move(nextPads));
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
         if (type == "openMidiInput") {
             const auto name = command.getProperty("name", {}).toString();
             const auto devices = juce::MidiInput::getAvailableDevices();
@@ -231,6 +356,7 @@ int serve() {
         }
         if (type == "closeMidiInput") {
             midiMonitor.setActive(false);
+            callback.stopPreview();
             if (midiInput != nullptr) {
                 midiInput->stop();
                 midiInput.reset();
