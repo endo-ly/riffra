@@ -202,12 +202,14 @@ function TimelineEditor({ session, setSession }: { session: ScratchSession; setS
 
 function TimelineClipInspector({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
   if (!session.timeline.length) return null;
-  const update = (id: string, field: "startMs" | "durationMs" | "gainDb" | "fadeInMs" | "fadeOutMs" | "pan", value: number) => {
+  const update = (id: string, field: "startMs" | "durationMs" | "sourceInMs" | "sourceOutMs" | "gainDb" | "fadeInMs" | "fadeOutMs" | "pan", value: number) => {
     const safeValue = Number.isFinite(value) ? value : 0;
     setSession({ ...session, timeline: session.timeline.map((clip) => {
       if (clip.id !== id) return clip;
       if (field === "startMs") return { ...clip, startMs: Math.max(0, Math.round(safeValue)) };
       if (field === "durationMs") return { ...clip, durationMs: Math.max(1, Math.round(safeValue)) };
+      if (field === "sourceInMs") return { ...clip, sourceInMs: Math.max(0, Math.round(safeValue)) };
+      if (field === "sourceOutMs") return { ...clip, sourceOutMs: Math.max(0, Math.round(safeValue)) };
       if (field === "gainDb") return { ...clip, gainDb: Math.max(-90, Math.min(24, safeValue)) };
       if (field === "fadeInMs") return { ...clip, fadeInMs: Math.max(0, Math.min(clip.durationMs, Math.round(safeValue))) };
       if (field === "fadeOutMs") return { ...clip, fadeOutMs: Math.max(0, Math.min(clip.durationMs, Math.round(safeValue))) };
@@ -215,8 +217,9 @@ function TimelineClipInspector({ session, setSession }: { session: ScratchSessio
     }) });
   };
   const toggleMute = (id: string) => setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === id ? { ...clip, muted: !clip.muted } : clip) });
+  const toggleLoop = (id: string) => setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === id ? { ...clip, loopEnabled: !clip.loopEnabled } : clip) });
   const remove = (id: string) => setSession({ ...session, timeline: session.timeline.filter((clip) => clip.id !== id) });
-  return <section className="section-card timeline-editor"><header><div><span className="eyebrow">CLIP INSPECTOR</span><h2>Non-destructive edits</h2></div><small>Source WAVs remain unchanged</small></header>{session.timeline.map((clip) => <div className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? "muted" : ""}`} key={clip.id}><div className="timeline-edit-name"><strong>{clip.name}</strong><small>{clip.assetPath}</small></div><label><span>Start ms</span><input type="number" min="0" value={clip.startMs} onChange={(event) => update(clip.id, "startMs", Number(event.target.value))} /></label><label><span>Length ms</span><input type="number" min="1" value={clip.durationMs} onChange={(event) => update(clip.id, "durationMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={clip.gainDb} onChange={(event) => update(clip.id, "gainDb", Number(event.target.value))} /></label><label><span>Fade in</span><input type="number" min="0" value={clip.fadeInMs} onChange={(event) => update(clip.id, "fadeInMs", Number(event.target.value))} /></label><label><span>Fade out</span><input type="number" min="0" value={clip.fadeOutMs} onChange={(event) => update(clip.id, "fadeOutMs", Number(event.target.value))} /></label><label><span>Pan</span><input type="number" min="-1" max="1" step="0.05" value={clip.pan} onChange={(event) => update(clip.id, "pan", Number(event.target.value))} /></label><button className="text-button" onClick={() => toggleMute(clip.id)}>{clip.muted ? "Unmute" : "Mute"}</button><button className="text-button danger" onClick={() => remove(clip.id)}>Remove</button></div>)}</section>;
+  return <section className="section-card timeline-editor"><header><div><span className="eyebrow">CLIP INSPECTOR</span><h2>Non-destructive edits</h2></div><small>Source WAVs remain unchanged</small></header>{session.timeline.map((clip) => <div className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? "muted" : ""}`} key={clip.id}><div className="timeline-edit-name"><strong>{clip.name}</strong><small>{clip.assetPath}</small></div><label><span>Start ms</span><input type="number" min="0" value={clip.startMs} onChange={(event) => update(clip.id, "startMs", Number(event.target.value))} /></label><label><span>Length ms</span><input type="number" min="1" value={clip.durationMs} onChange={(event) => update(clip.id, "durationMs", Number(event.target.value))} /></label><label><span>Source in</span><input type="number" min="0" value={clip.sourceInMs} onChange={(event) => update(clip.id, "sourceInMs", Number(event.target.value))} /></label><label><span>Source out</span><input type="number" min="0" value={clip.sourceOutMs} onChange={(event) => update(clip.id, "sourceOutMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={clip.gainDb} onChange={(event) => update(clip.id, "gainDb", Number(event.target.value))} /></label><label><span>Fade in</span><input type="number" min="0" value={clip.fadeInMs} onChange={(event) => update(clip.id, "fadeInMs", Number(event.target.value))} /></label><label><span>Fade out</span><input type="number" min="0" value={clip.fadeOutMs} onChange={(event) => update(clip.id, "fadeOutMs", Number(event.target.value))} /></label><label><span>Pan</span><input type="number" min="-1" max="1" step="0.05" value={clip.pan} onChange={(event) => update(clip.id, "pan", Number(event.target.value))} /></label><button className="text-button" onClick={() => toggleLoop(clip.id)}>{clip.loopEnabled ? "Loop on" : "Loop"}</button><button className="text-button" onClick={() => toggleMute(clip.id)}>{clip.muted ? "Unmute" : "Mute"}</button><button className="text-button danger" onClick={() => remove(clip.id)}>Remove</button></div>)}</section>;
 }
 
 function TimelineRenderControls({ session, result, message, onRender, onPreview, onStop, previewing }: { session: ScratchSession; result: RenderResult | null; message: string; onRender: () => void; onPreview: () => void; onStop: () => void; previewing: boolean }) {
@@ -457,7 +460,7 @@ function App() {
       : 1_000;
     setSession({
       ...session,
-      timeline: [...session.timeline, { id: `clip:${recording.id}`, assetPath, name: recording.name, startMs, durationMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0, pan: 0, muted: false }],
+      timeline: [...session.timeline, { id: `clip:${recording.id}`, assetPath, name: recording.name, startMs, durationMs, sourceInMs: 0, sourceOutMs: 0, loopEnabled: false, gainDb: 0, fadeInMs: 0, fadeOutMs: 0, pan: 0, muted: false }],
       workspace: "arrange",
     });
   }, [session]);

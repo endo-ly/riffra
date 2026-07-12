@@ -75,8 +75,23 @@ pub fn render_timeline(
         let source_frames = (wav.data_len / frame_bytes) as u64;
         let start_frame = clip.start_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
         let duration_frames = clip.duration_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
-        total_frames =
-            total_frames.max(start_frame.saturating_add(duration_frames.min(source_frames)));
+        let source_in_frame = clip.source_in_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
+        let source_out_frame = if clip.source_out_ms == 0 {
+            source_frames
+        } else {
+            clip.source_out_ms
+                .saturating_mul(u64::from(wav.sample_rate))
+                / 1_000
+        }
+        .min(source_frames);
+        let available_frames =
+            source_out_frame.saturating_sub(source_in_frame.min(source_out_frame));
+        let audible_frames = if clip.loop_enabled {
+            duration_frames
+        } else {
+            duration_frames.min(available_frames)
+        };
+        total_frames = total_frames.max(start_frame.saturating_add(audible_frames));
         sources.push((clip, bytes, wav));
     }
     let sample_rate =
@@ -109,26 +124,44 @@ pub fn render_timeline(
             })?;
         let start_frame = (clip.start_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
         let requested = (clip.duration_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
+        let source_start_frame =
+            (clip.source_in_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
+        let source_end_frame = if clip.source_out_ms == 0 {
+            source_frames
+        } else {
+            (clip.source_out_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize
+        }
+        .min(source_frames);
+        let source_range =
+            source_end_frame.saturating_sub(source_start_frame.min(source_end_frame));
+        if source_range == 0 {
+            continue;
+        }
         let gain = 10.0_f32.powf((clip.gain_db as f32) / 20.0);
         let pan = clip.pan as f32;
-        for frame in 0..requested
-            .min(source_frames)
-            .min(frames.saturating_sub(start_frame))
-        {
-            let source_start = frame * frame_bytes;
+        let render_frames = if clip.loop_enabled {
+            requested
+        } else {
+            requested.min(source_range)
+        };
+        for frame in 0..render_frames.min(frames.saturating_sub(start_frame)) {
+            let source_frame = if clip.loop_enabled {
+                source_start_frame + frame % source_range
+            } else {
+                source_start_frame + frame
+            };
+            let source_start = source_frame * frame_bytes;
             let left = decode_sample(
                 &data[source_start..source_start + bytes_per_sample],
                 wav.format,
                 wav.bits_per_sample,
-            )? as f32
-                * gain;
+            )? as f32;
             let right = if wav.channels > 1 {
                 decode_sample(
                     &data[source_start + bytes_per_sample..source_start + 2 * bytes_per_sample],
                     wav.format,
                     wav.bits_per_sample,
                 )? as f32
-                    * gain
             } else {
                 left
             };
@@ -141,8 +174,8 @@ pub fn render_timeline(
             let fade_out = if clip.fade_out_ms == 0 {
                 1.0
             } else {
-                let remaining_ms =
-                    (requested.saturating_sub(frame + 1) as f64 * 1_000.0) / f64::from(sample_rate);
+                let remaining_ms = (render_frames.saturating_sub(frame + 1) as f64 * 1_000.0)
+                    / f64::from(sample_rate);
                 (remaining_ms / clip.fade_out_ms as f64).clamp(0.0, 1.0) as f32
             };
             let envelope = fade_in.min(fade_out);
@@ -246,6 +279,9 @@ mod tests {
             name: "source".into(),
             start_ms: 100,
             duration_ms: 200,
+            source_in_ms: 0,
+            source_out_ms: 0,
+            loop_enabled: false,
             gain_db: -6.0,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -268,6 +304,33 @@ mod tests {
         assert!((samples[1] + 0.25059).abs() < 0.001);
         assert_eq!(samples[2], 0.0);
         assert!(samples[3] <= 1.0);
+    }
+
+    #[test]
+    fn loops_a_non_destructive_source_range_to_clip_length() {
+        let root = std::env::temp_dir().join(format!("riffra-render-loop-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.wav");
+        write_mono_test_wav(&source);
+        let mut session = ScratchSession::new(now_ms());
+        session.timeline.push(crate::model::TimelineClip {
+            id: "clip:loop".into(),
+            asset_path: source.to_string_lossy().into_owned(),
+            name: "loop".into(),
+            start_ms: 0,
+            duration_ms: 200,
+            source_in_ms: 0,
+            source_out_ms: 50,
+            loop_enabled: true,
+            gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
+            muted: false,
+        });
+        let result = render_timeline(&root, &session, 43).unwrap();
+        assert_eq!(result.frames, 8_820);
+        let _ = fs::remove_dir_all(root);
     }
 
     fn write_mono_test_wav(path: &Path) {

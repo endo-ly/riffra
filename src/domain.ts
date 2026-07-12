@@ -26,6 +26,9 @@ export interface TimelineClip {
   name: string;
   startMs: number;
   durationMs: number;
+  sourceInMs: number;
+  sourceOutMs: number;
+  loopEnabled: boolean;
   gainDb: number;
   fadeInMs: number;
   fadeOutMs: number;

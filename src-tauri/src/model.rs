@@ -34,6 +34,12 @@ pub struct TimelineClip {
     pub name: String,
     pub start_ms: u64,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub source_in_ms: u64,
+    #[serde(default)]
+    pub source_out_ms: u64,
+    #[serde(default)]
+    pub loop_enabled: bool,
     pub gain_db: f64,
     #[serde(default)]
     pub fade_in_ms: u64,
@@ -216,6 +222,12 @@ impl ScratchSession {
             clip.gain_db = clip.gain_db.clamp(-90.0, 24.0);
             clip.fade_in_ms = clip.fade_in_ms.min(clip.duration_ms);
             clip.fade_out_ms = clip.fade_out_ms.min(clip.duration_ms);
+            if clip.source_out_ms > 0 && clip.source_out_ms <= clip.source_in_ms {
+                return Err(format!(
+                    "Timeline clip '{}' has an invalid source range.",
+                    clip.name
+                ));
+            }
             if !clip.pan.is_finite() {
                 return Err(format!("Timeline clip '{}' has an invalid pan.", clip.name));
             }
