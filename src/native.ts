@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiEvent, MidiProbe, ProjectExport, RecordingAsset, RecoveryCandidate, RenderOptions, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiEvent, MidiExportResult, MidiProbe, ProjectExport, RecordingAsset, RecoveryCandidate, RenderOptions, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -155,6 +155,14 @@ export async function separateChannels(path: string): Promise<SeparationResult |
 export async function renderTimeline(options: RenderOptions): Promise<RenderResult | null> {
   try {
     return await invoke<RenderResult>("render_timeline", { options });
+  } catch {
+    return null;
+  }
+}
+
+export async function exportMidi(): Promise<MidiExportResult | null> {
+  try {
+    return await invoke<MidiExportResult>("export_midi");
   } catch {
     return null;
   }

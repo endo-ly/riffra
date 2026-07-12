@@ -336,6 +336,15 @@ export interface RenderOptions {
   trackId: string | null;
 }
 
+export interface MidiExportResult {
+  id: string;
+  path: string;
+  noteCount: number;
+  clipCount: number;
+  state: string;
+  message: string;
+}
+
 export const defaultSession = (): ScratchSession => ({
   formatVersion: 1,
   sessionId: "scratch-browser-preview",

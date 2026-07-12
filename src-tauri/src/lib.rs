@@ -1,5 +1,6 @@
 mod analysis;
 mod library;
+mod midi;
 mod model;
 mod native_audio;
 mod plugins;
@@ -247,6 +248,12 @@ async fn render_timeline(
     })
     .await
     .map_err(|error| format!("Timeline render task failed: {error}"))?
+}
+
+#[tauri::command]
+fn export_midi(state: State<'_, AppState>) -> Result<midi::MidiExportResult, String> {
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    midi::export(&state.data_root, &session, now_ms())
 }
 
 #[tauri::command]
@@ -650,6 +657,7 @@ pub fn run() {
             separate_channels,
             list_separations,
             render_timeline,
+            export_midi,
             load_plugin,
             clear_plugin,
             preview_sample,
