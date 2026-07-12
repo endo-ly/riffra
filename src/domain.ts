@@ -27,6 +27,9 @@ export interface TimelineClip {
   startMs: number;
   durationMs: number;
   gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  pan: number;
   muted: boolean;
 }
 

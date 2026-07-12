@@ -284,6 +284,9 @@ mod tests {
             start_ms: 250,
             duration_ms: 1_000,
             gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
             muted: false,
         });
         let encoded = serde_json::to_vec(&session).unwrap();

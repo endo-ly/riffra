@@ -110,6 +110,7 @@ pub fn render_timeline(
         let start_frame = (clip.start_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
         let requested = (clip.duration_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
         let gain = 10.0_f32.powf((clip.gain_db as f32) / 20.0);
+        let pan = clip.pan as f32;
         for frame in 0..requested
             .min(source_frames)
             .min(frames.saturating_sub(start_frame))
@@ -131,6 +132,24 @@ pub fn render_timeline(
             } else {
                 left
             };
+            let fade_in = if clip.fade_in_ms == 0 {
+                1.0
+            } else {
+                ((frame as f64 * 1_000.0 / f64::from(sample_rate)) / clip.fade_in_ms as f64)
+                    .clamp(0.0, 1.0) as f32
+            };
+            let fade_out = if clip.fade_out_ms == 0 {
+                1.0
+            } else {
+                let remaining_ms =
+                    (requested.saturating_sub(frame + 1) as f64 * 1_000.0) / f64::from(sample_rate);
+                (remaining_ms / clip.fade_out_ms as f64).clamp(0.0, 1.0) as f32
+            };
+            let envelope = fade_in.min(fade_out);
+            let left_pan = (1.0 - pan).clamp(0.0, 1.0);
+            let right_pan = (1.0 + pan).clamp(0.0, 1.0);
+            let left = left * gain * envelope * left_pan;
+            let right = right * gain * envelope * right_pan;
             let output_start = (start_frame + frame) * 2;
             output[output_start] = (output[output_start] + left).clamp(-1.0, 1.0);
             output[output_start + 1] = (output[output_start + 1] + right).clamp(-1.0, 1.0);
@@ -228,6 +247,9 @@ mod tests {
             start_ms: 100,
             duration_ms: 200,
             gain_db: -6.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
             muted: false,
         });
         let result = render_timeline(&root, &session, 42).unwrap();

@@ -232,6 +232,9 @@ mod tests {
             start_ms: 0,
             duration_ms: 100,
             gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
             muted: false,
         });
         let exported = export(&root, &session, 99).unwrap();

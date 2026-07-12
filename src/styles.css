@@ -323,6 +323,7 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .timeline-editor { margin-top: 12px; }
 .timeline-editor header > small { color: var(--muted); font-size: 9px; }
 .timeline-edit-row { display: grid; grid-template-columns: minmax(150px, 1fr) 84px 84px 76px auto auto; align-items: end; gap: 8px; padding: 9px 0; border-top: 1px solid #27313a; }
+.timeline-edit-row-expanded { grid-template-columns: minmax(145px, 1fr) repeat(6, minmax(58px, 72px)) auto auto; }
 .timeline-edit-row.muted { opacity: .6; }
 .timeline-edit-name strong, .timeline-edit-name small, .timeline-edit-row label span { display: block; }
 .timeline-edit-name strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

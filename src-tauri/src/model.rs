@@ -35,6 +35,12 @@ pub struct TimelineClip {
     pub start_ms: u64,
     pub duration_ms: u64,
     pub gain_db: f64,
+    #[serde(default)]
+    pub fade_in_ms: u64,
+    #[serde(default)]
+    pub fade_out_ms: u64,
+    #[serde(default)]
+    pub pan: f64,
     pub muted: bool,
 }
 
@@ -208,6 +214,12 @@ impl ScratchSession {
                 ));
             }
             clip.gain_db = clip.gain_db.clamp(-90.0, 24.0);
+            clip.fade_in_ms = clip.fade_in_ms.min(clip.duration_ms);
+            clip.fade_out_ms = clip.fade_out_ms.min(clip.duration_ms);
+            if !clip.pan.is_finite() {
+                return Err(format!("Timeline clip '{}' has an invalid pan.", clip.name));
+            }
+            clip.pan = clip.pan.clamp(-1.0, 1.0);
         }
         for pad in &self.sample_pads {
             if pad.id.trim().is_empty()
