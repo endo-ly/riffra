@@ -144,8 +144,9 @@ function WorkspaceArrange({ session, recordings, onPlaceRecording }: { session: 
   return <div className="workspace-scroll arrange-view"><section className="play-header"><div><span className="eyebrow">NON-DESTRUCTIVE TIMELINE</span><h1>Arrange ideas without moving sources</h1></div><span className="status-tag">{session.timeline.length} CLIPS</span></section><section className="section-card timeline-card"><div className="timeline-ruler"><span>00:00</span><span>{(timelineEnd / 1000).toFixed(1)} s</span></div><div className="timeline-lane">{session.timeline.length === 0 && <small>InboxのRecordingを右側からTimelineへ配置できます。</small>}{session.timeline.map((clip) => <article className={`timeline-clip ${clip.muted ? "muted" : ""}`} key={clip.id} style={{ left: `${(clip.startMs / timelineEnd) * 100}%`, width: `${Math.max(8, (clip.durationMs / timelineEnd) * 100)}%` }}><strong>{clip.name}</strong><small>{clip.gainDb.toFixed(1)} dB · {clip.muted ? "Muted" : "Source linked"}</small></article>)}</div></section><section className="section-card arrange-sources"><header><div><span className="eyebrow">INBOX SOURCES</span><h2>素材を配置</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">まだ録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onPlaceRecording(recording)}>Place</button></div>)}</section></div>;
 }
 
-function WorkspaceSample({ session, recordings, onCreateSamplePad }: { session: ScratchSession; recordings: RecordingAsset[]; onCreateSamplePad: (recording: RecordingAsset) => void }) {
+function WorkspaceSample({ session, recordings, onCreateSamplePad, onPreviewPad }: { session: ScratchSession; recordings: RecordingAsset[]; onCreateSamplePad: (recording: RecordingAsset) => void; onPreviewPad: (pad: ScratchSession["samplePads"][number]) => void }) {
   const pads = Array.from({ length: 16 }, (_, index) => session.samplePads[index] ?? null);
+  const keyboardKeys = ["Z", "S", "X", "D", "C", "V", "G", "B", "H", "N", "J", "M"];
   return <div className="workspace-scroll sample-view"><section className="play-header"><div><span className="eyebrow">SAMPLE INSTRUMENT</span><h1>Audio → Pad / Keyboard</h1></div><span className="status-tag">SOURCE MAPPING</span></section><section className="section-card pad-card"><header><div><span className="eyebrow">PADS</span><h2>{session.samplePads.length} mapped</h2></div><small>Playback engine follows this mapping gate</small></header><div className="pad-grid">{pads.map((pad, index) => <button className={`sample-pad ${pad ? "filled" : "empty"}`} key={pad?.id ?? `empty-${index}`}><strong>{pad?.name ?? `Pad ${index + 1}`}</strong><small>{pad ? `MIDI ${pad.midiKey}` : "Empty"}</small></button>)}</div></section><section className="section-card sample-sources"><header><div><span className="eyebrow">SOURCES</span><h2>録音をPadへ割り当てる</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onCreateSamplePad(recording)}>Map to Pad</button></div>)}</section></div>;
 }
 
@@ -491,6 +492,36 @@ function App() {
     void configureSamplePads(session.samplePads).then(setAudio);
   }, [boot, session?.samplePads]);
 
+  useEffect(() => {
+    if (!session) return;
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".sample-pad.filled"));
+    const handlers = buttons.map((button, index) => {
+      const handler = () => {
+        const pad = session.samplePads[index];
+        if (pad) void previewSamplePad(pad);
+      };
+      button.addEventListener("click", handler);
+      return { button, handler };
+    });
+    return () => handlers.forEach(({ button, handler }) => button.removeEventListener("click", handler));
+  }, [previewSamplePad, session?.samplePads]);
+
+  useEffect(() => {
+    const keyboardKeys = ["z", "s", "x", "d", "c", "v", "g", "b", "h", "n", "j", "m"];
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
+      const index = keyboardKeys.indexOf(event.key.toLowerCase());
+      const pad = index >= 0 ? session?.samplePads[index] : undefined;
+      if (pad) {
+        event.preventDefault();
+        void previewSamplePad(pad);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewSamplePad, session?.samplePads]);
+
   const switchWorkspace = useCallback((workspace: Workspace) => {
     setSession((current) => current ? { ...current, workspace } : current);
   }, []);
@@ -600,7 +631,7 @@ function App() {
         {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
-        {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
+        {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} /></>}
         {session.workspace === "separate" && <WorkspaceSeparate recordings={recordings} results={separations} busyId={separationBusy} message={separationMessage} onSeparate={(recording) => void runSeparation(recording)} />}
         {!(["home", "play", "arrange", "sample", "analyze", "separate"] as Workspace[]).includes(session.workspace) && <EmptyWorkspace workspace={session.workspace} />}
