@@ -285,6 +285,8 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .analysis-grid p { margin: 0; color: var(--muted); font-size: 10px; }
 .reference-card { margin-top: 12px; }
 .reference-card .status-tag { color: var(--muted); }
+.reference-loop { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 9px; }
+.reference-loop input { accent-color: var(--cyan); }
 .reference-source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .reference-source { display: grid; gap: 4px; padding: 8px; text-align: left; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
 .reference-source.active { background: #122d32; border-color: var(--teal); }
