@@ -137,6 +137,8 @@ pub fn render_timeline(
         }
     }
 
+    apply_master_gain(&mut output, session.master_db);
+
     let directory = data_root
         .join("exports")
         .join(format!("render-{created_at_ms}"));
@@ -156,7 +158,9 @@ pub fn render_timeline(
         duration_ms: total_frames * 1_000 / u64::from(sample_rate),
         clip_count: clips.len(),
         state: "completed".into(),
-        message: "Timeline rendered to a new stereo WAV; source clips remain unchanged.".into(),
+        message:
+            "Timeline rendered to a new stereo WAV with master gain; source clips remain unchanged."
+                .into(),
     };
     let manifest = directory.join("render.json");
     fs::write(
@@ -165,6 +169,17 @@ pub fn render_timeline(
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(result)
+}
+
+fn apply_master_gain(samples: &mut [f32], gain_db: f64) {
+    let gain = 10.0_f32.powf((gain_db as f32) / 20.0);
+    for sample in samples {
+        if !sample.is_finite() {
+            *sample = 0.0;
+        } else {
+            *sample = (*sample * gain).clamp(-1.0, 1.0);
+        }
+    }
 }
 
 fn write_float_wav(path: &Path, sample_rate: u32, samples: &[f32]) -> io::Result<()> {
@@ -221,6 +236,16 @@ mod tests {
         assert_eq!(analysis.channels, 2);
         assert!(analysis.samples >= 8_800);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn applies_bounded_master_gain_after_clip_mix() {
+        let mut samples = vec![0.5_f32, -0.5, f32::NAN, 2.0];
+        apply_master_gain(&mut samples, -6.0);
+        assert!((samples[0] - 0.25059).abs() < 0.001);
+        assert!((samples[1] + 0.25059).abs() < 0.001);
+        assert_eq!(samples[2], 0.0);
+        assert!(samples[3] <= 1.0);
     }
 
     fn write_mono_test_wav(path: &Path) {
