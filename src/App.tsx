@@ -87,10 +87,11 @@ function AudioDriverPicker({ probe, current, onSelect }: { probe: AudioDevicePro
   return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} disabled={driver.name === current} onClick={() => onSelect(driver.name)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
 }
 
-function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
+function WorkspacePlay({ session, plugins, missingPluginPaths, setSession, onTogglePluginBypass, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; missingPluginPaths: string[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
+  const missingPaths = new Set(missingPluginPaths);
   const persistedPlugins = session.rack
     .filter((device) => device.kind === "plugin")
-    .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: "validated" } as PluginEntry));
+    .map((device) => ({ id: device.id, name: device.name, vendor: null, version: null, format: "VST3", path: device.path ?? "", bundle: true, modifiedAtMs: null, scanState: device.path && missingPaths.has(device.path) ? "quarantined" : "validated" } as PluginEntry));
   const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
   const loadedBypassed = session.rack.find((device) => device.kind === "plugin")?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === "snapshot:A");
@@ -102,7 +103,7 @@ function WorkspacePlay({ session, plugins, setSession, onTogglePluginBypass, onC
       <section className="rack-flow">
         <article className="rack-device input-device"><span className="device-order">IN</span><div className="device-face"><Meter value={45} /><Meter value={40} /></div><h3>Input 1</h3><small>Mono · −12.4 dB</small></article>
         {(visiblePlugins.length ? visiblePlugins : [{ id: "placeholder", name: "Add a VST3", vendor: null } as PluginEntry]).map((plugin, index) => (
-          <article className="rack-device" key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button onClick={() => onTogglePluginBypass(!loadedBypassed)}>{loadedBypassed ? "Enable" : "Bypass"}</button><button onClick={onClearPlugin}>Remove</button><strong>0.0 dB</strong></div></article>
+          <article className={`rack-device ${plugin.scanState === "quarantined" ? "missing-dependency" : ""}`} key={plugin.id}><span className="device-order">{String(index + 1).padStart(2, "0")}</span><div className={`device-face face-${index}`}><span>{plugin.name.slice(0, 2).toUpperCase()}</span><i /></div><h3>{plugin.name}</h3><small>{plugin.scanState === "quarantined" ? "Missing dependency" : plugin.vendor ?? "VST3 discovered"}</small><div className="device-controls"><button onClick={() => onTogglePluginBypass(!loadedBypassed)}>{loadedBypassed ? "Enable" : "Bypass"}</button><button onClick={onClearPlugin}>Remove</button><strong>0.0 dB</strong></div></article>
         ))}
         <button className="add-device"><Icon name="plus" /><span>Add Device</span></button>
         <article className="rack-device output-device"><span className="device-order">OUT</span><div className="device-face"><Meter value={58} /><Meter value={51} /></div><h3>Main Out</h3><small>Safety limited</small></article>
@@ -225,6 +226,7 @@ function App() {
   const [session, setSession] = useState<ScratchSession | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], midiInputActive: false, midiMessages: 0, lastMidiNote: null, inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
+  const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
   const [separationBusy, setSeparationBusy] = useState<string | null>(null);
@@ -428,6 +430,10 @@ function App() {
       setSession(state.session);
       void scanVst3Folder(state.vst3Root).then((report) => {
         setPlugins(report.plugins);
+        setMissingPluginPaths(state.session.rack
+          .filter((device) => device.kind === "plugin" && device.path)
+          .filter((device) => !report.plugins.some((plugin) => plugin.path === device.path && plugin.scanState === "validated"))
+          .map((device) => device.path as string));
         setScanMessage(report.issues.length ? `${report.plugins.length}件 · ${report.issues.length}件の注意` : `${report.plugins.length}件を検出`);
         const persisted = state.session.rack.find((device) => device.kind === "plugin" && device.path);
         const restored = persisted && report.plugins.find((plugin) => plugin.path === persisted.path && plugin.scanState === "validated");
@@ -492,6 +498,7 @@ function App() {
       return;
     }
     setSession(imported);
+    setMissingPluginPaths([]);
     setBoot((current) => current ? { ...current, session: imported, recoveredFromGeneration: false } : current);
     setUndoStack([]);
     setRedoStack([]);
@@ -560,7 +567,7 @@ function App() {
 
       <section className="workspace">
         {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
-        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
+        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineEditor session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} /></>}

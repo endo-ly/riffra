@@ -181,6 +181,7 @@ h1, h2, h3, p { margin-top: 0; }
 .rack-flow::before { content: ""; position: absolute; left: 35px; right: 35px; top: 50%; height: 1px; background: linear-gradient(90deg, rgba(85,217,232,.15), rgba(85,217,232,.72), rgba(85,217,232,.16)); box-shadow: 0 0 12px rgba(85,217,232,.2); }
 .rack-device, .add-device { position: relative; z-index: 1; flex: 0 0 132px; min-height: 193px; padding: 12px; text-align: left; background: linear-gradient(145deg, #202832, #14191f); border: 1px solid #35404b; border-radius: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.24); }
 .rack-device:hover { border-color: #50606e; transform: translateY(-1px); }
+.rack-device.missing-dependency { border-color: rgba(239, 111, 111, .72); background: linear-gradient(145deg, rgba(71, 29, 35, .75), #14191f); }
 .device-order { display: block; margin-bottom: 8px; color: #596572; font-family: "DM Mono", monospace; font-size: 8px; }
 .device-face { height: 74px; display: grid; place-content: center; position: relative; margin-bottom: 12px; overflow: hidden; color: #8ee2e5; font-weight: 700; background: radial-gradient(circle, #2f4b51, #12191f 65%); border: 1px solid #34434d; border-radius: 6px; }
 .device-face::after { content: ""; position: absolute; inset: 8px; border: 1px solid rgba(117,217,224,.12); border-radius: 50%; }
