@@ -33,7 +33,7 @@ function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
   return <span className={`meter ${danger ? "meter-danger" : ""}`}><i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} /></span>;
 }
 
-function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice, onExportProject, onImportProject, onRestoreRecovery, exportMessage }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void; onExportProject: () => void; onImportProject: () => void; onRestoreRecovery: (fileName: string) => void; exportMessage: string }) {
+function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice, onExportProject, onImportProject, onRestoreRecovery, onDismissRecovery, exportMessage }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void; onExportProject: () => void; onImportProject: () => void; onRestoreRecovery: (fileName: string) => void; onDismissRecovery: () => void; exportMessage: string }) {
   return (
     <div className="workspace-scroll home-grid">
       <section className="hero-card">
@@ -50,7 +50,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
         </div>
         <small className="export-message">{exportMessage}</small>
         {state.safeMode && <div className="safe-mode-banner"><strong>SAFE MODE</strong><span>External VST3, MIDI input, driver changes, live preview and new recordings are isolated. Project open, library access, offline analysis, render and export remain available. Restart without <code>--safe-mode</code> to reconnect devices.</span></div>}
-        {state.recoveredFromGeneration && state.recoveryCandidates.length > 0 && <div className="recovery-choice"><strong>RECOVERY CHOICE</strong><span>The current session was recovered from an autosave generation. Choose a previous stable generation if needed.</span><div>{state.recoveryCandidates.slice(0, 5).map((candidate) => <button className="text-button" key={candidate.fileName} onClick={() => onRestoreRecovery(candidate.fileName)}>{candidate.projectName ?? "Untitled"} · {new Date(candidate.updatedAtMs).toLocaleString("ja-JP")}</button>)}</div></div>}
+        {state.recoveredFromGeneration && state.recoveryCandidates.length > 0 && <div className="recovery-choice"><strong>RECOVERY CHOICE</strong><span>The current session was recovered from an autosave generation. Choose a previous stable generation if needed.</span><div>{state.recoveryCandidates.slice(0, 5).map((candidate) => <button className="text-button" key={candidate.fileName} onClick={() => onRestoreRecovery(candidate.fileName)}>{candidate.projectName ?? "Untitled"} · {new Date(candidate.updatedAtMs).toLocaleString("ja-JP")}</button>)}<button className="text-button" onClick={onDismissRecovery}>Keep recovered session</button></div></div>}
       </section>
 
       <section className="section-card audio-setup">
@@ -592,6 +592,11 @@ function App() {
     setExportMessage(`Restored stable generation: ${restored.projectName ?? restored.sessionId}`);
   }, []);
 
+  const dismissRecovery = useCallback(() => {
+    setBoot((current) => current ? { ...current, recoveredFromGeneration: false } : current);
+    setExportMessage("Recovered session kept as the active working copy.");
+  }, []);
+
   const toggleMute = useCallback(async () => {
     if (!session) return;
     const muted = !(session.emergencyMuted || audio.state === "muted");
@@ -665,7 +670,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
+        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={() => void runTimelineRender()} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
