@@ -160,6 +160,14 @@ export async function renderTimeline(options: RenderOptions): Promise<RenderResu
   }
 }
 
+export async function renderTimelineStems(options: RenderOptions): Promise<RenderResult[]> {
+  try {
+    return await invoke<RenderResult[]>("render_timeline_stems", { options });
+  } catch {
+    return [];
+  }
+}
+
 export async function exportMidi(): Promise<MidiExportResult | null> {
   try {
     return await invoke<MidiExportResult>("export_midi");

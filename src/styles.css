@@ -387,6 +387,11 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }
 .render-result code { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.stem-results { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #27313a; }
+.stem-results > strong { color: #cbd3dc; font-size: 10px; }
+.stem-result { display: grid; grid-template-columns: minmax(100px, .6fr) auto minmax(0, 2fr); gap: 8px; align-items: center; padding: 7px 8px; background: #0d1115; border: 1px solid #242b33; border-radius: 5px; color: #cbd3dc; font-size: 9px; }
+.stem-result small { color: var(--muted); }
+.stem-result code { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .pad-card { margin-bottom: 12px; }
 .pad-card header, .sample-sources header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .pad-card h2, .sample-sources h2 { margin: 4px 0 0; font-size: 16px; font-weight: 500; }

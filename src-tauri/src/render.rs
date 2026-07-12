@@ -302,6 +302,43 @@ pub fn render_timeline_with_options(
     Ok(result)
 }
 
+pub fn render_stems_with_options(
+    data_root: &Path,
+    session: &ScratchSession,
+    created_at_ms: u64,
+    options: RenderOptions,
+) -> Result<Vec<RenderResult>, String> {
+    let mut stem_session = session.clone();
+    for track in &mut stem_session.tracks {
+        track.muted = false;
+        track.solo = false;
+    }
+    let track_ids = stem_session
+        .tracks
+        .iter()
+        .filter(|track| {
+            stem_session
+                .timeline
+                .iter()
+                .any(|clip| clip.track_id == track.id && !clip.muted)
+        })
+        .map(|track| track.id.clone())
+        .collect::<Vec<_>>();
+    if track_ids.is_empty() {
+        return Err("Timeline has no audible tracks to render as stems.".into());
+    }
+    let mut results = Vec::with_capacity(track_ids.len());
+    for (index, track_id) in track_ids.into_iter().enumerate() {
+        let mut track_options = options.clone();
+        track_options.track_id = Some(track_id.clone());
+        let created = created_at_ms.saturating_add(index as u64);
+        let result = render_timeline_with_options(data_root, &stem_session, created, track_options)
+            .map_err(|error| format!("Track stem '{track_id}' failed: {error}"))?;
+        results.push(result);
+    }
+    Ok(results)
+}
+
 fn apply_master_gain(samples: &mut [f32], gain_db: f64) {
     let gain = 10.0_f32.powf((gain_db as f32) / 20.0);
     for sample in samples {
@@ -472,6 +509,52 @@ mod tests {
         assert_eq!(result.frames, 2_205);
         assert_eq!(result.duration_ms, 50);
         assert!(result.normalized);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn renders_one_stem_for_each_audible_track() {
+        let root = std::env::temp_dir().join(format!("riffra-render-stems-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.wav");
+        write_mono_test_wav(&source);
+        let mut session = ScratchSession::new(now_ms());
+        session.tracks.push(crate::model::TimelineTrack {
+            id: "alt".into(),
+            name: "Alt".into(),
+            gain_db: 0.0,
+            pan: 0.0,
+            muted: true,
+            solo: false,
+        });
+        for (id, track_id) in [("clip:main", "main"), ("clip:alt", "alt")] {
+            session.timeline.push(crate::model::TimelineClip {
+                id: id.into(),
+                asset_path: source.to_string_lossy().into_owned(),
+                name: id.into(),
+                track_id: track_id.into(),
+                start_ms: 0,
+                duration_ms: 100,
+                source_in_ms: 0,
+                source_out_ms: 0,
+                loop_enabled: false,
+                gain_db: 0.0,
+                fade_in_ms: 0,
+                fade_out_ms: 0,
+                pan: 0.0,
+                muted: false,
+            });
+        }
+        let results =
+            render_stems_with_options(&root, &session, 50, RenderOptions::default()).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].track_id.as_deref(), Some("main"));
+        assert_eq!(results[1].track_id.as_deref(), Some("alt"));
+        assert!(
+            results
+                .iter()
+                .all(|result| Path::new(&result.path).exists())
+        );
         let _ = fs::remove_dir_all(root);
     }
 

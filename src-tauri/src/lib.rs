@@ -251,6 +251,26 @@ async fn render_timeline(
 }
 
 #[tauri::command]
+async fn render_timeline_stems(
+    options: Option<render::RenderOptions>,
+    state: State<'_, AppState>,
+) -> Result<Vec<render::RenderResult>, String> {
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    let data_root = state.data_root.clone();
+    let created_at_ms = now_ms();
+    tauri::async_runtime::spawn_blocking(move || {
+        render::render_stems_with_options(
+            &data_root,
+            &session,
+            created_at_ms,
+            options.unwrap_or_default(),
+        )
+    })
+    .await
+    .map_err(|error| format!("Timeline stem render task failed: {error}"))?
+}
+
+#[tauri::command]
 fn export_midi(state: State<'_, AppState>) -> Result<midi::MidiExportResult, String> {
     let session = state.session.lock().map_err(lock_error)?.clone();
     midi::export(&state.data_root, &session, now_ms())
@@ -696,6 +716,7 @@ pub fn run() {
             separate_channels,
             list_separations,
             render_timeline,
+            render_timeline_stems,
             export_midi,
             load_plugin,
             clear_plugin,
