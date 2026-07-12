@@ -25,7 +25,7 @@ public:
     bool startRecording(const juce::File& directory, juce::String& error);
     bool stopRecording(juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
-    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, juce::String& error);
+    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error);
     void stopPreview() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
@@ -77,9 +77,11 @@ private:
     std::unique_ptr<RecordingSession> recording;
     mutable juce::CriticalSection previewLock;
     juce::AudioBuffer<float> previewBuffer;
+    int previewStart = 0;
     int previewCursor = 0;
     int previewEnd = 0;
     float previewGain = 1.0f;
+    bool previewLoop = false;
     bool previewActive = false;
     PluginRack* pluginRack = nullptr;
 

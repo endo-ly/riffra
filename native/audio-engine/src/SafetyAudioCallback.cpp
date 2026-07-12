@@ -108,6 +108,7 @@ bool SafetyAudioCallback::startPreview(
     const int startSample,
     const int endSample,
     const float gain,
+    const bool loop,
     juce::String& error) {
     const juce::ScopedLock lock(previewLock);
     if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
@@ -121,9 +122,11 @@ bool SafetyAudioCallback::startPreview(
         return false;
     }
     previewBuffer.makeCopyOf(buffer, true);
+    previewStart = safeStart;
     previewCursor = safeStart;
     previewEnd = safeEnd;
     previewGain = juce::jlimit(0.0f, 2.0f, gain);
+    previewLoop = loop;
     previewActive = true;
     return true;
 }
@@ -131,8 +134,10 @@ bool SafetyAudioCallback::startPreview(
 void SafetyAudioCallback::stopPreview() noexcept {
     const juce::ScopedLock lock(previewLock);
     previewActive = false;
+    previewStart = 0;
     previewCursor = 0;
     previewEnd = 0;
+    previewLoop = false;
     previewBuffer.setSize(0, 0);
 }
 
@@ -157,8 +162,12 @@ void SafetyAudioCallback::mixPreview(
             output[sample] += previewBuffer.getSample(sourceChannel, previewCursor) * previewGain;
         }
     }
-    if (previewCursor >= previewEnd)
-        previewActive = false;
+    if (previewCursor >= previewEnd) {
+        if (previewLoop)
+            previewCursor = previewStart;
+        else
+            previewActive = false;
+    }
 }
 
 void SafetyAudioCallback::writeRecording(

@@ -184,9 +184,9 @@ export async function clearPlugin(): Promise<AudioStatus> {
   }
 }
 
-export async function previewSample(path: string, startMs: number, endMs: number): Promise<AudioStatus> {
+export async function previewSample(path: string, startMs: number, endMs: number, looped = false): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>("preview_sample", { path, startMs, endMs });
+    return await invoke<AudioStatus>("preview_sample", { path, startMs, endMs, looped });
   } catch {
     return await getAudioStatus();
   }

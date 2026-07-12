@@ -586,10 +586,10 @@ function App() {
 
   const previewTimelineRender = useCallback(async () => {
     if (!renderResult) return;
-    setAudio(await previewSample(renderResult.path, 0, 0));
+    setAudio(await previewSample(renderResult.path, 0, 0, session?.loopEnabled ?? false));
     setRenderPreviewing(true);
     setTransportPlaying(true);
-  }, [renderResult]);
+  }, [renderResult, session?.loopEnabled]);
 
   const stopTimelinePreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -598,15 +598,16 @@ function App() {
   }, []);
 
   const playTransport = useCallback(async () => {
+    if (!session) return;
     let result = renderResult;
     if (!result) {
       result = await renderTimeline({ rangeStartMs: 0, rangeEndMs: null, normalize: false, trackId: null });
       if (!result) return;
       setRenderResult(result);
     }
-    setAudio(await previewSample(result.path, 0, 0));
+    setAudio(await previewSample(result.path, 0, 0, session.loopEnabled));
     setTransportPlaying(true);
-  }, [renderResult]);
+  }, [renderResult, session]);
 
   const stopTransport = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -910,7 +911,7 @@ function App() {
       </aside>
 
       <footer className="transport">
-        <div className="transport-left"><button aria-label="Toggle loop"><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label={transportPlaying ? "Stop playback" : "Play"} onClick={() => void (transportPlaying ? stopTransport() : playTransport())}><Icon name={transportPlaying ? "stop" : "play"} /></button><button aria-label="Stop" onClick={() => void stopTransport()}><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
+        <div className="transport-left"><button className={session.loopEnabled ? "active" : ""} aria-label="Toggle loop" onClick={() => setSession({ ...session, loopEnabled: !session.loopEnabled })}><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label={transportPlaying ? "Stop playback" : "Play"} onClick={() => void (transportPlaying ? stopTransport() : playTransport())}><Icon name={transportPlaying ? "stop" : "play"} /></button><button aria-label="Stop" onClick={() => void stopTransport()}><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>

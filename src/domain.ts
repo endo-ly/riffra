@@ -90,6 +90,7 @@ export interface ScratchSession {
   workspace: Workspace;
   audioDriver: string | null;
   masterDb: number;
+  loopEnabled: boolean;
   emergencyMuted: boolean;
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
@@ -356,6 +357,7 @@ export const defaultSession = (): ScratchSession => ({
   workspace: "home",
   audioDriver: null,
   masterDb: -18,
+  loopEnabled: false,
   emergencyMuted: true,
   rack: [
     { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [] },

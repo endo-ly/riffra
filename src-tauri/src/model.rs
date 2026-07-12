@@ -152,6 +152,8 @@ pub struct ScratchSession {
     #[serde(default)]
     pub audio_driver: Option<String>,
     pub master_db: f64,
+    #[serde(default)]
+    pub loop_enabled: bool,
     pub emergency_muted: bool,
     pub rack: Vec<RackDevice>,
     #[serde(default)]
@@ -203,6 +205,7 @@ impl ScratchSession {
             workspace: Workspace::Home,
             audio_driver: None,
             master_db: -18.0,
+            loop_enabled: false,
             emergency_muted: true,
             rack: vec![
                 RackDevice {
