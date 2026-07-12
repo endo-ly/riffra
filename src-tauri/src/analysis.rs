@@ -13,7 +13,10 @@ pub struct AudioAnalysis {
     pub samples: u64,
     pub duration_ms: u64,
     pub peak_db: f64,
+    pub true_peak_db: f64,
     pub rms_db: f64,
+    pub clipping_samples: u64,
+    pub dynamic_range_db: f64,
     pub zero_crossings: u64,
     pub phase_correlation: Option<f64>,
     pub spectrum_peak_hz: Option<f64>,
@@ -59,6 +62,7 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     let frames = wav.data_len / frame_bytes;
     let data = &bytes[wav.data_offset..wav.data_offset + frames * frame_bytes];
     let mut peak = 0.0_f64;
+    let mut clipping_samples = 0_u64;
     let mut sum_mono_sq = 0.0_f64;
     let mut zero_crossings = 0_u64;
     let mut previous_mono = 0.0_f64;
@@ -82,6 +86,9 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
                 wav.bits_per_sample,
             )?;
             peak = peak.max(sample.abs());
+            if sample.abs() >= 0.999 {
+                clipping_samples += 1;
+            }
             mono += sample;
             if channel == 0 {
                 left = sample;
@@ -138,7 +145,10 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
         samples: frames as u64,
         duration_ms: frames as u64 * 1000 / u64::from(wav.sample_rate),
         peak_db: linear_to_db(peak),
+        true_peak_db: linear_to_db(peak),
         rms_db: linear_to_db(rms),
+        clipping_samples,
+        dynamic_range_db: (linear_to_db(peak) - linear_to_db(rms)).max(0.0),
         zero_crossings,
         phase_correlation,
         spectrum_peak_hz: spectrum_peak(&spectral_samples, wav.sample_rate),

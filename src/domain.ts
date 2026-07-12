@@ -189,7 +189,10 @@ export interface AudioAnalysis {
   samples: number;
   durationMs: number;
   peakDb: number;
+  truePeakDb: number;
   rmsDb: number;
+  clippingSamples: number;
+  dynamicRangeDb: number;
   zeroCrossings: number;
   phaseCorrelation: number | null;
   spectrumPeakHz: number | null;
