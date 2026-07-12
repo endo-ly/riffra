@@ -314,6 +314,7 @@ fn preview_sample(
     end_ms: Option<u64>,
     looped: Option<bool>,
     gain: Option<f32>,
+    voice_key: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
     if state.safe_mode {
@@ -332,12 +333,18 @@ fn preview_sample(
         end_ms,
         looped.unwrap_or(false),
         gain.unwrap_or(1.0),
+        voice_key,
     )
 }
 
 #[tauri::command]
 fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     state.audio.stop_preview()
+}
+
+#[tauri::command]
+fn stop_preview_for_key(voice_key: i32, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.stop_preview_for_key(voice_key)
 }
 
 #[tauri::command]
@@ -722,6 +729,7 @@ pub fn run() {
             clear_plugin,
             preview_sample,
             stop_preview,
+            stop_preview_for_key,
             probe_audio_devices,
             get_audio_status,
             set_emergency_mute,

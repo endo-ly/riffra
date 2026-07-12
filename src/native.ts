@@ -192,9 +192,9 @@ export async function clearPlugin(): Promise<AudioStatus> {
   }
 }
 
-export async function previewSample(path: string, startMs: number, endMs: number, looped = false, gain = 1): Promise<AudioStatus> {
+export async function previewSample(path: string, startMs: number, endMs: number, looped = false, gain = 1, voiceKey?: number): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>("preview_sample", { path, startMs, endMs, looped, gain });
+    return await invoke<AudioStatus>("preview_sample", { path, startMs, endMs, looped, gain, voiceKey: voiceKey ?? null });
   } catch {
     return await getAudioStatus();
   }
@@ -203,6 +203,14 @@ export async function previewSample(path: string, startMs: number, endMs: number
 export async function stopSamplePreview(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("stop_preview");
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
+export async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("stop_preview_for_key", { voiceKey });
   } catch {
     return await getAudioStatus();
   }

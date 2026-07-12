@@ -508,7 +508,7 @@ int serve() {
                         static_cast<float>(static_cast<double>(command.getProperty("gain", 1.0))),
                         static_cast<bool>(command.getProperty("loop", false)),
                         previewError,
-                        -1))
+                        static_cast<int>(command.getProperty("voiceKey", -1))))
                         previewError = previewError.isEmpty() ? "Preview range is invalid." : previewError;
                 }
             }
@@ -522,6 +522,13 @@ int serve() {
         if (type == "stopPreview") {
             callback.stopPreview();
             callback.allNotesOff();
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
+        if (type == "stopPreviewForKey") {
+            const auto voiceKey = static_cast<int>(command.getProperty("voiceKey", -1));
+            callback.stopPreviewForKey(voiceKey);
+            callback.stopSynthNote(voiceKey);
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AiChangeSet, AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, renderTimelineStems, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, renderTimelineStems, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, stopSamplePreviewKey, updateLibraryAsset } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -705,7 +705,7 @@ function App() {
   }, []);
 
   const previewSamplePad = useCallback(async (pad: ScratchSession["samplePads"][number]) => {
-    const nextAudio = await previewSample(pad.assetPath, pad.startMs, pad.endMs, pad.loopEnabled, Math.pow(10, (pad.gainDb ?? 0) / 20));
+    const nextAudio = await previewSample(pad.assetPath, pad.startMs, pad.endMs, pad.loopEnabled, Math.pow(10, (pad.gainDb ?? 0) / 20), pad.midiKey);
     setAudio(nextAudio);
     setPreviewPadId(pad.id);
   }, []);
@@ -825,8 +825,22 @@ function App() {
         void previewSamplePad(pad);
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
+      const index = keyboardKeys.indexOf(event.key.toLowerCase());
+      const pad = index >= 0 ? session?.samplePads[index] : undefined;
+      if (pad?.loopEnabled) {
+        event.preventDefault();
+        void stopSamplePreviewKey(pad.midiKey).then(setAudio);
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [previewSamplePad, session?.samplePads]);
 
   const switchWorkspace = useCallback((workspace: Workspace) => {

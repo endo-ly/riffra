@@ -295,6 +295,7 @@ impl AudioSupervisor {
         end_ms: Option<u64>,
         looped: bool,
         gain: f32,
+        voice_key: Option<i32>,
     ) -> Result<AudioStatus, String> {
         let mut command = serde_json::json!({
             "type": "previewSample",
@@ -306,6 +307,9 @@ impl AudioSupervisor {
         if let Some(end_ms) = end_ms {
             command["endMs"] = serde_json::json!(end_ms);
         }
+        if let Some(voice_key) = voice_key {
+            command["voiceKey"] = serde_json::json!(voice_key);
+        }
         self.send_command(
             command,
             "Sample preview queued through the safety limiter; output remains muted until unmuted.",
@@ -316,6 +320,13 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "stopPreview"}),
             "Sample preview stopped; the source file remains unchanged.",
+        )
+    }
+
+    pub fn stop_preview_for_key(&self, voice_key: i32) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "stopPreviewForKey", "voiceKey": voice_key}),
+            "Mapped preview voice stopped; other preview voices remain available.",
         )
     }
 
