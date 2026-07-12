@@ -17,6 +17,17 @@ pub struct RackDevice {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct RackMacro {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub value: f32,
+    #[serde(default)]
+    pub parameter_index: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
     pub id: String,
     pub name: String,
@@ -26,6 +37,8 @@ pub struct SessionSnapshot {
     pub parent_id: Option<String>,
     pub master_db: f64,
     pub rack: Vec<RackDevice>,
+    #[serde(default)]
+    pub macros: Vec<RackMacro>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -143,6 +156,8 @@ pub struct ScratchSession {
     pub rack: Vec<RackDevice>,
     #[serde(default)]
     pub snapshots: Vec<SessionSnapshot>,
+    #[serde(default = "default_macros")]
+    pub macros: Vec<RackMacro>,
     #[serde(default)]
     pub timeline: Vec<TimelineClip>,
     #[serde(default = "default_tracks")]
@@ -163,6 +178,19 @@ fn default_tracks() -> Vec<TimelineTrack> {
         muted: false,
         solo: false,
     }]
+}
+
+fn default_macros() -> Vec<RackMacro> {
+    ["Brightness", "Gain", "Space", "Width"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| RackMacro {
+            id: format!("macro:{index}"),
+            name: name.into(),
+            value: 0.5,
+            parameter_index: None,
+        })
+        .collect()
 }
 
 impl ScratchSession {
@@ -206,6 +234,7 @@ impl ScratchSession {
                 },
             ],
             snapshots: Vec::new(),
+            macros: default_macros(),
             timeline: Vec::new(),
             tracks: default_tracks(),
             midi_clips: Vec::new(),
@@ -238,6 +267,21 @@ impl ScratchSession {
         }
         if self.snapshots.len() > 16 {
             return Err("A session cannot contain more than 16 snapshots.".into());
+        }
+        if self.macros.len() > 64 {
+            return Err("A session cannot contain more than 64 rack macros.".into());
+        }
+        for macro_control in &mut self.macros {
+            if macro_control.id.trim().is_empty() || macro_control.name.trim().is_empty() {
+                return Err("Rack macros require non-empty ids and names.".into());
+            }
+            if !macro_control.value.is_finite() {
+                return Err(format!(
+                    "Rack macro '{}' has an invalid value.",
+                    macro_control.name
+                ));
+            }
+            macro_control.value = macro_control.value.clamp(0.0, 1.0);
         }
         if self.timeline.len() > 512 {
             return Err("A timeline cannot contain more than 512 clips.".into());

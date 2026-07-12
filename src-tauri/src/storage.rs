@@ -269,6 +269,7 @@ mod tests {
             parent_id: None,
             master_db: -18.0,
             rack: session.rack.clone(),
+            macros: session.macros.clone(),
         });
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.snapshots[0].name, "A");

@@ -97,6 +97,13 @@ function WorkspacePlay({ session, audio, plugins, missingPluginPaths, setSession
   const loadedBypassed = session.rack.find((device) => device.kind === "plugin")?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === "snapshot:A");
   const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === "snapshot:B");
+  const setMacro = (macroId: string, value: number) => {
+    const safeValue = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+    const macro = session.macros.find((item) => item.id === macroId);
+    setSession({ ...session, macros: session.macros.map((item) => item.id === macroId ? { ...item, value: safeValue } : item) });
+    if (macro?.parameterIndex != null) onSetPluginParameter(macro.parameterIndex, safeValue);
+  };
+  const mapMacro = (macroId: string, value: string) => setSession({ ...session, macros: session.macros.map((item) => item.id === macroId ? { ...item, parameterIndex: value === "" ? null : Number(value) } : item) });
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header"><div><span className="eyebrow">LIVE SIGNAL</span><h1>Input → Tone → Output</h1></div><div className="snapshot-tabs"><button className={hasSnapshotA ? "active" : ""} onClick={() => onRecallSnapshot("A")}>A</button><button className={hasSnapshotB ? "active" : ""} onClick={() => onRecallSnapshot("B")}>B</button><button onClick={() => onCaptureSnapshot(hasSnapshotA ? "B" : "A")}>＋</button></div></section>
@@ -111,10 +118,8 @@ function WorkspacePlay({ session, audio, plugins, missingPluginPaths, setSession
       </section>
       {audio.plugin?.loaded && audio.plugin.parameters.length > 0 && <section className="section-card plugin-parameters"><header><div><span className="eyebrow">COMMON PARAMETER VIEW</span><h2>{audio.plugin.parameters.length} VST3 parameters</h2></div><small>Native GUI is optional; changes stay inside the isolated rack.</small></header><div className="plugin-parameter-grid">{audio.plugin.parameters.slice(0, 48).map((parameter) => <label className="plugin-parameter" key={parameter.index}><span><strong>{parameter.name || `Parameter ${parameter.index + 1}`}</strong><small>{Math.round(parameter.value * 100)}%{parameter.automatable ? " · automatable" : ""}</small></span><input type="range" min="0" max="1" step="0.001" value={parameter.value} onChange={(event) => onSetPluginParameter(parameter.index, Number(event.target.value))} /></label>)}</div>{audio.plugin.parameters.length > 48 && <small className="inspector-copy">Showing first 48 parameters; the rest remain available to the plugin.</small>}</section>}
       <section className="macro-section">
-        <header><div><span className="eyebrow">MACROS</span><h2>Performance controls</h2></div><button className="text-button">Map parameters</button></header>
-        <div className="macro-grid">
-          {["Brightness", "Gain", "Space", "Width"].map((name, i) => <label className="macro" key={name}><span className="knob" style={{ "--turn": `${-120 + i * 45}deg` } as React.CSSProperties}><i /></span><strong>{name}</strong><small>{[42, 61, 28, 76][i]}%</small></label>)}
-        </div>
+        <header><div><span className="eyebrow">MACROS</span><h2>Performance controls</h2></div><small>{session.macros.filter((macro) => macro.parameterIndex != null).length} mapped</small></header>
+        <div className="macro-grid">{session.macros.map((macro) => <label className="macro" key={macro.id}><span className="knob" style={{ "--turn": `${-120 + macro.value * 240}deg` } as React.CSSProperties}><i /></span><strong>{macro.name}</strong><input type="range" min="0" max="1" step="0.001" value={macro.value} onChange={(event) => setMacro(macro.id, Number(event.target.value))} /><small>{Math.round(macro.value * 100)}%</small><select aria-label={`${macro.name} target`} value={macro.parameterIndex == null ? "" : macro.parameterIndex} onChange={(event) => mapMacro(macro.id, event.target.value)}><option value="">Unmapped</option>{audio.plugin?.parameters.map((parameter) => <option value={parameter.index} key={parameter.index}>{parameter.name || `Parameter ${parameter.index + 1}`}</option>)}</select></label>)}</div>
       </section>
       <label className="session-note"><span>Session note</span><textarea value={session.note} onChange={(event) => setSession({ ...session, note: event.target.value })} placeholder="意図、比較対象、使用場面を記録…" /></label>
     </div>
@@ -471,6 +476,7 @@ function App() {
       parentId: null,
       masterDb: session.masterDb,
       rack: session.rack.map((device) => ({ ...device })),
+      macros: session.macros.map((macro) => ({ ...macro })),
     };
     setSession({
       ...session,
@@ -482,7 +488,7 @@ function App() {
     if (!session) return;
     const snapshot = session.snapshots.find((item) => item.id === `snapshot:${slot}`);
     if (!snapshot) return;
-    setSession({ ...session, masterDb: snapshot.masterDb, rack: snapshot.rack.map((device) => ({ ...device })) });
+    setSession({ ...session, masterDb: snapshot.masterDb, rack: snapshot.rack.map((device) => ({ ...device })), macros: snapshot.macros.map((macro) => ({ ...macro })) });
     const plugin = snapshot.rack.find((device) => device.kind === "plugin");
     if (plugin) setAudio(await setPluginBypassed(plugin.bypassed));
   }, [session]);

@@ -10,6 +10,13 @@ export interface RackDevice {
   parameterValues: number[];
 }
 
+export interface RackMacro {
+  id: string;
+  name: string;
+  value: number;
+  parameterIndex: number | null;
+}
+
 export interface SessionSnapshot {
   id: string;
   name: string;
@@ -19,6 +26,7 @@ export interface SessionSnapshot {
   parentId: string | null;
   masterDb: number;
   rack: RackDevice[];
+  macros: RackMacro[];
 }
 
 export interface TimelineClip {
@@ -85,6 +93,7 @@ export interface ScratchSession {
   emergencyMuted: boolean;
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
+  macros: RackMacro[];
   timeline: TimelineClip[];
   tracks: TimelineTrack[];
   midiClips: MidiClip[];
@@ -342,6 +351,7 @@ export const defaultSession = (): ScratchSession => ({
     { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18, parameterValues: [] },
   ],
   snapshots: [],
+  macros: ["Brightness", "Gain", "Space", "Width"].map((name, index) => ({ id: `macro:${index}`, name, value: 0.5, parameterIndex: null })),
   timeline: [],
   tracks: [{ id: "main", name: "Main", gainDb: 0, pan: 0, muted: false, solo: false }],
   midiClips: [],
