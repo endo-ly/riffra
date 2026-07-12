@@ -83,10 +83,18 @@ kbd { font-family: "DM Mono", Consolas, monospace; font-size: 9px; font-weight: 
 .library-content { min-height: 0; flex: 1; overflow: auto; padding: 12px 8px; }
 .library-search-results { margin: 8px 0 12px; padding: 8px; background: rgba(85, 217, 232, .045); border: 1px solid rgba(85, 217, 232, .18); border-radius: 5px; }
 .library-search-row { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: center; gap: 6px; padding: 6px 0; border-top: 1px solid rgba(85, 217, 232, .1); }
+.library-search-row { width: 100%; color: inherit; text-align: left; background: transparent; border-right: 0; border-bottom: 0; border-left: 0; }
+.library-search-row:hover { background: rgba(85, 217, 232, .08); }
 .library-search-row:first-of-type { margin-top: 6px; }
 .library-search-row strong, .library-search-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library-search-row strong { color: #cbd3dc; font-size: 9px; font-weight: 500; }
 .library-search-row small, .library-search-empty { margin-top: 2px; color: var(--muted); font-size: 8px; }
+.library-asset-detail { display: grid; gap: 5px; margin-top: 9px; padding-top: 9px; border-top: 1px solid rgba(85, 217, 232, .18); }
+.library-asset-detail header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.library-asset-detail header strong { display: block; margin-top: 3px; overflow: hidden; color: #d9e4ea; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.library-asset-detail > small, .library-asset-detail p { color: var(--muted); font-size: 8px; }
+.library-asset-detail p { margin: 0; line-height: 1.5; }
+.related-asset { display: block; margin-top: 4px; color: #8ccbd6; font-size: 8px; }
 .eyebrow { display: block; color: #697480; font-size: 8px; font-weight: 700; letter-spacing: .17em; }
 .scan-message { display: block; margin: 6px 3px 10px; color: var(--muted); font-size: 9px; }
 .plugin-row { width: 100%; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px; text-align: left; background: transparent; border-radius: 5px; }

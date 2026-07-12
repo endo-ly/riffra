@@ -83,6 +83,22 @@ export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   }
 }
 
+export async function updateLibraryAsset(id: string, tag: string | null, note: string | null): Promise<LibraryAsset | null> {
+  try {
+    return await invoke<LibraryAsset>("update_library_asset", { id, tag, note });
+  } catch {
+    return null;
+  }
+}
+
+export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
+  try {
+    return await invoke<LibraryAsset[]>("related_library_assets", { id });
+  } catch {
+    return [];
+  }
+}
+
 export async function analyzeAudio(path: string): Promise<AudioAnalysis | null> {
   try {
     return await invoke<AudioAnalysis>("analyze_audio", { path });

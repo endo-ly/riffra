@@ -169,6 +169,32 @@ async fn search_library(
 }
 
 #[tauri::command]
+async fn update_library_asset(
+    id: String,
+    tag: Option<String>,
+    note: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<library::LibraryAsset, String> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        library::update_metadata(&data_root, &id, tag, note)
+    })
+    .await
+    .map_err(|error| format!("Library metadata task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn related_library_assets(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<library::LibraryAsset>, String> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || library::related(&data_root, &id))
+        .await
+        .map_err(|error| format!("Related asset task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> {
     let path = PathBuf::from(path);
     tauri::async_runtime::spawn_blocking(move || analysis::analyze(&path))
@@ -573,6 +599,8 @@ pub fn run() {
             scan_vst3_folder,
             list_recordings,
             search_library,
+            update_library_asset,
+            related_library_assets,
             analyze_audio,
             separate_channels,
             list_separations,

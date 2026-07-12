@@ -1,7 +1,7 @@
 use crate::{
     model::ScratchSession, plugins::PluginEntry, recordings::RecordingAsset, storage::now_ms,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Row, params};
 use serde::Serialize;
 use std::{
     fs,
@@ -224,26 +224,84 @@ pub fn search(data_root: &Path, query: &str) -> Result<Vec<LibraryAsset>, String
         )
         .map_err(|error| format!("Library search could not be prepared: {error}"))?;
     let rows = statement
-        .query_map(params![pattern, SEARCH_LIMIT], |row| {
-            Ok(LibraryAsset {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                path: row.get(3)?,
-                tag: row.get(4)?,
-                note: row.get(5)?,
-                created_at_ms: row
-                    .get::<_, Option<i64>>(6)?
-                    .and_then(|value| u64::try_from(value).ok()),
-                updated_at_ms: row
-                    .get::<_, Option<i64>>(7)?
-                    .and_then(|value| u64::try_from(value).ok()),
-                stability: row.get(8)?,
-            })
-        })
+        .query_map(params![pattern, SEARCH_LIMIT], row_to_asset)
         .map_err(|error| format!("Library search failed: {error}"))?;
     rows.map(|row| row.map_err(|error| format!("Library result could not be read: {error}")))
         .collect()
+}
+
+pub fn update_metadata(
+    data_root: &Path,
+    id: &str,
+    tag: Option<String>,
+    note: Option<String>,
+) -> Result<LibraryAsset, String> {
+    if id.trim().is_empty() || id.len() > 512 {
+        return Err("Library asset id is invalid.".into());
+    }
+    let tag = tag
+        .map(|value| value.trim().chars().take(128).collect::<String>())
+        .filter(|value| !value.is_empty());
+    let note = note
+        .map(|value| value.trim().chars().take(16_384).collect::<String>())
+        .filter(|value| !value.is_empty());
+    let connection = open(data_root)?;
+    let changed = connection
+        .execute(
+            "UPDATE assets SET tag = ?1, note = ?2, updated_at_ms = ?3 WHERE id = ?4",
+            params![tag, note, now_ms() as i64, id],
+        )
+        .map_err(|error| format!("Library metadata could not be updated: {error}"))?;
+    if changed == 0 {
+        return Err("Library asset was not found.".into());
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability
+             FROM assets WHERE id = ?1",
+        )
+        .map_err(|error| format!("Library asset lookup could not be prepared: {error}"))?;
+    statement
+        .query_row(params![id], row_to_asset)
+        .map_err(|error| format!("Library asset could not be read after update: {error}"))
+}
+
+pub fn related(data_root: &Path, id: &str) -> Result<Vec<LibraryAsset>, String> {
+    let connection = open(data_root)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT a.id, a.name, a.kind, a.path, a.tag, a.note, a.created_at_ms, a.updated_at_ms, a.stability
+             FROM assets a
+             JOIN asset_relations r ON (r.asset_id = a.id AND r.related_asset_id = ?1)
+                 OR (r.related_asset_id = a.id AND r.asset_id = ?1)
+             WHERE a.id != ?1
+             ORDER BY COALESCE(a.updated_at_ms, 0) DESC
+             LIMIT ?2",
+        )
+        .map_err(|error| format!("Related asset query could not be prepared: {error}"))?;
+    let rows = statement
+        .query_map(params![id, SEARCH_LIMIT], row_to_asset)
+        .map_err(|error| format!("Related asset query failed: {error}"))?;
+    rows.map(|row| row.map_err(|error| format!("Related asset could not be read: {error}")))
+        .collect()
+}
+
+fn row_to_asset(row: &Row<'_>) -> rusqlite::Result<LibraryAsset> {
+    Ok(LibraryAsset {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind: row.get(2)?,
+        path: row.get(3)?,
+        tag: row.get(4)?,
+        note: row.get(5)?,
+        created_at_ms: row
+            .get::<_, Option<i64>>(6)?
+            .and_then(|value| u64::try_from(value).ok()),
+        updated_at_ms: row
+            .get::<_, Option<i64>>(7)?
+            .and_then(|value| u64::try_from(value).ok()),
+        stability: row.get(8)?,
+    })
 }
 
 #[cfg(test)]
@@ -263,6 +321,33 @@ mod tests {
         let results = search(&directory, "project").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind, "project");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn updates_metadata_and_traverses_related_assets() {
+        let directory = root("metadata");
+        let mut session = ScratchSession::new(now_ms());
+        session.rack.push(crate::model::RackDevice {
+            id: "plugin:test".into(),
+            name: "Test Plugin".into(),
+            kind: crate::model::DeviceKind::Plugin,
+            path: Some("C:\\Test.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+        });
+        sync_session(&directory, &session).unwrap();
+        let updated = update_metadata(
+            &directory,
+            &format!("project:{}", session.session_id),
+            Some("idea, guitar".into()),
+            Some("keep this take".into()),
+        )
+        .unwrap();
+        assert_eq!(updated.tag.as_deref(), Some("idea, guitar"));
+        let related_assets = related(&directory, &updated.id).unwrap();
+        assert_eq!(related_assets.len(), 1);
+        assert_eq!(related_assets[0].kind, "rack");
         let _ = fs::remove_dir_all(directory);
     }
 }
