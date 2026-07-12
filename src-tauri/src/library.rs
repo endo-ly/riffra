@@ -385,6 +385,7 @@ mod tests {
             bypassed: false,
             gain_db: 0.0,
             parameter_values: Vec::new(),
+            state_data: None,
         });
         sync_session(&directory, &session).unwrap();
         let updated = update_metadata(

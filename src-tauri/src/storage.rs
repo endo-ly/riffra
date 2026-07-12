@@ -245,6 +245,7 @@ mod tests {
             bypassed: false,
             gain_db: 0.0,
             parameter_values: Vec::new(),
+            state_data: None,
         });
         let encoded = serde_json::to_vec(&session).unwrap();
         let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
