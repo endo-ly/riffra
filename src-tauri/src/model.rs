@@ -128,6 +128,23 @@ pub struct SamplePad {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiChangeSet {
+    pub id: String,
+    pub created_at_ms: u64,
+    pub permission: String,
+    pub target: String,
+    pub current_gain_db: f64,
+    pub proposed_gain_db: f64,
+    pub reason: String,
+    pub expected_effect: String,
+    pub risk: String,
+    #[serde(default)]
+    pub context: Vec<String>,
+    pub applied: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Input,
@@ -183,6 +200,8 @@ pub struct ScratchSession {
     pub ai_permission: String,
     #[serde(default = "default_ai_context")]
     pub ai_context: Vec<String>,
+    #[serde(default)]
+    pub ai_history: Vec<AiChangeSet>,
 }
 
 fn default_tracks() -> Vec<TimelineTrack> {
@@ -284,6 +303,7 @@ impl ScratchSession {
             note: String::new(),
             ai_permission: default_ai_permission(),
             ai_context: default_ai_context(),
+            ai_history: Vec::new(),
         }
     }
 
@@ -324,6 +344,36 @@ impl ScratchSession {
             !item.trim().is_empty() && item.len() <= 64 && AI_CONTEXT_IDS.contains(&item.as_str())
         });
         self.ai_context.dedup();
+        if self.ai_history.len() > 128 {
+            return Err("AI history cannot contain more than 128 ChangeSets.".into());
+        }
+        for change_set in &mut self.ai_history {
+            if change_set.id.trim().is_empty() || change_set.target.trim().is_empty() {
+                return Err("AI ChangeSets require non-empty ids and targets.".into());
+            }
+            if !matches!(
+                change_set.permission.as_str(),
+                "Explain" | "Suggest" | "Apply"
+            ) {
+                return Err("AI ChangeSet permission is invalid.".into());
+            }
+            if !change_set.current_gain_db.is_finite() || !change_set.proposed_gain_db.is_finite() {
+                return Err(format!(
+                    "AI ChangeSet '{}' has invalid gain values.",
+                    change_set.id
+                ));
+            }
+            change_set.current_gain_db = change_set.current_gain_db.clamp(-90.0, 24.0);
+            change_set.proposed_gain_db = change_set.proposed_gain_db.clamp(-90.0, 24.0);
+            change_set.reason.truncate(4_096);
+            change_set.expected_effect.truncate(4_096);
+            change_set.risk.truncate(256);
+            change_set.context.truncate(16);
+            change_set
+                .context
+                .retain(|item| AI_CONTEXT_IDS.contains(&item.as_str()));
+            change_set.context.dedup();
+        }
         if self.rack.len() > 256 {
             return Err("A rack cannot contain more than 256 devices.".into());
         }

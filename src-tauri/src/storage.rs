@@ -164,7 +164,9 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DeviceKind, RackDevice, SamplePad, SessionSnapshot, TimelineClip};
+    use crate::model::{
+        AiChangeSet, DeviceKind, RackDevice, SamplePad, SessionSnapshot, TimelineClip,
+    };
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -254,6 +256,29 @@ mod tests {
         session.ai_context = vec!["unknown".into(), "analysis".into(), "analysis".into()];
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.ai_context, vec!["analysis"]);
+    }
+
+    #[test]
+    fn preserves_reversible_ai_change_set_history() {
+        let mut session = ScratchSession::new(now_ms());
+        session.ai_history.push(AiChangeSet {
+            id: "ai:1".into(),
+            created_at_ms: now_ms(),
+            permission: "Apply".into(),
+            target: "clip:1".into(),
+            current_gain_db: 0.0,
+            proposed_gain_db: -3.0,
+            reason: "Match reference RMS".into(),
+            expected_effect: "Closer perceived level".into(),
+            risk: "Low · reversible".into(),
+            context: vec!["analysis".into(), "selectedClip".into()],
+            applied: true,
+        });
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.ai_history.len(), 1);
+        assert_eq!(decoded.ai_history[0].target, "clip:1");
+        assert!(decoded.ai_history[0].applied);
     }
 
     #[test]

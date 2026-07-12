@@ -85,6 +85,20 @@ export interface SamplePad {
   loopEnabled: boolean;
 }
 
+export interface AiChangeSet {
+  id: string;
+  createdAtMs: number;
+  permission: "Explain" | "Suggest" | "Apply";
+  target: string;
+  currentGainDb: number;
+  proposedGainDb: number;
+  reason: string;
+  expectedEffect: string;
+  risk: string;
+  context: string[];
+  applied: boolean;
+}
+
 export interface ScratchSession {
   formatVersion: number;
   sessionId: string;
@@ -107,6 +121,7 @@ export interface ScratchSession {
   note: string;
   aiPermission: "Explain" | "Suggest" | "Apply";
   aiContext: string[];
+  aiHistory: AiChangeSet[];
 }
 
 export interface PluginEntry {
@@ -383,4 +398,5 @@ export const defaultSession = (): ScratchSession => ({
   note: "",
   aiPermission: "Suggest",
   aiContext: ["analysis", "selectedClip"],
+  aiHistory: [],
 });

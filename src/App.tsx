@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
+import type { AiChangeSet, AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
 import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, renderTimelineStems, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
 
@@ -366,7 +366,20 @@ function ReferenceSuggestion({ analysis, recordings, references, referenceId, se
     : null;
   const applySuggestion = () => {
     if (!comparison || !targetClip || proposedGain == null || !selected || session.aiPermission !== "Apply") return;
-    setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip) });
+    const changeSet: AiChangeSet = {
+      id: `ai:${Date.now()}`,
+      createdAtMs: Date.now(),
+      permission: session.aiPermission,
+      target: targetClip.id,
+      currentGainDb: targetClip.gainDb,
+      proposedGainDb: proposedGain,
+      reason: "Match the selected reference RMS without changing the source WAV.",
+      expectedEffect: "A closer perceived level while clip position and source remain unchanged.",
+      risk: "Low · reversible",
+      context: [...session.aiContext],
+      applied: true,
+    };
+    setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip), aiHistory: [...session.aiHistory, changeSet].slice(-128) });
     setApplied(true);
   };
   const toggleContext = (id: string) => setSession({ ...session, aiContext: session.aiContext.includes(id) ? session.aiContext.filter((item) => item !== id) : [...session.aiContext, id] });
@@ -391,6 +404,7 @@ function ReferenceSuggestion({ analysis, recordings, references, referenceId, se
         {previewing && <small className="changeset-preview">Preview only: {comparison.loudnessMatchGainDb >= 0 ? "+" : ""}{comparison.loudnessMatchGainDb.toFixed(1)} dB would be applied. No session state changed.</small>}
       </> : <p className="inspector-copy">Place this recording on Arrange to create an explicit, reversible change target.</p>}
     </section>}
+    {session.aiHistory.length > 0 && <section className="section-card ai-history-card"><header><div><span className="eyebrow">AI HISTORY</span><h2>Applied ChangeSets</h2></div><small>{session.aiHistory.length} persisted</small></header>{session.aiHistory.slice(-8).reverse().map((item) => <article className="ai-history-row" key={item.id}><div><strong>{item.target}</strong><small>{new Date(item.createdAtMs).toLocaleString("ja-JP")} · {item.permission} · {item.context.join(", ") || "no context"}</small></div><span className="status-tag success">{item.applied ? "APPLIED" : "PREVIEW"}</span><p>{item.currentGainDb.toFixed(1)} dB → {item.proposedGainDb.toFixed(1)} dB · {item.reason}</p></article>)}</section>}
   </>;
 }
 
