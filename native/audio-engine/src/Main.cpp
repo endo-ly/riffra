@@ -22,6 +22,8 @@ public:
         std::shared_ptr<juce::AudioBuffer<float>> buffer;
         int start = 0;
         int end = 0;
+        float gain = 1.0f;
+        bool loop = false;
     };
 
     struct RecordedEvent {
@@ -111,6 +113,8 @@ public:
         std::shared_ptr<juce::AudioBuffer<float>> buffer;
         int start = 0;
         int end = 0;
+        float gain = 1.0f;
+        bool loop = false;
         {
             const juce::ScopedLock lock(padLock);
             const auto found = pads.find(message.getNoteNumber());
@@ -118,6 +122,8 @@ public:
                 buffer = found->second.buffer;
                 start = found->second.start;
                 end = found->second.end;
+                gain = found->second.gain;
+                loop = found->second.loop;
             }
         }
         if (audioCallback == nullptr || buffer == nullptr)
@@ -128,8 +134,8 @@ public:
                 *buffer,
                 start,
                 end,
-                juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()),
-                true,
+                juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()) * gain,
+                loop,
                 error))
             padTriggers.fetch_add(1, std::memory_order_relaxed);
     }
@@ -397,7 +403,14 @@ int serve() {
                         mappingError = "Sample pad slice is empty or its MIDI key is duplicated.";
                         break;
                     }
-                    nextPads.emplace(midiKey, MidiMonitor::Pad { std::move(buffer), start, end });
+                    const auto gainDb = juce::jlimit(-90.0, 24.0, static_cast<double>(item.getProperty("gainDb", 0.0)));
+                    nextPads.emplace(midiKey, MidiMonitor::Pad {
+                        std::move(buffer),
+                        start,
+                        end,
+                        juce::Decibels::decibelsToGain(static_cast<float>(gainDb)),
+                        static_cast<bool>(item.getProperty("loopEnabled", false)),
+                    });
                 }
             }
             if (mappingError.isNotEmpty()) {

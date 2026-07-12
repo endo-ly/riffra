@@ -80,6 +80,8 @@ export interface SamplePad {
   startMs: number;
   endMs: number;
   midiKey: number;
+  gainDb: number;
+  loopEnabled: boolean;
 }
 
 export interface ScratchSession {

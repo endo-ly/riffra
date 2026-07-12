@@ -283,12 +283,13 @@ impl AudioSupervisor {
         start_ms: u64,
         end_ms: Option<u64>,
         looped: bool,
+        gain: f32,
     ) -> Result<AudioStatus, String> {
         let mut command = serde_json::json!({
             "type": "previewSample",
             "path": path.to_string_lossy(),
             "startMs": start_ms,
-            "gain": 1.0,
+            "gain": gain.clamp(0.0, 2.0),
             "loop": looped,
         });
         if let Some(end_ms) = end_ms {

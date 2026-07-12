@@ -185,8 +185,10 @@ function SamplePadEditor({ session, setSession }: { session: ScratchSession; set
         : { ...pad, startMs: Math.min(startMs, Math.max(0, endMs - 1)), endMs };
     }) });
   };
+  const updatePadValue = (id: string, field: "gainDb", value: number) => setSession({ ...session, samplePads: session.samplePads.map((pad) => pad.id === id ? { ...pad, [field]: Math.max(-90, Math.min(24, Number.isFinite(value) ? value : 0)) } : pad) });
+  const togglePadLoop = (id: string) => setSession({ ...session, samplePads: session.samplePads.map((pad) => pad.id === id ? { ...pad, loopEnabled: !pad.loopEnabled } : pad) });
   const removePad = (id: string) => setSession({ ...session, samplePads: session.samplePads.filter((pad) => pad.id !== id) });
-  return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
+  return <section className="section-card sample-editor"><header><div><span className="eyebrow">SLICE RANGES</span><h2>Non-destructive pad regions</h2></div><small>Source files remain untouched</small></header>{session.samplePads.map((pad) => <div className="sample-edit-row" key={pad.id}><div className="sample-edit-name"><strong>{pad.name}</strong><small>MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms</small></div><label><span>Start</span><input type="number" min="0" step="1" value={pad.startMs} onChange={(event) => updateRange(pad.id, "startMs", Number(event.target.value))} /></label><label><span>End</span><input type="number" min="1" step="1" value={pad.endMs} onChange={(event) => updateRange(pad.id, "endMs", Number(event.target.value))} /></label><label><span>Gain dB</span><input type="number" min="-90" max="24" step="0.5" value={pad.gainDb} onChange={(event) => updatePadValue(pad.id, "gainDb", Number(event.target.value))} /></label><button className="text-button" onClick={() => togglePadLoop(pad.id)}>{pad.loopEnabled ? "Loop on" : "Loop"}</button><button className="text-button danger" onClick={() => removePad(pad.id)}>Remove</button></div>)}</section>;
 }
 
 function SamplePreviewControls({ session, playingId, onPreview, onStop }: { session: ScratchSession; playingId: string | null; onPreview: (pad: ScratchSession["samplePads"][number]) => void; onStop: () => void }) {
@@ -617,7 +619,7 @@ function App() {
   }, []);
 
   const previewSamplePad = useCallback(async (pad: ScratchSession["samplePads"][number]) => {
-    const nextAudio = await previewSample(pad.assetPath, pad.startMs, pad.endMs);
+    const nextAudio = await previewSample(pad.assetPath, pad.startMs, pad.endMs, pad.loopEnabled, Math.pow(10, (pad.gainDb ?? 0) / 20));
     setAudio(nextAudio);
     setPreviewPadId(pad.id);
   }, []);
@@ -652,7 +654,7 @@ function App() {
       : 1_000;
     setSession({
       ...session,
-      samplePads: [...session.samplePads, { id: `pad:${recording.id}`, name: recording.name, assetPath, startMs: 0, endMs, midiKey: 36 + index }],
+      samplePads: [...session.samplePads, { id: `pad:${recording.id}`, name: recording.name, assetPath, startMs: 0, endMs, midiKey: 36 + index, gainDb: 0, loopEnabled: false }],
       workspace: "sample",
     });
   }, [session]);

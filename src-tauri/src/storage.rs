@@ -314,6 +314,8 @@ mod tests {
             start_ms: 0,
             end_ms: 1_000,
             midi_key: 36,
+            gain_db: 0.0,
+            loop_enabled: false,
         });
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.sample_pads[0].midi_key, 36);

@@ -293,6 +293,7 @@ fn preview_sample(
     start_ms: u64,
     end_ms: Option<u64>,
     looped: Option<bool>,
+    gain: Option<f32>,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
     if state.safe_mode {
@@ -305,9 +306,13 @@ fn preview_sample(
     if !path.is_file() {
         return Err("Sample preview source does not exist.".into());
     }
-    state
-        .audio
-        .preview_sample(&path, start_ms, end_ms, looped.unwrap_or(false))
+    state.audio.preview_sample(
+        &path,
+        start_ms,
+        end_ms,
+        looped.unwrap_or(false),
+        gain.unwrap_or(1.0),
+    )
 }
 
 #[tauri::command]

@@ -119,6 +119,10 @@ pub struct SamplePad {
     pub start_ms: u64,
     pub end_ms: u64,
     pub midi_key: u8,
+    #[serde(default)]
+    pub gain_db: f64,
+    #[serde(default)]
+    pub loop_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -425,6 +429,9 @@ impl ScratchSession {
                     "Sample pad '{}' has an invalid slice range.",
                     pad.name
                 ));
+            }
+            if !pad.gain_db.is_finite() {
+                return Err(format!("Sample pad '{}' has an invalid gain.", pad.name));
             }
         }
         Ok(self)
