@@ -371,6 +371,7 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .plugin-parameter input { accent-color: var(--accent); }
 .macro input[type="range"] { width: 100%; accent-color: var(--accent); }
 .macro select { width: 100%; max-width: 130px; }
+.reference-source-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .render-message { display: block; color: var(--muted); font-size: 9px; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }
