@@ -387,14 +387,19 @@ function App() {
   const previousSession = useRef<ScratchSession | null>(null);
   const historySkip = useRef(false);
 
-  const loadPluginIntoRack = useCallback(async (plugin: PluginEntry) => {
-    const nextAudio = await loadPlugin(plugin.path);
+  const loadPluginIntoRack = useCallback(async (plugin: PluginEntry, parameterValues: number[] = [], bypassed = false) => {
+    let nextAudio = await loadPlugin(plugin.path);
+    for (const [index, value] of parameterValues.entries()) {
+      if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
+      nextAudio = await setPluginParameter(index, value);
+    }
+    if (bypassed) nextAudio = await setPluginBypassed(true);
     setAudio(nextAudio);
     setSession((current) => current ? {
       ...current,
       rack: [
         ...current.rack.filter((device) => device.kind !== "plugin"),
-        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed: false, gainDb: 0 },
+        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed, gainDb: 0, parameterValues: nextAudio.plugin?.parameters.map((parameter) => parameter.value) ?? parameterValues },
       ],
     } : current);
   }, []);
@@ -414,7 +419,10 @@ function App() {
   }, []);
 
   const setPluginParameterValue = useCallback(async (index: number, value: number) => {
-    setAudio(await setPluginParameter(index, value));
+    const nextAudio = await setPluginParameter(index, value);
+    setAudio(nextAudio);
+    const values = nextAudio.plugin?.parameters.map((parameter) => parameter.value);
+    if (values) setSession((current) => current ? { ...current, rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, parameterValues: values } : device) } : current);
   }, []);
 
   const recoverAudio = useCallback(async () => {
@@ -590,7 +598,7 @@ function App() {
         setScanMessage(report.issues.length ? `${report.plugins.length}件 · ${report.issues.length}件の注意` : `${report.plugins.length}件を検出`);
         const persisted = state.session.rack.find((device) => device.kind === "plugin" && device.path);
         const restored = persisted && report.plugins.find((plugin) => plugin.path === persisted.path && plugin.scanState === "validated");
-        if (restored) void loadPluginIntoRack(restored);
+        if (restored) void loadPluginIntoRack(restored, persisted?.parameterValues ?? [], persisted?.bypassed ?? false);
       });
     });
     void listRecordings().then(setRecordings);

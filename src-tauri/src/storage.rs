@@ -244,6 +244,7 @@ mod tests {
             path: Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3".into()),
             bypassed: false,
             gain_db: 0.0,
+            parameter_values: Vec::new(),
         });
         let encoded = serde_json::to_vec(&session).unwrap();
         let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();

@@ -11,6 +11,8 @@ pub struct RackDevice {
     pub path: Option<String>,
     pub bypassed: bool,
     pub gain_db: f64,
+    #[serde(default)]
+    pub parameter_values: Vec<f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -182,6 +184,7 @@ impl ScratchSession {
                     path: None,
                     bypassed: false,
                     gain_db: 0.0,
+                    parameter_values: Vec::new(),
                 },
                 RackDevice {
                     id: "safety".into(),
@@ -190,6 +193,7 @@ impl ScratchSession {
                     path: None,
                     bypassed: false,
                     gain_db: 0.0,
+                    parameter_values: Vec::new(),
                 },
                 RackDevice {
                     id: "output".into(),
@@ -198,6 +202,7 @@ impl ScratchSession {
                     path: None,
                     bypassed: false,
                     gain_db: -18.0,
+                    parameter_values: Vec::new(),
                 },
             ],
             snapshots: Vec::new(),
@@ -270,6 +275,21 @@ impl ScratchSession {
                 return Err(format!("Device '{}' has an invalid gain.", device.name));
             }
             device.gain_db = device.gain_db.clamp(-90.0, 24.0);
+            if device.parameter_values.len() > 512 {
+                return Err(format!(
+                    "Device '{}' exposes too many parameter values.",
+                    device.name
+                ));
+            }
+            for value in &mut device.parameter_values {
+                if !value.is_finite() {
+                    return Err(format!(
+                        "Device '{}' has an invalid parameter value.",
+                        device.name
+                    ));
+                }
+                *value = value.clamp(0.0, 1.0);
+            }
         }
         for snapshot in &mut self.snapshots {
             if snapshot.id.trim().is_empty() || snapshot.name.trim().is_empty() {

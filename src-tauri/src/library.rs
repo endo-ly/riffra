@@ -335,6 +335,7 @@ mod tests {
             path: Some("C:\\Test.vst3".into()),
             bypassed: false,
             gain_db: 0.0,
+            parameter_values: Vec::new(),
         });
         sync_session(&directory, &session).unwrap();
         let updated = update_metadata(

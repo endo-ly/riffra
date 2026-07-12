@@ -7,6 +7,7 @@ export interface RackDevice {
   path?: string | null;
   bypassed: boolean;
   gainDb: number;
+  parameterValues: number[];
 }
 
 export interface SessionSnapshot {
@@ -336,9 +337,9 @@ export const defaultSession = (): ScratchSession => ({
   masterDb: -18,
   emergencyMuted: true,
   rack: [
-    { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0 },
-    { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0 },
-    { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18 },
+    { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [] },
+    { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0, parameterValues: [] },
+    { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18, parameterValues: [] },
   ],
   snapshots: [],
   timeline: [],
