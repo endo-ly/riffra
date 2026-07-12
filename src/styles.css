@@ -360,8 +360,9 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .midi-note-row input { width: 100%; min-width: 0; }
 .track-mixer { margin-bottom: 12px; }
 .track-mixer-grid { display: grid; gap: 7px; }
-.track-mixer-row { display: grid; grid-template-columns: minmax(120px, 1fr) 120px auto auto; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #27313a; }
-.track-mixer-row small { color: var(--muted); font-size: 9px; }
+.track-mixer-row { display: grid; grid-template-columns: minmax(120px, 1fr) 80px 70px auto auto; align-items: end; gap: 8px; padding: 8px 0; border-top: 1px solid #27313a; }
+.track-mixer-row label { display: grid; gap: 3px; color: var(--muted); font-size: 8px; }
+.track-mixer-row input { width: 100%; min-width: 0; }
 .plugin-parameters { margin-top: 12px; }
 .plugin-parameter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 16px; margin-top: 10px; }
 .plugin-parameter { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
