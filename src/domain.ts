@@ -154,6 +154,7 @@ export interface BootstrapState {
   session: ScratchSession;
   recoveredFromGeneration: boolean;
   safeMode: boolean;
+  nativeAvailable: boolean;
   recoveryCandidates: RecoveryCandidate[];
   dataRoot: string;
   vst3Root: string;
@@ -182,6 +183,7 @@ export interface RecordingAsset {
   name: string;
   path: string;
   state: "recording" | "completed" | "recoverable" | string;
+  error: string | null;
   startedAt: string | null;
   updatedAt: string | null;
   rawFile: string | null;

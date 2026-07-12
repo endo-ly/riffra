@@ -20,14 +20,14 @@
 | --- | --- | --- | --- | --- |
 | A. Instant Play | `G-001`–`G-007`, `FLOW-001`, `AUD-*`, `MIDI-001` | Session起動、Device、Safety、Transport、MIDI | 実装済み | 実演奏までの一貫性、Device切替、Latencyの扱い |
 | B. Tone Design | `FLOW-002`, `PLG-*`, `RACK-*` | VST3 Host、Rack、Parameter、Macro、Snapshot | 実装済み | 複雑なRack経路、PDC、Plugin差異の吸収 |
-| C. Capture | `FLOW-003`, `REC-*` | Raw/Processed録音、Take、Count-in、Inbox | 実装中 | 録音途中の異常、manifest形式の互換、長時間安定性 |
+| C. Capture | `FLOW-003`, `REC-*` | Raw/Processed録音、Take、Count-in、Inbox、浮動小数`sampleRate`と不正manifestの明示 | 実装中 | 録音途中の異常、長時間安定性、Native録音の一貫性 |
 | D. Arrange | `FLOW-004`, `ARR-*`, `EXP-*` | Timeline、Clip、Track、MIDI、Render、Export | 実装済み | Tempo/Automation、DAW handoff、同期精度 |
 | E. Sample | `FLOW-005`, `SMP-*`, `MIDI-002`–`003` | Source mapping、Pad、Keyboard、内部音源、Preview | 実装済み | フルKeyboard Instrument、内部Synth、Utilityの広がり |
 | F. Analyze | `ANL-*` | Waveform、音量、Spectrum、Phase、Reference | 実装済み | 指標の拡充、Reference編集、表示密度 |
 | G. Separate | `SEP-*` | Background Job、Derived Asset、Source Link | 実装済み | モデル式Stem、キャンセル、再実行、比較 |
 | H. AI | `FLOW-006`, `AI-*` | Context、Explain、Suggest、ChangeSet、Provider | 実装済み | External Provider、送信範囲、より豊かな提案 |
 | I. Creative Memory | `LIB-*`, `PRJ-*` | Library、Metadata、Provenance、Package、Recovery | 実装済み | 大量Asset、Migration、Missing Fileの編集体験 |
-| J. Recovery | `FLOW-007`, `REL-*`, `SEC-*` | 失敗の隔離、復旧、権限、ログ、所有権 | 実装中 | sidecar lifecycle、エラーの表現、長時間動作 |
+| J. Recovery | `FLOW-007`, `REL-*`, `SEC-*` | 失敗の隔離、復旧、権限、ログ、所有権、親プロセス監視付きsidecar lifecycle | 実装中 | エラーの表現、異常終了時の録音復旧、長時間動作 |
 
 ## 製品横断の対応
 

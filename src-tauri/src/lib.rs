@@ -37,6 +37,7 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
         session: state.session.lock().map_err(lock_error)?.clone(),
         recovered_from_generation: state.recovered_from_generation,
         safe_mode: state.safe_mode,
+        native_available: true,
         recovery_candidates: SessionStore::new(&state.data_root)
             .recovery_candidates()
             .map_err(|error| format!("Recovery candidates could not be read: {error}"))?,

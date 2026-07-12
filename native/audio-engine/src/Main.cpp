@@ -10,6 +10,19 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <optional>
+#include <thread>
+
+#if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -279,6 +292,20 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     return juce::var(status);
 }
 
+bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
+#if JUCE_WINDOWS
+    const auto process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(parentPid));
+    if (process == nullptr)
+        return false;
+    const auto result = WaitForSingleObject(process, 0);
+    CloseHandle(process);
+    return result == WAIT_TIMEOUT;
+#else
+    juce::ignoreUnused(parentPid);
+    return true;
+#endif
+}
+
 juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
     auto error = manager.initialiseWithDefaultDevices(2, 2);
     if (error.isNotEmpty())
@@ -286,7 +313,7 @@ juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
     return error;
 }
 
-int serve() {
+int serve(const std::optional<std::uint32_t> parentPid) {
     juce::AudioDeviceManager manager;
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -307,6 +334,20 @@ int serve() {
 
     manager.addAudioCallback(&callback);
     writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+
+    std::atomic<bool> watchdogRunning { true };
+    std::thread watchdog;
+    if (parentPid.has_value()) {
+        watchdog = std::thread([&watchdogRunning, parentPid] {
+            while (watchdogRunning.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (!watchdogRunning.load(std::memory_order_acquire))
+                    break;
+                if (!parentProcessIsAlive(*parentPid))
+                    std::_Exit(0);
+            }
+        });
+    }
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -653,6 +694,9 @@ int serve() {
     }
     manager.removeAudioCallback(&callback);
     manager.closeAudioDevice();
+    watchdogRunning.store(false, std::memory_order_release);
+    if (watchdog.joinable())
+        watchdog.join();
     return 0;
 }
 
@@ -676,8 +720,25 @@ int main(int argc, char* argv[]) {
         writeJson(riffra::runRecordingSelfTest(juce::File(argv[2])));
         return 0;
     }
-    if (command == "--serve")
-        return serve();
+    if (command == "--serve") {
+        std::optional<std::uint32_t> parentPid;
+        for (int index = 2; index < argc; ++index) {
+            const juce::String argument(argv[index]);
+            if (argument != "--parent-pid")
+                continue;
+            if (index + 1 >= argc) {
+                writeJson(makeError("arguments", "--parent-pid requires a process id."));
+                return 1;
+            }
+            const auto value = juce::String(argv[++index]).getLargeIntValue();
+            if (value <= 0 || value > std::numeric_limits<std::uint32_t>::max()) {
+                writeJson(makeError("arguments", "--parent-pid must be a positive process id."));
+                return 1;
+            }
+            parentPid = static_cast<std::uint32_t>(value);
+        }
+        return serve(parentPid);
+    }
     writeJson(makeError("arguments", "Unknown command: " + command));
     return 1;
 }

@@ -13,6 +13,8 @@ const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
 ];
 
 const librarySections = ["Plugins", "Racks", "Presets", "Samples", "Recordings", "MIDI", "Projects", "References"];
+const DEFAULT_TEMPO_BPM = 120;
+const COUNT_IN_BEAT_MS = 60_000 / DEFAULT_TEMPO_BPM;
 
 function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
@@ -459,6 +461,10 @@ function App() {
 
   const loadPluginIntoRack = useCallback(async (plugin: PluginEntry, parameterValues: number[] = [], bypassed = false, stateData: string | null = null) => {
     let nextAudio = await loadPlugin(plugin.path);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") {
+      setAudio(nextAudio);
+      return;
+    }
     if (stateData) nextAudio = await setPluginState(stateData);
     for (const [index, value] of parameterValues.entries()) {
       if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
@@ -476,13 +482,16 @@ function App() {
   }, []);
 
   const clearPluginFromRack = useCallback(async () => {
-    setAudio(await clearPlugin());
+    const nextAudio = await clearPlugin();
+    setAudio(nextAudio);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
     setSession((current) => current ? { ...current, rack: current.rack.filter((device) => device.kind !== "plugin") } : current);
   }, []);
 
   const togglePluginBypass = useCallback(async (bypassed: boolean) => {
     const nextAudio = await setPluginBypassed(bypassed);
     setAudio(nextAudio);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
     setSession((current) => current ? {
       ...current,
       rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, bypassed } : device),
@@ -492,6 +501,7 @@ function App() {
   const setPluginParameterValue = useCallback(async (index: number, value: number) => {
     const nextAudio = await setPluginParameter(index, value);
     setAudio(nextAudio);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
     const values = nextAudio.plugin?.parameters.map((parameter) => parameter.value);
     if (values) setSession((current) => current ? { ...current, rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, parameterValues: values, stateData: nextAudio.plugin?.stateData ?? device.stateData } : device) } : current);
   }, []);
@@ -501,7 +511,10 @@ function App() {
   }, []);
 
   const selectAudioDriver = useCallback(async (driver: string, sampleRate: number, bufferSize: number) => {
-    setAudio(await setAudioDriver(driver, sampleRate, bufferSize));
+    const nextAudio = await setAudioDriver(driver, sampleRate, bufferSize);
+    setAudio(nextAudio);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
+    setSession((current) => current ? { ...current, audioDriver: driver, audioSampleRate: sampleRate, audioBufferSize: bufferSize } : current);
   }, []);
 
   const connectMidiInput = useCallback(async (name: string) => {
@@ -568,6 +581,7 @@ function App() {
   }, [session]);
 
   const openRecordingAnalysis = useCallback(async (recording: RecordingAsset) => {
+    if (recording.error) return;
     const path = recording.processedPath ?? recording.rawPath;
     if (!path) return;
     setAnalysis(await analyzeAudio(path));
@@ -575,6 +589,7 @@ function App() {
   }, []);
 
   const selectReference = useCallback(async (recording: RecordingAsset) => {
+    if (recording.error) return;
     const path = recording.processedPath ?? recording.rawPath;
     if (!path) return;
     setReferenceId(recording.id);
@@ -585,6 +600,7 @@ function App() {
   }, [referenceAnalyses]);
 
   const previewReference = useCallback(async (recording: RecordingAsset) => {
+    if (recording.error) return;
     const path = recording.processedPath ?? recording.rawPath;
     if (!path) return;
     await stopSamplePreview();
@@ -613,6 +629,7 @@ function App() {
   }, []);
 
   const runSeparation = useCallback(async (recording: RecordingAsset) => {
+    if (recording.error) return;
     const path = recording.processedPath ?? recording.rawPath;
     if (!path) return;
     setSeparationBusy(recording.id);
@@ -716,7 +733,7 @@ function App() {
   }, []);
 
   const placeRecording = useCallback((recording: RecordingAsset) => {
-    if (!session) return;
+    if (!session || recording.error) return;
     const assetPath = recording.processedPath ?? recording.rawPath;
     if (!assetPath || session.timeline.some((clip) => clip.assetPath === assetPath)) return;
     const startMs = session.timeline.reduce((end, clip) => Math.max(end, clip.startMs + clip.durationMs), 0);
@@ -731,7 +748,7 @@ function App() {
   }, [session]);
 
   const createSamplePad = useCallback((recording: RecordingAsset) => {
-    if (!session) return;
+    if (!session || recording.error) return;
     const assetPath = recording.processedPath ?? recording.rawPath;
     if (!assetPath || session.samplePads.some((pad) => pad.assetPath === assetPath)) return;
     const index = session.samplePads.length;
@@ -922,8 +939,13 @@ function App() {
   const toggleMute = useCallback(async () => {
     if (!session) return;
     const muted = !(session.emergencyMuted || audio.state === "muted");
+    const nextAudio = await setEmergencyMute(muted);
+    setAudio(nextAudio);
+    if (nextAudio.state === "faulted" || nextAudio.state === "offline") {
+      setSession({ ...session, emergencyMuted: session.emergencyMuted || muted });
+      return;
+    }
     setSession({ ...session, emergencyMuted: muted });
-    setAudio(await setEmergencyMute(muted));
   }, [audio.state, session]);
 
   const startRecordingNow = useCallback(async () => {
@@ -957,7 +979,7 @@ function App() {
       void startRecordingNow();
       return;
     }
-    const timer = window.setTimeout(() => setRecordCountdown((current) => current === null ? null : current - 1), 1_000);
+    const timer = window.setTimeout(() => setRecordCountdown((current) => current === null ? null : current - 1), COUNT_IN_BEAT_MS);
     return () => window.clearTimeout(timer);
   }, [recordCountdown, startRecordingNow]);
 
@@ -1010,6 +1032,8 @@ function App() {
         <button className={`emergency-button ${isMuted ? "active" : ""}`} onClick={() => void toggleMute()}><Icon name="stop" />{isMuted ? "UNMUTE" : "MUTE"}</button>
       </header>
 
+      {!boot.nativeAvailable && <div className="runtime-banner"><strong>BROWSER PREVIEW</strong><span>Native audio, VST3, MIDI, recording and Windows persistence are unavailable here. Open the Tauri application to use product features; this preview does not report empty results as successful operations.</span></div>}
+
       <aside className="library-panel">
         <div className="panel-heading"><span>LIBRARY</span><button><Icon name="plus" /></button></div>
         <label className="panel-search"><Icon name="search" /><input aria-label="Library search" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search assets" /></label>
@@ -1017,7 +1041,7 @@ function App() {
         <div className="library-content">
           <span className="eyebrow">{librarySection.toUpperCase()}</span>
           {query && <section className="library-search-results"><span className="eyebrow">CROSS-ASSET SEARCH · {libraryResults.length}</span>{libraryResults.slice(0, 8).map((asset) => <button className="library-search-row" key={asset.id} onClick={() => void selectLibraryAsset(asset)}><span className="nav-glyph" /><div><strong>{asset.name}</strong><small>{asset.kind} · {asset.stability}{asset.tag ? ` · ${asset.tag}` : ""}</small></div></button>)}{libraryResults.length === 0 && <small className="library-search-empty">No indexed asset matches yet.</small>}{selectedLibraryAsset && <div className="library-asset-detail"><header><div><span className="eyebrow">ASSET MEMORY</span><strong>{selectedLibraryAsset.name}</strong></div><div><button className="text-button" disabled={!selectedLibraryAsset.path?.toLowerCase().endsWith(".wav")} onClick={() => void previewSelectedLibraryAsset()}>Preview</button><button className="text-button" onClick={() => void editSelectedLibraryAsset()}>Edit</button></div></header><small>Tag: {selectedLibraryAsset.tag ?? "—"}</small><p>{selectedLibraryAsset.note ?? "No note yet."}</p>{relatedAssets.length > 0 && <div><span className="eyebrow">RELATED</span>{relatedAssets.slice(0, 4).map((asset) => <small className="related-asset" key={asset.id}>{asset.kind} · {asset.name}</small>)}</div>}</div>}</section>}
-          {librarySection === "Plugins" ? <><small className="scan-message">{visiblePlugins.length}件を表示</small>{visiblePlugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}{visiblePlugins.length === 0 && <div className="library-empty"><span>一致するVST3がありません</span><small>検索語を変えるか、VST3フォルダを確認してください。</small></div>}</> : librarySection === "Recordings" ? <>{visibleRecordings.slice(0, 12).map((recording) => <button className="plugin-row recording-row" key={recording.id} onClick={() => void openRecordingAnalysis(recording)} title={recording.path}><span>{recording.state === "completed" ? "✓" : "!"}</span><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples{recording.midiPath ? " · MIDI" : ""}</small></div><i className={`stability ${recording.state === "completed" ? "validated" : "quarantined"}`} /></button>)}{visibleRecordings.length === 0 && <div className="library-empty"><span>まだ録音がありません</span><small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small></div>}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
+          {librarySection === "Plugins" ? <><small className="scan-message">{visiblePlugins.length}件を表示</small>{visiblePlugins.slice(0, 12).map((plugin) => <button className="plugin-row" key={plugin.id} onClick={() => void loadPluginIntoRack(plugin)} title={`Load ${plugin.name}`}><span>{plugin.name.slice(0, 1).toUpperCase()}</span><div><strong>{plugin.name}</strong><small>{plugin.vendor ?? "VST3"}</small></div><i className={`stability ${plugin.scanState}`} /></button>)}{visiblePlugins.length === 0 && <div className="library-empty"><span>一致するVST3がありません</span><small>検索語を変えるか、VST3フォルダを確認してください。</small></div>}</> : librarySection === "Recordings" ? <>{visibleRecordings.slice(0, 12).map((recording) => <button className="plugin-row recording-row" key={recording.id} disabled={Boolean(recording.error)} onClick={() => void openRecordingAnalysis(recording)} title={recording.error ?? recording.path}><span>{recording.state === "completed" ? "✓" : "!"}</span><div><strong>{recording.name}</strong><small>{recording.error ?? `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${recording.midiPath ? " · MIDI" : ""}`}</small></div><i className={`stability ${recording.state === "completed" && !recording.error ? "validated" : "quarantined"}`} /></button>)}{visibleRecordings.length === 0 && <div className="library-empty"><span>まだ録音がありません</span><small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small></div>}</> : <div className="library-empty"><span>まだ資産がありません</span><small>良い結果を保存すると、ここから再利用できます。</small></div>}
         </div>
         <button className="inbox-button" onClick={() => setLibrarySection("Recordings")}><span className="inbox-icon">↓</span><div><strong>Inbox</strong><small>{recordings.length} items</small></div></button>
       </aside>
@@ -1045,7 +1069,7 @@ function App() {
       <footer className="transport">
         <div className="transport-left"><button className={session.loopEnabled ? "active" : ""} aria-label="Toggle loop" onClick={() => setSession({ ...session, loopEnabled: !session.loopEnabled })}><Icon name="loop" /></button><button aria-label="Previous position">◀</button><button className="play-button" aria-label={transportPlaying ? "Stop playback" : "Play"} onClick={() => void (transportPlaying ? stopTransport() : playTransport())}><Icon name={transportPlaying ? "stop" : "play"} /></button><button aria-label="Stop" onClick={() => void stopTransport()}><Icon name="stop" /></button><button className={`record-button ${audio.recording.active ? "active" : ""}`} onClick={() => void toggleRecording()} aria-label={audio.recording.active ? "Stop recording" : "Start recording"}><Icon name="record" /></button></div>
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
-        <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
+        <div className="tempo"><button><strong>{DEFAULT_TEMPO_BPM.toFixed(2)}</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
         <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => { const gainDb = Number(event.target.value); setSession({ ...session, masterDb: gainDb }); void setMasterGainDb(gainDb).then(setAudio); }} /></div>
         <div className="status-line"><span className={`status-dot ${audio.recording.active || recordCountdown !== null ? "recording" : audio.state}`} />{recordCountdown !== null ? `Count-in · ${recordCountdown} beats` : audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>

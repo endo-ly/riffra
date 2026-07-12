@@ -575,6 +575,7 @@ pub struct BootstrapState {
     pub session: ScratchSession,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
+    pub native_available: bool,
     pub recovery_candidates: Vec<RecoveryCandidate>,
     pub data_root: String,
     pub vst3_root: String,

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -13,6 +13,7 @@ pub struct RecordingAsset {
     pub name: String,
     pub path: String,
     pub state: String,
+    pub error: Option<String>,
     pub started_at: Option<String>,
     pub updated_at: Option<String>,
     pub raw_file: Option<String>,
@@ -99,16 +100,22 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             continue;
         }
         let manifest_path = path.join("manifest.json");
-        let manifest = read_manifest(&manifest_path).unwrap_or_default();
+        let (manifest, manifest_error) = match read_manifest(&manifest_path) {
+            Ok(manifest) => (manifest, None),
+            Err(error) => (RecordingManifest::default(), Some(error)),
+        };
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("Untitled Take")
             .to_owned();
-        let state = manifest
-            .state
-            .clone()
-            .unwrap_or_else(|| "recoverable".into());
+        let state = manifest.state.clone().unwrap_or_else(|| {
+            if manifest_error.is_some() {
+                "invalid".into()
+            } else {
+                "recoverable".into()
+            }
+        });
         let provenance = read_provenance(&path.join("provenance.json"));
         let provenance_text = provenance
             .as_ref()
@@ -156,6 +163,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             name,
             path: path.to_string_lossy().into_owned(),
             state,
+            error: manifest_error,
             started_at: manifest.started_at,
             updated_at: manifest.updated_at,
             raw_file: manifest.raw_file,
@@ -208,9 +216,15 @@ pub fn read_midi_events(path: &Path) -> Result<Vec<MidiEvent>, String> {
         .collect())
 }
 
-fn read_manifest(path: &PathBuf) -> Option<RecordingManifest> {
-    let payload = fs::read(path).ok()?;
-    serde_json::from_slice(&payload).ok()
+fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {
+    let payload = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "manifest.json is missing.".to_string()
+        } else {
+            format!("manifest.json could not be read: {error}")
+        }
+    })?;
+    serde_json::from_slice(&payload).map_err(|error| format!("manifest.json is invalid: {error}"))
 }
 
 fn read_provenance(path: &Path) -> Option<RecordingProvenance> {
@@ -243,6 +257,7 @@ pub fn save_provenance(directory: &Path, provenance: &RecordingProvenance) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_root() -> PathBuf {
@@ -267,6 +282,7 @@ mod tests {
         let results = list(&root, Some("take-1")).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].state, "completed");
+        assert_eq!(results[0].error, None);
         assert_eq!(results[0].samples_written, 44_100);
         assert_eq!(results[0].sample_rate, Some(44_100));
         let _ = fs::remove_dir_all(root);
@@ -281,6 +297,30 @@ mod tests {
         assert_eq!(normalize_sample_rate(f64::NAN), None);
         assert_eq!(normalize_sample_rate(f64::INFINITY), None);
         assert_eq!(normalize_sample_rate(f64::from(u32::MAX) + 1.0), None);
+    }
+
+    #[test]
+    fn exposes_invalid_manifest_instead_of_using_an_empty_default() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-invalid");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","samplesWritten":"not-a-number"}"#,
+        )
+        .unwrap();
+
+        let results = list(&root, Some("take-invalid")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].state, "invalid");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|message| message.contains("invalid"))
+        );
+        assert_eq!(results[0].samples_written, 0);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -12,6 +12,7 @@ export async function bootstrap(): Promise<BootstrapState> {
       session: defaultSession(),
       recoveredFromGeneration: false,
       safeMode: false,
+      nativeAvailable: false,
       recoveryCandidates: [] as RecoveryCandidate[],
       dataRoot: "Browser preview — native persistence is unavailable",
       vst3Root: defaultVst3Root,
@@ -176,43 +177,62 @@ export async function exportMidi(): Promise<MidiExportResult | null> {
   }
 }
 
+function nativeErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown native error";
+  }
+}
+
+async function audioCommandError(operation: string, error: unknown, safetyCritical = false): Promise<AudioStatus> {
+  const status = await getAudioStatus();
+  return {
+    ...status,
+    state: safetyCritical || status.state === "offline" ? "faulted" : status.state,
+    message: `${operation} failed: ${nativeErrorText(error)}. ${safetyCritical ? "Audio output could not be confirmed; keep emergency mute engaged." : "Audio state was not changed."} Saved data is safe.`,
+  };
+}
+
 export async function loadPlugin(path: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("load_plugin", { path });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Load plugin", error);
   }
 }
 
 export async function clearPlugin(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("clear_plugin");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Clear plugin", error);
   }
 }
 
 export async function previewSample(path: string, startMs: number, endMs: number, looped = false, gain = 1, voiceKey?: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("preview_sample", { path, startMs, endMs, looped, gain, voiceKey: voiceKey ?? null });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Preview sample", error);
   }
 }
 
 export async function stopSamplePreview(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("stop_preview");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Stop preview", error);
   }
 }
 
 export async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("stop_preview_for_key", { voiceKey });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Stop mapped preview", error);
   }
 }
 
@@ -253,121 +273,95 @@ export async function getAudioStatus(): Promise<AudioStatus> {
 export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_emergency_mute", { muted });
-  } catch {
-    return {
-      state: muted ? "muted" : "offline",
-      driver: null,
-      sampleRate: null,
-      bufferSize: null,
-      roundTripMs: null,
-      recording: {
-        active: false,
-        directory: null,
-        sampleRate: null,
-        rawChannels: null,
-        processedChannels: null,
-        samplesWritten: 0,
-        droppedBlocks: 0,
-      },
-      midiInputs: [],
-      midiOutputs: [],
-      midiInputActive: false,
-      midiMessages: 0,
-      lastMidiNote: null,
-      midiPadMappings: 0,
-      midiPadTriggers: 0,
-      inputPeak: 0,
-      outputPeak: 0,
-      invalidSamples: 0,
-      message: muted ? "Emergency mute is engaged." : "Native audio sidecar is not connected.",
-    };
+  } catch (error) {
+    return await audioCommandError(muted ? "Engage emergency mute" : "Release emergency mute", error, true);
   }
 }
 
 export async function startRecording(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("start_recording");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Start recording", error);
   }
 }
 
 export async function stopRecording(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("stop_recording");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Stop recording", error);
   }
 }
 
 export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_plugin_bypassed", { bypassed });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Change plugin bypass", error);
   }
 }
 
 export async function setPluginParameter(index: number, value: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_plugin_parameter", { index, value });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Set plugin parameter", error);
   }
 }
 
 export async function setPluginState(stateData: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_plugin_state", { stateData });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Set plugin state", error);
   }
 }
 
 export async function setMasterGainDb(gainDb: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_master_gain_db", { gainDb });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Set master gain", error);
   }
 }
 
 export async function recoverAudioDevice(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("recover_audio_device");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Recover audio device", error);
   }
 }
 
 export async function setAudioDriver(driver: string, sampleRate: number | null = null, bufferSize: number | null = null): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_audio_driver", { driver, sampleRate, bufferSize });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Set audio driver", error);
   }
 }
 
 export async function openMidiInput(name: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("open_midi_input", { name });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Open MIDI input", error);
   }
 }
 
 export async function closeMidiInput(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("close_midi_input");
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Close MIDI input", error);
   }
 }
 
 export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("configure_sample_pads", { pads });
-  } catch {
-    return await getAudioStatus();
+  } catch (error) {
+    return await audioCommandError("Configure sample pads", error);
   }
 }

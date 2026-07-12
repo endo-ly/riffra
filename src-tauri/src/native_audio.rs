@@ -75,6 +75,17 @@ struct NativePluginParameter {
     automatable: bool,
 }
 
+fn normalize_sample_rate(rate: f64) -> Option<u32> {
+    if !rate.is_finite() || rate <= 0.0 || rate > f64::from(u32::MAX) {
+        return None;
+    }
+    let rounded = rate.round();
+    if !(1.0..=f64::from(u32::MAX)).contains(&rounded) {
+        return None;
+    }
+    Some(rounded as u32)
+}
+
 impl AudioSupervisor {
     pub fn offline(message: impl Into<String>) -> Self {
         Self {
@@ -124,10 +135,12 @@ impl AudioSupervisor {
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
 
-        let spawn_result = app
-            .shell()
-            .sidecar("riffra-audio")
-            .and_then(|command| command.args(["--serve"]).spawn());
+        let parent_pid = std::process::id().to_string();
+        let spawn_result = app.shell().sidecar("riffra-audio").and_then(|command| {
+            command
+                .args(["--serve", "--parent-pid", &parent_pid])
+                .spawn()
+        });
 
         let (mut receiver, child) = match spawn_result {
             Ok(pair) => pair,
@@ -431,9 +444,7 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
             _ => AudioState::Offline,
         };
         current.driver = native.driver;
-        current.sample_rate = native
-            .sample_rate
-            .and_then(|rate| u32::try_from(rate.round() as i64).ok());
+        current.sample_rate = native.sample_rate.and_then(normalize_sample_rate);
         current.buffer_size = native.buffer_size;
         current.round_trip_ms = native.round_trip_ms;
         current.recording = native
@@ -441,9 +452,7 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
             .map(|recording| RecordingStatus {
                 active: recording.active,
                 directory: recording.directory,
-                sample_rate: recording
-                    .sample_rate
-                    .and_then(|rate| u32::try_from(rate.round() as i64).ok()),
+                sample_rate: recording.sample_rate.and_then(normalize_sample_rate),
                 raw_channels: recording.raw_channels,
                 processed_channels: recording.processed_channels,
                 samples_written: recording.samples_written.unwrap_or_default(),
@@ -455,9 +464,7 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
             bypassed: plugin.bypassed,
             path: plugin.path.filter(|path| !path.is_empty()),
             name: plugin.name.filter(|name| !name.is_empty()),
-            sample_rate: plugin
-                .sample_rate
-                .and_then(|rate| u32::try_from(rate.round() as i64).ok()),
+            sample_rate: plugin.sample_rate.and_then(normalize_sample_rate),
             block_size: plugin.block_size,
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
             parameters: plugin
@@ -610,5 +617,12 @@ mod tests {
         assert_eq!(current.midi_messages, 12);
         assert_eq!(current.last_midi_note, Some(60));
         assert_eq!(current.output_peak, 0.3);
+    }
+
+    #[test]
+    fn normalizes_native_floating_sample_rates_safely() {
+        assert_eq!(normalize_sample_rate(44_100.0), Some(44_100));
+        assert_eq!(normalize_sample_rate(f64::NAN), None);
+        assert_eq!(normalize_sample_rate(f64::INFINITY), None);
     }
 }
