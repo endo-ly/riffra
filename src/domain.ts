@@ -83,8 +83,17 @@ export interface BootstrapState {
   session: ScratchSession;
   recoveredFromGeneration: boolean;
   safeMode: boolean;
+  recoveryCandidates: RecoveryCandidate[];
   dataRoot: string;
   vst3Root: string;
+}
+
+export interface RecoveryCandidate {
+  fileName: string;
+  updatedAtMs: number;
+  sessionId: string;
+  projectName: string | null;
+  note: string;
 }
 
 export interface RecordingStatus {

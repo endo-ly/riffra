@@ -121,6 +121,9 @@ h1, h2, h3, p { margin-top: 0; }
 .safe-mode-banner { display: grid; gap: 5px; max-width: 680px; margin-top: 12px; padding: 10px 12px; color: #f1d69a; background: rgba(142, 102, 35, .14); border: 1px solid rgba(231, 181, 93, .38); border-radius: 6px; font-size: 9px; line-height: 1.5; }
 .safe-mode-banner strong { color: var(--amber); font-family: "DM Mono", monospace; font-size: 8px; letter-spacing: .12em; }
 .safe-mode-banner code { color: #f6e6b8; font-family: "DM Mono", monospace; font-size: 8px; }
+.recovery-choice { display: grid; gap: 5px; max-width: 680px; margin-top: 12px; padding: 10px 12px; color: #b9cfe0; background: rgba(61, 112, 157, .13); border: 1px solid rgba(104, 170, 216, .34); border-radius: 6px; font-size: 9px; line-height: 1.5; }
+.recovery-choice > strong { color: #8bd2ef; font-family: "DM Mono", monospace; font-size: 8px; letter-spacing: .12em; }
+.recovery-choice > div { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .audio-device-list { grid-column: 1 / -1; }
 .audio-driver-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid #27313a; }
 .audio-driver-row strong { color: #cbd3dc; font-size: 10px; }

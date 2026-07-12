@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, ProjectExport, RecordingAsset, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
+import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiProbe, ProjectExport, RecordingAsset, RecoveryCandidate, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
@@ -12,6 +12,7 @@ export async function bootstrap(): Promise<BootstrapState> {
       session: defaultSession(),
       recoveredFromGeneration: false,
       safeMode: false,
+      recoveryCandidates: [] as RecoveryCandidate[],
       dataRoot: "Browser preview — native persistence is unavailable",
       vst3Root: defaultVst3Root,
     };
@@ -23,6 +24,14 @@ export async function saveScratch(session: ScratchSession): Promise<void> {
     await invoke("save_scratch_session", { session });
   } catch {
     localStorage.setItem("riffra.preview.scratch", JSON.stringify(session));
+  }
+}
+
+export async function restoreRecoveryGeneration(fileName: string): Promise<ScratchSession | null> {
+  try {
+    return await invoke<ScratchSession>("restore_recovery_generation", { fileName });
+  } catch {
+    return null;
   }
 }
 

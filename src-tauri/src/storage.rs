@@ -1,4 +1,4 @@
-use crate::model::ScratchSession;
+use crate::model::{RecoveryCandidate, ScratchSession};
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -78,6 +78,47 @@ impl SessionStore {
         self.prune_generations()
     }
 
+    pub fn recovery_candidates(&self) -> io::Result<Vec<RecoveryCandidate>> {
+        self.ensure_layout()?;
+        let mut candidates = Vec::new();
+        for path in self.generation_files_newest_first()? {
+            let Ok(session) = read_session(&path) else {
+                continue;
+            };
+            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            candidates.push(RecoveryCandidate {
+                file_name: file_name.to_owned(),
+                updated_at_ms: session.updated_at_ms,
+                session_id: session.session_id,
+                project_name: session.project_name,
+                note: session.note,
+            });
+        }
+        Ok(candidates)
+    }
+
+    pub fn restore_generation(&self, file_name: &str) -> io::Result<ScratchSession> {
+        if file_name.trim().is_empty()
+            || file_name
+                != Path::new(file_name)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+            || !file_name.ends_with(".json")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Recovery generation name is invalid.",
+            ));
+        }
+        let path = self.generations_dir.join(file_name);
+        let session = read_session(&path)?;
+        self.save(&session)?;
+        Ok(session)
+    }
+
     fn generation_files_newest_first(&self) -> io::Result<Vec<PathBuf>> {
         let mut files = fs::read_dir(&self.generations_dir)?
             .filter_map(Result::ok)
@@ -144,6 +185,35 @@ mod tests {
         let (recovered, used_generation) = store.load_or_create().unwrap();
         assert!(used_generation);
         assert_eq!(recovered.note, "recover me");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lists_and_restores_valid_recovery_generations() {
+        let root = test_root("recovery-candidates");
+        let store = SessionStore::new(&root);
+        let mut first = ScratchSession::new(now_ms());
+        first.note = "stable choice".into();
+        store.save(&first).unwrap();
+        let mut second = first.clone();
+        second.note = "newer choice".into();
+        store.save(&second).unwrap();
+        let candidates = store.recovery_candidates().unwrap();
+        assert_eq!(candidates.len(), 1);
+        let restored = store.restore_generation(&candidates[0].file_name).unwrap();
+        assert_eq!(restored.note, "stable choice");
+        let (current, recovered) = store.load_or_create().unwrap();
+        assert!(!recovered);
+        assert_eq!(current.note, "stable choice");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_recovery_paths_outside_generation_directory() {
+        let root = test_root("recovery-path");
+        let store = SessionStore::new(&root);
+        let error = store.restore_generation("..\\current.json").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         let _ = fs::remove_dir_all(root);
     }
 

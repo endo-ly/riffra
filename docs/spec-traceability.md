@@ -13,7 +13,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 | G. Separate | background job provider | In progress | manifest-backed offline stereo channel split with immutable Left/Right WAV outputs; model-based cancellable stems and synchronized comparison remain |
 | H. AI | reversible suggestion service | In progress | offline Reference ChangeSet preview shows target/current/proposed/reason/effect/risk with selected apply, reject and Undo coverage; general context control, provider permissions and external-send control remain |
 | I. Creative Memory | library catalog + provenance manifests | In progress | VST3 catalog, recording-manifest search/listing, SQLite cross-asset index/search, rack/session provenance sidecars and explicit portable session-manifest export/import are available; richer tags, related-asset traversal and non-destructive preview remain |
-| J. Recovery | supervisor + autosave generations | In progress | corrupted current save fallback, explicit `--safe-mode` startup isolation, and persisted VST3 placeholders marked Missing dependency; stable-version choice and discard-recovery UI remain |
+| J. Recovery | supervisor + autosave generations | In progress | corrupted current save fallback, explicit `--safe-mode` startup isolation, persisted VST3 placeholders marked Missing dependency, and selectable stable autosave generations; discard-recovery and richer crash diagnostics remain |
 
 ## Gate 1 acceptance checks
 

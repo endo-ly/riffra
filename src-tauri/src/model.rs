@@ -222,10 +222,21 @@ impl ScratchSession {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RecoveryCandidate {
+    pub file_name: String,
+    pub updated_at_ms: u64,
+    pub session_id: String,
+    pub project_name: Option<String>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub session: ScratchSession,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
+    pub recovery_candidates: Vec<RecoveryCandidate>,
     pub data_root: String,
     pub vst3_root: String,
 }

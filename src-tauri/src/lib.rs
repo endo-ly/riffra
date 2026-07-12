@@ -36,6 +36,9 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
         session: state.session.lock().map_err(lock_error)?.clone(),
         recovered_from_generation: state.recovered_from_generation,
         safe_mode: state.safe_mode,
+        recovery_candidates: SessionStore::new(&state.data_root)
+            .recovery_candidates()
+            .map_err(|error| format!("Recovery candidates could not be read: {error}"))?,
         data_root: state.data_root.to_string_lossy().into_owned(),
         vst3_root: DEFAULT_VST3_ROOT.into(),
     })
@@ -63,6 +66,19 @@ fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> 
     queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session;
     Ok(())
+}
+
+#[tauri::command]
+fn restore_recovery_generation(
+    file_name: String,
+    state: State<'_, AppState>,
+) -> Result<ScratchSession, String> {
+    let session = SessionStore::new(&state.data_root)
+        .restore_generation(&file_name)
+        .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
 }
 
 #[tauri::command]
@@ -534,6 +550,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
             save_scratch_session,
+            restore_recovery_generation,
             export_scratch_session,
             import_scratch_session,
             scan_vst3_folder,
