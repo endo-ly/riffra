@@ -66,9 +66,20 @@ struct RecordingManifest {
     updated_at: Option<String>,
     raw_file: Option<String>,
     processed_file: Option<String>,
-    sample_rate: Option<u32>,
+    sample_rate: Option<f64>,
     samples_written: Option<u64>,
     dropped_blocks: Option<u64>,
+}
+
+fn normalize_sample_rate(rate: f64) -> Option<u32> {
+    if !rate.is_finite() || rate <= 0.0 || rate > f64::from(u32::MAX) {
+        return None;
+    }
+    let rounded = rate.round();
+    if !(1.0..=f64::from(u32::MAX)).contains(&rounded) {
+        return None;
+    }
+    Some(rounded as u32)
 }
 
 pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>, String> {
@@ -153,7 +164,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_path,
             midi_file,
             midi_path,
-            sample_rate: manifest.sample_rate,
+            sample_rate: manifest.sample_rate.and_then(normalize_sample_rate),
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
             provenance,
@@ -249,7 +260,7 @@ mod tests {
         fs::create_dir_all(&take).unwrap();
         fs::write(
             take.join("manifest.json"),
-            br#"{"state":"completed","startedAt":"2026-07-12T00:00:00Z","updatedAt":"2026-07-12T00:00:01Z","rawFile":"raw.wav","processedFile":"processed.wav","samplesWritten":44100,"droppedBlocks":0}"#,
+            br#"{"state":"completed","startedAt":"2026-07-12T00:00:00Z","updatedAt":"2026-07-12T00:00:01Z","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100,"droppedBlocks":0}"#,
         )
         .unwrap();
 
@@ -257,7 +268,19 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].state, "completed");
         assert_eq!(results[0].samples_written, 44_100);
+        assert_eq!(results[0].sample_rate, Some(44_100));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalizes_floating_sample_rates_and_rejects_invalid_values() {
+        assert_eq!(normalize_sample_rate(44_100.0), Some(44_100));
+        assert_eq!(normalize_sample_rate(44_100.4), Some(44_100));
+        assert_eq!(normalize_sample_rate(44_100.6), Some(44_101));
+        assert_eq!(normalize_sample_rate(0.0), None);
+        assert_eq!(normalize_sample_rate(f64::NAN), None);
+        assert_eq!(normalize_sample_rate(f64::INFINITY), None);
+        assert_eq!(normalize_sample_rate(f64::from(u32::MAX) + 1.0), None);
     }
 
     #[test]
