@@ -491,7 +491,14 @@ function App() {
     if (!snapshot) return;
     setSession({ ...session, masterDb: snapshot.masterDb, rack: snapshot.rack.map((device) => ({ ...device })), macros: snapshot.macros.map((macro) => ({ ...macro })) });
     const plugin = snapshot.rack.find((device) => device.kind === "plugin");
-    if (plugin) setAudio(await setPluginBypassed(plugin.bypassed));
+    if (plugin) {
+      let nextAudio = await setPluginBypassed(plugin.bypassed);
+      for (const [index, value] of plugin.parameterValues.entries()) {
+        if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
+        nextAudio = await setPluginParameter(index, value);
+      }
+      setAudio(nextAudio);
+    }
   }, [session]);
 
   const openRecordingAnalysis = useCallback(async (recording: RecordingAsset) => {
