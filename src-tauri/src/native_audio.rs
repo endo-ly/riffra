@@ -338,9 +338,21 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn set_audio_driver(&self, driver: &str) -> Result<AudioStatus, String> {
+    pub fn set_audio_driver(
+        &self,
+        driver: &str,
+        sample_rate: Option<u32>,
+        buffer_size: Option<u32>,
+    ) -> Result<AudioStatus, String> {
+        let mut command = serde_json::json!({"type": "setAudioDriver", "driver": driver});
+        if let Some(sample_rate) = sample_rate {
+            command["sampleRate"] = serde_json::json!(sample_rate);
+        }
+        if let Some(buffer_size) = buffer_size {
+            command["bufferSize"] = serde_json::json!(buffer_size);
+        }
         self.send_command(
-            serde_json::json!({"type": "setAudioDriver", "driver": driver}),
+            command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
         )
     }

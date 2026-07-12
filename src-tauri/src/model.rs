@@ -155,6 +155,10 @@ pub struct ScratchSession {
     pub workspace: Workspace,
     #[serde(default)]
     pub audio_driver: Option<String>,
+    #[serde(default)]
+    pub audio_sample_rate: Option<u32>,
+    #[serde(default)]
+    pub audio_buffer_size: Option<u32>,
     pub master_db: f64,
     #[serde(default)]
     pub loop_enabled: bool,
@@ -208,6 +212,8 @@ impl ScratchSession {
             project_name: None,
             workspace: Workspace::Home,
             audio_driver: None,
+            audio_sample_rate: None,
+            audio_buffer_size: None,
             master_db: -18.0,
             loop_enabled: false,
             emergency_muted: true,
@@ -268,6 +274,16 @@ impl ScratchSession {
             .audio_driver
             .map(|value| value.trim().chars().take(128).collect())
             .filter(|value: &String| !value.is_empty());
+        if let Some(sample_rate) = self.audio_sample_rate {
+            if !(8_000..=192_000).contains(&sample_rate) {
+                return Err("Audio sample rate preference is outside 8-192 kHz.".into());
+            }
+        }
+        if let Some(buffer_size) = self.audio_buffer_size {
+            if !(16..=8192).contains(&buffer_size) {
+                return Err("Audio buffer preference is outside 16-8192 samples.".into());
+            }
+        }
         self.note.truncate(16_384);
         if self.rack.len() > 256 {
             return Err("A rack cannot contain more than 256 devices.".into());

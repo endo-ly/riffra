@@ -316,9 +316,9 @@ export async function recoverAudioDevice(): Promise<AudioStatus> {
   }
 }
 
-export async function setAudioDriver(driver: string): Promise<AudioStatus> {
+export async function setAudioDriver(driver: string, sampleRate: number | null = null, bufferSize: number | null = null): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>("set_audio_driver", { driver });
+    return await invoke<AudioStatus>("set_audio_driver", { driver, sampleRate, bufferSize });
   } catch {
     return await getAudioStatus();
   }

@@ -407,7 +407,12 @@ fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, Strin
 }
 
 #[tauri::command]
-fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+fn set_audio_driver(
+    driver: String,
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<AudioStatus, String> {
     if state.safe_mode {
         return Err(
             "Safe Mode blocks audio-driver changes; restart Riffra without --safe-mode first."
@@ -418,9 +423,23 @@ fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioS
         return Err("Audio driver name must not be empty.".into());
     }
     let driver = driver.trim().to_owned();
-    let audio = state.audio.set_audio_driver(&driver)?;
+    if let Some(rate) = sample_rate {
+        if !(8_000..=192_000).contains(&rate) {
+            return Err("Audio sample rate preference is outside 8-192 kHz.".into());
+        }
+    }
+    if let Some(buffer) = buffer_size {
+        if !(16..=8192).contains(&buffer) {
+            return Err("Audio buffer preference is outside 16-8192 samples.".into());
+        }
+    }
+    let audio = state
+        .audio
+        .set_audio_driver(&driver, sample_rate, buffer_size)?;
     let mut session = state.session.lock().map_err(lock_error)?.clone();
     session.audio_driver = Some(driver);
+    session.audio_sample_rate = sample_rate;
+    session.audio_buffer_size = buffer_size;
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
         .save(&session)
@@ -637,7 +656,11 @@ pub fn run() {
             };
             if !safe_mode {
                 if let Some(driver) = session.audio_driver.as_deref() {
-                    let _ = audio.set_audio_driver(driver);
+                    let _ = audio.set_audio_driver(
+                        driver,
+                        session.audio_sample_rate,
+                        session.audio_buffer_size,
+                    );
                 }
             }
             app.manage(AppState {

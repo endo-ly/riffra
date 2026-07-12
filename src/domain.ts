@@ -91,6 +91,8 @@ export interface ScratchSession {
   projectName: string | null;
   workspace: Workspace;
   audioDriver: string | null;
+  audioSampleRate: number | null;
+  audioBufferSize: number | null;
   masterDb: number;
   loopEnabled: boolean;
   emergencyMuted: boolean;
@@ -358,6 +360,8 @@ export const defaultSession = (): ScratchSession => ({
   projectName: null,
   workspace: "home",
   audioDriver: null,
+  audioSampleRate: null,
+  audioBufferSize: null,
   masterDb: -18,
   loopEnabled: false,
   emergencyMuted: true,
