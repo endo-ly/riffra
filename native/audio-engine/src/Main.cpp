@@ -504,6 +504,17 @@ int serve() {
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
+        if (type == "setPluginParameter") {
+            juce::String parameterError;
+            const auto index = static_cast<int>(command.getProperty("index", -1));
+            const auto value = static_cast<float>(command.getProperty("value", 0.0));
+            if (!rack.setParameter(index, value, parameterError)) {
+                writeJson(makeError("plugin", parameterError));
+                continue;
+            }
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
         if (type == "recoverAudioDevice") {
             juce::String midiError;
             if (!midiMonitor.finishRecording(midiError)) {

@@ -1,4 +1,6 @@
-use crate::model::{AudioState, AudioStatus, PluginStatus, RecordingStatus, SamplePad};
+use crate::model::{
+    AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus, SamplePad,
+};
 use serde::Deserialize;
 use std::{
     path::Path,
@@ -59,6 +61,17 @@ struct NativePluginStatus {
     sample_rate: Option<f64>,
     block_size: Option<u32>,
     bypassed_blocks: Option<u64>,
+    parameters: Option<Vec<NativePluginParameter>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePluginParameter {
+    index: u32,
+    name: String,
+    value: f32,
+    default_value: f32,
+    automatable: bool,
 }
 
 impl AudioSupervisor {
@@ -246,6 +259,16 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_plugin_parameter(&self, index: u32, value: f32) -> Result<AudioStatus, String> {
+        if !value.is_finite() {
+            return Err("Plugin parameter value must be finite.".into());
+        }
+        self.send_command(
+            serde_json::json!({"type": "setPluginParameter", "index": index, "value": value.clamp(0.0, 1.0)}),
+            "VST3 parameter updated through the isolated rack.",
+        )
+    }
+
     pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
         let safe_gain = gain_db.clamp(-90.0, 0.0);
         self.send_command(
@@ -400,6 +423,18 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
                 .and_then(|rate| u32::try_from(rate.round() as i64).ok()),
             block_size: plugin.block_size,
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
+            parameters: plugin
+                .parameters
+                .unwrap_or_default()
+                .into_iter()
+                .map(|parameter| PluginParameter {
+                    index: parameter.index,
+                    name: parameter.name,
+                    value: parameter.value.clamp(0.0, 1.0),
+                    default_value: parameter.default_value.clamp(0.0, 1.0),
+                    automatable: parameter.automatable,
+                })
+                .collect(),
         });
         current.midi_inputs = native.midi_inputs.unwrap_or_default();
         current.midi_outputs = native.midi_outputs.unwrap_or_default();

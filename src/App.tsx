@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -88,7 +88,7 @@ function AudioDriverPicker({ probe, current, onSelect }: { probe: AudioDevicePro
   return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} disabled={driver.name === current} onClick={() => onSelect(driver.name)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
 }
 
-function WorkspacePlay({ session, plugins, missingPluginPaths, setSession, onTogglePluginBypass, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; plugins: PluginEntry[]; missingPluginPaths: string[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
+function WorkspacePlay({ session, audio, plugins, missingPluginPaths, setSession, onTogglePluginBypass, onSetPluginParameter, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; audio: AudioStatus; plugins: PluginEntry[]; missingPluginPaths: string[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onSetPluginParameter: (index: number, value: number) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
   const missingPaths = new Set(missingPluginPaths);
   const persistedPlugins = session.rack
     .filter((device) => device.kind === "plugin")
@@ -109,6 +109,7 @@ function WorkspacePlay({ session, plugins, missingPluginPaths, setSession, onTog
         <button className="add-device"><Icon name="plus" /><span>Add Device</span></button>
         <article className="rack-device output-device"><span className="device-order">OUT</span><div className="device-face"><Meter value={58} /><Meter value={51} /></div><h3>Main Out</h3><small>Safety limited</small></article>
       </section>
+      {audio.plugin?.loaded && audio.plugin.parameters.length > 0 && <section className="section-card plugin-parameters"><header><div><span className="eyebrow">COMMON PARAMETER VIEW</span><h2>{audio.plugin.parameters.length} VST3 parameters</h2></div><small>Native GUI is optional; changes stay inside the isolated rack.</small></header><div className="plugin-parameter-grid">{audio.plugin.parameters.slice(0, 48).map((parameter) => <label className="plugin-parameter" key={parameter.index}><span><strong>{parameter.name || `Parameter ${parameter.index + 1}`}</strong><small>{Math.round(parameter.value * 100)}%{parameter.automatable ? " · automatable" : ""}</small></span><input type="range" min="0" max="1" step="0.001" value={parameter.value} onChange={(event) => onSetPluginParameter(parameter.index, Number(event.target.value))} /></label>)}</div>{audio.plugin.parameters.length > 48 && <small className="inspector-copy">Showing first 48 parameters; the rest remain available to the plugin.</small>}</section>}
       <section className="macro-section">
         <header><div><span className="eyebrow">MACROS</span><h2>Performance controls</h2></div><button className="text-button">Map parameters</button></header>
         <div className="macro-grid">
@@ -410,6 +411,10 @@ function App() {
       ...current,
       rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, bypassed } : device),
     } : current);
+  }, []);
+
+  const setPluginParameterValue = useCallback(async (index: number, value: number) => {
+    setAudio(await setPluginParameter(index, value));
   }, []);
 
   const recoverAudio = useCallback(async () => {
@@ -807,7 +812,7 @@ function App() {
 
       <section className="workspace">
         {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} onSelect={(driver) => void selectAudioDriver(driver)} /></>}
-        {session.workspace === "play" && <WorkspacePlay session={session} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
+        {session.workspace === "play" && <WorkspacePlay session={session} audio={audio} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} setSession={setSession} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><MidiClipEditor session={session} setSession={setSession} recordings={recordings} /><TimelineRenderControls session={session} result={renderResult} message={renderMessage} onRender={(options) => void runTimelineRender(options)} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={recordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} /></>}

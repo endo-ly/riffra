@@ -284,6 +284,14 @@ export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus>
   }
 }
 
+export async function setPluginParameter(index: number, value: number): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("set_plugin_parameter", { index, value });
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
 export async function setMasterGainDb(gainDb: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_master_gain_db", { gainDb });

@@ -71,6 +71,21 @@ void PluginRack::setBypassed(const bool shouldBypass) noexcept {
     bypassed.store(shouldBypass, std::memory_order_release);
 }
 
+bool PluginRack::setParameter(const int index, const float value, juce::String& error) noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return false;
+    }
+    const auto& parameters = plugin->getParameters();
+    if (index < 0 || index >= parameters.size() || parameters[index] == nullptr) {
+        error = "Plugin parameter index is out of range.";
+        return false;
+    }
+    parameters[index]->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
+    return true;
+}
+
 void PluginRack::process(
     const float* const* inputChannelData,
     const int numInputChannels,
@@ -112,6 +127,23 @@ juce::var PluginRack::status() const {
     result->setProperty(
         "bypassedBlocks",
         static_cast<juce::int64>(bypassedBlocks.load(std::memory_order_acquire)));
+    juce::Array<juce::var> parameters;
+    if (plugin != nullptr) {
+        const auto& pluginParameters = plugin->getParameters();
+        for (int index = 0; index < pluginParameters.size(); ++index) {
+            auto* parameter = pluginParameters[index];
+            if (parameter == nullptr)
+                continue;
+            auto* item = new juce::DynamicObject();
+            item->setProperty("index", index);
+            item->setProperty("name", parameter->getName(96));
+            item->setProperty("value", parameter->getValue());
+            item->setProperty("defaultValue", parameter->getDefaultValue());
+            item->setProperty("automatable", parameter->isAutomatable());
+            parameters.add(juce::var(item));
+        }
+    }
+    result->setProperty("parameters", parameters);
     return juce::var(result);
 }
 

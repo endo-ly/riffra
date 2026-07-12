@@ -214,6 +214,15 @@ export interface PluginStatus {
   sampleRate: number | null;
   blockSize: number | null;
   bypassedBlocks: number;
+  parameters: PluginParameter[];
+}
+
+export interface PluginParameter {
+  index: number;
+  name: string;
+  value: number;
+  defaultValue: number;
+  automatable: boolean;
 }
 
 export interface AudioStatus {

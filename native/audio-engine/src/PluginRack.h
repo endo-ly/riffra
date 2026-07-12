@@ -14,6 +14,7 @@ public:
     void release() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
     void setBypassed(bool shouldBypass) noexcept;
+    bool setParameter(int index, float value, juce::String& error) noexcept;
     void process(
         const float* const* inputChannelData,
         int numInputChannels,

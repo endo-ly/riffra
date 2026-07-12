@@ -399,6 +399,16 @@ pub struct RecordingStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginParameter {
+    pub index: u32,
+    pub name: String,
+    pub value: f32,
+    pub default_value: f32,
+    pub automatable: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginStatus {
     pub loaded: bool,
     pub bypassed: bool,
@@ -407,6 +417,7 @@ pub struct PluginStatus {
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
     pub bypassed_blocks: u64,
+    pub parameters: Vec<PluginParameter>,
 }
 
 #[derive(Clone, Debug, Serialize)]

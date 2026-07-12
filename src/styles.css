@@ -362,6 +362,13 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .track-mixer-grid { display: grid; gap: 7px; }
 .track-mixer-row { display: grid; grid-template-columns: minmax(120px, 1fr) 120px auto auto; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #27313a; }
 .track-mixer-row small { color: var(--muted); font-size: 9px; }
+.plugin-parameters { margin-top: 12px; }
+.plugin-parameter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 16px; margin-top: 10px; }
+.plugin-parameter { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
+.plugin-parameter > span { display: flex; justify-content: space-between; gap: 8px; }
+.plugin-parameter strong { overflow: hidden; color: #cbd3dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-parameter small { white-space: nowrap; }
+.plugin-parameter input { accent-color: var(--accent); }
 .render-message { display: block; color: var(--muted); font-size: 9px; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }
