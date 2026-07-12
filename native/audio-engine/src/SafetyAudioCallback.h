@@ -5,6 +5,7 @@
 #include "PluginRack.h"
 
 #include <atomic>
+#include <array>
 #include <memory>
 
 namespace riffra {
@@ -25,8 +26,9 @@ public:
     bool startRecording(const juce::File& directory, juce::String& error);
     bool stopRecording(juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
-    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error);
+    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
+    void stopPreviewForKey(int voiceKey) noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
 
@@ -76,13 +78,20 @@ private:
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<RecordingSession> recording;
     mutable juce::CriticalSection previewLock;
-    juce::AudioBuffer<float> previewBuffer;
-    int previewStart = 0;
-    int previewCursor = 0;
-    int previewEnd = 0;
-    float previewGain = 1.0f;
-    bool previewLoop = false;
-    bool previewActive = false;
+    struct PreviewVoice {
+        juce::AudioBuffer<float> buffer;
+        int key = -1;
+        int start = 0;
+        int cursor = 0;
+        int end = 0;
+        float gain = 1.0f;
+        bool loop = false;
+        bool active = false;
+        std::uint64_t sequence = 0;
+    };
+    static constexpr std::size_t kPreviewVoiceCount = 8;
+    std::array<PreviewVoice, kPreviewVoiceCount> previewVoices;
+    std::uint64_t previewSequence = 0;
     PluginRack* pluginRack = nullptr;
 
     juce::CriticalSection errorLock;

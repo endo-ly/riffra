@@ -106,7 +106,7 @@ public:
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
         if (message.isNoteOff()) {
             if (audioCallback != nullptr)
-                audioCallback->stopPreview();
+                audioCallback->stopPreviewForKey(message.getNoteNumber());
             return;
         }
 
@@ -136,7 +136,8 @@ public:
                 end,
                 juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()) * gain,
                 loop,
-                error))
+                error,
+                message.getNoteNumber()))
             padTriggers.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -498,7 +499,8 @@ int serve() {
                         end,
                         static_cast<float>(static_cast<double>(command.getProperty("gain", 1.0))),
                         static_cast<bool>(command.getProperty("loop", false)),
-                        previewError))
+                        previewError,
+                        -1))
                         previewError = previewError.isEmpty() ? "Preview range is invalid." : previewError;
                 }
             }

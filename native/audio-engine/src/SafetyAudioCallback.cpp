@@ -109,7 +109,8 @@ bool SafetyAudioCallback::startPreview(
     const int endSample,
     const float gain,
     const bool loop,
-    juce::String& error) {
+    juce::String& error,
+    const int voiceKey) {
     const juce::ScopedLock lock(previewLock);
     if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
         error = "Preview source contains no audio samples.";
@@ -121,52 +122,102 @@ bool SafetyAudioCallback::startPreview(
         error = "Preview range is empty.";
         return false;
     }
-    previewBuffer.makeCopyOf(buffer, true);
-    previewStart = safeStart;
-    previewCursor = safeStart;
-    previewEnd = safeEnd;
-    previewGain = juce::jlimit(0.0f, 2.0f, gain);
-    previewLoop = loop;
-    previewActive = true;
+    PreviewVoice* target = nullptr;
+    if (voiceKey >= 0) {
+        for (auto& voice : previewVoices) {
+            if (voice.active && voice.key == voiceKey) {
+                target = &voice;
+                break;
+            }
+        }
+    }
+    if (target == nullptr) {
+        for (auto& voice : previewVoices) {
+            if (!voice.active) {
+                target = &voice;
+                break;
+            }
+        }
+    }
+    if (target == nullptr) {
+        target = &previewVoices.front();
+        for (auto& voice : previewVoices) {
+            if (voice.sequence < target->sequence)
+                target = &voice;
+        }
+    }
+    target->buffer.makeCopyOf(buffer, true);
+    target->key = voiceKey;
+    target->start = safeStart;
+    target->cursor = safeStart;
+    target->end = safeEnd;
+    target->gain = juce::jlimit(0.0f, 2.0f, gain);
+    target->loop = loop;
+    target->active = true;
+    target->sequence = ++previewSequence;
     return true;
 }
 
 void SafetyAudioCallback::stopPreview() noexcept {
     const juce::ScopedLock lock(previewLock);
-    previewActive = false;
-    previewStart = 0;
-    previewCursor = 0;
-    previewEnd = 0;
-    previewLoop = false;
-    previewBuffer.setSize(0, 0);
+    for (auto& voice : previewVoices) {
+        voice.active = false;
+        voice.key = -1;
+        voice.start = 0;
+        voice.cursor = 0;
+        voice.end = 0;
+        voice.loop = false;
+        voice.buffer.setSize(0, 0);
+    }
+}
+
+void SafetyAudioCallback::stopPreviewForKey(const int voiceKey) noexcept {
+    const juce::ScopedLock lock(previewLock);
+    for (auto& voice : previewVoices) {
+        if (voice.active && voice.key == voiceKey) {
+            voice.active = false;
+            voice.key = -1;
+            voice.cursor = voice.start;
+            voice.loop = false;
+        }
+    }
 }
 
 bool SafetyAudioCallback::isPreviewing() const noexcept {
     const juce::ScopedLock lock(previewLock);
-    return previewActive;
+    for (const auto& voice : previewVoices) {
+        if (voice.active)
+            return true;
+    }
+    return false;
 }
 
 void SafetyAudioCallback::mixPreview(
     float* const* outputChannelData,
     const int numOutputChannels,
     const int numSamples) noexcept {
-    if (!previewActive || previewBuffer.getNumSamples() <= 0)
-        return;
-    const auto sourceChannels = previewBuffer.getNumChannels();
-    for (int sample = 0; sample < numSamples && previewCursor < previewEnd; ++sample, ++previewCursor) {
-        for (int channel = 0; channel < numOutputChannels; ++channel) {
-            auto* output = outputChannelData[channel];
-            if (output == nullptr)
-                continue;
-            const auto sourceChannel = juce::jmin(channel, sourceChannels - 1);
-            output[sample] += previewBuffer.getSample(sourceChannel, previewCursor) * previewGain;
+    for (auto& voice : previewVoices) {
+        if (!voice.active || voice.buffer.getNumSamples() <= 0)
+            continue;
+        const auto sourceChannels = voice.buffer.getNumChannels();
+        for (int sample = 0; sample < numSamples && voice.active; ++sample) {
+            if (voice.cursor >= voice.end) {
+                if (voice.loop)
+                    voice.cursor = voice.start;
+                else {
+                    voice.active = false;
+                    break;
+                }
+            }
+            for (int channel = 0; channel < numOutputChannels; ++channel) {
+                auto* output = outputChannelData[channel];
+                if (output == nullptr)
+                    continue;
+                const auto sourceChannel = juce::jmin(channel, sourceChannels - 1);
+                output[sample] += voice.buffer.getSample(sourceChannel, voice.cursor) * voice.gain;
+            }
+            ++voice.cursor;
         }
-    }
-    if (previewCursor >= previewEnd) {
-        if (previewLoop)
-            previewCursor = previewStart;
-        else
-            previewActive = false;
     }
 }
 
