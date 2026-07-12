@@ -9,6 +9,7 @@
 #include <memory>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace {
 
@@ -23,6 +24,14 @@ public:
         int end = 0;
     };
 
+    struct RecordedEvent {
+        double timeMs = 0.0;
+        int status = 0;
+        int channel = 0;
+        int note = 0;
+        int velocity = 0;
+    };
+
     void setAudioCallback(SafetyAudioCallback* const callback) noexcept { audioCallback = callback; }
 
     void replacePads(std::map<int, Pad>&& next) {
@@ -30,8 +39,63 @@ public:
         pads = std::move(next);
     }
 
+    void beginRecording(const juce::File& file) {
+        const juce::ScopedLock lock(recordingLock);
+        recordedEvents.clear();
+        recordingFile = file;
+        recordingStartMs = juce::Time::getMillisecondCounterHiRes();
+        recordingMidi.store(true, std::memory_order_release);
+    }
+
+    bool finishRecording(juce::String& error) {
+        std::vector<RecordedEvent> events;
+        juce::File file;
+        {
+            const juce::ScopedLock lock(recordingLock);
+            recordingMidi.store(false, std::memory_order_release);
+            events = recordedEvents;
+            file = recordingFile;
+            recordingFile = {};
+        }
+        if (file == juce::File() || !file.getParentDirectory().createDirectory()) {
+            error = "MIDI recording destination could not be created.";
+            return false;
+        }
+        juce::Array<juce::var> encoded;
+        for (const auto& event : events) {
+            auto* object = new juce::DynamicObject();
+            object->setProperty("timeMs", event.timeMs);
+            object->setProperty("status", event.status);
+            object->setProperty("channel", event.channel);
+            object->setProperty("note", event.note);
+            object->setProperty("velocity", event.velocity);
+            encoded.add(juce::var(object));
+        }
+        auto* root = new juce::DynamicObject();
+        root->setProperty("version", 1);
+        root->setProperty("events", encoded);
+        if (!file.replaceWithText(juce::JSON::toString(juce::var(root), true))) {
+            error = "MIDI recording JSON could not be finalized.";
+            return false;
+        }
+        return true;
+    }
+
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override {
         messageCount.fetch_add(1, std::memory_order_relaxed);
+        if (message.isNoteOn() || message.isNoteOff()) {
+            const juce::ScopedLock lock(recordingLock);
+            if (recordingMidi.load(std::memory_order_acquire)
+                && recordedEvents.size() < 200'000) {
+                recordedEvents.push_back(RecordedEvent {
+                    juce::Time::getMillisecondCounterHiRes() - recordingStartMs,
+                    message.getRawDataSize() > 0 ? message.getRawData()[0] & 0xf0 : 0,
+                    message.getChannel(),
+                    message.getNoteNumber(),
+                    message.getVelocity(),
+                });
+            }
+        }
         if (!message.isNoteOn() && !message.isNoteOff())
             return;
 
@@ -76,15 +140,25 @@ public:
         return static_cast<int>(pads.size());
     }
     [[nodiscard]] std::uint64_t getPadTriggerCount() const noexcept { return padTriggers.load(std::memory_order_acquire); }
+    [[nodiscard]] bool isRecording() const noexcept { return recordingMidi.load(std::memory_order_acquire); }
+    [[nodiscard]] std::size_t getRecordedEventCount() const noexcept {
+        const juce::ScopedLock lock(recordingLock);
+        return recordedEvents.size();
+    }
 
 private:
     std::atomic<bool> active { false };
     std::atomic<std::uint64_t> messageCount { 0 };
     std::atomic<int> lastNote { -1 };
     std::atomic<std::uint64_t> padTriggers { 0 };
+    std::atomic<bool> recordingMidi { false };
     SafetyAudioCallback* audioCallback = nullptr;
     mutable juce::CriticalSection padLock;
     std::map<int, Pad> pads;
+    mutable juce::CriticalSection recordingLock;
+    juce::File recordingFile;
+    double recordingStartMs = 0.0;
+    std::vector<RecordedEvent> recordedEvents;
 };
 
 juce::var makeError(const juce::String& scope, const juce::String& message) {
@@ -157,6 +231,8 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
         status->setProperty("lastMidiNote", midi->getLastNote());
         status->setProperty("midiPadMappings", midi->getPadMappingCount());
         status->setProperty("midiPadTriggers", static_cast<juce::int64>(midi->getPadTriggerCount()));
+        status->setProperty("midiRecording", midi->isRecording());
+        status->setProperty("midiRecordedEvents", static_cast<juce::int64>(midi->getRecordedEventCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
 
@@ -477,12 +553,17 @@ int serve() {
                 writeJson(makeError("recording", directory.isEmpty() ? "Recording directory is required." : recordingError));
                 continue;
             }
+            midiMonitor.beginRecording(juce::File(directory).getChildFile("midi.json"));
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
         if (type == "stopRecording") {
             juce::String recordingError;
             if (!callback.stopRecording(recordingError)) {
+                writeJson(makeError("recording", recordingError));
+                continue;
+            }
+            if (!midiMonitor.finishRecording(recordingError)) {
                 writeJson(makeError("recording", recordingError));
                 continue;
             }
@@ -497,6 +578,8 @@ int serve() {
     }
 
     callback.setEmergencyMuted(true);
+    juce::String ignoredMidiError;
+    midiMonitor.finishRecording(ignoredMidiError);
     midiMonitor.setActive(false);
     if (midiInput != nullptr) {
         midiInput->stop();

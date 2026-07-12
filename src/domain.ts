@@ -108,6 +108,8 @@ export interface RecordingAsset {
   processedFile: string | null;
   rawPath: string | null;
   processedPath: string | null;
+  midiFile: string | null;
+  midiPath: string | null;
   sampleRate: number | null;
   samplesWritten: number;
   droppedBlocks: number;

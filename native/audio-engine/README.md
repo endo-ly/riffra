@@ -31,4 +31,8 @@ The first safety chain is deliberately small and auditable: immediate emergency 
 
 Responses are JSON Lines and always include an error scope and `dataSafe` when a request fails.
 
+When an input is open, `startRecording` also captures note-on/note-off events to
+`midi.json` beside the Raw and Processed WAV files. The sidecar caps the event
+journal at 200,000 events and finalizes it on `stopRecording`.
+
 - `riffra-audio.exe --recording-self-test <directory>` writes and reopens a synthetic Raw/Processed take without accessing a hardware input.

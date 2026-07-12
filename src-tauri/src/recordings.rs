@@ -19,6 +19,8 @@ pub struct RecordingAsset {
     pub processed_file: Option<String>,
     pub raw_path: Option<String>,
     pub processed_path: Option<String>,
+    pub midi_file: Option<String>,
+    pub midi_path: Option<String>,
     pub sample_rate: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
@@ -111,6 +113,13 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .processed_file
             .as_ref()
             .map(|file| path.join(file).to_string_lossy().into_owned());
+        let midi_file = path
+            .join("midi.json")
+            .is_file()
+            .then(|| "midi.json".to_string());
+        let midi_path = midi_file
+            .as_ref()
+            .map(|file| path.join(file).to_string_lossy().into_owned());
         assets.push(RecordingAsset {
             id: format!("recording:{}", path.to_string_lossy()),
             name,
@@ -122,6 +131,8 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_file: manifest.processed_file,
             raw_path,
             processed_path,
+            midi_file,
+            midi_path,
             sample_rate: manifest.sample_rate,
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
@@ -217,6 +228,24 @@ mod tests {
                 .as_ref()
                 .map(|item| item.session_id.as_str()),
             Some("scratch-42")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn indexes_midi_sidecar_when_a_take_contains_one() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-midi");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(take.join("manifest.json"), br#"{"state":"completed"}"#).unwrap();
+        fs::write(take.join("midi.json"), br#"{"version":1,"events":[]}"#).unwrap();
+        let results = list(&root, Some("take-midi")).unwrap();
+        assert_eq!(results[0].midi_file.as_deref(), Some("midi.json"));
+        assert!(
+            results[0]
+                .midi_path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("midi.json"))
         );
         let _ = fs::remove_dir_all(root);
     }
