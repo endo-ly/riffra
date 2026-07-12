@@ -145,6 +145,29 @@ pub fn sync_session(data_root: &Path, session: &ScratchSession) -> Result<(), St
             )
             .map_err(|error| format!("Library relation could not be indexed: {error}"))?;
     }
+    for clip in &session.midi_clips {
+        let id = format!("midi-clip:{}", clip.id);
+        upsert(
+            &connection,
+            &LibraryAsset {
+                id: id.clone(),
+                name: clip.name.clone(),
+                kind: "midi".into(),
+                path: None,
+                tag: None,
+                note: Some(format!("{} notes", clip.notes.len())),
+                created_at_ms: Some(session.updated_at_ms),
+                updated_at_ms: Some(session.updated_at_ms),
+                stability: if clip.muted { "muted" } else { "saved" }.into(),
+            },
+        )?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO asset_relations (asset_id, related_asset_id, relation) VALUES (?1, ?2, 'used-by')",
+                params![id, project_id],
+            )
+            .map_err(|error| format!("Library MIDI relation could not be indexed: {error}"))?;
+    }
     Ok(())
 }
 
@@ -199,6 +222,32 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                 stability: recording.state.clone(),
             },
         )?;
+        if let Some(midi_path) = recording.midi_path.as_ref() {
+            let midi_id = format!("midi:{}", recording.id);
+            upsert(
+                &connection,
+                &LibraryAsset {
+                    id: midi_id.clone(),
+                    name: format!("{} MIDI", recording.name),
+                    kind: "midi".into(),
+                    path: Some(midi_path.clone()),
+                    tag: Some("recorded".into()),
+                    note: Some("Note-on/off sidecar".into()),
+                    created_at_ms: recording
+                        .provenance
+                        .as_ref()
+                        .map(|value| value.recorded_at_ms),
+                    updated_at_ms: Some(indexed_at),
+                    stability: recording.state.clone(),
+                },
+            )?;
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO asset_relations (asset_id, related_asset_id, relation) VALUES (?1, ?2, 'derived-from')",
+                    params![midi_id, format!("recording:{}", recording.id)],
+                )
+                .map_err(|error| format!("Library MIDI recording relation could not be indexed: {error}"))?;
+        }
     }
     Ok(())
 }
