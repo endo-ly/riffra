@@ -236,6 +236,7 @@ export interface ProjectExport {
   path: string;
   sessionId: string;
   exportedAtMs: number;
+  assetCount: number;
 }
 
 export interface LibraryAsset {

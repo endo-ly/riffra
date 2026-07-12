@@ -537,7 +537,7 @@ function App() {
 
   const exportSession = useCallback(async () => {
     const result = await exportScratchSession();
-    setExportMessage(result ? `Exported manifest: ${result.path}` : "Export failed; the current session remains safe.");
+    setExportMessage(result ? `Exported manifest with ${result.assetCount} collected assets: ${result.path}` : "Export failed; the current session remains safe.");
   }, []);
 
   const importSession = useCallback(async () => {
