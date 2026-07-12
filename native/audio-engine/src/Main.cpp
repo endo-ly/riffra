@@ -57,7 +57,9 @@ public:
             file = recordingFile;
             recordingFile = {};
         }
-        if (file == juce::File() || !file.getParentDirectory().createDirectory()) {
+        if (file == juce::File())
+            return true;
+        if (!file.getParentDirectory().createDirectory()) {
             error = "MIDI recording destination could not be created.";
             return false;
         }
@@ -503,6 +505,11 @@ int serve() {
             continue;
         }
         if (type == "recoverAudioDevice") {
+            juce::String midiError;
+            if (!midiMonitor.finishRecording(midiError)) {
+                writeJson(makeError("recording", midiError));
+                continue;
+            }
             manager.removeAudioCallback(&callback);
             manager.closeAudioDevice();
             callback.setEmergencyMuted(true);
@@ -519,6 +526,11 @@ int serve() {
             const auto driver = command.getProperty("driver", {}).toString();
             if (driver.isEmpty()) {
                 writeJson(makeError("audioDevice", "An audio driver name is required."));
+                continue;
+            }
+            juce::String midiError;
+            if (!midiMonitor.finishRecording(midiError)) {
+                writeJson(makeError("recording", midiError));
                 continue;
             }
             manager.removeAudioCallback(&callback);
