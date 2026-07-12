@@ -34,6 +34,8 @@ pub struct RecordingProvenance {
     pub session_id: String,
     pub workspace: String,
     pub master_db: f64,
+    #[serde(default)]
+    pub count_in_beats: u8,
     pub rack: Vec<RackDevice>,
     pub source: String,
 }
@@ -269,6 +271,7 @@ mod tests {
             session_id: "scratch-42".into(),
             workspace: "play".into(),
             master_db: -18.0,
+            count_in_beats: 0,
             rack: Vec::new(),
             source: "raw DI".into(),
         };

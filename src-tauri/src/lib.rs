@@ -367,6 +367,7 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
             session_id: session.session_id.clone(),
             workspace: format!("{:?}", session.workspace).to_lowercase(),
             master_db: session.master_db,
+            count_in_beats: session.count_in_beats,
             rack: session.rack.clone(),
             source: "raw DI + processed safety path".into(),
         });
