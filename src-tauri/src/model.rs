@@ -52,6 +52,30 @@ pub struct TimelineClip {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct MidiNote {
+    pub id: String,
+    pub note: u8,
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    pub velocity: u8,
+    pub channel: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiClip {
+    pub id: String,
+    pub name: String,
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub notes: Vec<MidiNote>,
+    #[serde(default)]
+    pub muted: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct SamplePad {
     pub id: String,
     pub name: String,
@@ -99,6 +123,8 @@ pub struct ScratchSession {
     #[serde(default)]
     pub timeline: Vec<TimelineClip>,
     #[serde(default)]
+    pub midi_clips: Vec<MidiClip>,
+    #[serde(default)]
     pub sample_pads: Vec<SamplePad>,
     pub note: String,
 }
@@ -142,6 +168,7 @@ impl ScratchSession {
             ],
             snapshots: Vec::new(),
             timeline: Vec::new(),
+            midi_clips: Vec::new(),
             sample_pads: Vec::new(),
             note: String::new(),
         }
@@ -174,6 +201,9 @@ impl ScratchSession {
         }
         if self.timeline.len() > 512 {
             return Err("A timeline cannot contain more than 512 clips.".into());
+        }
+        if self.midi_clips.len() > 256 {
+            return Err("A session cannot contain more than 256 MIDI clips.".into());
         }
         if self.sample_pads.len() > 128 {
             return Err("A sample instrument cannot contain more than 128 pads.".into());
@@ -232,6 +262,34 @@ impl ScratchSession {
                 return Err(format!("Timeline clip '{}' has an invalid pan.", clip.name));
             }
             clip.pan = clip.pan.clamp(-1.0, 1.0);
+        }
+        for clip in &mut self.midi_clips {
+            if clip.id.trim().is_empty() || clip.name.trim().is_empty() {
+                return Err("MIDI clips require non-empty ids and names.".into());
+            }
+            if clip.duration_ms == 0 {
+                return Err(format!("MIDI clip '{}' must have a duration.", clip.name));
+            }
+            if clip.notes.len() > 200_000 {
+                return Err(format!(
+                    "MIDI clip '{}' contains too many notes.",
+                    clip.name
+                ));
+            }
+            for note in &clip.notes {
+                if note.id.trim().is_empty()
+                    || note.note > 127
+                    || note.velocity > 127
+                    || note.channel == 0
+                    || note.channel > 16
+                    || note.duration_ms == 0
+                {
+                    return Err(format!(
+                        "MIDI clip '{}' contains an invalid note.",
+                        clip.name
+                    ));
+                }
+            }
         }
         for pad in &self.sample_pads {
             if pad.id.trim().is_empty()

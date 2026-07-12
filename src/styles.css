@@ -345,6 +345,18 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .render-options input[type="number"] { width: 118px; }
 .render-normalize { display: flex !important; align-items: center; gap: 6px !important; padding-bottom: 7px; }
 .render-normalize input { accent-color: var(--accent); }
+.midi-clip-editor { margin-top: 12px; }
+.midi-import-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0; border-bottom: 1px solid #27313a; }
+.midi-clip-card { margin-top: 12px; padding: 10px; border: 1px solid #27313a; background: rgba(16, 21, 26, .62); }
+.midi-clip-card > header { display: flex; align-items: center; justify-content: space-between; }
+.midi-clip-card > header strong, .midi-clip-card > header small { display: block; }
+.midi-clip-card > header small { color: var(--muted); font-size: 9px; }
+.piano-roll { position: relative; height: 96px; margin: 10px 0; overflow: hidden; border: 1px solid #33414c; background: repeating-linear-gradient(to bottom, rgba(95, 112, 124, .1) 0, rgba(95, 112, 124, .1) 1px, transparent 1px, transparent 12px), #0c1115; }
+.piano-roll i { position: absolute; height: 5px; min-width: 4px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px rgba(101, 214, 190, .45); }
+.midi-note-list { display: grid; gap: 5px; }
+.midi-note-row { display: grid; grid-template-columns: repeat(5, minmax(58px, 1fr)) auto; align-items: end; gap: 6px; }
+.midi-note-row label { display: grid; gap: 3px; color: var(--muted); font-size: 8px; }
+.midi-note-row input { width: 100%; min-width: 0; }
 .render-message { display: block; color: var(--muted); font-size: 9px; }
 .render-result { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid #27313a; }
 .render-result strong { color: #8aeee8; font: 11px "DM Mono", Consolas, monospace; }

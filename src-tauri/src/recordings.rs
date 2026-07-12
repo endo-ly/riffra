@@ -38,6 +38,24 @@ pub struct RecordingProvenance {
     pub source: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiEvent {
+    pub time_ms: f64,
+    pub status: u8,
+    pub channel: u8,
+    pub note: u8,
+    pub velocity: u8,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct MidiManifest {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    events: Vec<MidiEvent>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RecordingManifest {
@@ -141,6 +159,40 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     Ok(assets)
+}
+
+pub fn read_midi_events(path: &Path) -> Result<Vec<MidiEvent>, String> {
+    if !path.is_file() {
+        return Err("MIDI sidecar does not exist.".into());
+    }
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("MIDI sidecar could not be inspected: {error}"))?;
+    if metadata.len() > 16 * 1024 * 1024 {
+        return Err("MIDI sidecar exceeds the safe 16 MiB import limit.".into());
+    }
+    let payload =
+        fs::read(path).map_err(|error| format!("MIDI sidecar could not be read: {error}"))?;
+    let manifest: MidiManifest = serde_json::from_slice(&payload)
+        .map_err(|error| format!("MIDI sidecar is not valid JSON: {error}"))?;
+    if manifest.version > 1 {
+        return Err(format!(
+            "Unsupported MIDI sidecar version {}.",
+            manifest.version
+        ));
+    }
+    Ok(manifest
+        .events
+        .into_iter()
+        .filter(|event| {
+            event.time_ms.is_finite()
+                && event.time_ms >= 0.0
+                && matches!(event.status & 0xf0, 0x80 | 0x90)
+                && (1..=16).contains(&event.channel)
+                && event.note <= 127
+                && event.velocity <= 127
+        })
+        .take(200_000)
+        .collect())
 }
 
 fn read_manifest(path: &PathBuf) -> Option<RecordingManifest> {
@@ -247,6 +299,22 @@ mod tests {
                 .as_deref()
                 .is_some_and(|path| path.ends_with("midi.json"))
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_and_filters_midi_note_events() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("midi.json");
+        fs::write(
+            &path,
+            br#"{"version":1,"events":[{"timeMs":0,"status":144,"channel":1,"note":60,"velocity":100},{"timeMs":100,"status":128,"channel":1,"note":60,"velocity":0},{"timeMs":-1,"status":144,"channel":1,"note":60,"velocity":100}]}"#,
+        )
+        .unwrap();
+        let events = read_midi_events(&path).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].note, 60);
         let _ = fs::remove_dir_all(root);
     }
 }

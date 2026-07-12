@@ -36,6 +36,24 @@ export interface TimelineClip {
   muted: boolean;
 }
 
+export interface MidiNote {
+  id: string;
+  note: number;
+  startMs: number;
+  durationMs: number;
+  velocity: number;
+  channel: number;
+}
+
+export interface MidiClip {
+  id: string;
+  name: string;
+  startMs: number;
+  durationMs: number;
+  notes: MidiNote[];
+  muted: boolean;
+}
+
 export interface SamplePad {
   id: string;
   name: string;
@@ -57,6 +75,7 @@ export interface ScratchSession {
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
   timeline: TimelineClip[];
+  midiClips: MidiClip[];
   samplePads: SamplePad[];
   note: string;
 }
@@ -214,6 +233,14 @@ export interface MidiProbe {
   message: string;
 }
 
+export interface MidiEvent {
+  timeMs: number;
+  status: number;
+  channel: number;
+  note: number;
+  velocity: number;
+}
+
 export interface AudioDriverInfo {
   name: string;
   inputs: string[];
@@ -293,6 +320,7 @@ export const defaultSession = (): ScratchSession => ({
   ],
   snapshots: [],
   timeline: [],
+  midiClips: [],
   samplePads: [],
   note: "",
 });

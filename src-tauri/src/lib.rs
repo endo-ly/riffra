@@ -203,6 +203,11 @@ async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> 
 }
 
 #[tauri::command]
+fn read_midi_events(path: String) -> Result<Vec<recordings::MidiEvent>, String> {
+    recordings::read_midi_events(&PathBuf::from(path))
+}
+
+#[tauri::command]
 async fn separate_channels(
     path: String,
     state: State<'_, AppState>,
@@ -610,6 +615,7 @@ pub fn run() {
             update_library_asset,
             related_library_assets,
             analyze_audio,
+            read_midi_events,
             separate_channels,
             list_separations,
             render_timeline,
