@@ -210,11 +210,24 @@ function ReferenceSuggestion({ analysis, recordings, references, referenceId, se
   const referenceAnalysis = reference ? references[reference.id] : null;
   const comparison = analysis && referenceAnalysis ? compareAnalyses(analysis, referenceAnalysis) : null;
   const targetClip = analysis ? session.timeline.find((clip) => clip.assetPath === analysis.path) : null;
+  const [selected, setSelected] = useState(true);
+  const [previewing, setPreviewing] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const changeKey = `${referenceId ?? "none"}:${targetClip?.id ?? "none"}:${comparison?.loudnessMatchGainDb ?? "none"}`;
+  useEffect(() => {
+    setSelected(true);
+    setPreviewing(false);
+    setApplied(false);
+  }, [changeKey]);
+  const proposedGain = targetClip && comparison
+    ? Math.max(-90, Math.min(24, targetClip.gainDb + comparison.loudnessMatchGainDb))
+    : null;
   const applySuggestion = () => {
-    if (!comparison || !targetClip) return;
-    setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === targetClip.id ? { ...clip, gainDb: Math.max(-90, Math.min(24, clip.gainDb + comparison.loudnessMatchGainDb)) } : clip) });
+    if (!comparison || !targetClip || proposedGain == null || !selected) return;
+    setSession({ ...session, timeline: session.timeline.map((clip) => clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip) });
+    setApplied(true);
   };
-  return <><ReferenceCompare analysis={analysis} recordings={recordings} references={references} referenceId={referenceId} onSelect={onSelect} />{comparison && <section className="section-card suggestion-card"><div><span className="eyebrow">REVERSIBLE SUGGESTION</span><p>{targetClip ? `Apply ${comparison.loudnessMatchGainDb >= 0 ? "+" : ""}${comparison.loudnessMatchGainDb.toFixed(1)} dB to ${targetClip.name}.` : "Place this recording on Arrange to apply the gain suggestion."}</p></div><button className="text-button" disabled={!targetClip} onClick={applySuggestion}>Apply</button></section>}</>;
+  return <><ReferenceCompare analysis={analysis} recordings={recordings} references={references} referenceId={referenceId} onSelect={onSelect} />{comparison && <section className="section-card suggestion-card"><header><div><span className="eyebrow">AI CHANGESET · SUGGEST</span><h2>{targetClip ? `Loudness match for ${targetClip.name}` : "Place a clip before applying"}</h2></div><span className={`status-tag ${applied ? "success" : ""}`}>{applied ? "APPLIED" : "PREVIEW"}</span></header>{targetClip && proposedGain != null ? <><div className="changeset-grid"><div><span className="eyebrow">TARGET</span><strong>{targetClip.name} · Gain dB</strong></div><div><span className="eyebrow">CURRENT</span><strong>{targetClip.gainDb.toFixed(1)} dB</strong></div><div><span className="eyebrow">PROPOSED</span><strong>{proposedGain.toFixed(1)} dB</strong></div><div><span className="eyebrow">RISK</span><strong>Low · reversible</strong></div></div><p className="inspector-copy">Reason: match the selected reference RMS without changing the source WAV. Expected audible effect: a closer perceived level while clip position and source remain unchanged.</p><div className="changeset-actions"><label><input type="checkbox" checked={selected} onChange={(event) => setSelected(event.target.checked)} /> Apply selected change</label><button className="text-button" onClick={() => setPreviewing((value) => !value)}>{previewing ? "Previewing" : "Preview"}</button><button className="text-button" disabled={!selected || applied} onClick={applySuggestion}>Apply selected</button><button className="text-button danger" disabled={applied} onClick={() => { setSelected(false); setPreviewing(false); }}>Reject</button></div>{previewing && <small className="changeset-preview">Preview only: {comparison.loudnessMatchGainDb >= 0 ? "+" : ""}{comparison.loudnessMatchGainDb.toFixed(1)} dB would be applied. No session state changed.</small>}</> : <p className="inspector-copy">Place this recording on Arrange to create an explicit, reversible change target.</p>}</section>}</>;
 }
 
 function WorkspaceSeparate({ recordings, results, busyId, message, onSeparate }: { recordings: RecordingAsset[]; results: SeparationResult[]; busyId: string | null; message: string; onSeparate: (recording: RecordingAsset) => void }) {

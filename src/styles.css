@@ -138,6 +138,7 @@ h1, h2, h3, p { margin-top: 0; }
 .section-card h2 { margin: 5px 0 0; color: #dfe5eb; font-size: 14px; letter-spacing: -.015em; }
 .status-tag { padding: 4px 6px; font-family: "DM Mono", monospace; font-size: 7px; letter-spacing: .08em; border-radius: 3px; }
 .status-tag.warning { color: var(--amber); background: rgba(231,181,93,.09); border: 1px solid rgba(231,181,93,.25); }
+.status-tag.success { color: var(--teal); background: rgba(72, 201, 173, .1); border: 1px solid rgba(72, 201, 173, .28); }
 .device-row { display: flex; align-items: center; gap: 11px; padding: 11px; background: #0e1216; border: 1px solid #202731; border-radius: 6px; }
 .device-icon { width: 34px; height: 34px; display: grid; place-content: center; color: var(--cyan); background: rgba(85,217,232,.07); border-radius: 6px; }
 .device-row strong, .device-row small { display: block; }
@@ -274,8 +275,16 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .comparison-grid > div { display: grid; gap: 5px; padding: 9px; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
 .comparison-grid strong { color: #8aeee8; font: 13px "DM Mono", Consolas, monospace; }
-.suggestion-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 12px; padding: 14px 19px; }
+.suggestion-card { margin-top: 12px; padding: 16px 19px; }
+.suggestion-card h2 { margin: 5px 0 0; color: #dfe5eb; font-size: 13px; }
 .suggestion-card p { margin: 6px 0 0; color: #b9c5ce; font-size: 10px; }
+.changeset-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0 10px; }
+.changeset-grid > div { padding: 9px; background: #0d1115; border: 1px solid #242b33; border-radius: 5px; }
+.changeset-grid strong { display: block; margin-top: 5px; overflow: hidden; color: #cbd3dc; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.changeset-actions { display: flex; align-items: center; gap: 12px; margin-top: 13px; }
+.changeset-actions label { display: flex; align-items: center; gap: 5px; margin-right: auto; color: var(--muted); font-size: 9px; }
+.changeset-actions input { accent-color: var(--cyan); }
+.changeset-preview { display: block; margin-top: 10px; color: var(--cyan); font-family: "DM Mono", monospace; font-size: 8px; }
 .separate-card, .separate-results { margin-top: 12px; }
 .separate-card header > small, .separate-results header > small { color: var(--muted); font-size: 9px; }
 .separate-message { display: block; margin-top: 12px; color: var(--muted); font-size: 9px; }
