@@ -91,6 +91,10 @@ function AudioDriverPicker({ probe, current, sampleRate, bufferSize, onSelect }:
   return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="audio-format-picker"><label><span>Sample rate</span><select value={selectedRate} onChange={(event) => onSelect(activeDriver, Number(event.target.value), selectedBuffer)}>{[44_100, 48_000, 88_200, 96_000].map((rate) => <option value={rate} key={rate}>{rate.toLocaleString()} Hz</option>)}</select></label><label><span>Buffer</span><select value={selectedBuffer} onChange={(event) => onSelect(activeDriver, selectedRate, Number(event.target.value))}>{[64, 128, 256, 512, 1024].map((buffer) => <option value={buffer} key={buffer}>{buffer} samples</option>)}</select></label></div><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} onClick={() => onSelect(driver.name, selectedRate, selectedBuffer)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
 }
 
+function CaptureSettings({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
+  return <section className="section-card capture-settings"><header><div><span className="eyebrow">CAPTURE</span><h2>Quick Record timing</h2></div><small>Stored with this Scratch Session</small></header><label><span>Visual count-in</span><select value={session.countInBeats} onChange={(event) => setSession({ ...session, countInBeats: Number(event.target.value) })}>{[0, 1, 2, 3, 4, 8].map((beats) => <option value={beats} key={beats}>{beats === 0 ? "Off" : `${beats} beats`}</option>)}</select></label><p className="inspector-copy">When enabled, recording starts after the countdown. Existing audio is never captured during the count-in.</p></section>;
+}
+
 function WorkspacePlay({ session, audio, plugins, missingPluginPaths, setSession, onTogglePluginBypass, onSetPluginParameter, onClearPlugin, onCaptureSnapshot, onRecallSnapshot }: { session: ScratchSession; audio: AudioStatus; plugins: PluginEntry[]; missingPluginPaths: string[]; setSession: (value: ScratchSession) => void; onTogglePluginBypass: (bypassed: boolean) => void; onSetPluginParameter: (index: number, value: number) => void; onClearPlugin: () => void; onCaptureSnapshot: (slot: "A" | "B") => void; onRecallSnapshot: (slot: "A" | "B") => void }) {
   const missingPaths = new Set(missingPluginPaths);
   const persistedPlugins = session.rack
@@ -427,6 +431,7 @@ function App() {
   const [stemResults, setStemResults] = useState<RenderResult[]>([]);
   const [renderPreviewing, setRenderPreviewing] = useState(false);
   const [transportPlaying, setTransportPlaying] = useState(false);
+  const [recordCountdown, setRecordCountdown] = useState<number | null>(null);
   const [renderMessage, setRenderMessage] = useState("Timeline render has not been requested.");
   const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState("Autosave remains the primary session copy.");
@@ -907,11 +912,40 @@ function App() {
     setAudio(await setEmergencyMute(muted));
   }, [audio.state, session]);
 
-  const toggleRecording = useCallback(async () => {
-    const nextAudio = await (audio.recording.active ? stopRecording() : startRecording());
+  const startRecordingNow = useCallback(async () => {
+    const nextAudio = await startRecording();
     setAudio(nextAudio);
     setRecordings(await listRecordings());
-  }, [audio.recording.active]);
+  }, []);
+
+  const toggleRecording = useCallback(async () => {
+    if (recordCountdown !== null) {
+      setRecordCountdown(null);
+      return;
+    }
+    if (audio.recording.active) {
+      setAudio(await stopRecording());
+      setRecordings(await listRecordings());
+      return;
+    }
+    const beats = session?.countInBeats ?? 0;
+    if (beats > 0) {
+      setRecordCountdown(beats);
+      return;
+    }
+    await startRecordingNow();
+  }, [audio.recording.active, recordCountdown, session?.countInBeats, startRecordingNow]);
+
+  useEffect(() => {
+    if (recordCountdown === null) return;
+    if (recordCountdown === 0) {
+      setRecordCountdown(null);
+      void startRecordingNow();
+      return;
+    }
+    const timer = window.setTimeout(() => setRecordCountdown((current) => current === null ? null : current - 1), 1_000);
+    return () => window.clearTimeout(timer);
+  }, [recordCountdown, startRecordingNow]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -975,7 +1009,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} sampleRate={audio.sampleRate} bufferSize={audio.bufferSize} onSelect={(driver, sampleRate, bufferSize) => void selectAudioDriver(driver, sampleRate, bufferSize)} /></>}
+        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active || recordCountdown !== null} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} sampleRate={audio.sampleRate} bufferSize={audio.bufferSize} onSelect={(driver, sampleRate, bufferSize) => void selectAudioDriver(driver, sampleRate, bufferSize)} /><CaptureSettings session={session} setSession={setSession} /></>}
         {session.workspace === "play" && <WorkspacePlay session={session} audio={audio} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} setSession={setSession} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><MidiClipEditor session={session} setSession={setSession} recordings={recordings} /><TimelineRenderControls session={session} result={renderResult} stems={stemResults} message={renderMessage} onRender={(options) => void runTimelineRender(options)} onRenderStems={(options) => void runTimelineStemRender(options)} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} onPanic={() => void stopPreview()} /></>}
@@ -1000,7 +1034,7 @@ function App() {
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
         <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => { const gainDb = Number(event.target.value); setSession({ ...session, masterDb: gainDb }); void setMasterGainDb(gainDb).then(setAudio); }} /></div>
-        <div className="status-line"><span className={`status-dot ${audio.recording.active ? "recording" : audio.state}`} />{audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
+        <div className="status-line"><span className={`status-dot ${audio.recording.active || recordCountdown !== null ? "recording" : audio.state}`} />{recordCountdown !== null ? `Count-in · ${recordCountdown} beats` : audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
       </footer>
 
       {focusMode && <button className="exit-focus" onClick={() => setFocusMode(false)}>Exit Focus <kbd>Esc</kbd></button>}

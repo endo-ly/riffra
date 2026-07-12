@@ -360,6 +360,9 @@ dt { color: var(--muted); } dd { margin: 0; color: #c2cad2; }
 .render-options label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
 .render-options input[type="number"] { width: 118px; }
 .render-options select { min-width: 132px; }
+.capture-settings { margin-top: 12px; }
+.capture-settings > label { display: grid; gap: 4px; max-width: 180px; color: var(--muted); font-size: 9px; }
+.capture-settings select { min-width: 140px; }
 .render-normalize { display: flex !important; align-items: center; gap: 6px !important; padding-bottom: 7px; }
 .render-normalize input { accent-color: var(--accent); }
 .midi-clip-editor { margin-top: 12px; }

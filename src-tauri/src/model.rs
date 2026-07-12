@@ -181,6 +181,8 @@ pub struct ScratchSession {
     pub master_db: f64,
     #[serde(default)]
     pub loop_enabled: bool,
+    #[serde(default)]
+    pub count_in_beats: u8,
     pub emergency_muted: bool,
     pub rack: Vec<RackDevice>,
     #[serde(default)]
@@ -261,6 +263,7 @@ impl ScratchSession {
             audio_buffer_size: None,
             master_db: -18.0,
             loop_enabled: false,
+            count_in_beats: 0,
             emergency_muted: true,
             rack: vec![
                 RackDevice {
@@ -321,6 +324,9 @@ impl ScratchSession {
             return Err("Master gain must be finite.".into());
         }
         self.master_db = self.master_db.clamp(-90.0, 0.0);
+        if self.count_in_beats > 8 {
+            return Err("Count-in must be between 0 and 8 beats.".into());
+        }
         self.audio_driver = self
             .audio_driver
             .map(|value| value.trim().chars().take(128).collect())

@@ -237,6 +237,16 @@ mod tests {
     }
 
     #[test]
+    fn preserves_bounded_count_in_preference() {
+        let mut session = ScratchSession::new(now_ms());
+        session.count_in_beats = 4;
+        let normalized = session.clone().validate_and_normalize().unwrap();
+        assert_eq!(normalized.count_in_beats, 4);
+        session.count_in_beats = 9;
+        assert!(session.validate_and_normalize().is_err());
+    }
+
+    #[test]
     fn preserves_ai_permission_and_context_preferences() {
         let mut session = ScratchSession::new(now_ms());
         session.ai_permission = "Apply".into();

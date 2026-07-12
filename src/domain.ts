@@ -110,6 +110,7 @@ export interface ScratchSession {
   audioBufferSize: number | null;
   masterDb: number;
   loopEnabled: boolean;
+  countInBeats: number;
   emergencyMuted: boolean;
   rack: RackDevice[];
   snapshots: SessionSnapshot[];
@@ -383,6 +384,7 @@ export const defaultSession = (): ScratchSession => ({
   audioBufferSize: null,
   masterDb: -18,
   loopEnabled: false,
+  countInBeats: 0,
   emergencyMuted: true,
   rack: [
     { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [], stateData: null },
