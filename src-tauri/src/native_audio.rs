@@ -246,6 +246,14 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
+        let safe_gain = gain_db.clamp(-90.0, 0.0);
+        self.send_command(
+            serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
+            "Master gain updated through the safety limiter.",
+        )
+    }
+
     pub fn preview_sample(
         &self,
         path: &Path,

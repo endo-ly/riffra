@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setPluginBypassed, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -567,6 +567,7 @@ function App() {
     void bootstrap().then((state) => {
       setBoot(state);
       setSession(state.session);
+      if (!state.safeMode) void setMasterGainDb(state.session.masterDb).then(setAudio);
       void scanVst3Folder(state.vst3Root).then((report) => {
         setPlugins(report.plugins);
         setMissingPluginPaths(state.session.rack
@@ -821,7 +822,7 @@ function App() {
         <div className="position"><strong>001 · 01 · 000</strong><small>00:00:00.000</small></div>
         <div className="tempo"><button><strong>120.00</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
-        <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => setSession({ ...session, masterDb: Number(event.target.value) })} /></div>
+        <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => { const gainDb = Number(event.target.value); setSession({ ...session, masterDb: gainDb }); void setMasterGainDb(gainDb).then(setAudio); }} /></div>
         <div className="status-line"><span className={`status-dot ${audio.recording.active ? "recording" : audio.state}`} />{audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
       </footer>
 

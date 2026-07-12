@@ -353,6 +353,25 @@ fn set_plugin_bypassed(bypassed: bool, state: State<'_, AppState>) -> Result<Aud
 }
 
 #[tauri::command]
+fn set_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if !gain_db.is_finite() {
+        return Err("Master gain must be finite.".into());
+    }
+    let audio = state.audio.set_master_gain_db(gain_db)?;
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    session.master_db = gain_db.clamp(-90.0, 0.0);
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| {
+            format!("Master gain changed, but the session could not be saved: {error}")
+        })?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session;
+    Ok(audio)
+}
+
+#[tauri::command]
 fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     if state.safe_mode {
         return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
@@ -629,6 +648,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             set_plugin_bypassed,
+            set_master_gain_db,
             recover_audio_device,
             set_audio_driver,
             open_midi_input,

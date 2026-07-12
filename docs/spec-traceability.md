@@ -4,7 +4,7 @@ This is the living completion ledger for specification version 2.0. `Implemented
 
 | Product acceptance area | Owning subsystem | Current gate | Evidence required |
 | --- | --- | --- | --- |
-| A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, muted device recovery with rack reprepare, validated rack restoration request, native input/output peak metering, Windows WASAPI/ASIO/MIDI discovery, muted driver switching and persisted driver preference; cold/warm timing remains |
+| A. Instant Play | audio sidecar + session recovery | In progress | emergency-muted startup, muted device recovery with rack reprepare, validated rack restoration request, native input/output peak metering, persisted master gain, Windows WASAPI/ASIO/MIDI discovery, muted driver switching and persisted driver preference; cold/warm timing remains |
 | B. Tone Design | plugin workers + rack engine | In progress | isolated real VST3 load/process, persisted rack path, explicit safety-preserving bypass and session A/B rack snapshots; plugin parameter state, macro/parallel rack and matched A/B remain |
 | C. Capture | audio sidecar + recording journal | In progress | JUCE threaded Raw/Processed WAV, completed/recoverable manifest, Inbox recording index, synthetic self-test; hardware interruption matrix remains |
 | D. Arrange | timeline engine + offline render | In progress | non-destructive Inbox audio clip references with editable position/source range/loop/gain/fade/pan/mute, duplicate/split clip operations, a persisted basic MIDI clip/piano-roll editor, bounded range/normalize stereo float WAV render with master gain, and safe rendered-audio preview; PDC and stem export remain |

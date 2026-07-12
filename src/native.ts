@@ -284,6 +284,14 @@ export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus>
   }
 }
 
+export async function setMasterGainDb(gainDb: number): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("set_master_gain_db", { gainDb });
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
 export async function recoverAudioDevice(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("recover_audio_device");
