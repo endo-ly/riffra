@@ -11,6 +11,7 @@ export async function bootstrap(): Promise<BootstrapState> {
     return {
       session: defaultSession(),
       recoveredFromGeneration: false,
+      safeMode: false,
       dataRoot: "Browser preview — native persistence is unavailable",
       vst3Root: defaultVst3Root,
     };

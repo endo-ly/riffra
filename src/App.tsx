@@ -49,11 +49,12 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
           <button className="quiet" onClick={onImportProject}>Import Manifest</button>
         </div>
         <small className="export-message">{exportMessage}</small>
+        {state.safeMode && <div className="safe-mode-banner"><strong>SAFE MODE</strong><span>External VST3, MIDI input, driver changes, live preview and new recordings are isolated. Project open, library access, offline analysis, render and export remain available. Restart without <code>--safe-mode</code> to reconnect devices.</span></div>}
       </section>
 
       <section className="section-card audio-setup">
         <header><div><span className="eyebrow">AUDIO DEVICE</span><h2>Sound First Setup</h2></div><span className="status-tag warning">ENGINE NEXT</span></header>
-        <div className="device-row"><div className="device-icon"><Icon name="bolt" /></div><div><strong>Native audio sidecar</strong><small>WASAPI / ASIO connection is the next delivery gate</small></div><button className="text-button" onClick={onRecoverAudioDevice}>Recover device</button></div>
+        <div className="device-row"><div className="device-icon"><Icon name="bolt" /></div><div><strong>Native audio sidecar</strong><small>{state.safeMode ? "Safe Mode keeps external audio isolated" : "WASAPI / ASIO connection is available through the safety chain"}</small></div><button className="text-button" disabled={state.safeMode} onClick={onRecoverAudioDevice}>{state.safeMode ? "Safe Mode" : "Recover device"}</button></div>
         <div className="safety-row"><span>Startup volume</span><strong>−18.0 dB</strong><Meter value={34} /><span className="safe-label">SAFE</span></div>
       </section>
 

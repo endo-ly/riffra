@@ -60,6 +60,30 @@ struct NativePluginStatus {
 }
 
 impl AudioSupervisor {
+    pub fn offline(message: impl Into<String>) -> Self {
+        Self {
+            status: Arc::new(Mutex::new(AudioStatus {
+                state: AudioState::Offline,
+                driver: None,
+                sample_rate: None,
+                buffer_size: None,
+                round_trip_ms: None,
+                recording: RecordingStatus::default(),
+                plugin: None,
+                midi_inputs: Vec::new(),
+                midi_outputs: Vec::new(),
+                midi_input_active: false,
+                midi_messages: 0,
+                last_midi_note: None,
+                input_peak: 0.0,
+                output_peak: 0.0,
+                invalid_samples: 0,
+                message: message.into(),
+            })),
+            child: Mutex::new(None),
+        }
+    }
+
     pub fn start<R: Runtime>(app: &AppHandle<R>) -> Self {
         let status = Arc::new(Mutex::new(AudioStatus {
             state: AudioState::Starting,

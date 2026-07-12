@@ -25,6 +25,7 @@ struct AppState {
     session: Mutex<ScratchSession>,
     audio: AudioSupervisor,
     recovered_from_generation: bool,
+    safe_mode: bool,
 }
 
 #[tauri::command]
@@ -32,6 +33,7 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
     Ok(BootstrapState {
         session: state.session.lock().map_err(lock_error)?.clone(),
         recovered_from_generation: state.recovered_from_generation,
+        safe_mode: state.safe_mode,
         data_root: state.data_root.to_string_lossy().into_owned(),
         vst3_root: DEFAULT_VST3_ROOT.into(),
     })
@@ -77,8 +79,22 @@ async fn scan_vst3_folder(
     state: State<'_, AppState>,
     path: Option<String>,
 ) -> Result<plugins::ScanReport, String> {
-    let data_root = state.data_root.clone();
     let root = PathBuf::from(path.unwrap_or_else(|| DEFAULT_VST3_ROOT.into()));
+    if state.safe_mode {
+        let now = now_ms();
+        return Ok(plugins::ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: now,
+            finished_at_ms: now,
+            plugins: Vec::new(),
+            issues: vec![plugins::ScanIssue {
+                path: root.to_string_lossy().into_owned(),
+                message: "Safe Mode skipped VST3 discovery; saved project data remains available."
+                    .into(),
+            }],
+        });
+    }
+    let data_root = state.data_root.clone();
     let report = tauri::async_runtime::spawn_blocking(move || plugins::discover(&root))
         .await
         .map_err(|error| {
@@ -163,6 +179,9 @@ fn set_emergency_mute(muted: bool, state: State<'_, AppState>) -> Result<AudioSt
 
 #[tauri::command]
 fn load_plugin(path: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to reconnect external plugins.".into());
+    }
     let path = PathBuf::from(path);
     if !path.exists() || path.extension().and_then(|value| value.to_str()) != Some("vst3") {
         return Err("Only an existing .vst3 bundle can be loaded.".into());
@@ -182,6 +201,12 @@ fn preview_sample(
     end_ms: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err(
+            "Safe Mode blocks live sample preview; offline analysis and export remain available."
+                .into(),
+        );
+    }
     let path = PathBuf::from(path);
     if !path.is_file() {
         return Err("Sample preview source does not exist.".into());
@@ -196,6 +221,9 @@ fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
 
 #[tauri::command]
 fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err("Safe Mode blocks new hardware recordings; existing Inbox assets remain available for export.".into());
+    }
     let inbox = state.data_root.join("recordings").join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|error| {
         format!("Recording Inbox could not be created; no audio was started: {error}")
@@ -240,11 +268,20 @@ fn set_plugin_bypassed(bypassed: bool, state: State<'_, AppState>) -> Result<Aud
 
 #[tauri::command]
 fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
+    }
     state.audio.recover_audio_device()
 }
 
 #[tauri::command]
 fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err(
+            "Safe Mode blocks audio-driver changes; restart Riffra without --safe-mode first."
+                .into(),
+        );
+    }
     if driver.trim().is_empty() {
         return Err("Audio driver name must not be empty.".into());
     }
@@ -253,6 +290,11 @@ fn set_audio_driver(driver: String, state: State<'_, AppState>) -> Result<AudioS
 
 #[tauri::command]
 fn open_midi_input(name: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err(
+            "Safe Mode blocks MIDI input; offline MIDI and audio export remain available.".into(),
+        );
+    }
     if name.trim().is_empty() {
         return Err("MIDI input name must not be empty.".into());
     }
@@ -288,7 +330,18 @@ struct NativeAudioDriver {
 }
 
 #[tauri::command]
-async fn probe_midi_devices(app: tauri::AppHandle) -> Result<MidiProbe, String> {
+async fn probe_midi_devices(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<MidiProbe, String> {
+    if state.safe_mode {
+        return Ok(MidiProbe {
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            refreshed_at_ms: now_ms(),
+            message: "Safe Mode skipped MIDI discovery.".into(),
+        });
+    }
     let probe = run_native_probe(app).await?;
     let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
     Ok(MidiProbe {
@@ -304,7 +357,19 @@ async fn probe_midi_devices(app: tauri::AppHandle) -> Result<MidiProbe, String> 
 }
 
 #[tauri::command]
-async fn probe_audio_devices(app: tauri::AppHandle) -> Result<AudioDeviceProbe, String> {
+async fn probe_audio_devices(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AudioDeviceProbe, String> {
+    if state.safe_mode {
+        return Ok(AudioDeviceProbe {
+            drivers: Vec::new(),
+            midi_inputs: Vec::new(),
+            midi_outputs: Vec::new(),
+            refreshed_at_ms: now_ms(),
+            message: "Safe Mode skipped audio and MIDI device discovery.".into(),
+        });
+    }
     let probe = run_native_probe(app).await?;
     Ok(AudioDeviceProbe {
         drivers: probe
@@ -362,11 +427,33 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("An internal state lock was poisoned: {error}")
 }
 
+fn safe_mode_from_args<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref().eq_ignore_ascii_case("--safe-mode"))
+}
+
+fn safe_mode_requested() -> bool {
+    safe_mode_from_args(std::env::args())
+        || std::env::var("RIFFRA_SAFE_MODE")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            let safe_mode = safe_mode_requested();
             let data_root = app.path().app_data_dir().map_err(|error| {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
@@ -374,11 +461,19 @@ pub fn run() {
             let (mut session, recovered_from_generation) =
                 SessionStore::new(&data_root).load_or_create()?;
             session.emergency_muted = true;
+            let audio = if safe_mode {
+                AudioSupervisor::offline(
+                    "Safe Mode is active; native audio, MIDI, and external plugins remain isolated.",
+                )
+            } else {
+                AudioSupervisor::start(app.handle())
+            };
             app.manage(AppState {
                 data_root,
                 session: Mutex::new(session),
-                audio: AudioSupervisor::start(app.handle()),
+                audio,
                 recovered_from_generation,
+                safe_mode,
             });
             Ok(())
         })
@@ -417,7 +512,7 @@ mod plugin_validation;
 
 #[cfg(test)]
 mod tests {
-    use super::parse_midi_probe;
+    use super::{parse_midi_probe, safe_mode_from_args};
 
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
@@ -434,5 +529,12 @@ mod tests {
     fn rejects_non_probe_messages() {
         let error = parse_midi_probe(br#"{"type":"audioStatus"}"#).unwrap_err();
         assert!(error.contains("unexpected"));
+    }
+
+    #[test]
+    fn recognizes_safe_mode_only_from_explicit_flag() {
+        assert!(safe_mode_from_args(["riffra.exe", "--safe-mode"]));
+        assert!(safe_mode_from_args(["--SAFE-MODE"]));
+        assert!(!safe_mode_from_args(["riffra.exe", "--serve"]));
     }
 }

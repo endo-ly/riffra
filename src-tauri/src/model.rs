@@ -225,6 +225,7 @@ impl ScratchSession {
 pub struct BootstrapState {
     pub session: ScratchSession,
     pub recovered_from_generation: bool,
+    pub safe_mode: bool,
     pub data_root: String,
     pub vst3_root: String,
 }

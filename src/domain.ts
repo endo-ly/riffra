@@ -82,6 +82,7 @@ export interface ScanReport {
 export interface BootstrapState {
   session: ScratchSession;
   recoveredFromGeneration: boolean;
+  safeMode: boolean;
   dataRoot: string;
   vst3Root: string;
 }

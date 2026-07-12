@@ -31,6 +31,16 @@ npm install
 npm run tauri dev
 ```
 
+To open a project in recovery-oriented Safe Mode, pass the explicit flag (or set
+`RIFFRA_SAFE_MODE=1`). Safe Mode keeps VST3 discovery, MIDI input, driver
+changes, live sample preview, and new hardware recordings isolated while still
+allowing project open, library access, offline analysis/render, and manifest
+export/import:
+
+```powershell
+npm run tauri dev -- --safe-mode
+```
+
 Run the non-GUI checks with:
 
 ```powershell
