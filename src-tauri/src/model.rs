@@ -13,6 +13,8 @@ pub struct RackDevice {
     pub gain_db: f64,
     #[serde(default)]
     pub parameter_values: Vec<f32>,
+    #[serde(default)]
+    pub state_data: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -226,6 +228,7 @@ impl ScratchSession {
                     bypassed: false,
                     gain_db: 0.0,
                     parameter_values: Vec::new(),
+                    state_data: None,
                 },
                 RackDevice {
                     id: "safety".into(),
@@ -235,6 +238,7 @@ impl ScratchSession {
                     bypassed: false,
                     gain_db: 0.0,
                     parameter_values: Vec::new(),
+                    state_data: None,
                 },
                 RackDevice {
                     id: "output".into(),
@@ -244,6 +248,7 @@ impl ScratchSession {
                     bypassed: false,
                     gain_db: -18.0,
                     parameter_values: Vec::new(),
+                    state_data: None,
                 },
             ],
             snapshots: Vec::new(),
@@ -356,6 +361,16 @@ impl ScratchSession {
                     ));
                 }
                 *value = value.clamp(0.0, 1.0);
+            }
+            if device
+                .state_data
+                .as_ref()
+                .is_some_and(|state| state.len() > 4_000_000)
+            {
+                return Err(format!(
+                    "Device '{}' has an oversized state blob.",
+                    device.name
+                ));
             }
         }
         for snapshot in &mut self.snapshots {
@@ -508,6 +523,7 @@ pub struct PluginStatus {
     pub block_size: Option<u32>,
     pub bypassed_blocks: u64,
     pub parameters: Vec<PluginParameter>,
+    pub state_data: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

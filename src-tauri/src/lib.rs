@@ -380,6 +380,14 @@ fn set_plugin_parameter(
 }
 
 #[tauri::command]
+fn set_plugin_state(state_data: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err("Safe Mode blocks external VST3 state changes.".into());
+    }
+    state.audio.set_plugin_state(&state_data)
+}
+
+#[tauri::command]
 fn set_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioStatus, String> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
@@ -700,6 +708,7 @@ pub fn run() {
             stop_recording,
             set_plugin_bypassed,
             set_plugin_parameter,
+            set_plugin_state,
             set_master_gain_db,
             recover_audio_device,
             set_audio_driver,

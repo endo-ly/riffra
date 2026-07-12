@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
+import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, updateLibraryAsset } from "./native";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -407,8 +407,9 @@ function App() {
   const previousSession = useRef<ScratchSession | null>(null);
   const historySkip = useRef(false);
 
-  const loadPluginIntoRack = useCallback(async (plugin: PluginEntry, parameterValues: number[] = [], bypassed = false) => {
+  const loadPluginIntoRack = useCallback(async (plugin: PluginEntry, parameterValues: number[] = [], bypassed = false, stateData: string | null = null) => {
     let nextAudio = await loadPlugin(plugin.path);
+    if (stateData) nextAudio = await setPluginState(stateData);
     for (const [index, value] of parameterValues.entries()) {
       if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
       nextAudio = await setPluginParameter(index, value);
@@ -419,7 +420,7 @@ function App() {
       ...current,
       rack: [
         ...current.rack.filter((device) => device.kind !== "plugin"),
-        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed, gainDb: 0, parameterValues: nextAudio.plugin?.parameters.map((parameter) => parameter.value) ?? parameterValues },
+        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed, gainDb: 0, parameterValues: nextAudio.plugin?.parameters.map((parameter) => parameter.value) ?? parameterValues, stateData: nextAudio.plugin?.stateData ?? stateData },
       ],
     } : current);
   }, []);
@@ -442,7 +443,7 @@ function App() {
     const nextAudio = await setPluginParameter(index, value);
     setAudio(nextAudio);
     const values = nextAudio.plugin?.parameters.map((parameter) => parameter.value);
-    if (values) setSession((current) => current ? { ...current, rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, parameterValues: values } : device) } : current);
+    if (values) setSession((current) => current ? { ...current, rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, parameterValues: values, stateData: nextAudio.plugin?.stateData ?? device.stateData } : device) } : current);
   }, []);
 
   const recoverAudio = useCallback(async () => {
@@ -506,7 +507,8 @@ function App() {
     setSession({ ...session, masterDb: snapshot.masterDb, rack: snapshot.rack.map((device) => ({ ...device })), macros: snapshot.macros.map((macro) => ({ ...macro })) });
     const plugin = snapshot.rack.find((device) => device.kind === "plugin");
     if (plugin) {
-      let nextAudio = await setPluginBypassed(plugin.bypassed);
+      let nextAudio = plugin.stateData ? await setPluginState(plugin.stateData) : await setPluginBypassed(plugin.bypassed);
+      if (plugin.stateData) nextAudio = await setPluginBypassed(plugin.bypassed);
       for (const [index, value] of plugin.parameterValues.entries()) {
         if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
         nextAudio = await setPluginParameter(index, value);
@@ -676,7 +678,7 @@ function App() {
         setScanMessage(report.issues.length ? `${report.plugins.length}件 · ${report.issues.length}件の注意` : `${report.plugins.length}件を検出`);
         const persisted = state.session.rack.find((device) => device.kind === "plugin" && device.path);
         const restored = persisted && report.plugins.find((plugin) => plugin.path === persisted.path && plugin.scanState === "validated");
-        if (restored) void loadPluginIntoRack(restored, persisted?.parameterValues ?? [], persisted?.bypassed ?? false);
+        if (restored) void loadPluginIntoRack(restored, persisted?.parameterValues ?? [], persisted?.bypassed ?? false, persisted?.stateData ?? null);
       });
     });
     void listRecordings().then(setRecordings);

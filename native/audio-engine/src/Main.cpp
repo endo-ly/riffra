@@ -530,6 +530,16 @@ int serve() {
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
+        if (type == "setPluginState") {
+            juce::String stateError;
+            const auto stateData = command.getProperty("stateData", {}).toString();
+            if (!rack.setState(stateData, stateError)) {
+                writeJson(makeError("plugin", stateError));
+                continue;
+            }
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
         if (type == "recoverAudioDevice") {
             juce::String midiError;
             if (!midiMonitor.finishRecording(midiError)) {

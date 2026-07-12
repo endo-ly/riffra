@@ -62,6 +62,7 @@ struct NativePluginStatus {
     block_size: Option<u32>,
     bypassed_blocks: Option<u64>,
     parameters: Option<Vec<NativePluginParameter>>,
+    state_data: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,6 +270,16 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_plugin_state(&self, state_data: &str) -> Result<AudioStatus, String> {
+        if state_data.len() > 4_000_000 {
+            return Err("VST3 state data exceeds the safe 4 MiB limit.".into());
+        }
+        self.send_command(
+            serde_json::json!({"type": "setPluginState", "stateData": state_data}),
+            "VST3 state restored through the isolated rack.",
+        )
+    }
+
     pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
         let safe_gain = gain_db.clamp(-90.0, 0.0);
         self.send_command(
@@ -450,6 +461,7 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
                     automatable: parameter.automatable,
                 })
                 .collect(),
+            state_data: plugin.state_data.filter(|state| state.len() <= 4_000_000),
         });
         current.midi_inputs = native.midi_inputs.unwrap_or_default();
         current.midi_outputs = native.midi_outputs.unwrap_or_default();

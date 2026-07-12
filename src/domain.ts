@@ -8,6 +8,7 @@ export interface RackDevice {
   bypassed: boolean;
   gainDb: number;
   parameterValues: number[];
+  stateData: string | null;
 }
 
 export interface RackMacro {
@@ -233,6 +234,7 @@ export interface PluginStatus {
   blockSize: number | null;
   bypassedBlocks: number;
   parameters: PluginParameter[];
+  stateData: string | null;
 }
 
 export interface PluginParameter {
@@ -366,9 +368,9 @@ export const defaultSession = (): ScratchSession => ({
   loopEnabled: false,
   emergencyMuted: true,
   rack: [
-    { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [] },
-    { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0, parameterValues: [] },
-    { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18, parameterValues: [] },
+    { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [], stateData: null },
+    { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0, parameterValues: [], stateData: null },
+    { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18, parameterValues: [], stateData: null },
   ],
   snapshots: [],
   macros: ["Brightness", "Gain", "Space", "Width"].map((name, index) => ({ id: `macro:${index}`, name, value: 0.5, parameterIndex: null })),

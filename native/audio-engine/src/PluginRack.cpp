@@ -86,6 +86,22 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
     return true;
 }
 
+bool PluginRack::setState(const juce::String& base64, juce::String& error) noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return false;
+    }
+    juce::MemoryBlock state;
+    juce::MemoryOutputStream output(state, true);
+    if (!base64.isEmpty() && !juce::Base64::convertFromBase64(output, base64)) {
+        error = "VST3 state data is not valid Base64.";
+        return false;
+    }
+    plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    return true;
+}
+
 void PluginRack::process(
     const float* const* inputChannelData,
     const int numInputChannels,
@@ -144,6 +160,11 @@ juce::var PluginRack::status() const {
         }
     }
     result->setProperty("parameters", parameters);
+    if (plugin != nullptr) {
+        juce::MemoryBlock state;
+        plugin->getStateInformation(state);
+        result->setProperty("stateData", state.toBase64Encoding());
+    }
     return juce::var(result);
 }
 

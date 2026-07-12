@@ -300,6 +300,14 @@ export async function setPluginParameter(index: number, value: number): Promise<
   }
 }
 
+export async function setPluginState(stateData: string): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>("set_plugin_state", { stateData });
+  } catch {
+    return await getAudioStatus();
+  }
+}
+
 export async function setMasterGainDb(gainDb: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>("set_master_gain_db", { gainDb });
