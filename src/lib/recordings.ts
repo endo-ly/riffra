@@ -1,4 +1,4 @@
-import type { RecordingAsset, ScratchSession, TimelineClip } from './domain';
+import type { RecordingAsset, Session, TimelineClip } from './domain';
 
 export function isUsableRecording(recording: RecordingAsset): boolean {
   return (
@@ -12,7 +12,7 @@ export function isUsableRecording(recording: RecordingAsset): boolean {
 }
 
 export function createTimelineClip(
-  session: ScratchSession,
+  session: Session,
   recording: RecordingAsset,
 ): TimelineClip | null {
   if (!isUsableRecording(recording) || !recording.processedPath) return null;

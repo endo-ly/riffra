@@ -2,7 +2,7 @@ import type { PluginEntry, PluginStatus, RackDevice } from '@/lib/domain';
 import { pluginParameterValuesForSession } from '@/lib/plugin-session';
 
 /**
- * Pure projections of the rack portion of a ScratchSession. Each function takes
+ * Pure projections of the rack portion of a Session. Each function takes
  * the current rack and returns a new rack, so the session-mutation logic that
  * was previously buried inside App's async handlers can be unit-tested without
  * a native runtime.

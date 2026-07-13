@@ -5,7 +5,7 @@ import {
   rackWithPluginLoaded,
   rackWithPluginParameter,
   rackWithoutPlugin,
-} from '@/features/rack';
+} from '@/lib/rack';
 
 function pluginRack(bypassed = false) {
   return [

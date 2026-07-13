@@ -15,7 +15,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  ScratchSession,
+  Session,
   SeparationResult,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
@@ -81,7 +81,7 @@ export interface FakeNativeApiOptions {
  */
 export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
-  readonly savedSessions: ScratchSession[] = [];
+  readonly savedSessions: Session[] = [];
   audio: AudioStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
@@ -117,19 +117,19 @@ export class FakeNativeApi implements NativeApi {
     return this.bootstrapState;
   };
 
-  saveScratch = async (session: ScratchSession): Promise<string | null> => {
-    this.calls.push('saveScratch');
+  saveSession = async (session: Session): Promise<string | null> => {
+    this.calls.push('saveSession');
     this.savedSessions.push(session);
     return null;
   };
 
-  restoreRecoveryGeneration = async (fileName: string): Promise<ScratchSession | null> => {
+  restoreRecoveryGeneration = async (fileName: string): Promise<Session | null> => {
     this.calls.push('restoreRecoveryGeneration');
     return { ...this.bootstrapState.session, projectName: `Restored ${fileName}` };
   };
 
-  exportScratchSession = async (): Promise<ProjectExport | null> => {
-    this.calls.push('exportScratchSession');
+  exportSession = async (): Promise<ProjectExport | null> => {
+    this.calls.push('exportSession');
     return {
       path: 'fake://export.json',
       sessionId: this.bootstrapState.session.sessionId,
@@ -138,8 +138,8 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  importScratchSession = async (path: string): Promise<ScratchSession | null> => {
-    this.calls.push('importScratchSession');
+  importSession = async (path: string): Promise<Session | null> => {
+    this.calls.push('importSession');
     return { ...this.bootstrapState.session, projectName: `Imported ${path}` };
   };
 

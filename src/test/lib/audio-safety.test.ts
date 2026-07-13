@@ -4,7 +4,7 @@ import {
   audioCommandSucceeded,
   isOutputMuted,
   resolveEmergencyMuteAfterCommand,
-} from '@/features/audio-safety';
+} from '@/lib/audio-safety';
 
 function audio(state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted') {
   return makeAudioStatus({ state });

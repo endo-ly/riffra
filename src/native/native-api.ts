@@ -13,7 +13,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  ScratchSession,
+  Session,
   SeparationResult,
 } from '@/lib/domain';
 
@@ -30,10 +30,10 @@ import type {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
-  saveScratch(session: ScratchSession): Promise<string | null>;
-  restoreRecoveryGeneration(fileName: string): Promise<ScratchSession | null>;
-  exportScratchSession(): Promise<ProjectExport | null>;
-  importScratchSession(path: string): Promise<ScratchSession | null>;
+  saveSession(session: Session): Promise<string | null>;
+  restoreRecoveryGeneration(fileName: string): Promise<Session | null>;
+  exportSession(): Promise<ProjectExport | null>;
+  importSession(path: string): Promise<Session | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
   listRecordings(query?: string): Promise<RecordingAsset[]>;

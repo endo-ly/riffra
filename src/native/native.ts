@@ -15,7 +15,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  ScratchSession,
+  Session,
   SeparationResult,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
@@ -39,7 +39,7 @@ export async function bootstrap(): Promise<BootstrapState> {
   }
 }
 
-export async function saveScratch(session: ScratchSession): Promise<string | null> {
+export async function saveSession(session: Session): Promise<string | null> {
   try {
     await invoke('save_scratch_session', { session });
     return null;
@@ -51,15 +51,15 @@ export async function saveScratch(session: ScratchSession): Promise<string | nul
   }
 }
 
-export async function restoreRecoveryGeneration(fileName: string): Promise<ScratchSession | null> {
+export async function restoreRecoveryGeneration(fileName: string): Promise<Session | null> {
   try {
-    return await invoke<ScratchSession>('restore_recovery_generation', { fileName });
+    return await invoke<Session>('restore_recovery_generation', { fileName });
   } catch {
     return null;
   }
 }
 
-export async function exportScratchSession(): Promise<ProjectExport | null> {
+export async function exportSession(): Promise<ProjectExport | null> {
   try {
     return await invoke<ProjectExport>('export_scratch_session');
   } catch {
@@ -67,9 +67,9 @@ export async function exportScratchSession(): Promise<ProjectExport | null> {
   }
 }
 
-export async function importScratchSession(path: string): Promise<ScratchSession | null> {
+export async function importSession(path: string): Promise<Session | null> {
   try {
-    return await invoke<ScratchSession>('import_scratch_session', { path });
+    return await invoke<Session>('import_scratch_session', { path });
   } catch {
     return null;
   }
@@ -438,10 +438,10 @@ export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatu
 export function createNativeApi(): NativeApi {
   return {
     bootstrap,
-    saveScratch,
+    saveSession,
     restoreRecoveryGeneration,
-    exportScratchSession,
-    importScratchSession,
+    exportSession,
+    importSession,
     scanVst3Folder,
     listRecordings,
     searchLibrary,

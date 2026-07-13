@@ -99,7 +99,7 @@ export interface AiChangeSet {
   applied: boolean;
 }
 
-export interface ScratchSession {
+export interface Session {
   formatVersion: number;
   sessionId: string;
   updatedAtMs: number;
@@ -151,7 +151,7 @@ export interface ScanReport {
 }
 
 export interface BootstrapState {
-  session: ScratchSession;
+  session: Session;
   recoveredFromGeneration: boolean;
   safeMode: boolean;
   nativeAvailable: boolean;
@@ -379,7 +379,7 @@ export interface MidiExportResult {
   message: string;
 }
 
-export const defaultSession = (): ScratchSession => ({
+export const defaultSession = (): Session => ({
   formatVersion: 1,
   sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),

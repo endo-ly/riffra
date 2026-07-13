@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideRecordingToggle } from '@/features/recording';
+import { decideRecordingToggle } from '@/lib/recording';
 
 describe('decideRecordingToggle', () => {
   const base = { commandPending: false, countdown: null, recordingActive: false, countInBeats: 0 };
