@@ -470,13 +470,34 @@ fn set_audio_driver(
             return Err("Audio buffer preference is outside 16-8192 samples.".into());
         }
     }
-    let audio = state
+    let mut audio = state
         .audio
         .set_audio_driver(&driver, sample_rate, buffer_size)?;
+    let mut unavailable_preferences = Vec::new();
+    if sample_rate.is_some() && sample_rate != audio.sample_rate {
+        unavailable_preferences.push(format!(
+            "sample rate {} Hz (device uses {} Hz)",
+            sample_rate.unwrap_or_default(),
+            audio.sample_rate.unwrap_or_default()
+        ));
+    }
+    if buffer_size.is_some() && buffer_size != audio.buffer_size {
+        unavailable_preferences.push(format!(
+            "buffer {} samples (device uses {} samples)",
+            buffer_size.unwrap_or_default(),
+            audio.buffer_size.unwrap_or_default()
+        ));
+    }
+    if !unavailable_preferences.is_empty() {
+        audio.message = format!(
+            "The selected driver did not accept the requested {}; its effective settings are shown.",
+            unavailable_preferences.join(" and ")
+        );
+    }
     let mut session = state.session.lock().map_err(lock_error)?.clone();
-    session.audio_driver = Some(driver);
-    session.audio_sample_rate = sample_rate;
-    session.audio_buffer_size = buffer_size;
+    session.audio_driver = audio.driver.clone().or(Some(driver));
+    session.audio_sample_rate = audio.sample_rate;
+    session.audio_buffer_size = audio.buffer_size;
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
         .save(&session)
@@ -682,7 +703,6 @@ pub fn run() {
             std::fs::create_dir_all(&data_root)?;
             let (mut session, recovered_from_generation) =
                 SessionStore::new(&data_root).load_or_create()?;
-            let _ = library::sync_session(&data_root, &session);
             session.emergency_muted = true;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -692,14 +712,20 @@ pub fn run() {
                 AudioSupervisor::start(app.handle())
             };
             if !safe_mode {
-                if let Some(driver) = session.audio_driver.as_deref() {
-                    let _ = audio.set_audio_driver(
-                        driver,
+                if let Some(driver) = session.audio_driver.clone() {
+                    if let Ok(status) = audio.set_audio_driver(
+                        &driver,
                         session.audio_sample_rate,
                         session.audio_buffer_size,
-                    );
+                    ) {
+                        session.audio_driver = status.driver;
+                        session.audio_sample_rate = status.sample_rate;
+                        session.audio_buffer_size = status.buffer_size;
+                    }
                 }
             }
+            SessionStore::new(&data_root).save(&session)?;
+            let _ = library::sync_session(&data_root, &session);
             app.manage(AppState {
                 data_root,
                 session: Mutex::new(session),

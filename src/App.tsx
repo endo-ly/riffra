@@ -37,7 +37,7 @@ function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
 
 function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onRecoverAudioDevice, onExportProject, onImportProject, onRestoreRecovery, onDismissRecovery, exportMessage }: { state: BootstrapState; onWorkspace: (workspace: Workspace) => void; onQuickRecord: () => void; recordingActive: boolean; onRecoverAudioDevice: () => void; onExportProject: () => void; onImportProject: () => void; onRestoreRecovery: (fileName: string) => void; onDismissRecovery: () => void; exportMessage: string }) {
   return (
-    <div className="workspace-scroll home-grid">
+    <>
       <section className="hero-card">
         <div>
           <span className="eyebrow">SCRATCH SESSION</span>
@@ -77,7 +77,7 @@ function WorkspaceHome({ state, onWorkspace, onQuickRecord, recordingActive, onR
           ))}
         </div>
       </section>
-    </div>
+    </>
   );
 }
 
@@ -90,7 +90,9 @@ function AudioDriverPicker({ probe, current, sampleRate, bufferSize, onSelect }:
   const activeDriver = current ?? probe.drivers[0].name;
   const selectedRate = sampleRate ?? 48_000;
   const selectedBuffer = bufferSize ?? 256;
-  return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="audio-format-picker"><label><span>Sample rate</span><select value={selectedRate} onChange={(event) => onSelect(activeDriver, Number(event.target.value), selectedBuffer)}>{[44_100, 48_000, 88_200, 96_000].map((rate) => <option value={rate} key={rate}>{rate.toLocaleString()} Hz</option>)}</select></label><label><span>Buffer</span><select value={selectedBuffer} onChange={(event) => onSelect(activeDriver, selectedRate, Number(event.target.value))}>{[64, 128, 256, 512, 1024].map((buffer) => <option value={buffer} key={buffer}>{buffer} samples</option>)}</select></label></div><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} onClick={() => onSelect(driver.name, selectedRate, selectedBuffer)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
+  const rateOptions = Array.from(new Set([selectedRate, 44_100, 48_000, 88_200, 96_000])).sort((left, right) => left - right);
+  const bufferOptions = Array.from(new Set([selectedBuffer, 64, 128, 256, 512, 1024])).sort((left, right) => left - right);
+  return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="audio-format-picker"><fieldset><legend>Sample rate</legend><div className="audio-format-options">{rateOptions.map((rate) => <button className={rate === selectedRate ? "active" : ""} aria-pressed={rate === selectedRate} onClick={() => onSelect(activeDriver, rate, selectedBuffer)} key={rate}>{rate.toLocaleString()} Hz</button>)}</div></fieldset><fieldset><legend>Buffer</legend><div className="audio-format-options">{bufferOptions.map((buffer) => <button className={buffer === selectedBuffer ? "active" : ""} aria-pressed={buffer === selectedBuffer} onClick={() => onSelect(activeDriver, selectedRate, buffer)} key={buffer}>{buffer} samples</button>)}</div></fieldset></div><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} onClick={() => onSelect(driver.name, selectedRate, selectedBuffer)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
 }
 
 function CaptureSettings({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
@@ -422,6 +424,7 @@ function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], midiInputActive: false, midiMessages: 0, lastMidiNote: null, midiPadMappings: 0, midiPadTriggers: 0, inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
+  const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
@@ -507,6 +510,7 @@ function App() {
   }, []);
 
   const recoverAudio = useCallback(async () => {
+    setAudioPreferenceMessage(null);
     setAudio(await recoverAudioDevice());
   }, []);
 
@@ -514,7 +518,12 @@ function App() {
     const nextAudio = await setAudioDriver(driver, sampleRate, bufferSize);
     setAudio(nextAudio);
     if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
-    setSession((current) => current ? { ...current, audioDriver: driver, audioSampleRate: sampleRate, audioBufferSize: bufferSize } : current);
+    const unavailable = [
+      nextAudio.sampleRate !== sampleRate ? `${sampleRate.toLocaleString()} Hz (using ${nextAudio.sampleRate?.toLocaleString() ?? "unknown"} Hz)` : null,
+      nextAudio.bufferSize !== bufferSize ? `${bufferSize} samples (using ${nextAudio.bufferSize ?? "unknown"} samples)` : null,
+    ].filter((value): value is string => value !== null);
+    setAudioPreferenceMessage(unavailable.length > 0 ? `The driver did not accept ${unavailable.join(" and ")}. Effective settings are selected.` : null);
+    setSession((current) => current ? { ...current, audioDriver: nextAudio.driver ?? driver, audioSampleRate: nextAudio.sampleRate, audioBufferSize: nextAudio.bufferSize } : current);
   }, []);
 
   const connectMidiInput = useCallback(async (name: string) => {
@@ -998,7 +1007,18 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [redo, switchWorkspace, toggleMute, undo]);
 
-  const selectedPlugin = useMemo(() => plugins[0] ?? null, [plugins]);
+  const persistedPlugin = session?.rack.find((device) => device.kind === "plugin") ?? null;
+  const selectedPlugin = useMemo(() => {
+    if (persistedPlugin?.path) {
+      return plugins.find((plugin) => plugin.path === persistedPlugin.path) ?? null;
+    }
+    if (audio.plugin?.name) {
+      return plugins.find((plugin) => plugin.name === audio.plugin?.name) ?? null;
+    }
+    return null;
+  }, [audio.plugin?.name, persistedPlugin?.path, plugins]);
+  const selectedPluginName = selectedPlugin?.name ?? persistedPlugin?.name ?? audio.plugin?.name ?? null;
+  const selectedPluginVendor = selectedPlugin?.vendor ?? (selectedPluginName ? "VST3" : null);
   const query = libraryQuery.trim().toLowerCase();
   const visiblePlugins = query ? plugins.filter((plugin) => `${plugin.name} ${plugin.vendor ?? ""} ${plugin.path}`.toLowerCase().includes(query)) : plugins;
   const visibleRecordings = query ? recordings.filter((recording) => `${recording.name} ${recording.state} ${recording.path}`.toLowerCase().includes(query)) : recordings;
@@ -1047,7 +1067,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        {session.workspace === "home" && <><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active || recordCountdown !== null} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} sampleRate={audio.sampleRate} bufferSize={audio.bufferSize} onSelect={(driver, sampleRate, bufferSize) => void selectAudioDriver(driver, sampleRate, bufferSize)} /><CaptureSettings session={session} setSession={setSession} /></>}
+        {session.workspace === "home" && <div className="workspace-scroll home-grid"><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active || recordCountdown !== null} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} sampleRate={audio.sampleRate} bufferSize={audio.bufferSize} onSelect={(driver, sampleRate, bufferSize) => void selectAudioDriver(driver, sampleRate, bufferSize)} /><CaptureSettings session={session} setSession={setSession} /></div>}
         {session.workspace === "play" && <WorkspacePlay session={session} audio={audio} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
         {session.workspace === "arrange" && <><WorkspaceArrange session={session} setSession={setSession} recordings={recordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><MidiClipEditor session={session} setSession={setSession} recordings={recordings} /><TimelineRenderControls session={session} result={renderResult} stems={stemResults} message={renderMessage} onRender={(options) => void runTimelineRender(options)} onRenderStems={(options) => void runTimelineStemRender(options)} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={recordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} onPanic={() => void stopPreview()} /></>}
@@ -1058,7 +1078,7 @@ function App() {
 
       <aside className="inspector-panel">
         <div className="panel-heading"><span>INSPECTOR</span><button onClick={() => setFocusMode(true)}>×</button></div>
-        <div className="inspector-identity"><span className="inspector-art">{selectedPlugin?.name.slice(0, 2).toUpperCase() ?? "SS"}</span><div><span className="eyebrow">{selectedPlugin ? "PLUGIN" : "SESSION"}</span><h3>{selectedPlugin?.name ?? "Scratch Session"}</h3><small>{selectedPlugin?.vendor ?? "Always preserved"}</small></div></div>
+        <div className="inspector-identity"><span className="inspector-art">{selectedPluginName?.slice(0, 2).toUpperCase() ?? "SS"}</span><div><span className="eyebrow">{selectedPluginName ? "PLUGIN" : "SESSION"}</span><h3>{selectedPluginName ?? "Scratch Session"}</h3><small>{selectedPluginVendor ?? "Always preserved"}</small></div></div>
         <section><header><strong>Signal</strong><Icon name="chevron" /></header><dl><div><dt>Input</dt><dd>Mono</dd></div><div><dt>Gain</dt><dd>0.0 dB</dd></div><div><dt>State</dt><dd className="safe-label">Safe</dd></div></dl></section>
         <section><header><strong>Tone engine</strong><Icon name="chevron" /></header><dl><div><dt>Rack</dt><dd className={audio.plugin?.loaded ? "safe-label" : ""}>{audio.plugin?.loaded ? "Loaded" : "Empty"}</dd></div><div><dt>VST3</dt><dd>{audio.plugin?.name ?? "—"}</dd></div><div><dt>State</dt><dd>{audio.plugin?.bypassed ? "Bypassed" : "Active"}</dd></div><div><dt>Bypassed blocks</dt><dd>{audio.plugin?.bypassedBlocks ?? 0}</dd></div></dl></section>
         <section><header><strong>Provenance</strong><Icon name="chevron" /></header><dl><div><dt>Session</dt><dd>Scratch</dd></div><div><dt>Updated</dt><dd>{new Date(session.updatedAtMs).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</dd></div></dl></section>
@@ -1072,7 +1092,7 @@ function App() {
         <div className="tempo"><button><strong>{DEFAULT_TEMPO_BPM.toFixed(2)}</strong><small>BPM</small></button><button><strong>4 / 4</strong><small>TIME</small></button></div>
         <div className="transport-meter"><span>IN</span><Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} /><span>OUT</span><Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} /></div>
         <div className="master"><span>MASTER</span><strong>{session.masterDb.toFixed(1)} dB</strong><input aria-label="Master volume" type="range" min="-60" max="0" step="0.5" value={session.masterDb} onChange={(event) => { const gainDb = Number(event.target.value); setSession({ ...session, masterDb: gainDb }); void setMasterGainDb(gainDb).then(setAudio); }} /></div>
-        <div className="status-line"><span className={`status-dot ${audio.recording.active || recordCountdown !== null ? "recording" : audio.state}`} />{recordCountdown !== null ? `Count-in · ${recordCountdown} beats` : audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audio.message}</div>
+        <div className="status-line"><span className={`status-dot ${audio.recording.active || recordCountdown !== null ? "recording" : audio.state}`} />{recordCountdown !== null ? `Count-in · ${recordCountdown} beats` : audio.recording.active ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples` : audioPreferenceMessage ?? audio.message}</div>
       </footer>
 
       {focusMode && <button className="exit-focus" onClick={() => setFocusMode(false)}>Exit Focus <kbd>Esc</kbd></button>}

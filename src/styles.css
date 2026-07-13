@@ -143,7 +143,11 @@ h1, h2, h3, p { margin-top: 0; }
 .audio-driver-picker header > small { color: var(--muted); font-size: 8px; }
 .driver-picker-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .audio-format-picker { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
-.audio-format-picker label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+.audio-format-picker fieldset { min-width: 0; margin: 0; padding: 0; border: 0; color: var(--muted); font-size: 9px; }
+.audio-format-picker legend { margin-bottom: 4px; padding: 0; }
+.audio-format-options { display: flex; flex-wrap: wrap; gap: 4px; }
+.audio-format-options button { padding: 5px 7px; color: #aeb8c3; background: #0c1116; border: 1px solid #27313a; border-radius: 4px; font-size: 9px; }
+.audio-format-options button.active { color: #d8ffff; background: #122d32; border-color: var(--teal); }
 .driver-choice { display: grid; gap: 5px; padding: 9px; text-align: left; background: #0c1116; border: 1px solid #27313a; border-radius: 5px; }
 .driver-choice.active { background: #122d32; border-color: var(--teal); }
 .driver-choice strong { overflow: hidden; color: #cbd3dc; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }

@@ -10,7 +10,7 @@ Riffra is a Windows-first music production workbench built around a short creati
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
 
-The detailed boundaries and staged acceptance gates are in [docs/architecture.md](./docs/architecture.md) and [docs/spec-traceability.md](./docs/spec-traceability.md).
+The detailed boundaries, behavior requirements, and verification work queue are in [docs/architecture.md](./docs/architecture.md), [docs/behavior-requirements.md](./docs/behavior-requirements.md), and [docs/behavior-verification.md](./docs/behavior-verification.md).
 
 ## Prerequisites
 

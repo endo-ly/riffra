@@ -628,25 +628,40 @@ int serve(const std::optional<std::uint32_t> parentPid) {
                 writeJson(makeError("recording", midiError));
                 continue;
             }
+            const auto previousDriver = manager.getCurrentAudioDeviceType();
+            juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
+            manager.getAudioDeviceSetup(previousSetup);
             manager.removeAudioCallback(&callback);
             manager.closeAudioDevice();
             callback.setEmergencyMuted(true);
             manager.setCurrentAudioDeviceType(driver, true);
-            juce::AudioDeviceManager::AudioDeviceSetup setup;
-            setup.inputDeviceName = command.getProperty("inputDevice", {}).toString();
-            setup.outputDeviceName = command.getProperty("outputDevice", {}).toString();
-            setup.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
-            setup.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
-            setup.useDefaultInputChannels = true;
-            setup.useDefaultOutputChannels = true;
-            auto setupError = setup.inputDeviceName.isEmpty() && setup.outputDeviceName.isEmpty()
-                ? initialiseDefaultAudio(manager)
-                : manager.setAudioDeviceSetup(setup, true);
+            auto setupError = initialiseDefaultAudio(manager);
+            if (setupError.isEmpty()) {
+                juce::AudioDeviceManager::AudioDeviceSetup setup;
+                manager.getAudioDeviceSetup(setup);
+                const auto inputDevice = command.getProperty("inputDevice", {}).toString();
+                const auto outputDevice = command.getProperty("outputDevice", {}).toString();
+                if (inputDevice.isNotEmpty())
+                    setup.inputDeviceName = inputDevice;
+                if (outputDevice.isNotEmpty())
+                    setup.outputDeviceName = outputDevice;
+                const auto requestedSampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
+                const auto requestedBufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
+                if (requestedSampleRate > 0.0)
+                    setup.sampleRate = requestedSampleRate;
+                if (requestedBufferSize > 0)
+                    setup.bufferSize = requestedBufferSize;
+                setupError = manager.setAudioDeviceSetup(setup, true);
+            }
             if (setupError.isNotEmpty()) {
-                const auto fallbackError = initialiseDefaultAudio(manager);
-                if (fallbackError.isEmpty())
+                manager.closeAudioDevice();
+                manager.setCurrentAudioDeviceType(previousDriver, true);
+                const auto restoreError = manager.setAudioDeviceSetup(previousSetup, true);
+                if (restoreError.isEmpty())
                     manager.addAudioCallback(&callback);
-                writeJson(makeError("audioDevice", setupError + ". The previous device was not changed in the session."));
+                writeJson(makeError("audioDevice", setupError + (restoreError.isEmpty()
+                    ? ". The previous device was restored."
+                    : ". The previous device could not be restored: " + restoreError)));
                 continue;
             }
             manager.addAudioCallback(&callback);
