@@ -10,7 +10,7 @@ Riffra is a Windows-first music production workbench built around a short creati
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
 
-The detailed boundaries, behavior requirements, and verification work queue are in [docs/architecture.md](./docs/architecture.md), [docs/behavior-requirements.md](./docs/behavior-requirements.md), and [docs/behavior-verification.md](./docs/behavior-verification.md).
+The detailed boundaries, behavior requirements, verification work queue, and test policy are in [docs/architecture.md](./docs/architecture.md), [docs/behavior-requirements.md](./docs/behavior-requirements.md), [docs/behavior-verification.md](./docs/behavior-verification.md), and [docs/test-strategy.md](./docs/test-strategy.md).
 
 ## Prerequisites
 
@@ -44,10 +44,13 @@ npm run tauri dev -- --safe-mode
 Run the non-GUI checks with:
 
 ```powershell
-npm run check
-Push-Location src-tauri
-cargo test
-Pop-Location
+npm run verify
+```
+
+Run the same checks plus a Native sidecar build and recording self-test at the end of a Native verification batch:
+
+```powershell
+npm run verify:native
 ```
 
 `build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.

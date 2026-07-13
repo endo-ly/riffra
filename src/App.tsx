@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AiChangeSet, AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
 import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, renderTimelineStems, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, stopSamplePreviewKey, updateLibraryAsset } from "./native";
+import { includeEffectiveOption, reconcileAudioSettings } from "./audio-settings";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -85,17 +86,17 @@ function AudioDevices({ probe, onRefresh }: { probe: AudioDeviceProbe; onRefresh
   return <section className="section-card audio-device-list"><header><div><span className="eyebrow">WINDOWS DEVICES</span><h2>WASAPI / ASIO / MIDI</h2></div><button className="text-button" onClick={onRefresh}>Refresh</button></header>{probe.drivers.length === 0 ? <p className="inspector-copy">No audio driver list is available yet.</p> : probe.drivers.map((driver) => <div className="audio-driver-row" key={driver.name}><strong>{driver.name}</strong><small>{driver.inputs.length} inputs · {driver.outputs.length} outputs</small></div>)}<small className="device-probe-message">{probe.message} · MIDI {probe.midiInputs.length} in / {probe.midiOutputs.length} out</small></section>;
 }
 
-function AudioDriverPicker({ probe, current, sampleRate, bufferSize, onSelect }: { probe: AudioDeviceProbe; current: string | null; sampleRate: number | null; bufferSize: number | null; onSelect: (driver: string, sampleRate: number, bufferSize: number) => void }) {
+export function AudioDriverPicker({ probe, current, sampleRate, bufferSize, onSelect }: { probe: AudioDeviceProbe; current: string | null; sampleRate: number | null; bufferSize: number | null; onSelect: (driver: string, sampleRate: number, bufferSize: number) => void }) {
   if (!probe.drivers.length) return null;
   const activeDriver = current ?? probe.drivers[0].name;
   const selectedRate = sampleRate ?? 48_000;
   const selectedBuffer = bufferSize ?? 256;
-  const rateOptions = Array.from(new Set([selectedRate, 44_100, 48_000, 88_200, 96_000])).sort((left, right) => left - right);
-  const bufferOptions = Array.from(new Set([selectedBuffer, 64, 128, 256, 512, 1024])).sort((left, right) => left - right);
+  const rateOptions = includeEffectiveOption(selectedRate, [44_100, 48_000, 88_200, 96_000]);
+  const bufferOptions = includeEffectiveOption(selectedBuffer, [64, 128, 256, 512, 1024]);
   return <section className="section-card audio-driver-picker"><header><div><span className="eyebrow">DRIVER ROUTING</span><h2>Choose a safe audio backend</h2></div><small>Switching re-enters emergency mute</small></header><div className="audio-format-picker"><fieldset><legend>Sample rate</legend><div className="audio-format-options">{rateOptions.map((rate) => <button className={rate === selectedRate ? "active" : ""} aria-pressed={rate === selectedRate} onClick={() => onSelect(activeDriver, rate, selectedBuffer)} key={rate}>{rate.toLocaleString()} Hz</button>)}</div></fieldset><fieldset><legend>Buffer</legend><div className="audio-format-options">{bufferOptions.map((buffer) => <button className={buffer === selectedBuffer ? "active" : ""} aria-pressed={buffer === selectedBuffer} onClick={() => onSelect(activeDriver, selectedRate, buffer)} key={buffer}>{buffer} samples</button>)}</div></fieldset></div><div className="driver-picker-grid">{probe.drivers.map((driver) => <button className={`driver-choice ${driver.name === current ? "active" : ""}`} key={driver.name} onClick={() => onSelect(driver.name, selectedRate, selectedBuffer)}><strong>{driver.name}</strong><small>{driver.name === current ? "Current" : "Use this driver"}</small></button>)}</div></section>;
 }
 
-function CaptureSettings({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
+export function CaptureSettings({ session, setSession }: { session: ScratchSession; setSession: (value: ScratchSession) => void }) {
   return <section className="section-card capture-settings"><header><div><span className="eyebrow">CAPTURE</span><h2>Quick Record timing</h2></div><small>Stored with this Scratch Session</small></header><label><span>Visual count-in</span><select value={session.countInBeats} onChange={(event) => setSession({ ...session, countInBeats: Number(event.target.value) })}>{[0, 1, 2, 3, 4, 8].map((beats) => <option value={beats} key={beats}>{beats === 0 ? "Off" : `${beats} beats`}</option>)}</select></label><p className="inspector-copy">When enabled, recording starts after the countdown. Existing audio is never captured during the count-in.</p></section>;
 }
 
@@ -518,12 +519,9 @@ function App() {
     const nextAudio = await setAudioDriver(driver, sampleRate, bufferSize);
     setAudio(nextAudio);
     if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
-    const unavailable = [
-      nextAudio.sampleRate !== sampleRate ? `${sampleRate.toLocaleString()} Hz (using ${nextAudio.sampleRate?.toLocaleString() ?? "unknown"} Hz)` : null,
-      nextAudio.bufferSize !== bufferSize ? `${bufferSize} samples (using ${nextAudio.bufferSize ?? "unknown"} samples)` : null,
-    ].filter((value): value is string => value !== null);
-    setAudioPreferenceMessage(unavailable.length > 0 ? `The driver did not accept ${unavailable.join(" and ")}. Effective settings are selected.` : null);
-    setSession((current) => current ? { ...current, audioDriver: nextAudio.driver ?? driver, audioSampleRate: nextAudio.sampleRate, audioBufferSize: nextAudio.bufferSize } : current);
+    const effective = reconcileAudioSettings({ driver, sampleRate, bufferSize }, nextAudio);
+    setAudioPreferenceMessage(effective.message);
+    setSession((current) => current ? { ...current, audioDriver: effective.driver, audioSampleRate: effective.sampleRate, audioBufferSize: effective.bufferSize } : current);
   }, []);
 
   const connectMidiInput = useCallback(async (name: string) => {

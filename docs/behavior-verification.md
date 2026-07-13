@@ -38,7 +38,7 @@
 | `FLOW-006` | P1 | AI案を確認して適用する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `FLOW-007` | P0 | 障害から復旧する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `AUD-001` | P0 | Driverを列挙する | 適合 | 2026-07-13 Native HomeでWindows Audio 3/7、Exclusive 3/7、Low Latency 3/7、DirectSound 4/8、ASIO 8/8を確認 | Device構成変更時に再列挙 |
-| `AUD-002` | P0 | Sample Rate/Bufferを適用する | 適合 | 2026-07-13 Native releaseでHome下部へ到達し、Exclusive切替、48 kHz/480 samplesの実効値、Session保存、再起動後の保持を確認。未対応の64 samples要求は実効480 samplesへ戻り、理由をStatusへ表示 | 別Audio Interface接続時に対応Rate/Bufferでも回帰確認 |
+| `AUD-002` | P0 | Sample Rate/Bufferを適用する | 適合 | 2026-07-13 Native releaseでHome下部への到達、Exclusive切替、48 kHz/480 samplesの実効値、Session保存、再起動後の保持を確認。要求値不採用時の実効値選択、説明表示、Driver切替時の値保持をTypeScript Component/Unit TestとRust Unit Testで自動化 | 別Audio Interface接続時に対応Rate/Bufferでも回帰確認 |
 | `AUD-003` | P0 | Input/OutputをMeter表示する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `AUD-004` | P0 | Device切断を安全に処理する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `AUD-005` | P1 | Plugin/ParallelのLatencyを補償する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
@@ -102,7 +102,7 @@
 | `SEC-002` | P0 | Credentialを平文保存しない | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `SEC-003` | P1 | Logを安全に扱う | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `WIN-001` | P1 | DPI/複数モニターで使える | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `WIN-002` | P1 | Settingsを明示的に保存する | 適合 | 2026-07-13 Native releaseでDriver、実効Sample Rate/Bufferをcurrent.jsonへ保存し、再起動後もExclusive・48 kHz・480 samplesが選択されることを確認 | 他設定項目を追加した際に同じ再起動確認を実施 |
+| `WIN-002` | P1 | Settingsを明示的に保存する | 適合 | 2026-07-13 Native releaseでDriver、実効Sample Rate/Bufferをcurrent.jsonへ保存し、再起動後もExclusive・48 kHz・480 samplesが選択されることを確認。要求値ではなくNative実効値を保存するRust Unit Testを追加 | 他設定項目を追加した際に同じ再起動確認を実施 |
 | `Q-001` | P0 | Startupを測定する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `Q-002` | P0 | UIをAudioより優先しない | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `Q-003` | P0 | 長時間安定性を確認する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |

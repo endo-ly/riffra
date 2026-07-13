@@ -443,6 +443,47 @@ fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, Strin
     state.audio.recover_audio_device()
 }
 
+fn effective_audio_preference_message(
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+    effective_sample_rate: Option<u32>,
+    effective_buffer_size: Option<u32>,
+) -> Option<String> {
+    let mut unavailable_preferences = Vec::new();
+    if sample_rate.is_some() && sample_rate != effective_sample_rate {
+        unavailable_preferences.push(format!(
+            "sample rate {} Hz (device uses {} Hz)",
+            sample_rate.unwrap_or_default(),
+            effective_sample_rate.unwrap_or_default()
+        ));
+    }
+    if buffer_size.is_some() && buffer_size != effective_buffer_size {
+        unavailable_preferences.push(format!(
+            "buffer {} samples (device uses {} samples)",
+            buffer_size.unwrap_or_default(),
+            effective_buffer_size.unwrap_or_default()
+        ));
+    }
+    (!unavailable_preferences.is_empty()).then(|| {
+        format!(
+            "The selected driver did not accept the requested {}; its effective settings are shown.",
+            unavailable_preferences.join(" and ")
+        )
+    })
+}
+
+fn apply_effective_audio_settings(
+    session: &mut ScratchSession,
+    requested_driver: &str,
+    effective_driver: Option<&str>,
+    effective_sample_rate: Option<u32>,
+    effective_buffer_size: Option<u32>,
+) {
+    session.audio_driver = Some(effective_driver.unwrap_or(requested_driver).to_owned());
+    session.audio_sample_rate = effective_sample_rate;
+    session.audio_buffer_size = effective_buffer_size;
+}
+
 #[tauri::command]
 fn set_audio_driver(
     driver: String,
@@ -473,31 +514,22 @@ fn set_audio_driver(
     let mut audio = state
         .audio
         .set_audio_driver(&driver, sample_rate, buffer_size)?;
-    let mut unavailable_preferences = Vec::new();
-    if sample_rate.is_some() && sample_rate != audio.sample_rate {
-        unavailable_preferences.push(format!(
-            "sample rate {} Hz (device uses {} Hz)",
-            sample_rate.unwrap_or_default(),
-            audio.sample_rate.unwrap_or_default()
-        ));
-    }
-    if buffer_size.is_some() && buffer_size != audio.buffer_size {
-        unavailable_preferences.push(format!(
-            "buffer {} samples (device uses {} samples)",
-            buffer_size.unwrap_or_default(),
-            audio.buffer_size.unwrap_or_default()
-        ));
-    }
-    if !unavailable_preferences.is_empty() {
-        audio.message = format!(
-            "The selected driver did not accept the requested {}; its effective settings are shown.",
-            unavailable_preferences.join(" and ")
-        );
+    if let Some(message) = effective_audio_preference_message(
+        sample_rate,
+        buffer_size,
+        audio.sample_rate,
+        audio.buffer_size,
+    ) {
+        audio.message = message;
     }
     let mut session = state.session.lock().map_err(lock_error)?.clone();
-    session.audio_driver = audio.driver.clone().or(Some(driver));
-    session.audio_sample_rate = audio.sample_rate;
-    session.audio_buffer_size = audio.buffer_size;
+    apply_effective_audio_settings(
+        &mut session,
+        &driver,
+        audio.driver.as_deref(),
+        audio.sample_rate,
+        audio.buffer_size,
+    );
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
         .save(&session)
@@ -718,9 +750,13 @@ pub fn run() {
                         session.audio_sample_rate,
                         session.audio_buffer_size,
                     ) {
-                        session.audio_driver = status.driver;
-                        session.audio_sample_rate = status.sample_rate;
-                        session.audio_buffer_size = status.buffer_size;
+                        apply_effective_audio_settings(
+                            &mut session,
+                            &driver,
+                            status.driver.as_deref(),
+                            status.sample_rate,
+                            status.buffer_size,
+                        );
                     }
                 }
             }
@@ -782,7 +818,11 @@ mod plugin_validation;
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_midi_probe, safe_mode_from_args};
+    use super::{
+        apply_effective_audio_settings, effective_audio_preference_message, parse_midi_probe,
+        safe_mode_from_args,
+    };
+    use crate::model::ScratchSession;
 
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
@@ -806,5 +846,39 @@ mod tests {
         assert!(safe_mode_from_args(["riffra.exe", "--safe-mode"]));
         assert!(safe_mode_from_args(["--SAFE-MODE"]));
         assert!(!safe_mode_from_args(["riffra.exe", "--serve"]));
+    }
+
+    #[test]
+    fn persists_effective_audio_settings_instead_of_rejected_preferences() {
+        let mut session = ScratchSession::new(1);
+
+        apply_effective_audio_settings(
+            &mut session,
+            "Windows Audio",
+            Some("Windows Audio (Exclusive Mode)"),
+            Some(48_000),
+            Some(480),
+        );
+
+        assert_eq!(
+            session.audio_driver.as_deref(),
+            Some("Windows Audio (Exclusive Mode)")
+        );
+        assert_eq!(session.audio_sample_rate, Some(48_000));
+        assert_eq!(session.audio_buffer_size, Some(480));
+    }
+
+    #[test]
+    fn explains_when_a_driver_rejects_requested_audio_settings() {
+        let message =
+            effective_audio_preference_message(Some(44_100), Some(64), Some(48_000), Some(480))
+                .unwrap();
+
+        assert!(message.contains("sample rate 44100 Hz (device uses 48000 Hz)"));
+        assert!(message.contains("buffer 64 samples (device uses 480 samples)"));
+        assert_eq!(
+            effective_audio_preference_message(Some(48_000), Some(480), Some(48_000), Some(480)),
+            None
+        );
     }
 }
