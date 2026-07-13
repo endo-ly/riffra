@@ -1,6 +1,6 @@
 # Riffra
 
-Riffra is a Windows-first music production workbench built around a short creative loop: hear, shape, capture, compare, and reuse. The product contract is defined in [Windows統合音楽制作ワークベンチ_製品仕様書_改訂版.md](./Windows統合音楽制作ワークベンチ_製品仕様書_改訂版.md).
+Riffra is a Windows-first music production workbench built around a short creative loop: hear, shape, capture, compare, and reuse. The product contract is defined in [CONCEPT.md](./docs/CONCEPT.md).
 
 ## Architecture
 
