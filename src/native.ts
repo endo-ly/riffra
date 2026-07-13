@@ -20,11 +20,15 @@ export async function bootstrap(): Promise<BootstrapState> {
   }
 }
 
-export async function saveScratch(session: ScratchSession): Promise<void> {
+export async function saveScratch(session: ScratchSession): Promise<string | null> {
   try {
     await invoke("save_scratch_session", { session });
-  } catch {
-    localStorage.setItem("riffra.preview.scratch", JSON.stringify(session));
+    return null;
+  } catch (error) {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      localStorage.setItem("riffra.preview.scratch", JSON.stringify(session));
+    }
+    return nativeErrorText(error);
   }
 }
 

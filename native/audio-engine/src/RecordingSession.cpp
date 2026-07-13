@@ -140,12 +140,20 @@ bool RecordingSession::finish(juce::String& error) {
     processedWriter.reset();
     writerThread.stopThread(5000);
 
-    auto completed = true;
-    if (rawPartial.existsAsFile() && !rawPartial.moveFileTo(rawFinal)) {
+    auto completed = getSamplesWritten() > 0;
+    if (!completed)
+        error << "Recording contains no audio samples; empty partial files were kept for diagnosis. ";
+    if (!rawPartial.existsAsFile()) {
+        completed = false;
+        error << "Raw recording file is missing. ";
+    } else if (completed && !rawPartial.moveFileTo(rawFinal)) {
         completed = false;
         error << "Raw recording remains recoverable at " << rawPartial.getFullPathName() << ". ";
     }
-    if (processedPartial.existsAsFile() && !processedPartial.moveFileTo(processedFinal)) {
+    if (!processedPartial.existsAsFile()) {
+        completed = false;
+        error << "Processed recording file is missing. ";
+    } else if (completed && !processedPartial.moveFileTo(processedFinal)) {
         completed = false;
         error << "Processed recording remains recoverable at "
               << processedPartial.getFullPathName() << ".";
@@ -189,10 +197,10 @@ bool RecordingSession::writeManifest(const juce::String& state, juce::String& er
     object->setProperty("processedChannels", processedChannelCount);
     object->setProperty("samplesWritten", static_cast<juce::int64>(getSamplesWritten()));
     object->setProperty("droppedBlocks", static_cast<juce::int64>(getDroppedBlocks()));
-    object->setProperty("rawFile", state == "completed" ? "raw.wav" : "raw.wav.partial");
+    object->setProperty("rawFile", rawFinal.existsAsFile() ? "raw.wav" : "raw.wav.partial");
     object->setProperty(
         "processedFile",
-        state == "completed" ? "processed.wav" : "processed.wav.partial");
+        processedFinal.existsAsFile() ? "processed.wav" : "processed.wav.partial");
     if (!manifest.replaceWithText(juce::JSON::toString(juce::var(object), true))) {
         error = "Recording manifest could not be written.";
         return false;

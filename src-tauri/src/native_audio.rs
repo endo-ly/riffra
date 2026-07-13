@@ -4,7 +4,11 @@ use crate::model::{
 use serde::Deserialize;
 use std::{
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::{
@@ -14,7 +18,20 @@ use tauri_plugin_shell::{
 
 pub struct AudioSupervisor {
     status: Arc<Mutex<AudioStatus>>,
+    responses: Arc<(Mutex<CommandResponse>, Condvar)>,
+    next_request_id: AtomicU64,
     child: Mutex<Option<CommandChild>>,
+}
+
+#[derive(Default)]
+struct CommandResponse {
+    request_id: Option<u64>,
+    error: Option<String>,
+}
+
+struct NativeReply {
+    request_id: Option<u64>,
+    result: Result<(), String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +126,8 @@ impl AudioSupervisor {
                 invalid_samples: 0,
                 message: message.into(),
             })),
+            responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
+            next_request_id: AtomicU64::new(1),
             child: Mutex::new(None),
         }
     }
@@ -134,6 +153,7 @@ impl AudioSupervisor {
             invalid_samples: 0,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
+        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
 
         let parent_pid = std::process::id().to_string();
         let spawn_result = app.shell().sidecar("riffra-audio").and_then(|command| {
@@ -153,17 +173,28 @@ impl AudioSupervisor {
                 }
                 return Self {
                     status,
+                    responses,
+                    next_request_id: AtomicU64::new(1),
                     child: Mutex::new(None),
                 };
             }
         };
 
         let event_status = Arc::clone(&status);
+        let event_responses = Arc::clone(&responses);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        handle_native_stdout(&event_status, &bytes);
+                        if let Some(response) = handle_native_stdout(&event_status, &bytes) {
+                            if let Some(request_id) = response.request_id {
+                                record_command_response(
+                                    &event_responses,
+                                    request_id,
+                                    response.result.err(),
+                                );
+                            }
+                        }
                     }
                     CommandEvent::Stderr(bytes) => {
                         let detail = String::from_utf8_lossy(&bytes);
@@ -194,22 +225,26 @@ impl AudioSupervisor {
 
         Self {
             status,
+            responses,
+            next_request_id: AtomicU64::new(1),
             child: Mutex::new(Some(child)),
         }
     }
 
-    pub fn status(&self) -> Result<AudioStatus, String> {
-        self.status
-            .lock()
-            .map(|status| status.clone())
-            .map_err(|error| format!("Audio status lock was poisoned: {error}"))
+    pub fn refresh_status(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "status"}),
+            "Native audio status refreshed.",
+        )
     }
 
     fn send_command(
         &self,
-        command: serde_json::Value,
+        mut command: serde_json::Value,
         message: &str,
     ) -> Result<AudioStatus, String> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        command["requestId"] = serde_json::json!(request_id);
         let payload = serde_json::to_string(&command)
             .map_err(|error| format!("Audio command could not be encoded: {error}"))?;
         let mut child_slot = self
@@ -219,6 +254,10 @@ impl AudioSupervisor {
         let child = child_slot.as_mut().ok_or_else(|| {
             "Native audio is unavailable; the requested audio command was not sent.".to_string()
         })?;
+        let (response_lock, response_ready) = &*self.responses;
+        let response = response_lock
+            .lock()
+            .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
         child
             .write(format!("{payload}\n").as_bytes())
             .map_err(|error| {
@@ -226,6 +265,17 @@ impl AudioSupervisor {
                     "Audio recording command could not reach the isolated audio process: {error}"
                 )
             })?;
+        let (response, wait_result) = response_ready
+            .wait_timeout_while(response, Duration::from_secs(3), |current| {
+                current.request_id != Some(request_id)
+            })
+            .map_err(|error| format!("Audio response wait failed: {error}"))?;
+        if wait_result.timed_out() && response.request_id != Some(request_id) {
+            return Err("Native audio did not acknowledge the command within 3 seconds.".into());
+        }
+        if let Some(error) = response.error.clone() {
+            return Err(error);
+        }
         let mut status = self
             .status
             .lock()
@@ -393,33 +443,14 @@ impl AudioSupervisor {
     }
 
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
-        let command = format!("{{\"type\":\"setEmergencyMute\",\"muted\":{muted}}}\n");
-        let mut child_slot = self
-            .child
-            .lock()
-            .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
-        let child = child_slot.as_mut().ok_or_else(|| {
-            "Native audio is unavailable; the requested mute state was not sent.".to_string()
-        })?;
-        child.write(command.as_bytes()).map_err(|error| {
-            format!("Emergency mute command could not reach the isolated audio process: {error}")
-        })?;
-
-        let mut status = self
-            .status
-            .lock()
-            .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
-        status.state = if muted {
-            AudioState::Muted
-        } else {
-            AudioState::Starting
-        };
-        status.message = if muted {
-            "Emergency mute is engaged; saved and recorded data is unaffected.".into()
-        } else {
-            "Audio is fading in from silence through the safety limiter.".into()
-        };
-        Ok(status.clone())
+        self.send_command(
+            serde_json::json!({"type": "setEmergencyMute", "muted": muted}),
+            if muted {
+                "Emergency mute is engaged; saved and recorded data is unaffected."
+            } else {
+                "Audio faded in from silence through the safety limiter."
+            },
+        )
     }
 }
 
@@ -503,14 +534,21 @@ fn update_from_native(status: &Arc<Mutex<AudioStatus>>, native: NativeStatus) {
     }
 }
 
-fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) {
+fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Option<NativeReply> {
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return;
+        return None;
     };
+    let request_id = payload.get("requestId").and_then(serde_json::Value::as_u64);
     match payload.get("type").and_then(serde_json::Value::as_str) {
         Some("audioStatus") => {
             if let Ok(native) = serde_json::from_value::<NativeStatus>(payload) {
                 update_from_native(status, native);
+                Some(NativeReply {
+                    request_id,
+                    result: Ok(()),
+                })
+            } else {
+                None
             }
         }
         Some("error") => {
@@ -522,21 +560,37 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) {
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("Unknown native error.");
-            if scope == "audioDevice" {
-                set_faulted(
-                    status,
-                    format!("Native audio device error: {message}. Saved data remains safe."),
-                );
+            let detail = if scope == "audioDevice" {
+                let detail =
+                    format!("Native audio device error: {message}. Saved data remains safe.");
+                set_faulted(status, detail.clone());
+                detail
             } else {
-                set_command_error(
-                    status,
-                    format!(
-                        "Native {scope} command failed: {message}. Audio and saved data remain safe."
-                    ),
+                let detail = format!(
+                    "Native {scope} command failed: {message}. Audio and saved data remain safe."
                 );
-            }
+                set_command_error(status, detail.clone());
+                detail
+            };
+            Some(NativeReply {
+                request_id,
+                result: Err(detail),
+            })
         }
-        _ => {}
+        _ => None,
+    }
+}
+
+fn record_command_response(
+    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
+    request_id: u64,
+    error: Option<String>,
+) {
+    let (response_lock, response_ready) = &**responses;
+    if let Ok(mut response) = response_lock.lock() {
+        response.request_id = Some(request_id);
+        response.error = error;
+        response_ready.notify_all();
     }
 }
 
@@ -624,5 +678,25 @@ mod tests {
         assert_eq!(normalize_sample_rate(44_100.0), Some(44_100));
         assert_eq!(normalize_sample_rate(f64::NAN), None);
         assert_eq!(normalize_sample_rate(f64::INFINITY), None);
+    }
+
+    #[test]
+    fn preserves_request_ids_for_command_acknowledgements() {
+        let status = test_status();
+        let success = handle_native_stdout(
+            &status,
+            br#"{"type":"audioStatus","requestId":42,"state":"ready"}"#,
+        )
+        .expect("status reply");
+        assert_eq!(success.request_id, Some(42));
+        assert!(success.result.is_ok());
+
+        let failure = handle_native_stdout(
+            &status,
+            br#"{"type":"error","requestId":43,"scope":"recording","message":"no input"}"#,
+        )
+        .expect("error reply");
+        assert_eq!(failure.request_id, Some(43));
+        assert!(failure.result.is_err());
     }
 }

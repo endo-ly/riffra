@@ -32,8 +32,8 @@
 | `G-007` | P1 | Focus Modeは表示だけを整理する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `FLOW-001` | P0 | 起動して演奏する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `FLOW-002` | P0 | 音色候補を比較する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `FLOW-003` | P0 | 思いつきを録る | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `FLOW-004` | P0 | 録音をArrangeへ進める | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
+| `FLOW-003` | P0 | 思いつきを録る | 適合 | 2026-07-13 Native releaseで開始直後にStopへ切替、録音中sample増加、停止後に381,120 samplesのcompleted take、Inbox反映を確認。Raw/Processed/manifest整合と空録音のpartial保全はNative self-test、一覧検証はRust testで回帰化 | Audio Device変更時に同じ開始・停止・Inbox確認を実施 |
+| `FLOW-004` | P0 | 録音をArrangeへ進める | 未確認 | 2026-07-13 completed takeのPlace、processed.wavへの非破壊リンク、Autosave、再起動後のClip保持までは確認。編集後Renderと原本hash照合が残る | Split/Trim/Fade後にRenderし、前後のRaw/Processed hashを照合 |
 | `FLOW-005` | P1 | AudioからSampleを作る | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `FLOW-006` | P1 | AI案を確認して適用する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `FLOW-007` | P0 | 障害から復旧する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
@@ -57,11 +57,11 @@
 | `RACK-004` | P1 | Snapshotを複数保存・比較する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `RACK-005` | P2 | Tone Explorationを安全に行う | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `RACK-006` | P1 | Freeze/Render fallbackを作る | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `REC-001` | P0 | Raw/Processedを同時録音する | 再確認待ち | 既知の修正後。Native再確認を未完了 | 既存Inboxのcompleted、sample数、Placeを確認 |
+| `REC-001` | P0 | Raw/Processedを同時録音する | 適合 | 2026-07-13 Native releaseで録音中sample増加、停止後completed 381,120 samples、Raw/Processedを要求するInbox検証、Placeを確認。Native self-testは両WAV 22,050 samples、manifest finalization、0 dropped blocksを確認 | 別Sample Rate/Input構成でも両WAVの長さを照合 |
 | `REC-002` | P1 | Count-in/Pre-roll/Punch/Loopを扱う | 再確認待ち | 既知の修正後。Native再確認を未完了 | 4 beat Count-inの実時間と録音範囲を確認 |
-| `REC-003` | P1 | Take Groupを管理する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `REC-004` | P0 | 録音異常時に取得済みデータを保全する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
-| `ARR-001` | P0 | Audio/MIDIを非破壊配置する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
+| `REC-003` | P1 | Take Groupを管理する | 不成立 | Recording provenanceとMIDI sidecarはあるが、Rating、Selected State、Take切替を行うUI・保存モデルが未実装 | Take Groupモデルと選択UIを実装後、複数Takeで切替・再起動保持を確認 |
+| `REC-004` | P0 | 録音異常時に取得済みデータを保全する | 不成立 | 空録音をcompletedにせずrecoverable partialとして残すNative self-testは追加済み。Dropout位置、Missing Range、Recovery Statusの表示とDevice切断/Disk低速/Plugin異常の実機確認は未実装 | 異常メタデータとRecovery UIを実装し、各障害注入でpartial WAVを照合 |
+| `ARR-001` | P0 | Audio/MIDIを非破壊配置する | 未確認 | 2026-07-13 AudioのPlace、processed.wav参照、Clip編集UI、Autosave、再起動保持を確認。MIDI配置と全編集操作後の原本hash照合が残る | Audio/MIDIでMove/Duplicate/Split/Trim/Loop/Fade/Gain/Pan/Muteを行いhashを照合 |
 | `ARR-002` | P1 | Track/Mixerを共有する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `ARR-003` | P1 | MIDI Clipを編集する | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |
 | `ARR-004` | P1 | Tempo/Marker/Loop Regionを扱う | 未確認 | Native操作未確認 | 条件→操作→期待結果をNativeで確認 |

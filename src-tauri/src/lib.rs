@@ -279,7 +279,7 @@ fn export_midi(state: State<'_, AppState>) -> Result<midi::MidiExportResult, Str
 
 #[tauri::command]
 fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.status()
+    state.audio.refresh_status()
 }
 
 #[tauri::command]

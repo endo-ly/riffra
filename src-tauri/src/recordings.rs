@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::Path,
+    path::{Component, Path},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -83,6 +83,49 @@ fn normalize_sample_rate(rate: f64) -> Option<u32> {
     Some(rounded as u32)
 }
 
+fn resolve_take_file(directory: &Path, file: Option<&str>, label: &str) -> Result<String, String> {
+    let file = file.ok_or_else(|| format!("{label} file is not declared in manifest.json."))?;
+    let mut components = Path::new(file).components();
+    let safe_name =
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+    if !safe_name || file.trim().is_empty() {
+        return Err(format!(
+            "{label} file must be a safe file name inside the take directory."
+        ));
+    }
+    let path = directory.join(file);
+    if !path.is_file() {
+        return Err(format!("{label} file is missing from the take directory."));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn validate_manifest(
+    directory: &Path,
+    manifest: &RecordingManifest,
+) -> Result<(String, String), String> {
+    let state = manifest.state.as_deref().unwrap_or("recoverable");
+    if !matches!(state, "recording" | "completed" | "recoverable") {
+        return Err(format!("Recording state '{state}' is not supported."));
+    }
+    if state == "completed" {
+        if manifest.samples_written.unwrap_or_default() == 0 {
+            return Err("Completed recording contains no audio samples.".into());
+        }
+        if manifest
+            .sample_rate
+            .and_then(normalize_sample_rate)
+            .is_none()
+        {
+            return Err("Completed recording has no valid sample rate.".into());
+        }
+    }
+    let raw_path = resolve_take_file(directory, manifest.raw_file.as_deref(), "Raw")?;
+    let processed_path =
+        resolve_take_file(directory, manifest.processed_file.as_deref(), "Processed")?;
+    Ok((raw_path, processed_path))
+}
+
 pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>, String> {
     let inbox = data_root.join("recordings").join("inbox");
     if !inbox.exists() {
@@ -109,13 +152,28 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .and_then(|name| name.to_str())
             .unwrap_or("Untitled Take")
             .to_owned();
-        let state = manifest.state.clone().unwrap_or_else(|| {
+        let declared_state = manifest.state.clone().unwrap_or_else(|| {
             if manifest_error.is_some() {
                 "invalid".into()
             } else {
                 "recoverable".into()
             }
         });
+        let validation = manifest_error
+            .is_none()
+            .then(|| validate_manifest(&path, &manifest))
+            .transpose();
+        let (validated_paths, validation_error) = match validation {
+            Ok(Some(paths)) => (Some(paths), None),
+            Ok(None) => (None, None),
+            Err(error) => (None, Some(error)),
+        };
+        let error = manifest_error.or(validation_error);
+        let state = if error.is_some() {
+            "invalid".into()
+        } else {
+            declared_state
+        };
         let provenance = read_provenance(&path.join("provenance.json"));
         let provenance_text = provenance
             .as_ref()
@@ -143,14 +201,9 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         if !query.is_empty() && !search_text.contains(&query) {
             continue;
         }
-        let raw_path = manifest
-            .raw_file
-            .as_ref()
-            .map(|file| path.join(file).to_string_lossy().into_owned());
-        let processed_path = manifest
-            .processed_file
-            .as_ref()
-            .map(|file| path.join(file).to_string_lossy().into_owned());
+        let (raw_path, processed_path) = validated_paths
+            .map(|(raw, processed)| (Some(raw), Some(processed)))
+            .unwrap_or((None, None));
         let midi_file = path
             .join("midi.json")
             .is_file()
@@ -163,7 +216,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             name,
             path: path.to_string_lossy().into_owned(),
             state,
-            error: manifest_error,
+            error,
             started_at: manifest.started_at,
             updated_at: manifest.updated_at,
             raw_file: manifest.raw_file,
@@ -278,6 +331,8 @@ mod tests {
             br#"{"state":"completed","startedAt":"2026-07-12T00:00:00Z","updatedAt":"2026-07-12T00:00:01Z","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100,"droppedBlocks":0}"#,
         )
         .unwrap();
+        fs::write(take.join("raw.wav"), b"raw audio").unwrap();
+        fs::write(take.join("processed.wav"), b"processed audio").unwrap();
 
         let results = list(&root, Some("take-1")).unwrap();
         assert_eq!(results.len(), 1);
@@ -285,6 +340,78 @@ mod tests {
         assert_eq!(results[0].error, None);
         assert_eq!(results[0].samples_written, 44_100);
         assert_eq!(results[0].sample_rate, Some(44_100));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_completed_manifest_when_audio_files_are_missing() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-missing-audio");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+
+        let results = list(&root, Some("take-missing-audio")).unwrap();
+        assert_eq!(results[0].state, "invalid");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("missing"))
+        );
+        assert_eq!(results[0].raw_path, None);
+        assert_eq!(results[0].processed_path, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_completed_manifest_without_recorded_samples() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-empty");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":0}"#,
+        )
+        .unwrap();
+        fs::write(take.join("raw.wav"), b"header only").unwrap();
+        fs::write(take.join("processed.wav"), b"header only").unwrap();
+
+        let results = list(&root, Some("take-empty")).unwrap();
+        assert_eq!(results[0].state, "invalid");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("no audio samples"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_manifest_file_paths_outside_the_take_directory() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-unsafe-path");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"../raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(take.join("processed.wav"), b"processed audio").unwrap();
+
+        let results = list(&root, Some("take-unsafe-path")).unwrap();
+        assert_eq!(results[0].state, "invalid");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("safe file name"))
+        );
+        assert_eq!(results[0].raw_path, None);
         let _ = fs::remove_dir_all(root);
     }
 

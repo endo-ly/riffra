@@ -29,6 +29,8 @@ namespace {
 using riffra::SafetyAudioCallback;
 using riffra::PluginRack;
 
+thread_local juce::String currentRequestId;
+
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
     struct Pad {
@@ -201,7 +203,11 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
 }
 
 void writeJson(const juce::var& value) {
-    std::cout << juce::JSON::toString(value, true) << std::endl;
+    auto response = value;
+    if (currentRequestId.isNotEmpty())
+        if (auto* object = response.getDynamicObject())
+            object->setProperty("requestId", currentRequestId.getLargeIntValue());
+    std::cout << juce::JSON::toString(response, true) << std::endl;
 }
 
 juce::var probeAudioDevices() {
@@ -351,12 +357,14 @@ int serve(const std::optional<std::uint32_t> parentPid) {
 
     std::string line;
     while (std::getline(std::cin, line)) {
+        currentRequestId.clear();
         const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
         if (!command.isObject()) {
             writeJson(makeError("protocol", "Expected one JSON object per line."));
             continue;
         }
 
+        currentRequestId = command.getProperty("requestId", {}).toString();
         const auto type = command.getProperty("type", {}).toString();
         if (type == "shutdown")
             break;
