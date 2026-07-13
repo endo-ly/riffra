@@ -15,7 +15,7 @@ import type {
   ScanReport,
   ScratchSession,
   SeparationResult,
-} from './domain';
+} from '@/lib/domain';
 
 /**
  * NativeApi is the seam between the React layer and every side-effectful

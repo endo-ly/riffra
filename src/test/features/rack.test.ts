@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { makePluginEntry, makePluginStatus, makeRackPlugin } from '../test-fixtures';
+import { makePluginEntry, makePluginStatus, makeRackPlugin } from '@/test/test-fixtures';
 import {
   rackWithPluginBypassed,
   rackWithPluginLoaded,
   rackWithPluginParameter,
   rackWithoutPlugin,
-} from './rack';
+} from '@/features/rack';
 
 function pluginRack(bypassed = false) {
   return [

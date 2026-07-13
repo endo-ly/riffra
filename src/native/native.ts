@@ -17,8 +17,8 @@ import type {
   ScanReport,
   ScratchSession,
   SeparationResult,
-} from './domain';
-import { defaultSession } from './domain';
+} from '@/lib/domain';
+import { defaultSession } from '@/lib/domain';
 import type { NativeApi } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';

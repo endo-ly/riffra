@@ -1,5 +1,11 @@
-import { defaultSession } from './domain';
-import type { AudioStatus, PluginEntry, PluginStatus, RackDevice, ScratchSession } from './domain';
+import { defaultSession } from '@/lib/domain';
+import type {
+  AudioStatus,
+  PluginEntry,
+  PluginStatus,
+  RackDevice,
+  ScratchSession,
+} from '@/lib/domain';
 
 /**
  * Shared test builders for M0+ tests. They return valid, minimal objects so

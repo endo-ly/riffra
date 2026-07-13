@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AudioStatus } from './domain';
-import { includeEffectiveOption, reconcileAudioSettings } from './audio-settings';
+import type { AudioStatus } from '@/lib/domain';
+import { includeEffectiveOption, reconcileAudioSettings } from '@/lib/audio-settings';
 
 function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {

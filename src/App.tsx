@@ -17,16 +17,16 @@ import type {
   ScratchSession,
   SeparationResult,
   Workspace,
-} from './domain';
-import { compareAnalyses } from './domain';
-import { defaultNativeApi } from './native';
-import type { NativeApi } from './native-api';
-import { includeEffectiveOption, reconcileAudioSettings } from './audio-settings';
-import { createTimelineClip, isUsableRecording } from './recordings';
+} from '@/lib/domain';
+import { compareAnalyses } from '@/lib/domain';
+import { defaultNativeApi } from '@/native/native';
+import type { NativeApi } from '@/native/native-api';
+import { includeEffectiveOption, reconcileAudioSettings } from '@/lib/audio-settings';
+import { createTimelineClip, isUsableRecording } from '@/lib/recordings';
 import {
   pluginParameterValuesForSession,
   shouldRestoreIndividualParameters,
-} from './plugin-session';
+} from '@/lib/plugin-session';
 import {
   audioCommandSucceeded,
   isOutputMuted,

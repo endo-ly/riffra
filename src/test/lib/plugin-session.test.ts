@@ -3,7 +3,7 @@ import {
   MAX_PERSISTED_PLUGIN_PARAMETERS,
   pluginParameterValuesForSession,
   shouldRestoreIndividualParameters,
-} from './plugin-session';
+} from '@/lib/plugin-session';
 
 describe('plugin session persistence', () => {
   it('bounds auxiliary parameter values for plugins with large parameter lists', () => {

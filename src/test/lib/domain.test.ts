@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareAnalyses, defaultSession } from './domain';
+import { compareAnalyses, defaultSession } from '@/lib/domain';
 
 describe('Scratch Session safety defaults', () => {
   it('starts muted at a conservative master level with a safety limiter', () => {

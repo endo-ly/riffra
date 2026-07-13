@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { makeAudioStatus } from '../test-fixtures';
+import { makeAudioStatus } from '@/test/test-fixtures';
 import {
   audioCommandSucceeded,
   isOutputMuted,
   resolveEmergencyMuteAfterCommand,
-} from './audio-safety';
+} from '@/features/audio-safety';
 
 function audio(state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted') {
   return makeAudioStatus({ state });

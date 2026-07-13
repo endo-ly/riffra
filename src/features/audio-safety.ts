@@ -1,4 +1,4 @@
-import type { AudioStatus } from '../domain';
+import type { AudioStatus } from '@/lib/domain';
 
 /**
  * Audio safety state transitions. These encode the product invariants that keep

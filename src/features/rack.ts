@@ -1,5 +1,5 @@
-import type { PluginEntry, PluginStatus, RackDevice } from '../domain';
-import { pluginParameterValuesForSession } from '../plugin-session';
+import type { PluginEntry, PluginStatus, RackDevice } from '@/lib/domain';
+import { pluginParameterValuesForSession } from '@/lib/plugin-session';
 
 /**
  * Pure projections of the rack portion of a ScratchSession. Each function takes

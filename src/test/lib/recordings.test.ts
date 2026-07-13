@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSession, type RecordingAsset } from './domain';
-import { createTimelineClip, isUsableRecording } from './recordings';
+import { defaultSession, type RecordingAsset } from '@/lib/domain';
+import { createTimelineClip, isUsableRecording } from '@/lib/recordings';
 
 const completedRecording = (): RecordingAsset => ({
   id: 'recording:take-1',

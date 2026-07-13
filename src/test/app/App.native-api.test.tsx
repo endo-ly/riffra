@@ -4,10 +4,10 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { defaultSession } from './domain';
-import type { PluginEntry } from './domain';
-import { FakeNativeApi, fakeAudioStatus } from './native-api-fake';
-import App from './App';
+import { defaultSession } from '@/lib/domain';
+import type { PluginEntry } from '@/lib/domain';
+import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import App from '@/App';
 
 const examplePlugin: PluginEntry = {
   id: 'plug:example',
