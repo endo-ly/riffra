@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AiChangeSet, AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiClip, MidiEvent, MidiNote, MidiProbe, PluginEntry, RecordingAsset, RenderOptions, RenderResult, ScratchSession, SeparationResult, Workspace } from "./domain";
 import { compareAnalyses } from "./domain";
-import { analyzeAudio, bootstrap, clearPlugin, closeMidiInput, configureSamplePads, exportMidi, exportScratchSession, getAudioStatus, importScratchSession, listRecordings, listSeparations, loadPlugin, openMidiInput, previewSample, probeAudioDevices, probeMidiDevices, readMidiEvents, recoverAudioDevice, relatedLibraryAssets, renderTimeline, renderTimelineStems, restoreRecoveryGeneration, saveScratch, scanVst3Folder, searchLibrary, separateChannels, setAudioDriver, setEmergencyMute, setMasterGainDb, setPluginBypassed, setPluginParameter, setPluginState, startRecording, stopRecording, stopSamplePreview, stopSamplePreviewKey, updateLibraryAsset } from "./native";
+import { defaultNativeApi } from "./native";
+import type { NativeApi } from "./native-api";
 import { includeEffectiveOption, reconcileAudioSettings } from "./audio-settings";
 import { createTimelineClip, isUsableRecording } from "./recordings";
 import { pluginParameterValuesForSession, shouldRestoreIndividualParameters } from "./plugin-session";
+import { audioCommandSucceeded, isOutputMuted, resolveEmergencyMuteAfterCommand } from "./features/audio-safety";
+import { decideRecordingToggle } from "./features/recording";
+import { rackWithPluginBypassed, rackWithPluginLoaded, rackWithPluginParameter, rackWithoutPlugin } from "./features/rack";
 
 const workspaces: Array<{ id: Workspace; label: string; key: string }> = [
   { id: "home", label: "Home", key: "1" },
@@ -175,7 +179,7 @@ function WorkspaceArrange({ session, setSession, recordings, onPlaceRecording }:
 function WorkspaceSample({ session, recordings, onCreateSamplePad, onPreviewPad }: { session: ScratchSession; recordings: RecordingAsset[]; onCreateSamplePad: (recording: RecordingAsset) => void; onPreviewPad: (pad: ScratchSession["samplePads"][number]) => void }) {
   const pads = Array.from({ length: 16 }, (_, index) => session.samplePads[index] ?? null);
   const keyboardKeys = ["Z", "S", "X", "D", "C", "V", "G", "B", "H", "N", "J", "M"];
-  return <div className="workspace-scroll sample-view"><section className="play-header"><div><span className="eyebrow">SAMPLE INSTRUMENT</span><h1>Audio → Pad / Keyboard</h1></div><span className="status-tag">SOURCE MAPPING</span></section><section className="section-card pad-card"><header><div><span className="eyebrow">PADS</span><h2>{session.samplePads.length} mapped</h2></div><small>Playback engine follows this mapping gate</small></header><div className="pad-grid">{pads.map((pad, index) => <button className={`sample-pad ${pad ? "filled" : "empty"}`} key={pad?.id ?? `empty-${index}`}><strong>{pad?.name ?? `Pad ${index + 1}`}</strong><small>{pad ? `MIDI ${pad.midiKey}` : "Empty"}</small></button>)}</div></section><section className="section-card sample-sources"><header><div><span className="eyebrow">SOURCES</span><h2>録音をPadへ割り当てる</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onCreateSamplePad(recording)}>Map to Pad</button></div>)}</section></div>;
+  return <div className="workspace-scroll sample-view"><section className="play-header"><div><span className="eyebrow">SAMPLE INSTRUMENT</span><h1>Audio → Pad / Keyboard</h1></div><span className="status-tag">SOURCE MAPPING</span></section><section className="section-card pad-card"><header><div><span className="eyebrow">PADS</span><h2>{session.samplePads.length} mapped</h2></div><small>Playback engine follows this mapping gate</small></header><div className="pad-grid">{pads.map((pad, index) => <button className={`sample-pad ${pad ? "filled" : "empty"}`} key={pad?.id ?? `empty-${index}`} onClick={pad ? () => onPreviewPad(pad) : undefined} aria-label={pad ? `Preview ${pad.name}` : `Empty pad ${index + 1}`}><strong>{pad?.name ?? `Pad ${index + 1}`}</strong><small>{pad ? `MIDI ${pad.midiKey}` : "Empty"}</small></button>)}</div></section><section className="section-card sample-sources"><header><div><span className="eyebrow">SOURCES</span><h2>録音をPadへ割り当てる</h2></div><small>元ファイルは変更されません</small></header>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" onClick={() => onCreateSamplePad(recording)}>Map to Pad</button></div>)}</section></div>;
 }
 
 function MidiDevices({ probe, onRefresh }: { probe: MidiProbe; onRefresh: () => void }) {
@@ -318,12 +322,12 @@ function notesFromMidiEvents(events: MidiEvent[]): MidiNote[] {
   return notes.sort((left, right) => left.startMs - right.startMs || left.note - right.note);
 }
 
-function MidiClipEditor({ session, setSession, recordings }: { session: ScratchSession; setSession: (value: ScratchSession) => void; recordings: RecordingAsset[] }) {
+function MidiClipEditor({ session, setSession, recordings, api }: { session: ScratchSession; setSession: (value: ScratchSession) => void; recordings: RecordingAsset[]; api: NativeApi }) {
   const [message, setMessage] = useState("Recorded MIDI sidecars can be imported as editable clips.");
   const [exportMessage, setExportMessage] = useState("");
   const importRecording = async (recording: RecordingAsset) => {
     if (!recording.midiPath) return;
-    const events = await readMidiEvents(recording.midiPath);
+    const events = await api.readMidiEvents(recording.midiPath);
     const notes = notesFromMidiEvents(events);
     if (!notes.length) {
       setMessage("No note-on/note-off pairs were found in that MIDI sidecar.");
@@ -342,7 +346,7 @@ function MidiClipEditor({ session, setSession, recordings }: { session: ScratchS
   const removeNote = (clipId: string, noteId: string) => setSession({ ...session, midiClips: session.midiClips.map((clip) => clip.id !== clipId ? clip : { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) }) });
   const removeClip = (clipId: string) => setSession({ ...session, midiClips: session.midiClips.filter((clip) => clip.id !== clipId) });
   const exportSessionMidi = async () => {
-    const result = await exportMidi();
+    const result = await api.exportMidi();
     setExportMessage(result ? `${result.noteCount} notes exported: ${result.path}` : "MIDI export failed; the session remains unchanged.");
   };
   return <section className="section-card midi-clip-editor"><header><div><span className="eyebrow">MIDI CLIPS</span><h2>Basic piano-roll editing</h2></div><div><button className="text-button" disabled={!session.midiClips.some((clip) => !clip.muted && clip.notes.length)} onClick={() => void exportSessionMidi()}>Export .mid</button><small>{message}</small></div></header>{exportMessage && <small className="render-message">{exportMessage}</small>}<div className="midi-import-list">{recordings.filter((recording) => recording.midiPath).slice(0, 8).map((recording) => <button className="text-button" key={recording.id} onClick={() => void importRecording(recording)}>Import {recording.name}</button>)}{!recordings.some((recording) => recording.midiPath) && <small className="inspector-copy">Quick Record a MIDI input to create an editable sidecar.</small>}</div>{session.midiClips.map((clip) => <article className={`midi-clip-card ${clip.muted ? "muted" : ""}`} key={clip.id}><header><div><strong>{clip.name}</strong><small>{clip.notes.length} notes · {clip.durationMs} ms</small></div><button className="text-button danger" onClick={() => removeClip(clip.id)}>Remove</button></header><div className="piano-roll" aria-label={`${clip.name} piano roll`}>{clip.notes.map((note) => <i key={note.id} style={{ left: `${Math.min(98, (note.startMs / Math.max(1, clip.durationMs)) * 100)}%`, width: `${Math.max(1, (note.durationMs / Math.max(1, clip.durationMs)) * 100)}%`, top: `${((127 - note.note) / 128) * 100}%` }} />)}</div><div className="midi-note-list">{clip.notes.slice(0, 64).map((note) => <div className="midi-note-row" key={note.id}><label><span>Note</span><input type="number" min="0" max="127" value={note.note} onChange={(event) => updateNote(clip.id, note.id, "note", Number(event.target.value))} /></label><label><span>Start</span><input type="number" min="0" value={note.startMs} onChange={(event) => updateNote(clip.id, note.id, "startMs", Number(event.target.value))} /></label><label><span>Length</span><input type="number" min="1" value={note.durationMs} onChange={(event) => updateNote(clip.id, note.id, "durationMs", Number(event.target.value))} /></label><label><span>Velocity</span><input type="number" min="1" max="127" value={note.velocity} onChange={(event) => updateNote(clip.id, note.id, "velocity", Number(event.target.value))} /></label><label><span>Channel</span><input type="number" min="1" max="16" value={note.channel} onChange={(event) => updateNote(clip.id, note.id, "channel", Number(event.target.value))} /></label><button className="text-button danger" onClick={() => removeNote(clip.id, note.id)}>×</button></div>)}</div>{clip.notes.length > 64 && <small className="inspector-copy">Showing first 64 notes; edits remain bounded and persisted.</small>}</article>)}</section>;
@@ -423,7 +427,17 @@ function WorkspaceSeparate({ recordings, results, busyId, message, previewingPat
   return <div className="workspace-scroll separate-view"><section className="play-header"><div><span className="eyebrow">SEPARATE WORKSPACE</span><h1>Preserve the source, derive channel assets</h1></div><span className="status-tag">CHANNEL SPLIT FALLBACK</span></section><section className="section-card separate-card"><header><div><span className="eyebrow">OFFLINE JOB</span><h2>Stereo channel split</h2></div><small>Creates immutable Left / Right WAV assets</small></header><p className="inspector-copy">This local fallback separates stereo channels without claiming vocal or instrument stems. The original WAV is never overwritten.</p>{recordings.length === 0 ? <p className="inspector-copy">Inboxに録音がありません。</p> : recordings.slice(0, 12).map((recording) => <div className="source-row" key={recording.id}><div><strong>{recording.name}</strong><small>{recording.state} · {recording.samplesWritten.toLocaleString()} samples</small></div><button className="text-button" disabled={busyId === recording.id} onClick={() => onSeparate(recording)}>{busyId === recording.id ? "Running…" : "Split stereo"}</button></div>)}<small className="separate-message">{message}</small></section><section className="section-card separate-results"><header><div><span className="eyebrow">DERIVED ASSETS</span><h2>{results.length} completed jobs</h2></div><small>Manifest-backed provenance</small></header>{results.length === 0 ? <p className="inspector-copy">No separation result has been created yet.</p> : results.slice(0, 8).map((result) => { const sourceName = result.sourcePath.split("\\").pop() ?? "Stem"; return <article className="separation-result" key={result.id}><div><strong>{sourceName}</strong><small>{new Date(result.createdAtMs).toLocaleString("ja-JP")} · {result.state}</small></div><div className="separation-paths"><span>LEFT <code>{result.leftPath}</code><button className="text-button" onClick={() => previewingPath === result.leftPath ? onStop() : onPreview(result.leftPath)}>{previewingPath === result.leftPath ? "Stop" : "Preview"}</button><button className="text-button" onClick={() => onAddToTimeline(result.leftPath, `Left · ${sourceName}`)}>Add to Timeline</button></span><span>RIGHT <code>{result.rightPath}</code><button className="text-button" onClick={() => previewingPath === result.rightPath ? onStop() : onPreview(result.rightPath)}>{previewingPath === result.rightPath ? "Stop" : "Preview"}</button><button className="text-button" onClick={() => onAddToTimeline(result.rightPath, `Right · ${sourceName}`)}>Add to Timeline</button></span></div></article>; })}</section></div>;
 }
 
-function App() {
+function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
+  const {
+    bootstrap, saveScratch, restoreRecoveryGeneration, exportScratchSession, importScratchSession,
+    scanVst3Folder, listRecordings, searchLibrary, updateLibraryAsset, relatedLibraryAssets,
+    analyzeAudio, readMidiEvents, probeMidiDevices, probeAudioDevices,
+    listSeparations, separateChannels, renderTimeline, renderTimelineStems, exportMidi,
+    loadPlugin, clearPlugin, previewSample, stopSamplePreview, stopSamplePreviewKey,
+    getAudioStatus, setEmergencyMute, startRecording, stopRecording,
+    setPluginBypassed, setPluginParameter, setPluginState, setMasterGainDb,
+    recoverAudioDevice, setAudioDriver, openMidiInput, closeMidiInput, configureSamplePads,
+  } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [session, setSession] = useState<ScratchSession | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({ state: "starting", driver: null, sampleRate: null, bufferSize: null, roundTripMs: null, recording: { active: false, directory: null, sampleRate: null, rawChannels: null, processedChannels: null, samplesWritten: 0, droppedBlocks: 0 }, midiInputs: [], midiOutputs: [], midiInputActive: false, midiMessages: 0, lastMidiNote: null, midiPadMappings: 0, midiPadTriggers: 0, inputPeak: 0, outputPeak: 0, invalidSamples: 0, message: "Audio supervisor is starting." });
@@ -470,7 +484,7 @@ function App() {
 
   const loadPluginIntoRack = useCallback(async (plugin: PluginEntry, parameterValues: number[] = [], bypassed = false, stateData: string | null = null) => {
     let nextAudio = await loadPlugin(plugin.path);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") {
+    if (!audioCommandSucceeded(nextAudio)) {
       setAudio(nextAudio);
       return;
     }
@@ -485,36 +499,33 @@ function App() {
     setAudio(nextAudio);
     setSession((current) => current ? {
       ...current,
-      rack: [
-        ...current.rack.filter((device) => device.kind !== "plugin"),
-        { id: `plugin:${plugin.id}`, name: plugin.name, kind: "plugin", path: plugin.path, bypassed, gainDb: 0, parameterValues: pluginParameterValuesForSession(nextAudio.plugin?.parameters, parameterValues), stateData: nextAudio.plugin?.stateData ?? stateData },
-      ],
+      rack: rackWithPluginLoaded(current.rack, plugin, nextAudio.plugin, { parameterValues, bypassed, stateData }),
     } : current);
   }, []);
 
   const clearPluginFromRack = useCallback(async () => {
     const nextAudio = await clearPlugin();
     setAudio(nextAudio);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
-    setSession((current) => current ? { ...current, rack: current.rack.filter((device) => device.kind !== "plugin") } : current);
+    if (!audioCommandSucceeded(nextAudio)) return;
+    setSession((current) => current ? { ...current, rack: rackWithoutPlugin(current.rack) } : current);
   }, []);
 
   const togglePluginBypass = useCallback(async (bypassed: boolean) => {
     const nextAudio = await setPluginBypassed(bypassed);
     setAudio(nextAudio);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
+    if (!audioCommandSucceeded(nextAudio)) return;
     setSession((current) => current ? {
       ...current,
-      rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, bypassed } : device),
+      rack: rackWithPluginBypassed(current.rack, bypassed),
     } : current);
   }, []);
 
   const setPluginParameterValue = useCallback(async (index: number, value: number) => {
     const nextAudio = await setPluginParameter(index, value);
     setAudio(nextAudio);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
+    if (!audioCommandSucceeded(nextAudio)) return;
     const values = nextAudio.plugin ? pluginParameterValuesForSession(nextAudio.plugin.parameters) : undefined;
-    if (values) setSession((current) => current ? { ...current, rack: current.rack.map((device) => device.kind === "plugin" ? { ...device, parameterValues: values, stateData: nextAudio.plugin?.stateData ?? device.stateData } : device) } : current);
+    if (values) setSession((current) => current ? { ...current, rack: rackWithPluginParameter(current.rack, values, nextAudio.plugin?.stateData ?? current.rack.find((device) => device.kind === "plugin")?.stateData ?? null) } : current);
   }, []);
 
   const recoverAudio = useCallback(async () => {
@@ -525,7 +536,7 @@ function App() {
   const selectAudioDriver = useCallback(async (driver: string, sampleRate: number, bufferSize: number) => {
     const nextAudio = await setAudioDriver(driver, sampleRate, bufferSize);
     setAudio(nextAudio);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") return;
+    if (!audioCommandSucceeded(nextAudio)) return;
     const effective = reconcileAudioSettings({ driver, sampleRate, bufferSize }, nextAudio);
     setAudioPreferenceMessage(effective.message);
     setSession((current) => current ? { ...current, audioDriver: effective.driver, audioSampleRate: effective.sampleRate, audioBufferSize: effective.bufferSize } : current);
@@ -834,20 +845,6 @@ function App() {
   }, [audio.state, boot, session?.samplePads]);
 
   useEffect(() => {
-    if (!session) return;
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".sample-pad.filled"));
-    const handlers = buttons.map((button, index) => {
-      const handler = () => {
-        const pad = session.samplePads[index];
-        if (pad) void previewSamplePad(pad);
-      };
-      button.addEventListener("click", handler);
-      return { button, handler };
-    });
-    return () => handlers.forEach(({ button, handler }) => button.removeEventListener("click", handler));
-  }, [previewSamplePad, session?.samplePads]);
-
-  useEffect(() => {
     const keyboardKeys = ["z", "s", "x", "d", "c", "v", "g", "b", "h", "n", "j", "m"];
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -955,15 +952,11 @@ function App() {
 
   const toggleMute = useCallback(async () => {
     if (!session) return;
-    const muted = !(session.emergencyMuted || audio.state === "muted");
+    const muted = !isOutputMuted(session.emergencyMuted, audio);
     const nextAudio = await setEmergencyMute(muted);
     setAudio(nextAudio);
-    if (nextAudio.state === "faulted" || nextAudio.state === "offline") {
-      setSession({ ...session, emergencyMuted: session.emergencyMuted || muted });
-      return;
-    }
-    setSession({ ...session, emergencyMuted: muted });
-  }, [audio.state, session]);
+    setSession({ ...session, emergencyMuted: resolveEmergencyMuteAfterCommand(session.emergencyMuted, nextAudio, muted) });
+  }, [audio, session]);
 
   const startRecordingNow = useCallback(async () => {
     if (recordingCommandLock.current) return;
@@ -980,29 +973,36 @@ function App() {
   }, []);
 
   const toggleRecording = useCallback(async () => {
-    if (recordingCommandLock.current) return;
-    if (recordCountdown !== null) {
-      setRecordCountdown(null);
-      return;
+    const decision = decideRecordingToggle({
+      commandPending: recordingCommandLock.current,
+      countdown: recordCountdown,
+      recordingActive: audio.recording.active,
+      countInBeats: session?.countInBeats ?? 0,
+    });
+    switch (decision.kind) {
+      case "ignore":
+        return;
+      case "cancelCountdown":
+        setRecordCountdown(null);
+        return;
+      case "stop":
+        recordingCommandLock.current = true;
+        setRecordingCommandPending(true);
+        try {
+          setAudio(await stopRecording());
+          setRecordings(await listRecordings());
+        } finally {
+          recordingCommandLock.current = false;
+          setRecordingCommandPending(false);
+        }
+        return;
+      case "startCountdown":
+        setRecordCountdown(decision.beats);
+        return;
+      case "startNow":
+        await startRecordingNow();
+        return;
     }
-    if (audio.recording.active) {
-      recordingCommandLock.current = true;
-      setRecordingCommandPending(true);
-      try {
-        setAudio(await stopRecording());
-        setRecordings(await listRecordings());
-      } finally {
-        recordingCommandLock.current = false;
-        setRecordingCommandPending(false);
-      }
-      return;
-    }
-    const beats = session?.countInBeats ?? 0;
-    if (beats > 0) {
-      setRecordCountdown(beats);
-      return;
-    }
-    await startRecordingNow();
   }, [audio.recording.active, recordCountdown, session?.countInBeats, startRecordingNow]);
 
   useEffect(() => {
@@ -1062,7 +1062,7 @@ function App() {
   }, [query]);
   if (!boot || !session) return <div className="boot-screen"><span className="logo-mark">R</span><strong>Riffra</strong><small>Recovering your creative memory…</small></div>;
 
-  const isMuted = session.emergencyMuted || audio.state === "muted";
+  const isMuted = isOutputMuted(session.emergencyMuted, audio);
   return (
     <main className={`app-shell ${focusMode ? "focus-mode" : ""} ${isMuted ? "is-muted" : ""}`}>
       <header className="global-bar">
@@ -1094,7 +1094,7 @@ function App() {
       <section className="workspace">
         {session.workspace === "home" && <div className="workspace-scroll home-grid"><WorkspaceHome state={boot} onWorkspace={switchWorkspace} onQuickRecord={() => void toggleRecording()} recordingActive={audio.recording.active || recordCountdown !== null || recordingCommandPending} onRecoverAudioDevice={() => void recoverAudio()} onExportProject={() => void exportSession()} onImportProject={() => void importSession()} onRestoreRecovery={(fileName) => void restoreRecovery(fileName)} onDismissRecovery={dismissRecovery} exportMessage={exportMessage} /><AudioDevices probe={deviceProbe} onRefresh={() => void probeAudioDevices().then(setDeviceProbe)} /><AudioDriverPicker probe={deviceProbe} current={audio.driver} sampleRate={audio.sampleRate} bufferSize={audio.bufferSize} onSelect={(driver, sampleRate, bufferSize) => void selectAudioDriver(driver, sampleRate, bufferSize)} /><CaptureSettings session={session} setSession={setSession} /></div>}
         {session.workspace === "play" && <WorkspacePlay session={session} audio={audio} plugins={plugins} missingPluginPaths={missingPluginPaths} setSession={setSession} onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)} onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)} onClearPlugin={() => void clearPluginFromRack()} onCaptureSnapshot={captureSnapshot} onRecallSnapshot={(slot) => void recallSnapshot(slot)} />}
-        {session.workspace === "arrange" && <><WorkspaceArrange session={session} setSession={setSession} recordings={usableRecordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><MidiClipEditor session={session} setSession={setSession} recordings={usableRecordings} /><TimelineRenderControls session={session} result={renderResult} stems={stemResults} message={renderMessage} onRender={(options) => void runTimelineRender(options)} onRenderStems={(options) => void runTimelineStemRender(options)} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
+        {session.workspace === "arrange" && <><WorkspaceArrange session={session} setSession={setSession} recordings={usableRecordings} onPlaceRecording={placeRecording} /><TimelineClipInspector session={session} setSession={setSession} /><MidiClipEditor session={session} setSession={setSession} recordings={usableRecordings} api={api} /><TimelineRenderControls session={session} result={renderResult} stems={stemResults} message={renderMessage} onRender={(options) => void runTimelineRender(options)} onRenderStems={(options) => void runTimelineStemRender(options)} onPreview={() => void previewTimelineRender()} onStop={() => void stopTimelinePreview()} previewing={renderPreviewing} /></>}
         {session.workspace === "sample" && <><WorkspaceSample session={session} recordings={usableRecordings} onCreateSamplePad={createSamplePad} onPreviewPad={(pad) => void previewSamplePad(pad)} /><SamplePadEditor session={session} setSession={setSession} /><SamplePreviewControls session={session} playingId={previewPadId} onPreview={(pad) => void previewSamplePad(pad)} onStop={() => void stopPreview()} /><MidiDevices probe={midi} onRefresh={() => void probeMidiDevices().then(setMidi)} /><MidiMonitor probe={midi} audio={audio} onOpen={(name) => void connectMidiInput(name)} onClose={() => void disconnectMidiInput()} onPanic={() => void stopPreview()} /></>}
         {session.workspace === "analyze" && <><WorkspaceAnalyze analysis={analysis} /><ReferenceSuggestion analysis={analysis} recordings={usableRecordings} references={referenceAnalyses} referenceId={referenceId} session={session} setSession={setSession} onSelect={(recording) => void selectReference(recording)} onPreview={(recording) => void previewReference(recording)} onStop={() => void stopReferencePreview()} onSyncPreview={() => void previewReferencePair()} onToggleLoop={() => setReferenceLoopPreview((value) => !value)} previewingId={referencePreviewingId} syncPreviewing={referenceSyncPreviewing} loopPreview={referenceLoopPreview} /></>}
         {session.workspace === "separate" && <WorkspaceSeparate recordings={usableRecordings} results={separations} busyId={separationBusy} message={separationMessage} previewingPath={separationPreviewingPath} onSeparate={(recording) => void runSeparation(recording)} onPreview={(path) => void previewSeparation(path)} onStop={() => void stopSeparationPreview()} onAddToTimeline={(path, name) => void addSeparationToTimeline(path, name)} />}

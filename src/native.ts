@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AudioAnalysis, AudioDeviceProbe, AudioStatus, BootstrapState, LibraryAsset, MidiEvent, MidiExportResult, MidiProbe, ProjectExport, RecordingAsset, RecoveryCandidate, RenderOptions, RenderResult, SamplePad, ScanReport, ScratchSession, SeparationResult } from "./domain";
 import { defaultSession } from "./domain";
+import type { NativeApi } from "./native-api";
 
 const defaultVst3Root = "C:\\Program Files\\Common Files\\VST3";
 
@@ -369,3 +370,54 @@ export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatu
     return await audioCommandError("Configure sample pads", error);
   }
 }
+
+/**
+ * createNativeApi returns the production NativeApi that delegates to the
+ * invoke-backed helpers in this module. Behavior is identical to calling the
+ * named functions directly; this wrapper exists so callers can depend on the
+ * NativeApi seam and tests can substitute a FakeNativeApi.
+ */
+export function createNativeApi(): NativeApi {
+  return {
+    bootstrap,
+    saveScratch,
+    restoreRecoveryGeneration,
+    exportScratchSession,
+    importScratchSession,
+    scanVst3Folder,
+    listRecordings,
+    searchLibrary,
+    updateLibraryAsset,
+    relatedLibraryAssets,
+    analyzeAudio,
+    readMidiEvents,
+    probeMidiDevices,
+    probeAudioDevices,
+    listSeparations,
+    separateChannels,
+    renderTimeline,
+    renderTimelineStems,
+    exportMidi,
+    loadPlugin,
+    clearPlugin,
+    previewSample,
+    stopSamplePreview,
+    stopSamplePreviewKey,
+    getAudioStatus,
+    setEmergencyMute,
+    startRecording,
+    stopRecording,
+    setPluginBypassed,
+    setPluginParameter,
+    setPluginState,
+    setMasterGainDb,
+    recoverAudioDevice,
+    setAudioDriver,
+    openMidiInput,
+    closeMidiInput,
+    configureSamplePads,
+  };
+}
+
+/** defaultNativeApi is the shared production instance used when no api is injected. */
+export const defaultNativeApi: NativeApi = createNativeApi();
