@@ -287,6 +287,7 @@ export interface AudioStatus {
   inputPeak: number;
   outputPeak: number;
   invalidSamples: number;
+  feedbackSuspected: boolean;
   message: string;
 }
 

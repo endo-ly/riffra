@@ -6,8 +6,10 @@ Current executable modes:
 
 - `riffra-audio.exe --probe` enumerates ASIO/WASAPI device types without opening an audio stream.
 - `riffra-audio.exe --serve` opens the default device in emergency-mute state and accepts one JSON command per stdin line.
+- `riffra-audio.exe --safety-self-test` exercises the DC blocker and feedback detector with synthetic data without accessing a hardware input.
+- `riffra-audio.exe --recording-self-test <directory>` writes and reopens a synthetic Raw/Processed take without accessing a hardware input.
 
-The first safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, and a 0.98 hard ceiling. VST3 loading runs in the sidecar through an isolated rack; click-free rack transitions, dropout accounting, and recoverable raw/processed recording remain explicit follow-on gates.
+The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed. VST3 loading runs in the sidecar through an isolated rack; click-free rack transitions and dropout accounting remain explicit follow-on gates.
 
 ## Protocol examples
 
@@ -30,6 +32,8 @@ The first safety chain is deliberately small and auditable: immediate emergency 
 ```
 
 Responses are JSON Lines and always include an error scope and `dataSafe` when a request fails.
+
+Status replies include `feedbackSuspected` when the detector has engaged emergency mute due to acoustic feedback. The flag clears on device recovery (`audioDeviceAboutToStart`).
 
 When an input is open, `startRecording` also captures note-on/note-off events to
 `midi.json` beside the Raw and Processed WAV files. The sidecar caps the event

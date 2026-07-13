@@ -54,6 +54,7 @@ struct NativeStatus {
     input_peak: Option<f64>,
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
+    feedback_suspected: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +125,7 @@ impl AudioSupervisor {
                 input_peak: 0.0,
                 output_peak: 0.0,
                 invalid_samples: 0,
+                feedback_suspected: false,
                 message: message.into(),
             })),
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
@@ -151,6 +153,7 @@ impl AudioSupervisor {
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,
+            feedback_suspected: false,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
         let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
@@ -535,6 +538,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         input_peak: native.input_peak.unwrap_or_default().clamp(0.0, 1.0),
         output_peak: native.output_peak.unwrap_or_default().clamp(0.0, 1.0),
         invalid_samples: native.invalid_samples.unwrap_or_default(),
+        feedback_suspected: native.feedback_suspected.unwrap_or(false),
         message,
     }
 }
@@ -680,6 +684,7 @@ mod tests {
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,
+            feedback_suspected: false,
             message: "ready".into(),
         }))
     }
@@ -838,5 +843,6 @@ mod tests {
             Some("v.st3")
         );
         assert!(status.message.contains("emergency-muted"));
+        assert!(!status.feedback_suspected);
     }
 }

@@ -52,6 +52,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,
+    feedbackSuspected: false,
     message: 'Fake audio supervisor is muted and ready for an explicit unmute.',
     ...overrides,
   };

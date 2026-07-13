@@ -879,4 +879,43 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn denies_network_client_dependencies() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
+            .expect("Cargo.toml must be readable for the SEC-001 guard");
+
+        let dependencies = manifest
+            .split("\n[dependencies]")
+            .nth(1)
+            .and_then(|section| section.split("\n[").next())
+            .unwrap_or("");
+
+        let forbidden = [
+            "reqwest",
+            "ureq",
+            "hyper",
+            "isahc",
+            "attohttpc",
+            "surf",
+            "minreq",
+            "curl",
+            "tauri-plugin-http",
+        ];
+        for crate_name in forbidden {
+            let prefix = format!("{crate_name} =");
+            let offender = dependencies
+                .lines()
+                .find(|line| line.trim_start().starts_with(&prefix));
+            assert!(
+                offender.is_none(),
+                "SEC-001 violation: network client crate '{crate_name}' is listed in [dependencies]. \
+                 Local First requires no implicit network transport; audio, project, and AI context \
+                 must not leave the machine without explicit user action. \
+                 Offending line: {}",
+                offender.unwrap_or("?")
+            );
+        }
+    }
 }

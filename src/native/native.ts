@@ -320,6 +320,7 @@ export async function getAudioStatus(): Promise<AudioStatus> {
       inputPeak: 0,
       outputPeak: 0,
       invalidSamples: 0,
+      feedbackSuspected: false,
       message: 'Native audio sidecar is not connected.',
     };
   }

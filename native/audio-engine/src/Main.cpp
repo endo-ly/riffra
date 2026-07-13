@@ -1,6 +1,7 @@
 #include <JuceHeader.h>
 
 #include "SafetyAudioCallback.h"
+#include "AudioSafetyDsp.h"
 #include "RecordingSelfTest.h"
 #include "PluginRack.h"
 
@@ -28,6 +29,8 @@ namespace {
 
 using riffra::SafetyAudioCallback;
 using riffra::PluginRack;
+using riffra::DCBlocker;
+using riffra::FeedbackDetector;
 
 thread_local juce::String currentRequestId;
 
@@ -260,6 +263,7 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     status->setProperty("inputPeak", callback.getInputPeak());
     status->setProperty("outputPeak", callback.getOutputPeak());
     status->setProperty("invalidSamples", static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    status->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
     status->setProperty("previewing", callback.isPreviewing());
     if (midi != nullptr) {
         status->setProperty("midiInputActive", midi->isActive());
@@ -719,11 +723,127 @@ int serve(const std::optional<std::uint32_t> parentPid) {
     manager.closeAudioDevice();
     watchdogRunning.store(false, std::memory_order_release);
     if (watchdog.joinable())
-        watchdog.join();
+    watchdog.join();
     return 0;
 }
 
+juce::var runSafetySelfTest() {
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int numChannels = 2;
+
+    auto* result = new juce::DynamicObject();
+    result->setProperty("type", "safetySelfTest");
+    juce::Array<juce::var> checks;
+
+    {
+        DCBlocker blocker;
+        blocker.prepare(numChannels);
+        std::array<std::array<float, blockSize>, numChannels> buffers {};
+        for (auto& buffer : buffers)
+            buffer.fill(0.5f);
+
+        std::array<float*, numChannels> channelPtrs {};
+        for (int ch = 0; ch < numChannels; ++ch)
+            channelPtrs[ch] = buffers[ch].data();
+
+        const int blocks = static_cast<int>(sampleRate * 0.5 / blockSize);
+        float lastSample = 0.0f;
+        for (int block = 0; block < blocks; ++block) {
+            for (auto& buffer : buffers)
+                buffer.fill(0.5f);
+            blocker.processBlock(channelPtrs.data(), numChannels, blockSize);
+            lastSample = buffers[0].back();
+        }
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "DCBlocker removes constant offset");
+        check->setProperty("inputOffset", 0.5f);
+        check->setProperty("outputTail", std::abs(lastSample));
+        check->setProperty("passed", std::abs(lastSample) < 0.01f);
+        checks.add(juce::var(check));
+    }
+
+    {
+        DCBlocker blocker;
+        blocker.prepare(numChannels);
+        std::array<std::array<float, blockSize>, numChannels> buffers {};
+        std::array<float*, numChannels> channelPtrs {};
+        for (int ch = 0; ch < numChannels; ++ch)
+            channelPtrs[ch] = buffers[ch].data();
+
+        constexpr float twoPi = 6.2831853071795864769f;
+        constexpr float frequency = 440.0f;
+        float phase = 0.0f;
+        const float phaseStep = twoPi * frequency / static_cast<float>(sampleRate);
+        float maxAbs = 0.0f;
+        const int blocks = static_cast<int>(sampleRate * 0.5 / blockSize);
+        for (int block = 0; block < blocks; ++block) {
+            for (int s = 0; s < blockSize; ++s) {
+                buffers[0][s] = std::sin(phase) * 0.5f;
+                buffers[1][s] = buffers[0][s];
+                phase += phaseStep;
+                if (phase >= twoPi)
+                    phase -= twoPi;
+            }
+            blocker.processBlock(channelPtrs.data(), numChannels, blockSize);
+            for (int s = blockSize / 2; s < blockSize; ++s)
+                maxAbs = std::max(maxAbs, std::abs(buffers[0][s]));
+        }
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "DCBlocker preserves audio content");
+        check->setProperty("signalAmplitude", 0.5f);
+        check->setProperty("preservedAmplitude", maxAbs);
+        check->setProperty("passed", maxAbs > 0.3f && maxAbs < 0.6f);
+        checks.add(juce::var(check));
+    }
+
+    {
+        FeedbackDetector detector;
+        detector.prepare(sampleRate);
+        const int sustainedBlocks = static_cast<int>(
+            sampleRate * 300.0 / 1000.0 / blockSize);
+        for (int block = 0; block < sustainedBlocks; ++block)
+            detector.observe(0.99f, blockSize);
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "FeedbackDetector flags sustained near-peak input");
+        check->setProperty("sustainedMs", 300.0);
+        check->setProperty("threshold", 0.97f);
+        check->setProperty("detected", detector.isSuspected());
+        check->setProperty("passed", detector.isSuspected());
+        checks.add(juce::var(check));
+    }
+
+    {
+        FeedbackDetector detector;
+        detector.prepare(sampleRate);
+        const int shortBlocks = static_cast<int>(
+            sampleRate * 50.0 / 1000.0 / blockSize);
+        for (int block = 0; block < shortBlocks; ++block)
+            detector.observe(0.99f, blockSize);
+        detector.observe(0.1f, blockSize);
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "FeedbackDetector does not false-positive on brief peaks");
+        check->setProperty("briefMs", 50.0);
+        check->setProperty("detected", detector.isSuspected());
+        check->setProperty("passed", !detector.isSuspected());
+        checks.add(juce::var(check));
+    }
+
+    const bool allPassed = std::all_of(checks.begin(), checks.end(),
+        [](const juce::var& check) {
+            return static_cast<bool>(check.getProperty("passed", false));
+        });
+    result->setProperty("checks", checks);
+    result->setProperty("passed", allPassed);
+    return juce::var(result);
+}
+
 } // namespace
+
 int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (argc < 2) {
@@ -741,6 +861,10 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         writeJson(riffra::runRecordingSelfTest(juce::File(argv[2])));
+        return 0;
+    }
+    if (command == "--safety-self-test") {
+        writeJson(runSafetySelfTest());
         return 0;
     }
     if (command == "--serve") {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "AudioSafetyDsp.h"
 #include "RecordingSession.h"
 #include "PluginRack.h"
 
@@ -22,6 +23,7 @@ public:
     [[nodiscard]] float getInputPeak() const noexcept;
     [[nodiscard]] float getOutputPeak() const noexcept;
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept;
+    [[nodiscard]] bool isFeedbackSuspected() const noexcept;
     [[nodiscard]] double getSampleRate() const noexcept;
     bool startRecording(const juce::File& directory, juce::String& error);
     bool stopRecording(juce::String& error);
@@ -71,6 +73,7 @@ private:
     std::atomic<float> inputPeak { 0.0f };
     std::atomic<float> outputPeak { 0.0f };
     std::atomic<std::uint64_t> invalidSamples { 0 };
+    std::atomic<bool> feedbackSuspected { false };
     std::atomic<double> activeSampleRate { 0.0 };
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;
@@ -110,6 +113,8 @@ private:
 
     juce::CriticalSection errorLock;
     juce::String lastDeviceError;
+    DCBlocker dcBlocker;
+    FeedbackDetector feedbackDetector;
 };
 
 } // namespace riffra

@@ -637,6 +637,7 @@ pub struct AudioStatus {
     pub input_peak: f64,
     pub output_peak: f64,
     pub invalid_samples: u64,
+    pub feedback_suspected: bool,
     pub message: String,
 }
 

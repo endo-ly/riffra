@@ -19,8 +19,10 @@ void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
     if (shouldMute)
         allNotesOff();
     emergencyMuted.store(shouldMute, std::memory_order_release);
-    if (!shouldMute)
+    if (!shouldMute) {
         currentGainLinear = 0.0f;
+        feedbackSuspected.store(false, std::memory_order_release);
+    }
 }
 
 bool SafetyAudioCallback::isEmergencyMuted() const noexcept {
@@ -47,6 +49,10 @@ float SafetyAudioCallback::getOutputPeak() const noexcept {
 
 std::uint64_t SafetyAudioCallback::getInvalidSampleCount() const noexcept {
     return invalidSamples.load(std::memory_order_acquire);
+}
+
+bool SafetyAudioCallback::isFeedbackSuspected() const noexcept {
+    return feedbackSuspected.load(std::memory_order_acquire);
 }
 
 double SafetyAudioCallback::getSampleRate() const noexcept {
@@ -348,6 +354,30 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         return;
     }
 
+    float rawInputPeak = 0.0f;
+    for (int channel = 0; channel < numInputChannels; ++channel) {
+        if (inputChannelData[channel] == nullptr)
+            continue;
+        const auto maxVal = std::abs(juce::FloatVectorOperations::findMaximum(
+            inputChannelData[channel], numSamples));
+        const auto minVal = std::abs(juce::FloatVectorOperations::findMinimum(
+            inputChannelData[channel], numSamples));
+        rawInputPeak = std::max({rawInputPeak, maxVal, minVal});
+    }
+    feedbackDetector.observe(rawInputPeak, numSamples);
+    if (feedbackDetector.consumeSuspected()) {
+        emergencyMuted.store(true, std::memory_order_release);
+        feedbackSuspected.store(true, std::memory_order_release);
+        allNotesOff();
+        for (int channel = 0; channel < numOutputChannels; ++channel)
+            if (outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+        inputPeak.store(0.0f, std::memory_order_release);
+        outputPeak.store(0.0f, std::memory_order_release);
+        writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+        return;
+    }
+
     const auto target = targetGainLinear.load(std::memory_order_acquire);
     float blockInputPeak = 0.0f;
     float blockOutputPeak = 0.0f;
@@ -376,6 +406,8 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         mixPreview(outputChannelData, numOutputChannels, numSamples);
         mixSynth(outputChannelData, numOutputChannels, numSamples);
     }
+
+    dcBlocker.processBlock(outputChannelData, numOutputChannels, numSamples);
 
     for (int sample = 0; sample < numSamples; ++sample) {
         if (currentGainLinear < target)
@@ -423,6 +455,11 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
     outputPeak.store(0.0f, std::memory_order_release);
     silenceBuffer.setSize(1, device != nullptr ? juce::jmax(1, device->getCurrentBufferSizeSamples()) : 1);
     silenceBuffer.clear();
+    dcBlocker.prepare(device != nullptr
+        ? static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits())
+        : 0);
+    feedbackDetector.prepare(sampleRate);
+    feedbackSuspected.store(false, std::memory_order_release);
     if (pluginRack != nullptr)
         pluginRack->prepare(activeSampleRate.load(std::memory_order_acquire), silenceBuffer.getNumSamples());
 }
@@ -432,6 +469,8 @@ void SafetyAudioCallback::audioDeviceStopped() {
     currentGainLinear = 0.0f;
     inputPeak.store(0.0f, std::memory_order_release);
     outputPeak.store(0.0f, std::memory_order_release);
+    dcBlocker.reset();
+    feedbackDetector.reset();
     if (pluginRack != nullptr)
         pluginRack->release();
     stopPreview();

@@ -49,6 +49,9 @@ try {
         New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
 
         $AudioSidecar = Join-Path $Root 'src-tauri\binaries\riffra-audio-x86_64-pc-windows-msvc.exe'
+        Invoke-Checked 'Native safety self-test' {
+            & $AudioSidecar --safety-self-test
+        }
         Invoke-Checked 'Native recording self-test' {
             & $AudioSidecar --recording-self-test $ResolvedRecordingTestDirectory
         }

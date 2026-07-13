@@ -368,7 +368,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       {isMuted && (
         <div className="mute-banner">
           <Icon name="stop" />
-          EMERGENCY MUTE ENGAGED — audio output is forced silent
+          EMERGENCY MUTE ENGAGED —{' '}
+          {audio.feedbackSuspected
+            ? 'acoustic feedback suspected; output silenced automatically'
+            : 'audio output is forced silent'}
         </div>
       )}
       {commandOpen && (

@@ -81,6 +81,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,
+    feedbackSuspected: false,
     message: 'Audio supervisor is starting.',
   });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);

@@ -54,6 +54,45 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.audio.state).toBe('muted');
   });
 
+  it('re-engages emergency mute when the audio driver changes', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /UNMUTE/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
+    await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
+    expect(screen.getByText(/EMERGENCY MUTE ENGAGED/)).toBeInTheDocument();
+  });
+
+  it('keeps the emergency mute control reachable from every workspace', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+
+    const user = userEvent.setup();
+    const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
+
+    for (const label of ['Play', 'Arrange', 'Sample', 'Analyze', 'Separate']) {
+      await user.click(within(workspaceNav).getByRole('button', { name: new RegExp(label) }));
+      expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+    }
+  });
+
+  it('shows the feedback cause in the mute banner when feedback is suspected', async () => {
+    const fake = new FakeNativeApi({
+      audio: fakeAudioStatus({ state: 'muted', feedbackSuspected: true }),
+    });
+    renderApp(fake);
+    await waitForAppShell();
+
+    expect(screen.getByText(/acoustic feedback suspected/i)).toBeInTheDocument();
+  });
+
   it('keeps output safe when the device is faulted and recovers into emergency mute', async () => {
     const fake = new FakeNativeApi({
       audio: fakeAudioStatus({ state: 'faulted', message: 'Device disconnected.' }),
