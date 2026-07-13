@@ -25,6 +25,13 @@ function Invoke-Checked {
 Push-Location $Root
 try {
     Invoke-Checked 'TypeScript build and tests' { npm run check }
+    Invoke-Checked 'ESLint' { npm run lint }
+    Invoke-Checked 'Prettier check' { npm run format:check }
+    Invoke-Checked 'Knip (unused files and dependencies)' {
+        npx knip --tsConfig tsconfig.app.json --include='files,dependencies' --no-config-hints
+    }
+    Invoke-Checked 'Rust formatting' { cargo fmt --manifest-path 'src-tauri\Cargo.toml' --check }
+    Invoke-Checked 'Rust clippy' { cargo clippy --manifest-path 'src-tauri\Cargo.toml' --all-targets -- -D warnings }
     Invoke-Checked 'Rust tests' { cargo test --manifest-path 'src-tauri\Cargo.toml' }
 
     if ($Native) {
@@ -45,6 +52,17 @@ try {
         Invoke-Checked 'Native recording self-test' {
             & $AudioSidecar --recording-self-test $ResolvedRecordingTestDirectory
         }
+    }
+
+    if (Get-Command clang-format -ErrorAction SilentlyContinue) {
+        $CppFiles = Get-ChildItem -Path 'native\audio-engine' -Recurse -Include *.cpp,*.h,*.hpp,*.cc,*.hh |
+            Select-Object -ExpandProperty FullName
+        if ($CppFiles) {
+            Invoke-Checked 'C++ formatting' { clang-format --dry-run --Werror @CppFiles }
+        }
+    }
+    else {
+        Write-Host "`n== C++ formatting skipped: clang-format is not installed ==" -ForegroundColor Yellow
     }
 
     Invoke-Checked 'Git whitespace check' { git diff --check }

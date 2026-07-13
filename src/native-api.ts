@@ -15,7 +15,7 @@ import type {
   ScanReport,
   ScratchSession,
   SeparationResult,
-} from "./domain";
+} from './domain';
 
 /**
  * NativeApi is the seam between the React layer and every side-effectful
@@ -38,7 +38,11 @@ export interface NativeApi {
   scanVst3Folder(path?: string): Promise<ScanReport>;
   listRecordings(query?: string): Promise<RecordingAsset[]>;
   searchLibrary(query: string): Promise<LibraryAsset[]>;
-  updateLibraryAsset(id: string, tag: string | null, note: string | null): Promise<LibraryAsset | null>;
+  updateLibraryAsset(
+    id: string,
+    tag: string | null,
+    note: string | null,
+  ): Promise<LibraryAsset | null>;
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 
   analyzeAudio(path: string): Promise<AudioAnalysis | null>;
@@ -54,7 +58,14 @@ export interface NativeApi {
 
   loadPlugin(path: string): Promise<AudioStatus>;
   clearPlugin(): Promise<AudioStatus>;
-  previewSample(path: string, startMs: number, endMs: number, looped?: boolean, gain?: number, voiceKey?: number): Promise<AudioStatus>;
+  previewSample(
+    path: string,
+    startMs: number,
+    endMs: number,
+    looped?: boolean,
+    gain?: number,
+    voiceKey?: number,
+  ): Promise<AudioStatus>;
   stopSamplePreview(): Promise<AudioStatus>;
   stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
@@ -67,7 +78,11 @@ export interface NativeApi {
   setPluginState(stateData: string): Promise<AudioStatus>;
   setMasterGainDb(gainDb: number): Promise<AudioStatus>;
   recoverAudioDevice(): Promise<AudioStatus>;
-  setAudioDriver(driver: string, sampleRate?: number | null, bufferSize?: number | null): Promise<AudioStatus>;
+  setAudioDriver(
+    driver: string,
+    sampleRate?: number | null,
+    bufferSize?: number | null,
+  ): Promise<AudioStatus>;
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
   configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;

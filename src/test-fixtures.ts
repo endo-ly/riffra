@@ -1,5 +1,5 @@
-import { defaultSession } from "./domain";
-import type { AudioStatus, PluginEntry, PluginStatus, RackDevice, ScratchSession } from "./domain";
+import { defaultSession } from './domain';
+import type { AudioStatus, PluginEntry, PluginStatus, RackDevice, ScratchSession } from './domain';
 
 /**
  * Shared test builders for M0+ tests. They return valid, minimal objects so
@@ -13,7 +13,7 @@ export function makeSession(overrides: Partial<ScratchSession> = {}): ScratchSes
 
 export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {
-    state: "ready",
+    state: 'ready',
     driver: null,
     sampleRate: 48000,
     bufferSize: 1024,
@@ -38,22 +38,22 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,
-    message: "",
+    message: '',
     ...overrides,
   };
 }
 
 export function makePluginEntry(overrides: Partial<PluginEntry> = {}): PluginEntry {
   return {
-    id: "p1",
-    name: "Test Plugin",
+    id: 'p1',
+    name: 'Test Plugin',
     vendor: null,
     version: null,
-    format: "VST3",
-    path: "/vst/test.vst3",
+    format: 'VST3',
+    path: '/vst/test.vst3',
     bundle: false,
     modifiedAtMs: null,
-    scanState: "validated",
+    scanState: 'validated',
     ...overrides,
   };
 }
@@ -62,8 +62,8 @@ export function makePluginStatus(overrides: Partial<PluginStatus> = {}): PluginS
   return {
     loaded: true,
     bypassed: false,
-    path: "/vst/test.vst3",
-    name: "Test Plugin",
+    path: '/vst/test.vst3',
+    name: 'Test Plugin',
     sampleRate: 48000,
     blockSize: 1024,
     bypassedBlocks: 0,
@@ -75,10 +75,10 @@ export function makePluginStatus(overrides: Partial<PluginStatus> = {}): PluginS
 
 export function makeRackPlugin(overrides: Partial<RackDevice> = {}): RackDevice {
   return {
-    id: "plugin:p1",
-    name: "Test Plugin",
-    kind: "plugin",
-    path: "/vst/test.vst3",
+    id: 'plugin:p1',
+    name: 'Test Plugin',
+    kind: 'plugin',
+    path: '/vst/test.vst3',
     bypassed: false,
     gainDb: 0,
     parameterValues: [],

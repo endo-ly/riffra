@@ -1,12 +1,14 @@
-import type { RecordingAsset, ScratchSession, TimelineClip } from "./domain";
+import type { RecordingAsset, ScratchSession, TimelineClip } from './domain';
 
 export function isUsableRecording(recording: RecordingAsset): boolean {
-  return recording.state === "completed"
-    && !recording.error
-    && Boolean(recording.rawPath)
-    && Boolean(recording.processedPath)
-    && recording.samplesWritten > 0
-    && (recording.sampleRate ?? 0) > 0;
+  return (
+    recording.state === 'completed' &&
+    !recording.error &&
+    Boolean(recording.rawPath) &&
+    Boolean(recording.processedPath) &&
+    recording.samplesWritten > 0 &&
+    (recording.sampleRate ?? 0) > 0
+  );
 }
 
 export function createTimelineClip(
@@ -27,7 +29,7 @@ export function createTimelineClip(
     id: `clip:${recording.id}`,
     assetPath: recording.processedPath,
     name: recording.name,
-    trackId: session.tracks[0]?.id ?? "main",
+    trackId: session.tracks[0]?.id ?? 'main',
     startMs,
     durationMs,
     sourceInMs: 0,

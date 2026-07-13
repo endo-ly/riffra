@@ -1,9 +1,9 @@
-export type Workspace = "home" | "play" | "arrange" | "sample" | "analyze" | "separate";
+export type Workspace = 'home' | 'play' | 'arrange' | 'sample' | 'analyze' | 'separate';
 
 export interface RackDevice {
   id: string;
   name: string;
-  kind: "input" | "plugin" | "utility" | "output";
+  kind: 'input' | 'plugin' | 'utility' | 'output';
   path?: string | null;
   bypassed: boolean;
   gainDb: number;
@@ -88,7 +88,7 @@ export interface SamplePad {
 export interface AiChangeSet {
   id: string;
   createdAtMs: number;
-  permission: "Explain" | "Suggest" | "Apply";
+  permission: 'Explain' | 'Suggest' | 'Apply';
   target: string;
   currentGainDb: number;
   proposedGainDb: number;
@@ -120,7 +120,7 @@ export interface ScratchSession {
   midiClips: MidiClip[];
   samplePads: SamplePad[];
   note: string;
-  aiPermission: "Explain" | "Suggest" | "Apply";
+  aiPermission: 'Explain' | 'Suggest' | 'Apply';
   aiContext: string[];
   aiHistory: AiChangeSet[];
 }
@@ -130,11 +130,11 @@ export interface PluginEntry {
   name: string;
   vendor: string | null;
   version: string | null;
-  format: "VST3";
+  format: 'VST3';
   path: string;
   bundle: boolean;
   modifiedAtMs: number | null;
-  scanState: "discovered" | "validated" | "failed" | "quarantined";
+  scanState: 'discovered' | 'validated' | 'failed' | 'quarantined';
 }
 
 export interface ScanIssue {
@@ -182,7 +182,7 @@ export interface RecordingAsset {
   id: string;
   name: string;
   path: string;
-  state: "recording" | "completed" | "recoverable" | string;
+  state: 'recording' | 'completed' | 'recoverable' | string;
   error: string | null;
   startedAt: string | null;
   updatedAt: string | null;
@@ -233,14 +233,18 @@ export interface AnalysisComparison {
   loudnessMatchGainDb: number;
 }
 
-export function compareAnalyses(current: AudioAnalysis, reference: AudioAnalysis): AnalysisComparison {
+export function compareAnalyses(
+  current: AudioAnalysis,
+  reference: AudioAnalysis,
+): AnalysisComparison {
   return {
     rmsDeltaDb: current.rmsDb - reference.rmsDb,
     peakDeltaDb: current.peakDb - reference.peakDb,
     durationDeltaMs: current.durationMs - reference.durationMs,
-    phaseDelta: current.phaseCorrelation == null || reference.phaseCorrelation == null
-      ? null
-      : current.phaseCorrelation - reference.phaseCorrelation,
+    phaseDelta:
+      current.phaseCorrelation == null || reference.phaseCorrelation == null
+        ? null
+        : current.phaseCorrelation - reference.phaseCorrelation,
     loudnessMatchGainDb: reference.rmsDb - current.rmsDb,
   };
 }
@@ -266,7 +270,7 @@ export interface PluginParameter {
 }
 
 export interface AudioStatus {
-  state: "offline" | "starting" | "ready" | "muted" | "faulted";
+  state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted';
   driver: string | null;
   sampleRate: number | null;
   bufferSize: number | null;
@@ -377,10 +381,10 @@ export interface MidiExportResult {
 
 export const defaultSession = (): ScratchSession => ({
   formatVersion: 1,
-  sessionId: "scratch-browser-preview",
+  sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),
   projectName: null,
-  workspace: "home",
+  workspace: 'home',
   audioDriver: null,
   audioSampleRate: null,
   audioBufferSize: null,
@@ -389,18 +393,47 @@ export const defaultSession = (): ScratchSession => ({
   countInBeats: 0,
   emergencyMuted: true,
   rack: [
-    { id: "input", name: "Input 1", kind: "input", bypassed: false, gainDb: 0, parameterValues: [], stateData: null },
-    { id: "safety", name: "Safety Limiter", kind: "utility", bypassed: false, gainDb: 0, parameterValues: [], stateData: null },
-    { id: "output", name: "Main Out", kind: "output", bypassed: false, gainDb: -18, parameterValues: [], stateData: null },
+    {
+      id: 'input',
+      name: 'Input 1',
+      kind: 'input',
+      bypassed: false,
+      gainDb: 0,
+      parameterValues: [],
+      stateData: null,
+    },
+    {
+      id: 'safety',
+      name: 'Safety Limiter',
+      kind: 'utility',
+      bypassed: false,
+      gainDb: 0,
+      parameterValues: [],
+      stateData: null,
+    },
+    {
+      id: 'output',
+      name: 'Main Out',
+      kind: 'output',
+      bypassed: false,
+      gainDb: -18,
+      parameterValues: [],
+      stateData: null,
+    },
   ],
   snapshots: [],
-  macros: ["Brightness", "Gain", "Space", "Width"].map((name, index) => ({ id: `macro:${index}`, name, value: 0.5, parameterIndex: null })),
+  macros: ['Brightness', 'Gain', 'Space', 'Width'].map((name, index) => ({
+    id: `macro:${index}`,
+    name,
+    value: 0.5,
+    parameterIndex: null,
+  })),
   timeline: [],
-  tracks: [{ id: "main", name: "Main", gainDb: 0, pan: 0, muted: false, solo: false }],
+  tracks: [{ id: 'main', name: 'Main', gainDb: 0, pan: 0, muted: false, solo: false }],
   midiClips: [],
   samplePads: [],
-  note: "",
-  aiPermission: "Suggest",
-  aiContext: ["analysis", "selectedClip"],
+  note: '',
+  aiPermission: 'Suggest',
+  aiContext: ['analysis', 'selectedClip'],
   aiHistory: [],
 });

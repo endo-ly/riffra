@@ -1,4 +1,4 @@
-import type { AudioStatus } from "../domain";
+import type { AudioStatus } from '../domain';
 
 /**
  * Audio safety state transitions. These encode the product invariants that keep
@@ -13,8 +13,8 @@ import type { AudioStatus } from "../domain";
  * (non-faulted, non-offline) engine. Used to gate session mutations: a faulted
  * command must not persist routing or mute changes as if it succeeded.
  */
-export function audioCommandSucceeded(audio: Pick<AudioStatus, "state">): boolean {
-  return audio.state !== "faulted" && audio.state !== "offline";
+export function audioCommandSucceeded(audio: Pick<AudioStatus, 'state'>): boolean {
+  return audio.state !== 'faulted' && audio.state !== 'offline';
 }
 
 /**
@@ -24,7 +24,7 @@ export function audioCommandSucceeded(audio: Pick<AudioStatus, "state">): boolea
  */
 export function resolveEmergencyMuteAfterCommand(
   currentEmergencyMuted: boolean,
-  audio: Pick<AudioStatus, "state">,
+  audio: Pick<AudioStatus, 'state'>,
   attemptedMute: boolean,
 ): boolean {
   if (!audioCommandSucceeded(audio)) {
@@ -39,7 +39,7 @@ export function resolveEmergencyMuteAfterCommand(
  */
 export function isOutputMuted(
   sessionEmergencyMuted: boolean,
-  audio: Pick<AudioStatus, "state">,
+  audio: Pick<AudioStatus, 'state'>,
 ): boolean {
-  return sessionEmergencyMuted || audio.state === "muted";
+  return sessionEmergencyMuted || audio.state === 'muted';
 }

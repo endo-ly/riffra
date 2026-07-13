@@ -331,15 +331,15 @@ impl ScratchSession {
             .audio_driver
             .map(|value| value.trim().chars().take(128).collect())
             .filter(|value: &String| !value.is_empty());
-        if let Some(sample_rate) = self.audio_sample_rate {
-            if !(8_000..=192_000).contains(&sample_rate) {
-                return Err("Audio sample rate preference is outside 8-192 kHz.".into());
-            }
+        if let Some(sample_rate) = self.audio_sample_rate
+            && !(8_000..=192_000).contains(&sample_rate)
+        {
+            return Err("Audio sample rate preference is outside 8-192 kHz.".into());
         }
-        if let Some(buffer_size) = self.audio_buffer_size {
-            if !(16..=8192).contains(&buffer_size) {
-                return Err("Audio buffer preference is outside 16-8192 samples.".into());
-            }
+        if let Some(buffer_size) = self.audio_buffer_size
+            && !(16..=8192).contains(&buffer_size)
+        {
+            return Err("Audio buffer preference is outside 16-8192 samples.".into());
         }
         self.note.truncate(16_384);
         if !matches!(self.ai_permission.as_str(), "Explain" | "Suggest" | "Apply") {

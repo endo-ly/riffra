@@ -6,11 +6,11 @@
  */
 
 export type RecordingToggleDecision =
-  | { kind: "ignore" }
-  | { kind: "cancelCountdown" }
-  | { kind: "stop" }
-  | { kind: "startCountdown"; beats: number }
-  | { kind: "startNow" };
+  | { kind: 'ignore' }
+  | { kind: 'cancelCountdown' }
+  | { kind: 'stop' }
+  | { kind: 'startCountdown'; beats: number }
+  | { kind: 'startNow' };
 
 export interface RecordingToggleInput {
   /** True while a start/stop command is mid-flight; further toggles are ignored. */
@@ -30,9 +30,9 @@ export interface RecordingToggleInput {
  * new recording considered (with optional count-in).
  */
 export function decideRecordingToggle(input: RecordingToggleInput): RecordingToggleDecision {
-  if (input.commandPending) return { kind: "ignore" };
-  if (input.countdown !== null) return { kind: "cancelCountdown" };
-  if (input.recordingActive) return { kind: "stop" };
-  if (input.countInBeats > 0) return { kind: "startCountdown", beats: input.countInBeats };
-  return { kind: "startNow" };
+  if (input.commandPending) return { kind: 'ignore' };
+  if (input.countdown !== null) return { kind: 'cancelCountdown' };
+  if (input.recordingActive) return { kind: 'stop' };
+  if (input.countInBeats > 0) return { kind: 'startCountdown', beats: input.countInBeats };
+  return { kind: 'startNow' };
 }

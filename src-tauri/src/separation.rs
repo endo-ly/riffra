@@ -138,7 +138,7 @@ pub fn list(output_root: &Path) -> Result<Vec<SeparationResult>, String> {
             results.push(result);
         }
     }
-    results.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+    results.sort_by_key(|result| std::cmp::Reverse(result.created_at_ms));
     Ok(results)
 }
 

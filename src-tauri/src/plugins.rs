@@ -102,7 +102,7 @@ pub fn discover(root: &Path) -> ScanReport {
         }
     }
 
-    plugins.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    plugins.sort_by_key(|left| left.name.to_lowercase());
     ScanReport {
         root: root.to_string_lossy().into_owned(),
         started_at_ms,

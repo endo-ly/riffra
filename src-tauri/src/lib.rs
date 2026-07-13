@@ -132,7 +132,7 @@ async fn scan_vst3_folder(
         })?;
     let mut report = plugin_validation::validate_report(app, report).await;
     report.finished_at_ms = now_ms();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         if let Err(error) = plugin_catalog::save(&data_root, &report) {
             report.issues.push(plugins::ScanIssue {
                 path: data_root.to_string_lossy().into_owned(),
@@ -146,7 +146,7 @@ async fn scan_vst3_folder(
             });
         }
         report
-    }).await.map_err(|error| format!("Plugin catalog task failed: {error}"))?)
+    }).await.map_err(|error| format!("Plugin catalog task failed: {error}"))
 }
 
 #[tauri::command]
@@ -501,15 +501,15 @@ fn set_audio_driver(
         return Err("Audio driver name must not be empty.".into());
     }
     let driver = driver.trim().to_owned();
-    if let Some(rate) = sample_rate {
-        if !(8_000..=192_000).contains(&rate) {
-            return Err("Audio sample rate preference is outside 8-192 kHz.".into());
-        }
+    if let Some(rate) = sample_rate
+        && !(8_000..=192_000).contains(&rate)
+    {
+        return Err("Audio sample rate preference is outside 8-192 kHz.".into());
     }
-    if let Some(buffer) = buffer_size {
-        if !(16..=8192).contains(&buffer) {
-            return Err("Audio buffer preference is outside 16-8192 samples.".into());
-        }
+    if let Some(buffer) = buffer_size
+        && !(16..=8192).contains(&buffer)
+    {
+        return Err("Audio buffer preference is outside 16-8192 samples.".into());
     }
     let mut audio = state
         .audio
@@ -743,9 +743,9 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle())
             };
-            if !safe_mode {
-                if let Some(driver) = session.audio_driver.clone() {
-                    if let Ok(status) = audio.set_audio_driver(
+            if !safe_mode
+                && let Some(driver) = session.audio_driver.clone()
+                    && let Ok(status) = audio.set_audio_driver(
                         &driver,
                         session.audio_sample_rate,
                         session.audio_buffer_size,
@@ -758,8 +758,6 @@ pub fn run() {
                             status.buffer_size,
                         );
                     }
-                }
-            }
             SessionStore::new(&data_root).save(&session)?;
             let _ = library::sync_session(&data_root, &session);
             app.manage(AppState {

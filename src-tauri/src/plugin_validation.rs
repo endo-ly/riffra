@@ -175,16 +175,17 @@ fn interpret_result(
         .find_map(|line| serde_json::from_slice::<ScanEnvelope>(line).ok());
 
     if let Some(envelope) = envelope {
-        if envelope.message_type == "pluginScanResult" && terminated.code == Some(0) {
-            if let Some(plugin) = envelope.plugins.and_then(|mut plugins| {
+        if envelope.message_type == "pluginScanResult"
+            && terminated.code == Some(0)
+            && let Some(plugin) = envelope.plugins.and_then(|mut plugins| {
                 if plugins.is_empty() {
                     None
                 } else {
                     Some(plugins.remove(0))
                 }
-            }) {
-                return ValidationOutcome::Validated(plugin);
-            }
+            })
+        {
+            return ValidationOutcome::Validated(plugin);
         }
         if envelope.message_type == "pluginScanError" {
             return ValidationOutcome::Failed(envelope.message.unwrap_or_else(|| {

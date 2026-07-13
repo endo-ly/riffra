@@ -186,14 +186,14 @@ impl AudioSupervisor {
             while let Some(event) = receiver.recv().await {
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        if let Some(response) = handle_native_stdout(&event_status, &bytes) {
-                            if let Some(request_id) = response.request_id {
-                                record_command_response(
-                                    &event_responses,
-                                    request_id,
-                                    response.result.err(),
-                                );
-                            }
+                        if let Some(response) = handle_native_stdout(&event_status, &bytes)
+                            && let Some(request_id) = response.request_id
+                        {
+                            record_command_response(
+                                &event_responses,
+                                request_id,
+                                response.result.err(),
+                            );
                         }
                     }
                     CommandEvent::Stderr(bytes) => {
@@ -456,11 +456,11 @@ impl AudioSupervisor {
 
 impl Drop for AudioSupervisor {
     fn drop(&mut self) {
-        if let Ok(slot) = self.child.get_mut() {
-            if let Some(mut child) = slot.take() {
-                let _ = child.write(b"{\"type\":\"shutdown\"}\n");
-                let _ = child.kill();
-            }
+        if let Ok(slot) = self.child.get_mut()
+            && let Some(mut child) = slot.take()
+        {
+            let _ = child.write(b"{\"type\":\"shutdown\"}\n");
+            let _ = child.kill();
         }
     }
 }
@@ -542,6 +542,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
 /// One parsed sidecar line: a status update, or an error classified by scope.
 /// Parsing is pure; applying the effect to shared state happens in
 /// `handle_native_stdout`, so the protocol is reproducible without a live child.
+#[allow(clippy::large_enum_variant)]
 enum ParsedNativeLine {
     Status {
         request_id: Option<u64>,
@@ -561,9 +562,8 @@ fn render_native_error(scope: &str, message: &str) -> (bool, String) {
         let detail = format!("Native audio device error: {message}. Saved data remains safe.");
         (true, detail)
     } else {
-        let detail = format!(
-            "Native {scope} command failed: {message}. Audio and saved data remain safe."
-        );
+        let detail =
+            format!("Native {scope} command failed: {message}. Audio and saved data remain safe.");
         (false, detail)
     }
 }
@@ -782,12 +782,12 @@ mod tests {
 
     #[test]
     fn error_reply_without_scope_defaults_to_protocol() {
-        let parsed = parse_native_line(
-            br#"{"type":"error","requestId":9,"message":"no input"}"#,
-        )
-        .expect("error line");
+        let parsed = parse_native_line(br#"{"type":"error","requestId":9,"message":"no input"}"#)
+            .expect("error line");
         match parsed {
-            ParsedNativeLine::Error { request_id, fault, .. } => {
+            ParsedNativeLine::Error {
+                request_id, fault, ..
+            } => {
                 assert_eq!(request_id, Some(9));
                 assert!(!fault);
             }
@@ -833,7 +833,10 @@ mod tests {
         assert_eq!(status.sample_rate, Some(48_000));
         assert!(status.recording.active);
         assert_eq!(status.recording.samples_written, 10);
-        assert_eq!(status.plugin.as_ref().unwrap().path.as_deref(), Some("v.st3"));
+        assert_eq!(
+            status.plugin.as_ref().unwrap().path.as_deref(),
+            Some("v.st3")
+        );
         assert!(status.message.contains("emergency-muted"));
     }
 }
