@@ -3,6 +3,7 @@ use std::{
     collections::HashSet,
     fs,
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -40,6 +41,19 @@ pub struct ScanReport {
 }
 
 pub fn discover(root: &Path) -> ScanReport {
+    discover_with_cancel(root, None).unwrap_or_else(|message| ScanReport {
+        root: root.to_string_lossy().into_owned(),
+        started_at_ms: epoch_ms(SystemTime::now()),
+        finished_at_ms: epoch_ms(SystemTime::now()),
+        plugins: Vec::new(),
+        issues: vec![issue(root, message)],
+    })
+}
+
+pub fn discover_with_cancel(
+    root: &Path,
+    cancelled: Option<&AtomicBool>,
+) -> Result<ScanReport, String> {
     let started_at_ms = epoch_ms(SystemTime::now());
     let mut plugins = Vec::new();
     let mut issues = Vec::new();
@@ -48,6 +62,9 @@ pub fn discover(root: &Path) -> ScanReport {
     let mut entries_seen = 0usize;
 
     while let Some(directory) = pending.pop() {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("VST3 scan cancelled; the previous catalog remains unchanged.".into());
+        }
         let canonical = match directory.canonicalize() {
             Ok(path) => path,
             Err(error) => {
@@ -67,6 +84,11 @@ pub fn discover(root: &Path) -> ScanReport {
         };
 
         for entry in entries {
+            if entries_seen.is_multiple_of(128)
+                && cancelled.is_some_and(|flag| flag.load(Ordering::Acquire))
+            {
+                return Err("VST3 scan cancelled; the previous catalog remains unchanged.".into());
+            }
             entries_seen += 1;
             if entries_seen > MAX_ENTRIES {
                 issues.push(issue(
@@ -103,13 +125,13 @@ pub fn discover(root: &Path) -> ScanReport {
     }
 
     plugins.sort_by_key(|left| left.name.to_lowercase());
-    ScanReport {
+    Ok(ScanReport {
         root: root.to_string_lossy().into_owned(),
         started_at_ms,
         finished_at_ms: epoch_ms(SystemTime::now()),
         plugins,
         issues,
-    }
+    })
 }
 
 fn is_vst3(path: &Path) -> bool {

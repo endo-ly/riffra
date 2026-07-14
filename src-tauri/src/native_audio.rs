@@ -68,6 +68,10 @@ struct NativeRecordingStatus {
     processed_channels: Option<u32>,
     samples_written: Option<u64>,
     dropped_blocks: Option<u64>,
+    missing_samples: Option<u64>,
+    dropout_start_sample: Option<u64>,
+    dropout_end_sample: Option<u64>,
+    recovery_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +511,16 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 processed_channels: recording.processed_channels,
                 samples_written: recording.samples_written.unwrap_or_default(),
                 dropped_blocks: recording.dropped_blocks.unwrap_or_default(),
+                missing_samples: recording.missing_samples.unwrap_or_default(),
+                dropout_start_sample: recording.dropout_start_sample,
+                dropout_end_sample: recording.dropout_end_sample,
+                recovery_status: recording.recovery_status.unwrap_or_else(|| {
+                    if recording.dropped_blocks.unwrap_or_default() == 0 {
+                        "clean".into()
+                    } else {
+                        "partial".into()
+                    }
+                }),
             })
             .unwrap_or_default(),
         plugin: native.plugin.map(|plugin| PluginStatus {

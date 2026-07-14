@@ -7,6 +7,7 @@ use std::{
 };
 
 const GENERATIONS_TO_KEEP: usize = 20;
+const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug)]
 pub struct SessionStore {
@@ -49,15 +50,22 @@ impl SessionStore {
     pub fn save(&self, session: &ScratchSession) -> io::Result<()> {
         self.ensure_layout()?;
         let current = self.scratch_dir.join("current.json");
+        let payload = serde_json::to_vec_pretty(session)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let current_bytes = current
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        ensure_storage_capacity(
+            &self.scratch_dir,
+            required_space(payload.len() as u64, current_bytes),
+        )?;
         if current.is_file() {
             let generation =
                 self.generations_dir
                     .join(format!("{}-{}.json", now_ms(), std::process::id()));
             fs::copy(&current, generation)?;
         }
-
-        let payload = serde_json::to_vec_pretty(session)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let temporary =
             self.scratch_dir
                 .join(format!(".current-{}-{}.tmp", std::process::id(), now_ms()));
@@ -142,6 +150,51 @@ impl SessionStore {
         }
         Ok(())
     }
+}
+
+fn required_space(payload_bytes: u64, current_bytes: u64) -> u64 {
+    payload_bytes
+        .saturating_add(current_bytes)
+        .saturating_add(STORAGE_HEADROOM_BYTES)
+}
+
+fn ensure_storage_capacity(directory: &Path, required_bytes: u64) -> io::Result<()> {
+    let Some(available) = available_space(directory)? else {
+        return Ok(());
+    };
+    if available < required_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            format!(
+                "Not enough free disk space for an atomic session save ({} bytes required, {} available).",
+                required_bytes, available
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn available_space(directory: &Path) -> io::Result<Option<u64>> {
+    use std::{os::windows::ffi::OsStrExt, ptr::null_mut};
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let mut path = directory.as_os_str().encode_wide().collect::<Vec<_>>();
+    path.push(0);
+    let mut free_bytes = 0_u64;
+    // The directory is created before this check, so Windows can resolve the volume.
+    let success =
+        unsafe { GetDiskFreeSpaceExW(path.as_ptr(), &mut free_bytes, null_mut(), null_mut()) };
+    if success == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(Some(free_bytes))
+    }
+}
+
+#[cfg(not(windows))]
+fn available_space(_directory: &Path) -> io::Result<Option<u64>> {
+    Ok(None)
 }
 
 fn read_session(path: &Path) -> io::Result<ScratchSession> {
@@ -384,6 +437,11 @@ mod tests {
         assert!(!used_generation);
         assert_eq!(recovered.note, newest.note);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reserves_space_for_current_generation_and_atomic_temp_file() {
+        assert_eq!(required_space(100, 50), 64 * 1024 + 150);
     }
 
     #[test]

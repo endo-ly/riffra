@@ -1,5 +1,6 @@
 #include "RecordingSession.h"
 
+#include <limits>
 #include <utility>
 
 namespace riffra {
@@ -122,10 +123,19 @@ bool RecordingSession::write(
     const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || processedWriter == nullptr || numSamples <= 0)
         return false;
+    const auto attemptedStart = attemptedSamples.fetch_add(
+        static_cast<std::uint64_t>(numSamples),
+        std::memory_order_relaxed);
     const auto rawAccepted = rawWriter->write(rawData, numSamples);
     const auto processedAccepted = processedWriter->write(processedData, numSamples);
     if (!rawAccepted || !processedAccepted) {
         droppedBlocks.fetch_add(1, std::memory_order_relaxed);
+        missingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+        auto expected = std::numeric_limits<std::uint64_t>::max();
+        firstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
+        lastMissingSample.store(
+            attemptedStart + static_cast<std::uint64_t>(numSamples),
+            std::memory_order_relaxed);
         return false;
     }
     samplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
@@ -174,6 +184,19 @@ std::uint64_t RecordingSession::getDroppedBlocks() const noexcept {
     return droppedBlocks.load(std::memory_order_acquire);
 }
 
+std::uint64_t RecordingSession::getMissingSamples() const noexcept {
+    return missingSamples.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getFirstMissingSample() const noexcept {
+    const auto value = firstMissingSample.load(std::memory_order_acquire);
+    return value == std::numeric_limits<std::uint64_t>::max() ? 0 : value;
+}
+
+std::uint64_t RecordingSession::getLastMissingSample() const noexcept {
+    return lastMissingSample.load(std::memory_order_acquire);
+}
+
 juce::var RecordingSession::status() const {
     auto* result = new juce::DynamicObject();
     result->setProperty("active", !finished);
@@ -183,6 +206,10 @@ juce::var RecordingSession::status() const {
     result->setProperty("processedChannels", processedChannelCount);
     result->setProperty("samplesWritten", static_cast<juce::int64>(getSamplesWritten()));
     result->setProperty("droppedBlocks", static_cast<juce::int64>(getDroppedBlocks()));
+    result->setProperty("missingSamples", static_cast<juce::int64>(getMissingSamples()));
+    result->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
+    result->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
+    result->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     return juce::var(result);
 }
 
@@ -197,6 +224,10 @@ bool RecordingSession::writeManifest(const juce::String& state, juce::String& er
     object->setProperty("processedChannels", processedChannelCount);
     object->setProperty("samplesWritten", static_cast<juce::int64>(getSamplesWritten()));
     object->setProperty("droppedBlocks", static_cast<juce::int64>(getDroppedBlocks()));
+    object->setProperty("missingSamples", static_cast<juce::int64>(getMissingSamples()));
+    object->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
+    object->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
+    object->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     object->setProperty("rawFile", rawFinal.existsAsFile() ? "raw.wav" : "raw.wav.partial");
     object->setProperty(
         "processedFile",

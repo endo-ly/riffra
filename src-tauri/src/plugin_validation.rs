@@ -1,6 +1,12 @@
 use crate::plugins::{ScanIssue, ScanReport};
 use serde::Deserialize;
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tauri::AppHandle;
 use tauri_plugin_shell::{
     ShellExt,
@@ -15,6 +21,7 @@ enum ValidationOutcome {
     Validated(PluginMetadata),
     Failed(String),
     Quarantined(String),
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -34,7 +41,26 @@ struct PluginMetadata {
     version: Option<String>,
 }
 
-pub async fn validate_report(app: AppHandle, mut report: ScanReport) -> ScanReport {
+pub async fn validate_report(app: AppHandle, report: ScanReport) -> ScanReport {
+    validate_report_with_cancel(app, report, None)
+        .await
+        .unwrap_or_else(|message| ScanReport {
+            root: String::new(),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+            plugins: Vec::new(),
+            issues: vec![ScanIssue {
+                path: String::new(),
+                message,
+            }],
+        })
+}
+
+pub async fn validate_report_with_cancel(
+    app: AppHandle,
+    mut report: ScanReport,
+    cancelled: Option<Arc<AtomicBool>>,
+) -> Result<ScanReport, String> {
     let candidates = report
         .plugins
         .iter()
@@ -45,15 +71,29 @@ pub async fn validate_report(app: AppHandle, mut report: ScanReport) -> ScanRepo
     for group in candidates.chunks(MAX_PARALLEL_SCANNERS) {
         let mut tasks = Vec::with_capacity(group.len());
         for path in group {
+            if cancelled
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            {
+                return Err(
+                    "VST3 validation cancelled; the previous catalog remains unchanged.".into(),
+                );
+            }
             let app = app.clone();
             let path = path.clone();
+            let cancelled = cancelled.clone();
             tasks.push(tauri::async_runtime::spawn(async move {
-                let outcome = validate_one(app, path.clone()).await;
+                let outcome = validate_one(app, path.clone(), cancelled).await;
                 (path, outcome)
             }));
         }
         for task in tasks {
             match task.await {
+                Ok((path, ValidationOutcome::Cancelled)) => {
+                    return Err(format!(
+                        "VST3 validation cancelled while checking {path}; the previous catalog remains unchanged."
+                    ));
+                }
                 Ok(result) => results.push(result),
                 Err(error) => report.issues.push(ScanIssue {
                     path: report.root.clone(),
@@ -84,12 +124,21 @@ pub async fn validate_report(app: AppHandle, mut report: ScanReport) -> ScanRepo
                 plugin.scan_state = "quarantined";
                 report.issues.push(ScanIssue { path, message });
             }
+            ValidationOutcome::Cancelled => {
+                return Err(
+                    "VST3 validation cancelled; the previous catalog remains unchanged.".into(),
+                );
+            }
         }
     }
-    report
+    Ok(report)
 }
 
-async fn validate_one(app: AppHandle, path: String) -> ValidationOutcome {
+async fn validate_one(
+    app: AppHandle,
+    path: String,
+    cancelled: Option<Arc<AtomicBool>>,
+) -> ValidationOutcome {
     let command = match app
         .shell()
         .sidecar("riffra-plugin-scan")
@@ -119,6 +168,14 @@ async fn validate_one(app: AppHandle, path: String) -> ValidationOutcome {
 
     loop {
         tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                if cancelled.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                    if let Some(child) = child.take() {
+                        let _ = child.kill();
+                    }
+                    return ValidationOutcome::Cancelled;
+                }
+            }
             _ = &mut deadline => {
                 if let Some(child) = child.take() {
                     let _ = child.kill();

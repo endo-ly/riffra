@@ -151,6 +151,15 @@ export interface ScanReport {
   issues: ScanIssue[];
 }
 
+export interface BackgroundJobStatus {
+  id: string;
+  kind: 'analysis' | 'separation' | 'render' | 'renderStems' | 'scan' | string;
+  state: 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | string;
+  progress: number;
+  message: string;
+  result: unknown | null;
+}
+
 export interface BootstrapState {
   session: Session;
   recoveredFromGeneration: boolean;
@@ -185,6 +194,10 @@ export interface RecordingStatus {
   processedChannels: number | null;
   samplesWritten: number;
   droppedBlocks: number;
+  missingSamples?: number;
+  dropoutStartSample?: number | null;
+  dropoutEndSample?: number | null;
+  recoveryStatus?: 'clean' | 'partial' | string;
 }
 
 export interface RecordingAsset {
@@ -204,6 +217,10 @@ export interface RecordingAsset {
   sampleRate: number | null;
   samplesWritten: number;
   droppedBlocks: number;
+  missingSamples?: number;
+  dropoutStartSample?: number | null;
+  dropoutEndSample?: number | null;
+  recoveryStatus?: 'clean' | 'partial' | string;
   provenance: RecordingProvenance | null;
 }
 

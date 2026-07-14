@@ -159,7 +159,11 @@ export function LibraryPanel({ library, rack, recordings }: LibraryPanelProps) {
                   <strong>{recording.name}</strong>
                   <small>
                     {recording.error ??
-                      `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${recording.midiPath ? ' · MIDI' : ''}`}
+                      `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${
+                        recording.missingSamples
+                          ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
+                          : ''
+                      }${recording.midiPath ? ' · MIDI' : ''}`}
                   </small>
                 </div>
                 <i

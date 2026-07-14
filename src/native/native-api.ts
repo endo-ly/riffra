@@ -2,6 +2,7 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
   MissingDependency,
@@ -37,6 +38,13 @@ export interface NativeApi {
   importSession(path: string): Promise<Session | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
+  startAnalysisJob(path: string): Promise<BackgroundJobStatus>;
+  startSeparationJob(path: string): Promise<BackgroundJobStatus>;
+  startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
+  startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus>;
+  startScanJob(path?: string): Promise<BackgroundJobStatus>;
+  getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
+  cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   listRecordings(query?: string): Promise<RecordingAsset[]>;
   searchLibrary(query: string): Promise<LibraryAsset[]>;
   updateLibraryAsset(

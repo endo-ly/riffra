@@ -1,5 +1,9 @@
 use serde::Serialize;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 const WAVEFORM_BINS: usize = 128;
 
@@ -33,6 +37,13 @@ pub(crate) struct WavData {
 }
 
 pub fn analyze(path: &Path) -> Result<AudioAnalysis, String> {
+    analyze_with_cancel(path, None)
+}
+
+pub fn analyze_with_cancel(
+    path: &Path,
+    cancelled: Option<&AtomicBool>,
+) -> Result<AudioAnalysis, String> {
     if !path.is_file() {
         return Err(format!("Audio file does not exist: {}", path.display()));
     }
@@ -40,10 +51,14 @@ pub fn analyze(path: &Path) -> Result<AudioAnalysis, String> {
         return Err("Only WAV files can be analyzed.".into());
     }
     let bytes = fs::read(path).map_err(|error| format!("Audio file could not be read: {error}"))?;
-    analyze_bytes(path, &bytes)
+    analyze_bytes(path, &bytes, cancelled)
 }
 
-fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
+fn analyze_bytes(
+    path: &Path,
+    bytes: &[u8],
+    cancelled: Option<&AtomicBool>,
+) -> Result<AudioAnalysis, String> {
     let wav = parse_wav(bytes)?;
     if wav.channels == 0 || wav.sample_rate == 0 {
         return Err("WAV has no usable channels or sample rate.".into());
@@ -74,6 +89,9 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     let mut spectral_samples = Vec::with_capacity(frames.min(4096));
 
     for frame in 0..frames {
+        if frame % 4096 == 0 && cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("Audio analysis cancelled; no partial result was promoted.".into());
+        }
         let frame_start = frame * frame_bytes;
         let mut mono = 0.0_f64;
         let mut left = 0.0_f64;

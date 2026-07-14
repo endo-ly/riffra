@@ -25,6 +25,10 @@ pub struct RecordingAsset {
     pub sample_rate: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
+    pub missing_samples: u64,
+    pub dropout_start_sample: Option<u64>,
+    pub dropout_end_sample: Option<u64>,
+    pub recovery_status: String,
     pub provenance: Option<RecordingProvenance>,
 }
 
@@ -70,6 +74,10 @@ struct RecordingManifest {
     sample_rate: Option<f64>,
     samples_written: Option<u64>,
     dropped_blocks: Option<u64>,
+    missing_samples: Option<u64>,
+    dropout_start_sample: Option<u64>,
+    dropout_end_sample: Option<u64>,
+    recovery_status: Option<String>,
 }
 
 fn normalize_sample_rate(rate: f64) -> Option<u32> {
@@ -228,6 +236,16 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             sample_rate: manifest.sample_rate.and_then(normalize_sample_rate),
             samples_written: manifest.samples_written.unwrap_or_default(),
             dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
+            missing_samples: manifest.missing_samples.unwrap_or_default(),
+            dropout_start_sample: manifest.dropout_start_sample,
+            dropout_end_sample: manifest.dropout_end_sample,
+            recovery_status: manifest.recovery_status.unwrap_or_else(|| {
+                if manifest.dropped_blocks.unwrap_or_default() == 0 {
+                    "clean".into()
+                } else {
+                    "partial".into()
+                }
+            }),
             provenance,
         });
     }
@@ -457,7 +475,7 @@ mod tests {
         fs::create_dir_all(&take).unwrap();
         fs::write(
             take.join("manifest.json"),
-            br#"{"state":"recoverable","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":22050,"droppedBlocks":3}"#,
+            br#"{"state":"recoverable","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":22050,"droppedBlocks":3,"missingSamples":512,"dropoutStartSample":22050,"dropoutEndSample":22562,"recoveryStatus":"partial"}"#,
         )
         .unwrap();
         fs::write(take.join("raw.wav"), b"partial raw").unwrap();
@@ -469,6 +487,10 @@ mod tests {
         assert_eq!(results[0].error, None);
         assert_eq!(results[0].samples_written, 22_050);
         assert_eq!(results[0].dropped_blocks, 3);
+        assert_eq!(results[0].missing_samples, 512);
+        assert_eq!(results[0].dropout_start_sample, Some(22_050));
+        assert_eq!(results[0].dropout_end_sample, Some(22_562));
+        assert_eq!(results[0].recovery_status, "partial");
         assert!(results[0].raw_path.is_some());
         assert!(results[0].processed_path.is_some());
         let _ = fs::remove_dir_all(root);

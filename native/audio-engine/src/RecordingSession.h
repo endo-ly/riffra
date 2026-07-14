@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <limits>
 #include <memory>
 
 namespace riffra {
@@ -30,6 +31,9 @@ public:
     [[nodiscard]] int getProcessedChannels() const noexcept { return processedChannelCount; }
     [[nodiscard]] std::uint64_t getSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getDroppedBlocks() const noexcept;
+    [[nodiscard]] std::uint64_t getMissingSamples() const noexcept;
+    [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
+    [[nodiscard]] std::uint64_t getLastMissingSample() const noexcept;
     [[nodiscard]] juce::File getDirectory() const { return recordingDirectory; }
     [[nodiscard]] juce::var status() const;
 
@@ -63,7 +67,11 @@ private:
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> rawWriter;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> processedWriter;
     std::atomic<std::uint64_t> samplesWritten { 0 };
+    std::atomic<std::uint64_t> attemptedSamples { 0 };
     std::atomic<std::uint64_t> droppedBlocks { 0 };
+    std::atomic<std::uint64_t> missingSamples { 0 };
+    std::atomic<std::uint64_t> firstMissingSample { std::numeric_limits<std::uint64_t>::max() };
+    std::atomic<std::uint64_t> lastMissingSample { 0 };
     bool finished = false;
 };
 

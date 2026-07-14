@@ -79,7 +79,9 @@ juce::var runRecordingSelfTest(const juce::File& directory) {
         return result(false, directory, "Recording manifest did not reach completed state.");
     if (static_cast<juce::int64>(manifest.getProperty("samplesWritten", {})) != totalSamples
         || manifest.getProperty("rawFile", {}).toString() != "raw.wav"
-        || manifest.getProperty("processedFile", {}).toString() != "processed.wav")
+        || manifest.getProperty("processedFile", {}).toString() != "processed.wav"
+        || static_cast<juce::int64>(manifest.getProperty("missingSamples", {})) != 0
+        || manifest.getProperty("recoveryStatus", {}).toString() != "clean")
         return result(false, directory, "Completed manifest did not describe the finalized WAV files.");
 
     const auto emptyDirectory = directory.getChildFile("empty-take");
@@ -99,6 +101,8 @@ juce::var runRecordingSelfTest(const juce::File& directory) {
     if (!emptyManifest.isObject()
         || emptyManifest.getProperty("state", {}).toString() != "recoverable"
         || static_cast<juce::int64>(emptyManifest.getProperty("samplesWritten", {})) != 0
+        || static_cast<juce::int64>(emptyManifest.getProperty("missingSamples", {})) != 0
+        || emptyManifest.getProperty("recoveryStatus", {}).toString() != "clean"
         || !emptyDirectory.getChildFile("raw.wav.partial").existsAsFile()
         || !emptyDirectory.getChildFile("processed.wav.partial").existsAsFile())
         return result(false, directory, "Empty take was not retained as recoverable partial data.");

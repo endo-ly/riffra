@@ -121,7 +121,6 @@
 - **REL-003 [P0] Background Jobをキャンセル・再開する** — 期待結果: Analysis、Render、Separation、ScanがUIを止めず、キャンセル後もPartial Resultを誤って完成扱いしない。出典: 14.4、21.5。
 - **REL-004 [P0] Disk障害を扱う** — 期待結果: 空き容量不足、書込失敗、破損、Partial Fileを明示し、取得済みデータを保全する。出典: 10.5、21.6。
 - **SEC-001 [P0] Local Firstを守る** — 期待結果: Audio/Project/AI Contextは明示許可なしに外部送信されず、Offlineでも中核制作機能が動く。出典: 3.9、15.7、23.1。
-- **SEC-002 [P0] Credentialを平文保存しない** — 期待結果: API KeyがLog、Project、Export Packageに含まれない。出典: 15.6、23.3。
 - **SEC-003 [P1] Logを安全に扱う** — 期待結果: Logに必要な診断情報だけを保存し、Audio/個人情報を無制限に含めない。出典: 23.4、23.5。
 - **WIN-001 [P1] DPI/複数モニターで使える** — 期待結果: DPI変更、Window移動、再接続、縦長/横長表示で主要操作が隠れない。出典: 19.9、24。
 - **WIN-002 [P1] Settingsを明示的に保存する** — 期待結果: Audio、MIDI、Theme、Library、AI Provider、Privacy、Shortcut、保存先が再起動後も一致する。出典: 25。

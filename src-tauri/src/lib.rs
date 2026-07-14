@@ -1,4 +1,6 @@
 mod analysis;
+mod diagnostics;
+mod jobs;
 mod library;
 mod midi;
 mod missing;
@@ -16,7 +18,8 @@ use model::{
     ScratchSession,
 };
 use native_audio::AudioSupervisor;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{path::PathBuf, sync::Mutex};
 use storage::{SessionStore, now_ms};
 use tauri::{Manager, State};
@@ -30,6 +33,7 @@ struct AppState {
     audio: AudioSupervisor,
     recovered_from_generation: bool,
     safe_mode: bool,
+    jobs: jobs::JobRegistry,
 }
 
 #[tauri::command]
@@ -148,6 +152,250 @@ async fn scan_vst3_folder(
         }
         report
     }).await.map_err(|error| format!("Plugin catalog task failed: {error}"))
+}
+
+fn failed_job(
+    registry: &jobs::JobRegistry,
+    data_root: &std::path::Path,
+    id: &str,
+    message: String,
+) {
+    if registry.is_cancelled(id) {
+        registry.mark_cancelled(id);
+    } else {
+        let _ = diagnostics::record(data_root, "job", &message);
+        registry.fail(id, message);
+    }
+}
+
+fn serialized_job_result<T: Serialize>(result: &T) -> Result<Value, String> {
+    serde_json::to_value(result)
+        .map_err(|error| format!("Job result could not be encoded: {error}"))
+}
+
+#[tauri::command]
+fn start_analysis_job(path: String, state: State<'_, AppState>) -> Result<jobs::JobStatus, String> {
+    let (id, status) = state.jobs.start("analysis");
+    let jobs = state.jobs.clone();
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        jobs.set_running(&id, "Analyzing audio in the background.");
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return;
+        };
+        let result = analysis::analyze_with_cancel(&PathBuf::from(path), Some(cancelled.as_ref()));
+        match result {
+            Ok(result) => match serialized_job_result(&result) {
+                Ok(value) => jobs.complete(&id, value, "Audio analysis completed."),
+                Err(message) => failed_job(&jobs, &data_root, &id, message),
+            },
+            Err(message) => failed_job(&jobs, &data_root, &id, message),
+        }
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+fn start_separation_job(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<jobs::JobStatus, String> {
+    let (id, status) = state.jobs.start("separation");
+    let jobs = state.jobs.clone();
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        jobs.set_running(&id, "Separating stereo channels in the background.");
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return;
+        };
+        let result = separation::separate_channels_with_cancel(
+            &PathBuf::from(path),
+            &data_root.join("separations"),
+            now_ms(),
+            Some(cancelled.as_ref()),
+        );
+        match result {
+            Ok(result) => match serialized_job_result(&result) {
+                Ok(value) => jobs.complete(&id, value, "Separation completed."),
+                Err(message) => failed_job(&jobs, &data_root, &id, message),
+            },
+            Err(message) => failed_job(&jobs, &data_root, &id, message),
+        }
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+fn start_render_job(
+    options: Option<render::RenderOptions>,
+    state: State<'_, AppState>,
+) -> Result<jobs::JobStatus, String> {
+    let (id, status) = state.jobs.start("render");
+    let jobs = state.jobs.clone();
+    let data_root = state.data_root.clone();
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        jobs.set_running(&id, "Rendering the timeline in the background.");
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return;
+        };
+        let result = render::render_timeline_with_options_cancel(
+            &data_root,
+            &session,
+            now_ms(),
+            options.unwrap_or_default(),
+            Some(cancelled.as_ref()),
+        );
+        match result {
+            Ok(result) => match serialized_job_result(&result) {
+                Ok(value) => jobs.complete(&id, value, "Timeline render completed."),
+                Err(message) => failed_job(&jobs, &data_root, &id, message),
+            },
+            Err(message) => failed_job(&jobs, &data_root, &id, message),
+        }
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+fn start_render_stems_job(
+    options: Option<render::RenderOptions>,
+    state: State<'_, AppState>,
+) -> Result<jobs::JobStatus, String> {
+    let (id, status) = state.jobs.start("renderStems");
+    let jobs = state.jobs.clone();
+    let data_root = state.data_root.clone();
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        jobs.set_running(&id, "Rendering track stems in the background.");
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return;
+        };
+        let result = render::render_stems_with_options_cancel(
+            &data_root,
+            &session,
+            now_ms(),
+            options.unwrap_or_default(),
+            Some(cancelled.as_ref()),
+        );
+        match result {
+            Ok(result) => match serialized_job_result(&result) {
+                Ok(value) => jobs.complete(&id, value, "Track stem render completed."),
+                Err(message) => failed_job(&jobs, &data_root, &id, message),
+            },
+            Err(message) => failed_job(&jobs, &data_root, &id, message),
+        }
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+async fn start_scan_job(
+    app: tauri::AppHandle,
+    path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<jobs::JobStatus, String> {
+    let (id, status) = state.jobs.start("scan");
+    let jobs = state.jobs.clone();
+    let data_root = state.data_root.clone();
+    let root = PathBuf::from(path.unwrap_or_else(|| DEFAULT_VST3_ROOT.into()));
+    if state.safe_mode {
+        let report = plugins::ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: now_ms(),
+            finished_at_ms: now_ms(),
+            plugins: Vec::new(),
+            issues: vec![plugins::ScanIssue {
+                path: root.to_string_lossy().into_owned(),
+                message: "Safe Mode skipped VST3 discovery; saved project data remains available."
+                    .into(),
+            }],
+        };
+        jobs.complete(
+            &id,
+            serialized_job_result(&report)?,
+            "VST3 scan skipped in Safe Mode.",
+        );
+        return Ok(status);
+    }
+    tauri::async_runtime::spawn(async move {
+        jobs.set_running(
+            &id,
+            "Discovering and validating VST3 plugins in the background.",
+        );
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return;
+        };
+        let discovered = tauri::async_runtime::spawn_blocking({
+            let root = root.clone();
+            let cancelled = cancelled.clone();
+            move || plugins::discover_with_cancel(&root, Some(cancelled.as_ref()))
+        })
+        .await;
+        let report = match discovered {
+            Ok(Ok(report)) => report,
+            Ok(Err(message)) => {
+                failed_job(&jobs, &data_root, &id, message);
+                return;
+            }
+            Err(error) => {
+                failed_job(
+                    &jobs,
+                    &data_root,
+                    &id,
+                    format!("VST3 discovery task failed: {error}"),
+                );
+                return;
+            }
+        };
+        let report = match plugin_validation::validate_report_with_cancel(
+            app,
+            report,
+            Some(cancelled.clone()),
+        )
+        .await
+        {
+            Ok(mut report) => {
+                report.finished_at_ms = now_ms();
+                report
+            }
+            Err(message) => {
+                failed_job(&jobs, &data_root, &id, message);
+                return;
+            }
+        };
+        if jobs.is_cancelled(&id) {
+            jobs.mark_cancelled(&id);
+            return;
+        }
+        if let Err(error) = plugin_catalog::save(&data_root, &report) {
+            let _ = diagnostics::record(&data_root, "scan", &error.to_string());
+        }
+        if let Err(error) = library::sync_plugins(&data_root, &report.plugins) {
+            let _ = diagnostics::record(&data_root, "scan", &error.to_string());
+        }
+        match serialized_job_result(&report) {
+            Ok(value) => jobs.complete(&id, value, "VST3 scan completed."),
+            Err(message) => failed_job(&jobs, &data_root, &id, message),
+        }
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+fn get_background_job(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<jobs::JobStatus>, String> {
+    Ok(state.jobs.status(&id))
+}
+
+#[tauri::command]
+fn cancel_background_job(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<jobs::JobStatus>, String> {
+    Ok(state.jobs.cancel(&id))
 }
 
 #[tauri::command]
@@ -810,6 +1058,7 @@ pub fn run() {
                 audio,
                 recovered_from_generation,
                 safe_mode,
+                jobs: jobs::JobRegistry::default(),
             });
             Ok(())
         })
@@ -820,6 +1069,13 @@ pub fn run() {
             export_scratch_session,
             import_scratch_session,
             scan_vst3_folder,
+            start_analysis_job,
+            start_separation_job,
+            start_render_job,
+            start_render_stems_job,
+            start_scan_job,
+            get_background_job,
+            cancel_background_job,
             list_recordings,
             search_library,
             update_library_asset,

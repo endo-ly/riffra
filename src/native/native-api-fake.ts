@@ -2,6 +2,7 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
   MissingDependency,
@@ -33,6 +34,10 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     processedChannels: null,
     samplesWritten: 0,
     droppedBlocks: 0,
+    missingSamples: 0,
+    dropoutStartSample: null,
+    dropoutEndSample: null,
+    recoveryStatus: 'clean',
     ...overrides.recording,
   };
   return {
@@ -97,6 +102,8 @@ export class FakeNativeApi implements NativeApi {
   missing: MissingDependency[];
   private recordingCounter = 0;
   private renderCounter = 0;
+  private jobCounter = 0;
+  private jobs = new Map<string, BackgroundJobStatus>();
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
@@ -153,6 +160,52 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('scanVst3Folder');
     const root = path ?? defaultVst3Root;
     return { root, startedAtMs: 1, finishedAtMs: 2, plugins: this.plugins, issues: [] };
+  };
+
+  startAnalysisJob = async (path: string): Promise<BackgroundJobStatus> => {
+    this.calls.push('startAnalysisJob');
+    return this.completeFakeJob('analysis', await this.analyzeAudio(path));
+  };
+
+  startSeparationJob = async (path: string): Promise<BackgroundJobStatus> => {
+    this.calls.push('startSeparationJob');
+    return this.completeFakeJob('separation', await this.separateChannels(path));
+  };
+
+  startRenderJob = async (options: RenderOptions): Promise<BackgroundJobStatus> => {
+    this.calls.push('startRenderJob');
+    return this.completeFakeJob('render', await this.renderTimeline(options));
+  };
+
+  startRenderStemsJob = async (options: RenderOptions): Promise<BackgroundJobStatus> => {
+    this.calls.push('startRenderStemsJob');
+    return this.completeFakeJob('renderStems', await this.renderTimelineStems(options));
+  };
+
+  startScanJob = async (path?: string): Promise<BackgroundJobStatus> => {
+    this.calls.push('startScanJob');
+    return this.completeFakeJob('scan', await this.scanVst3Folder(path));
+  };
+
+  getBackgroundJob = async (id: string): Promise<BackgroundJobStatus | null> => {
+    this.calls.push('getBackgroundJob');
+    return this.jobs.get(id) ?? null;
+  };
+
+  cancelBackgroundJob = async (id: string): Promise<BackgroundJobStatus | null> => {
+    this.calls.push('cancelBackgroundJob');
+    const job = this.jobs.get(id);
+    if (job && !['completed', 'failed', 'cancelled'].includes(job.state)) {
+      const cancelled = {
+        ...job,
+        state: 'cancelled',
+        message: 'Fake job cancelled.',
+        result: null,
+      };
+      this.jobs.set(id, cancelled);
+      return cancelled;
+    }
+    return job ?? null;
   };
 
   listRecordings = async (query?: string): Promise<RecordingAsset[]> => {
@@ -412,6 +465,10 @@ export class FakeNativeApi implements NativeApi {
         processedChannels: 2,
         samplesWritten: 0,
         droppedBlocks: 0,
+        missingSamples: 0,
+        dropoutStartSample: null,
+        dropoutEndSample: null,
+        recoveryStatus: 'clean',
       },
       message: 'Recording started; raw and processed takes are being captured.',
     };
@@ -431,6 +488,10 @@ export class FakeNativeApi implements NativeApi {
         processedChannels: 2,
         samplesWritten: samples,
         droppedBlocks: 0,
+        missingSamples: 0,
+        dropoutStartSample: null,
+        dropoutEndSample: null,
+        recoveryStatus: 'clean',
       },
       message: 'Recording stopped; the take was finalized and preserved.',
     };
@@ -454,6 +515,10 @@ export class FakeNativeApi implements NativeApi {
         sampleRate: 48_000,
         samplesWritten: samples,
         droppedBlocks: 0,
+        missingSamples: 0,
+        dropoutStartSample: null,
+        dropoutEndSample: null,
+        recoveryStatus: 'clean',
         provenance: null,
       },
       ...this.recordings,
@@ -600,6 +665,20 @@ export class FakeNativeApi implements NativeApi {
     this.missing = this.missing.filter((item) => item.id !== deviceId);
     return next;
   };
+
+  private completeFakeJob(kind: BackgroundJobStatus['kind'], result: unknown): BackgroundJobStatus {
+    const id = `fake-job:${kind}:${++this.jobCounter}`;
+    const job: BackgroundJobStatus = {
+      id,
+      kind,
+      state: 'completed',
+      progress: 1,
+      message: `Fake ${kind} job completed.`,
+      result,
+    };
+    this.jobs.set(id, job);
+    return job;
+  }
 }
 
 function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {

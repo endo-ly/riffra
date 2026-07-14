@@ -596,6 +596,10 @@ pub struct RecordingStatus {
     pub processed_channels: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
+    pub missing_samples: u64,
+    pub dropout_start_sample: Option<u64>,
+    pub dropout_end_sample: Option<u64>,
+    pub recovery_status: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

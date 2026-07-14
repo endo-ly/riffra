@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  BackgroundJobStatus,
   BootstrapState,
   MissingDependency,
   MidiProbe,
@@ -11,6 +12,7 @@ import type {
   RenderOptions,
   RenderResult,
   Session,
+  ScanReport,
   SeparationResult,
 } from '@/lib/domain';
 import { createTimelineClip, isUsableRecording } from '@/lib/recordings';
@@ -35,15 +37,19 @@ import { useAudio } from './useAudio';
 export function useApp(api: NativeApi = defaultNativeApi) {
   const {
     bootstrap,
-    scanVst3Folder,
+    startAnalysisJob,
+    startSeparationJob,
+    startRenderJob,
+    startRenderStemsJob,
+    startScanJob,
+    getBackgroundJob,
+    cancelBackgroundJob,
     listRecordings,
     analyzeAudio,
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
-    separateChannels,
     renderTimeline,
-    renderTimelineStems,
     loadPlugin,
     clearPlugin,
     previewSample,
@@ -74,6 +80,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       processedChannels: null,
       samplesWritten: 0,
       droppedBlocks: 0,
+      missingSamples: 0,
+      dropoutStartSample: null,
+      dropoutEndSample: null,
+      recoveryStatus: 'clean',
     },
     midiInputs: [],
     midiOutputs: [],
@@ -126,6 +136,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [, setScanMessage] = useState('VST3を検出中…');
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
+  const activeJobId = useRef<string | null>(null);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const {
@@ -280,14 +292,79 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       );
   }, []);
 
-  const openRecordingAnalysis = useCallback(async (recording: RecordingAsset) => {
-    if (!isUsableRecording(recording)) return;
-    if (recording.error) return;
-    const path = recording.processedPath ?? recording.rawPath;
-    if (!path) return;
-    setAnalysis(await analyzeAudio(path));
-    setSession((current) => (current ? { ...current, workspace: 'analyze' } : current));
-  }, []);
+  const runBackgroundJob = useCallback(
+    async (
+      start: () => Promise<BackgroundJobStatus>,
+      onCompleted: (result: unknown) => void,
+      onFailed: (message: string) => void,
+    ): Promise<boolean> => {
+      if (activeJobId.current) return false;
+      let started: BackgroundJobStatus;
+      try {
+        started = await start();
+      } catch (error) {
+        onFailed(error instanceof Error ? error.message : String(error));
+        return false;
+      }
+      activeJobId.current = started.id;
+      setBackgroundJob(started);
+      let latest = started;
+      try {
+        while (!['completed', 'failed', 'cancelled'].includes(latest.state)) {
+          await new Promise((resolve) => window.setTimeout(resolve, 75));
+          const next = await getBackgroundJob(started.id);
+          if (!next) {
+            onFailed('Background job disappeared before it reported a result.');
+            return false;
+          }
+          latest = next;
+          setBackgroundJob(next);
+        }
+        if (latest.state !== 'completed') {
+          onFailed(latest.message);
+          return false;
+        }
+        onCompleted(latest.result);
+        return true;
+      } catch (error) {
+        onFailed(error instanceof Error ? error.message : String(error));
+        return false;
+      } finally {
+        activeJobId.current = null;
+        window.setTimeout(
+          () => setBackgroundJob((current) => (current?.id === started.id ? null : current)),
+          500,
+        );
+      }
+    },
+    [getBackgroundJob],
+  );
+
+  const cancelActiveJob = useCallback(async () => {
+    const id = activeJobId.current;
+    if (!id) return;
+    const status = await cancelBackgroundJob(id);
+    if (status) setBackgroundJob(status);
+  }, [cancelBackgroundJob]);
+
+  const openRecordingAnalysis = useCallback(
+    async (recording: RecordingAsset) => {
+      if (!isUsableRecording(recording)) return;
+      if (recording.error) return;
+      const path = recording.processedPath ?? recording.rawPath;
+      if (!path) return;
+      await runBackgroundJob(
+        () => startAnalysisJob(path),
+        (result) => {
+          if (!result || typeof result !== 'object') return;
+          setAnalysis(result as AudioAnalysis);
+          setSession((current) => (current ? { ...current, workspace: 'analyze' } : current));
+        },
+        () => setAnalysis(null),
+      );
+    },
+    [runBackgroundJob, startAnalysisJob],
+  );
 
   const selectReference = useCallback(
     async (recording: RecordingAsset) => {
@@ -335,21 +412,26 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setReferenceSyncPreviewing(false);
   }, []);
 
-  const runSeparation = useCallback(async (recording: RecordingAsset) => {
-    if (recording.error) return;
-    const path = recording.processedPath ?? recording.rawPath;
-    if (!path) return;
-    setSeparationBusy(recording.id);
-    setSeparationMessage('Writing Left / Right WAV assets…');
-    const result = await separateChannels(path);
-    setSeparationBusy(null);
-    if (!result) {
-      setSeparationMessage('Separation failed; the source and saved session remain unchanged.');
-      return;
-    }
-    setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
-    setSeparationMessage(result.message);
-  }, []);
+  const runSeparation = useCallback(
+    async (recording: RecordingAsset) => {
+      if (recording.error) return;
+      const path = recording.processedPath ?? recording.rawPath;
+      if (!path) return;
+      setSeparationBusy(recording.id);
+      setSeparationMessage('Writing Left / Right WAV assets…');
+      await runBackgroundJob(
+        () => startSeparationJob(path),
+        (value) => {
+          const result = value as SeparationResult;
+          setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
+          setSeparationMessage(result.message);
+        },
+        (message) => setSeparationMessage(`Separation failed: ${message}`),
+      );
+      setSeparationBusy(null);
+    },
+    [runBackgroundJob, startSeparationJob],
+  );
 
   const previewSeparation = useCallback(async (path: string) => {
     setAudio(await previewSample(path, 0, 0));
@@ -397,33 +479,49 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     [session],
   );
 
-  const runTimelineRender = useCallback(async (options: RenderOptions) => {
-    setRenderResult(null);
-    setStemResults([]);
-    setRenderPreviewing(false);
-    setRenderMessage('Rendering a new stereo WAV…');
-    const result = await renderTimeline(options);
-    if (!result) {
-      setRenderMessage('Render failed; source clips and the session remain unchanged.');
-      return;
-    }
-    setRenderResult(result);
-    setRenderMessage(result.message);
-  }, []);
+  const runTimelineRender = useCallback(
+    async (options: RenderOptions) => {
+      setRenderResult(null);
+      setStemResults([]);
+      setRenderPreviewing(false);
+      setRenderMessage('Rendering a new stereo WAV…');
+      await runBackgroundJob(
+        () => startRenderJob(options),
+        (value) => {
+          const result = value as RenderResult;
+          setRenderResult(result);
+          setRenderMessage(result.message);
+        },
+        (message) => setRenderMessage(`Render failed: ${message}`),
+      );
+    },
+    [runBackgroundJob, startRenderJob],
+  );
 
-  const runTimelineStemRender = useCallback(async (options: RenderOptions) => {
-    setRenderResult(null);
-    setStemResults([]);
-    setRenderPreviewing(false);
-    setRenderMessage('Rendering independent track stems…');
-    const results = await renderTimelineStems(options);
-    if (!results.length) {
-      setRenderMessage('Stem render failed; source clips and the session remain unchanged.');
-      return;
-    }
-    setStemResults(results);
-    setRenderMessage(`${results.length} track stems rendered without changing source clips.`);
-  }, []);
+  const runTimelineStemRender = useCallback(
+    async (options: RenderOptions) => {
+      setRenderResult(null);
+      setStemResults([]);
+      setRenderPreviewing(false);
+      setRenderMessage('Rendering independent track stems…');
+      await runBackgroundJob(
+        () => startRenderStemsJob(options),
+        (value) => {
+          const results = Array.isArray(value) ? (value as RenderResult[]) : [];
+          if (!results.length) {
+            setRenderMessage(
+              'Stem render returned no completed result; source clips remain unchanged.',
+            );
+            return;
+          }
+          setStemResults(results);
+          setRenderMessage(`${results.length} track stems rendered without changing source clips.`);
+        },
+        (message) => setRenderMessage(`Stem render failed: ${message}`),
+      );
+    },
+    [runBackgroundJob, startRenderStemsJob],
+  );
 
   const previewTimelineRender = useCallback(async () => {
     if (!renderResult) return;
@@ -548,40 +646,45 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setSession(state.session);
       void getMissingDependencies().then(setMissingDependencies);
       if (!state.safeMode) void setMasterGainDb(state.session.masterDb).then(setAudio);
-      void scanVst3Folder(state.vst3Root).then((report) => {
-        setPlugins(report.plugins);
-        setMissingPluginPaths(
-          state.session.rack
-            .filter((device) => device.kind === 'plugin' && device.path)
-            .filter(
-              (device) =>
-                !report.plugins.some(
-                  (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
-                ),
-            )
-            .map((device) => device.path as string),
-        );
-        setScanMessage(
-          report.issues.length
-            ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-            : `${report.plugins.length}件を検出`,
-        );
-        const persisted = state.session.rack.find(
-          (device) => device.kind === 'plugin' && device.path,
-        );
-        const restored =
-          persisted &&
-          report.plugins.find(
-            (plugin) => plugin.path === persisted.path && plugin.scanState === 'validated',
+      void runBackgroundJob(
+        () => startScanJob(state.vst3Root),
+        (value) => {
+          const report = value as ScanReport;
+          setPlugins(report.plugins);
+          setMissingPluginPaths(
+            state.session.rack
+              .filter((device) => device.kind === 'plugin' && device.path)
+              .filter(
+                (device) =>
+                  !report.plugins.some(
+                    (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
+                  ),
+              )
+              .map((device) => device.path as string),
           );
-        if (restored)
-          void loadPluginIntoRack(
-            restored,
-            persisted?.parameterValues ?? [],
-            persisted?.bypassed ?? false,
-            persisted?.stateData ?? null,
+          setScanMessage(
+            report.issues.length
+              ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+              : `${report.plugins.length}件を検出`,
           );
-      });
+          const persisted = state.session.rack.find(
+            (device) => device.kind === 'plugin' && device.path,
+          );
+          const restored =
+            persisted &&
+            report.plugins.find(
+              (plugin) => plugin.path === persisted.path && plugin.scanState === 'validated',
+            );
+          if (restored)
+            void loadPluginIntoRack(
+              restored,
+              persisted?.parameterValues ?? [],
+              persisted?.bypassed ?? false,
+              persisted?.stateData ?? null,
+            );
+        },
+        (message) => setScanMessage(`VST3 scan failed: ${message}`),
+      );
     });
     void listRecordings().then(setRecordings);
     void listSeparations().then(setSeparations);
@@ -767,6 +870,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setCommandOpen,
     focusMode,
     setFocusMode,
+    backgroundJob,
+    cancelActiveJob,
     undoStack,
     setUndoStack,
     redoStack,

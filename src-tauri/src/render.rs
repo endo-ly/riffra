@@ -7,6 +7,7 @@ use std::{
     fs::{self, File},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 const MAX_RENDER_MINUTES: u64 = 30;
@@ -46,6 +47,16 @@ pub fn render_timeline_with_options(
     session: &ScratchSession,
     created_at_ms: u64,
     options: RenderOptions,
+) -> Result<RenderResult, String> {
+    render_timeline_with_options_cancel(data_root, session, created_at_ms, options, None)
+}
+
+pub fn render_timeline_with_options_cancel(
+    data_root: &Path,
+    session: &ScratchSession,
+    created_at_ms: u64,
+    options: RenderOptions,
+    cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
     let has_solo = session.tracks.iter().any(|track| track.solo);
     let clips = session
@@ -204,6 +215,9 @@ pub fn render_timeline_with_options(
             requested.min(source_range)
         };
         for frame in 0..render_frames {
+            if frame % 4096 == 0 && cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                return Err("Timeline render cancelled; no partial result was promoted.".into());
+            }
             let absolute_frame = start_frame.saturating_add(frame);
             if absolute_frame < render_start_frame_usize || absolute_frame >= render_end_frame_usize
             {
@@ -258,6 +272,9 @@ pub fn render_timeline_with_options(
     }
 
     apply_master_gain(&mut output, session.master_db);
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("Timeline render cancelled; no partial result was promoted.".into());
+    }
     if options.normalize {
         normalize_peak(&mut output);
     }
@@ -308,6 +325,16 @@ pub fn render_stems_with_options(
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<Vec<RenderResult>, String> {
+    render_stems_with_options_cancel(data_root, session, created_at_ms, options, None)
+}
+
+pub fn render_stems_with_options_cancel(
+    data_root: &Path,
+    session: &ScratchSession,
+    created_at_ms: u64,
+    options: RenderOptions,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Vec<RenderResult>, String> {
     let mut stem_session = session.clone();
     for track in &mut stem_session.tracks {
         track.muted = false;
@@ -329,11 +356,20 @@ pub fn render_stems_with_options(
     }
     let mut results = Vec::with_capacity(track_ids.len());
     for (index, track_id) in track_ids.into_iter().enumerate() {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("Stem render cancelled; no partial result was promoted.".into());
+        }
         let mut track_options = options.clone();
         track_options.track_id = Some(track_id.clone());
         let created = created_at_ms.saturating_add(index as u64);
-        let result = render_timeline_with_options(data_root, &stem_session, created, track_options)
-            .map_err(|error| format!("Track stem '{track_id}' failed: {error}"))?;
+        let result = render_timeline_with_options_cancel(
+            data_root,
+            &stem_session,
+            created,
+            track_options,
+            cancelled,
+        )
+        .map_err(|error| format!("Track stem '{track_id}' failed: {error}"))?;
         results.push(result);
     }
     Ok(results)

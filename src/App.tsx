@@ -76,6 +76,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     midi,
     missingPluginPaths,
     missingDependencies,
+    backgroundJob,
+    cancelActiveJob,
     relinkMissing,
     disableMissingPluginDevice,
     ignoreMissing,
@@ -168,6 +170,20 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             the Tauri application to use product features; this preview does not report empty
             results as successful operations.
           </span>
+        </div>
+      )}
+
+      {backgroundJob && (
+        <div className="runtime-banner">
+          <strong>
+            {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
+          </strong>
+          <span>{backgroundJob.message}</span>
+          {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
+            <button className="text-button" onClick={() => void cancelActiveJob()}>
+              Cancel
+            </button>
+          )}
         </div>
       )}
 

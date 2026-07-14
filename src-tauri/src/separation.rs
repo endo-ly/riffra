@@ -4,6 +4,7 @@ use std::{
     fs::{self, File},
     io::{self, BufWriter, Write},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -22,6 +23,15 @@ pub fn separate_channels(
     source: &Path,
     output_root: &Path,
     created_at_ms: u64,
+) -> Result<SeparationResult, String> {
+    separate_channels_with_cancel(source, output_root, created_at_ms, None)
+}
+
+pub fn separate_channels_with_cancel(
+    source: &Path,
+    output_root: &Path,
+    created_at_ms: u64,
+    cancelled: Option<&AtomicBool>,
 ) -> Result<SeparationResult, String> {
     if !source.is_file() {
         return Err(format!("Audio file does not exist: {}", source.display()));
@@ -71,6 +81,12 @@ pub fn separate_channels(
     let mut right_writer = split_writer(&right_partial, wav.sample_rate, data_len)
         .map_err(|error| format!("Right channel output could not be created: {error}"))?;
     for frame in 0..frames {
+        if frame % 4096 == 0 && cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            drop(left_writer);
+            drop(right_writer);
+            let _ = fs::remove_dir_all(&output_dir);
+            return Err("Separation cancelled; no partial result was promoted.".into());
+        }
         let start = frame * frame_bytes;
         let left_sample = decode_sample(
             &data[start..start + bytes_per_sample],
@@ -89,6 +105,12 @@ pub fn separate_channels(
         right_writer
             .write_all(&right_sample.to_le_bytes())
             .map_err(|error| format!("Right channel output could not be written: {error}"))?;
+    }
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        drop(left_writer);
+        drop(right_writer);
+        let _ = fs::remove_dir_all(&output_dir);
+        return Err("Separation cancelled; no partial result was promoted.".into());
     }
     left_writer
         .flush()

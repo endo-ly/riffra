@@ -19,6 +19,10 @@ const completedRecording = (): RecordingAsset => ({
   sampleRate: 48_000,
   samplesWritten: 96_000,
   droppedBlocks: 0,
+  missingSamples: 0,
+  dropoutStartSample: null,
+  dropoutEndSample: null,
+  recoveryStatus: 'clean',
   provenance: null,
 });
 

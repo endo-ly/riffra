@@ -3,6 +3,7 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
   MissingDependency,
@@ -93,6 +94,34 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
       ],
     };
   }
+}
+
+export async function startAnalysisJob(path: string): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_analysis_job', { path });
+}
+
+export async function startSeparationJob(path: string): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_separation_job', { path });
+}
+
+export async function startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_render_job', { options });
+}
+
+export async function startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_render_stems_job', { options });
+}
+
+export async function startScanJob(path?: string): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_scan_job', { path: path ?? null });
+}
+
+export async function getBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
+  return await invoke<BackgroundJobStatus | null>('get_background_job', { id });
+}
+
+export async function cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
+  return await invoke<BackgroundJobStatus | null>('cancel_background_job', { id });
 }
 
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
@@ -310,6 +339,10 @@ export async function getAudioStatus(): Promise<AudioStatus> {
         processedChannels: null,
         samplesWritten: 0,
         droppedBlocks: 0,
+        missingSamples: 0,
+        dropoutStartSample: null,
+        dropoutEndSample: null,
+        recoveryStatus: 'clean',
       },
       midiInputs: [],
       midiOutputs: [],
@@ -461,6 +494,13 @@ export function createNativeApi(): NativeApi {
     exportSession,
     importSession,
     scanVst3Folder,
+    startAnalysisJob,
+    startSeparationJob,
+    startRenderJob,
+    startRenderStemsJob,
+    startScanJob,
+    getBackgroundJob,
+    cancelBackgroundJob,
     listRecordings,
     searchLibrary,
     updateLibraryAsset,
