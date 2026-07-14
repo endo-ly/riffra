@@ -63,7 +63,7 @@ struct MidiManifest {
     events: Vec<MidiEvent>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RecordingManifest {
     state: Option<String>,
@@ -78,6 +78,86 @@ struct RecordingManifest {
     dropout_start_sample: Option<u64>,
     dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
+}
+
+/// A process interruption can leave the native writer's partial WAVs and a
+/// manifest whose state is still `recording`. Treat that take as recoverable
+/// when it is indexed, and derive the number of complete frames from the WAV
+/// bytes instead of exposing a misleading zero-sample recording.
+fn recover_interrupted_manifest(directory: &Path, manifest: &mut RecordingManifest) -> bool {
+    if manifest.state.as_deref() != Some("recording") {
+        return false;
+    }
+    let Some(raw_file) = manifest.raw_file.as_deref() else {
+        return false;
+    };
+    let raw_path = directory.join(raw_file);
+    let Ok(bytes) = fs::read(&raw_path) else {
+        return false;
+    };
+    let Some(samples) = partial_wav_samples(&bytes) else {
+        return false;
+    };
+    manifest.state = Some("recoverable".into());
+    manifest.samples_written = Some(samples);
+    manifest.recovery_status = Some("partial".into());
+    true
+}
+
+fn persist_recovered_manifest(path: &Path, manifest: &RecordingManifest) -> std::io::Result<()> {
+    let temporary = path.with_file_name(format!(".manifest-recovery-{}.tmp", std::process::id()));
+    let payload = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    {
+        let mut file = File::create(&temporary)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        if path.exists() {
+            fs::remove_file(path)?;
+            fs::rename(&temporary, path)?;
+        } else {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn partial_wav_samples(bytes: &[u8]) -> Option<u64> {
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut cursor = 12_usize;
+    let mut channels = None;
+    let mut bits_per_sample = None;
+    while cursor.checked_add(8)? <= bytes.len() {
+        let id = &bytes[cursor..cursor + 4];
+        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().ok()?) as usize;
+        let start = cursor.checked_add(8)?;
+        if id == b"fmt " && size >= 16 && start.checked_add(16)? <= bytes.len() {
+            channels = Some(u16::from_le_bytes(
+                bytes[start + 2..start + 4].try_into().ok()?,
+            ));
+            bits_per_sample = Some(u16::from_le_bytes(
+                bytes[start + 14..start + 16].try_into().ok()?,
+            ));
+        } else if id == b"data" {
+            let frame_bytes =
+                usize::from(channels?).saturating_mul(usize::from(bits_per_sample? / 8));
+            if frame_bytes == 0 || start > bytes.len() {
+                return None;
+            }
+            let available = size.min(bytes.len().saturating_sub(start));
+            return Some((available / frame_bytes) as u64);
+        }
+        let end = start.checked_add(size)?;
+        if end > bytes.len() {
+            return None;
+        }
+        cursor = end + (size % 2);
+    }
+    None
 }
 
 fn normalize_sample_rate(rate: f64) -> Option<u32> {
@@ -151,10 +231,13 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             continue;
         }
         let manifest_path = path.join("manifest.json");
-        let (manifest, manifest_error) = match read_manifest(&manifest_path) {
+        let (mut manifest, manifest_error) = match read_manifest(&manifest_path) {
             Ok(manifest) => (manifest, None),
             Err(error) => (RecordingManifest::default(), Some(error)),
         };
+        if manifest_error.is_none() && recover_interrupted_manifest(&path, &mut manifest) {
+            let _ = persist_recovered_manifest(&manifest_path, &manifest);
+        }
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -493,6 +576,46 @@ mod tests {
         assert_eq!(results[0].recovery_status, "partial");
         assert!(results[0].raw_path.is_some());
         assert!(results[0].processed_path.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn derives_samples_for_interrupted_partial_wav() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-interrupted");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"recording","rawFile":"raw.wav.partial","processedFile":"processed.wav.partial","sampleRate":44100.0,"samplesWritten":0,"recoveryStatus":"clean"}"#,
+        )
+        .unwrap();
+
+        let mut wav = Vec::from(&b"RIFF"[..]);
+        wav.extend_from_slice(&40_u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&44_100_u32.to_le_bytes());
+        wav.extend_from_slice(&88_200_u32.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4_u32.to_le_bytes());
+        wav.extend_from_slice(&[0, 0, 0, 0]);
+        fs::write(take.join("raw.wav.partial"), &wav).unwrap();
+        fs::write(take.join("processed.wav.partial"), &wav).unwrap();
+
+        let results = list(&root, Some("take-interrupted")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].state, "recoverable");
+        assert_eq!(results[0].samples_written, 2);
+        assert_eq!(results[0].recovery_status, "partial");
+        assert!(results[0].raw_path.is_some());
+        assert!(results[0].processed_path.is_some());
+        let recovered_manifest = read_manifest(&take.join("manifest.json")).unwrap();
+        assert_eq!(recovered_manifest.state.as_deref(), Some("recoverable"));
+        assert_eq!(recovered_manifest.samples_written, Some(2));
         let _ = fs::remove_dir_all(root);
     }
 

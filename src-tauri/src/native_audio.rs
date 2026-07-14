@@ -163,33 +163,42 @@ impl AudioSupervisor {
         }));
         let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
 
-        let parent_pid = std::process::id().to_string();
-        let spawn_result = app.shell().sidecar("riffra-audio").and_then(|command| {
-            command
-                .args(["--serve", "--parent-pid", &parent_pid])
-                .spawn()
-        });
-
-        let (mut receiver, child) = match spawn_result {
-            Ok(pair) => pair,
-            Err(error) => {
-                if let Ok(mut current) = status.lock() {
-                    current.state = AudioState::Faulted;
-                    current.message = format!(
-                        "Native audio sidecar could not start; the session and saved data remain available: {error}"
-                    );
-                }
-                return Self {
-                    status,
-                    responses,
-                    next_request_id: AtomicU64::new(1),
-                    child: Mutex::new(None),
-                };
-            }
+        let supervisor = Self {
+            status,
+            responses,
+            next_request_id: AtomicU64::new(1),
+            child: Mutex::new(None),
         };
+        match supervisor.spawn_sidecar(app) {
+            Ok(child) => {
+                if let Ok(mut slot) = supervisor.child.lock() {
+                    *slot = Some(child);
+                }
+            }
+            Err(error) => set_faulted(
+                &supervisor.status,
+                format!(
+                    "Native audio sidecar could not start; the session and saved data remain available: {error}"
+                ),
+            ),
+        }
+        supervisor
+    }
 
-        let event_status = Arc::clone(&status);
-        let event_responses = Arc::clone(&responses);
+    fn spawn_sidecar<R: Runtime>(&self, app: &AppHandle<R>) -> Result<CommandChild, String> {
+        let parent_pid = std::process::id().to_string();
+        let (mut receiver, child) = app
+            .shell()
+            .sidecar("riffra-audio")
+            .and_then(|command| {
+                command
+                    .args(["--serve", "--parent-pid", &parent_pid])
+                    .spawn()
+            })
+            .map_err(|error| error.to_string())?;
+
+        let event_status = Arc::clone(&self.status);
+        let event_responses = Arc::clone(&self.responses);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 match event {
@@ -230,13 +239,7 @@ impl AudioSupervisor {
                 }
             }
         });
-
-        Self {
-            status,
-            responses,
-            next_request_id: AtomicU64::new(1),
-            child: Mutex::new(Some(child)),
-        }
+        Ok(child)
     }
 
     pub fn refresh_status(&self) -> Result<AudioStatus, String> {
@@ -424,11 +427,47 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn recover_audio_device(&self) -> Result<AudioStatus, String> {
-        self.send_command(
-            serde_json::json!({"type": "recoverAudioDevice"}),
+    pub fn recover_audio_device<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+    ) -> Result<AudioStatus, String> {
+        let command = serde_json::json!({"type": "recoverAudioDevice"});
+        match self.send_command(
+            command.clone(),
             "Audio device recovery requested; output remains muted until the device is ready.",
-        )
+        ) {
+            Ok(status) => Ok(status),
+            Err(error) if sidecar_restart_required(&error) => {
+                if let Ok(mut slot) = self.child.lock()
+                    && let Some(child) = slot.take()
+                {
+                    let _ = child.kill();
+                }
+                set_starting(
+                    &self.status,
+                    "Native audio sidecar is restarting in emergency-mute state.",
+                );
+                let child = self.spawn_sidecar(app).map_err(|spawn_error| {
+                    set_faulted(
+                        &self.status,
+                        format!(
+                            "Native audio sidecar recovery could not restart the isolated engine: {spawn_error}. Saved data remains safe."
+                        ),
+                    );
+                    format!(
+                        "Native audio sidecar recovery could not restart the isolated engine: {spawn_error}"
+                    )
+                })?;
+                *self.child.lock().map_err(|lock_error| {
+                    format!("Audio child lock was poisoned: {lock_error}")
+                })? = Some(child);
+                self.send_command(
+                    command,
+                    "Audio sidecar restarted and device recovery was requested; output remains muted until the device is ready.",
+                )
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn set_audio_driver(
@@ -673,11 +712,24 @@ fn set_command_error(status: &Arc<Mutex<AudioStatus>>, message: String) {
     }
 }
 
+fn set_starting(status: &Arc<Mutex<AudioStatus>>, message: &str) {
+    if let Ok(mut current) = status.lock() {
+        current.state = AudioState::Starting;
+        current.message = message.into();
+    }
+}
+
 fn set_faulted(status: &Arc<Mutex<AudioStatus>>, message: String) {
     if let Ok(mut current) = status.lock() {
         current.state = AudioState::Faulted;
         current.message = message;
     }
+}
+
+fn sidecar_restart_required(error: &str) -> bool {
+    error.contains("could not reach the isolated audio process")
+        || error.contains("Native audio is unavailable")
+        || error.contains("did not acknowledge the command")
 }
 
 #[cfg(test)]
@@ -802,6 +854,16 @@ mod tests {
         let (fault, detail) = render_native_error("plugin", "load failed");
         assert!(!fault);
         assert!(detail.contains("plugin"));
+    }
+
+    #[test]
+    fn identifies_lost_sidecar_transport_for_recovery() {
+        assert!(sidecar_restart_required(
+            "Audio recording command could not reach the isolated audio process: pipe closed."
+        ));
+        assert!(!sidecar_restart_required(
+            "Native audio device error: device missing."
+        ));
     }
 
     #[test]

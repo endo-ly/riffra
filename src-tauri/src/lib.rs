@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Mutex};
 use storage::{SessionStore, now_ms};
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
@@ -728,11 +728,11 @@ fn set_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioS
 }
 
 #[tauri::command]
-fn recover_audio_device(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+fn recover_audio_device(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStatus, String> {
     if state.safe_mode {
         return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
     }
-    state.audio.recover_audio_device()
+    state.audio.recover_audio_device(&app)
 }
 
 fn effective_audio_preference_message(
