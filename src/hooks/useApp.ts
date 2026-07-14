@@ -4,6 +4,7 @@ import type {
   AudioDeviceProbe,
   AudioStatus,
   BootstrapState,
+  MissingDependency,
   MidiProbe,
   PluginEntry,
   RecordingAsset,
@@ -54,6 +55,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setPluginState,
     setMasterGainDb,
     configureSamplePads,
+    getMissingDependencies,
+    relinkMissingDependency,
+    disableMissingPlugin,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({
@@ -86,6 +90,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   });
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
+  const [missingDependencies, setMissingDependencies] = useState<MissingDependency[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
   const [separationBusy, setSeparationBusy] = useState<string | null>(null);
@@ -474,6 +479,24 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setPreviewPadId(null);
   }, []);
 
+  const relinkMissing = useCallback(async (item: MissingDependency, newPath: string) => {
+    const next = await relinkMissingDependency(item.path, newPath);
+    setSession(next);
+    setMissingDependencies(await getMissingDependencies());
+  }, []);
+
+  const disableMissingPluginDevice = useCallback(async (deviceId: string) => {
+    const next = await disableMissingPlugin(deviceId);
+    setSession(next);
+    setMissingDependencies(await getMissingDependencies());
+  }, []);
+
+  const ignoreMissing = useCallback((item: MissingDependency) => {
+    setMissingDependencies((current) =>
+      current.filter((candidate) => !(candidate.kind === item.kind && candidate.id === item.id)),
+    );
+  }, []);
+
   const placeRecording = useCallback(
     (recording: RecordingAsset) => {
       if (!session) return;
@@ -523,6 +546,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     void bootstrap().then((state) => {
       setBoot(state);
       setSession(state.session);
+      void getMissingDependencies().then(setMissingDependencies);
       if (!state.safeMode) void setMasterGainDb(state.session.masterDb).then(setAudio);
       void scanVst3Folder(state.vst3Root).then((report) => {
         setPlugins(report.plugins);
@@ -681,6 +705,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setPlugins,
     missingPluginPaths,
     setMissingPluginPaths,
+    missingDependencies,
+    relinkMissing,
+    disableMissingPluginDevice,
+    ignoreMissing,
     recordings,
     setRecordings,
     separations,

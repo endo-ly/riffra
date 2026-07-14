@@ -28,6 +28,7 @@ import {
   LibraryPanel,
   InspectorPanel,
   TransportBar,
+  MissingDependencies,
 } from '@/components';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
@@ -74,6 +75,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     deviceProbe,
     midi,
     missingPluginPaths,
+    missingDependencies,
+    relinkMissing,
+    disableMissingPluginDevice,
+    ignoreMissing,
     commandOpen,
     undoStack,
     redoStack,
@@ -164,6 +169,15 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             results as successful operations.
           </span>
         </div>
+      )}
+
+      {missingDependencies.length > 0 && (
+        <MissingDependencies
+          missing={missingDependencies}
+          onRelink={relinkMissing}
+          onDisablePlugin={disableMissingPluginDevice}
+          onIgnore={ignoreMissing}
+        />
       )}
 
       <LibraryPanel

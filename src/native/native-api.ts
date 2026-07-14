@@ -4,6 +4,7 @@ import type {
   AudioStatus,
   BootstrapState,
   LibraryAsset,
+  MissingDependency,
   MidiEvent,
   MidiExportResult,
   MidiProbe,
@@ -86,4 +87,8 @@ export interface NativeApi {
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
   configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;
+
+  getMissingDependencies(): Promise<MissingDependency[]>;
+  relinkMissingDependency(oldPath: string, newPath: string): Promise<Session>;
+  disableMissingPlugin(deviceId: string): Promise<Session>;
 }

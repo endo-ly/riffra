@@ -3,6 +3,7 @@ export { GlobalBar } from './GlobalBar';
 export { LibraryPanel } from './LibraryPanel';
 export { InspectorPanel } from './InspectorPanel';
 export { TransportBar } from './TransportBar';
+export { MissingDependencies } from './MissingDependencies';
 export {
   AudioDevices,
   AudioDriverPicker,

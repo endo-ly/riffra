@@ -1,6 +1,7 @@
 mod analysis;
 mod library;
 mod midi;
+mod missing;
 mod model;
 mod native_audio;
 mod plugins;
@@ -280,6 +281,49 @@ fn export_midi(state: State<'_, AppState>) -> Result<midi::MidiExportResult, Str
 #[tauri::command]
 fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     state.audio.refresh_status()
+}
+
+#[tauri::command]
+fn get_missing_dependencies(
+    state: State<'_, AppState>,
+) -> Result<Vec<missing::MissingDependency>, String> {
+    let session = state.session.lock().map_err(lock_error)?;
+    Ok(missing::collect_missing(&session))
+}
+
+#[tauri::command]
+fn relink_missing_dependency(
+    old_path: String,
+    new_path: String,
+    state: State<'_, AppState>,
+) -> Result<ScratchSession, String> {
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    session = missing::relink(&session, &old_path, &new_path);
+    session = session.validate_and_normalize()?;
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| format!("Relinked session could not be saved: {error}"))?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
+}
+
+#[tauri::command]
+fn disable_missing_plugin(
+    device_id: String,
+    state: State<'_, AppState>,
+) -> Result<ScratchSession, String> {
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    session = missing::mark_disabled_placeholder(&session, &device_id);
+    session = session.validate_and_normalize()?;
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| format!("Session could not be saved: {error}"))?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
 }
 
 #[tauri::command]
@@ -794,6 +838,9 @@ pub fn run() {
             stop_preview_for_key,
             probe_audio_devices,
             get_audio_status,
+            get_missing_dependencies,
+            relink_missing_dependency,
+            disable_missing_plugin,
             set_emergency_mute,
             start_recording,
             stop_recording,

@@ -257,7 +257,11 @@ juce::var probeAudioDevices() {
 juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCallback& callback, const PluginRack* rack = nullptr, const MidiMonitor* midi = nullptr) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
-    status->setProperty("state", callback.isEmergencyMuted() ? "muted" : "ready");
+    const juce::String state = callback.isDeviceFaulted() ? "faulted"
+        : (callback.isEmergencyMuted() ? "muted" : "ready");
+    status->setProperty("state", state);
+    if (callback.isDeviceFaulted())
+        status->setProperty("message", "Audio device disconnected; output is muted and any captured take is preserved.");
     status->setProperty("emergencyMuted", callback.isEmergencyMuted());
     status->setProperty("masterGainDb", callback.getMasterGainDb());
     status->setProperty("inputPeak", callback.getInputPeak());
@@ -323,6 +327,41 @@ juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
     return error;
 }
 
+/// Decides whether a device change should fault the engine. We only fault
+/// when audio was actually live (playing or recording); a silent/muted device
+/// reconfiguration is not a safety event.
+inline bool deviceLossRequiresFault(const bool devicePresent, const bool audioActive) {
+    return !devicePresent && audioActive;
+}
+
+/// Watches the AudioDeviceManager for device loss. JUCE fires a change when a
+/// device disappears mid-session; we then mute the engine, mark it faulted, and
+/// finalize any in-progress recording so the partial take is preserved.
+class DeviceFaultWatcher final : public juce::ChangeListener {
+public:
+    DeviceFaultWatcher(juce::AudioDeviceManager& manager, SafetyAudioCallback& callback)
+        : deviceManager(manager), audioCallback(callback) {}
+
+    void changeListenerCallback(juce::ChangeBroadcaster*) override {
+        const bool present = deviceManager.getCurrentAudioDevice() != nullptr;
+        const bool audioActive = !audioCallback.isEmergencyMuted()
+            || audioCallback.recordingStatus().getProperty("active", false);
+        if (!deviceLossRequiresFault(present, audioActive))
+            return;
+        if (audioCallback.isDeviceFaulted())
+            return;
+        audioCallback.setDeviceFaulted(true);
+        audioCallback.setEmergencyMuted(true);
+        juce::String ignored;
+        audioCallback.stopRecording(ignored);
+        writeJson(currentStatus(deviceManager, audioCallback, nullptr, nullptr));
+    }
+
+private:
+    juce::AudioDeviceManager& deviceManager;
+    SafetyAudioCallback& audioCallback;
+};
+
 int serve(const std::optional<std::uint32_t> parentPid) {
     juce::AudioDeviceManager manager;
     juce::AudioFormatManager formatManager;
@@ -343,6 +382,8 @@ int serve(const std::optional<std::uint32_t> parentPid) {
     }
 
     manager.addAudioCallback(&callback);
+    DeviceFaultWatcher deviceWatcher(manager, callback);
+    manager.addChangeListener(&deviceWatcher);
     writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
 
     std::atomic<bool> watchdogRunning { true };
@@ -626,6 +667,7 @@ int serve(const std::optional<std::uint32_t> parentPid) {
                 continue;
             }
             manager.addAudioCallback(&callback);
+            callback.setDeviceFaulted(false);
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
@@ -720,6 +762,7 @@ int serve(const std::optional<std::uint32_t> parentPid) {
         midiInput.reset();
     }
     manager.removeAudioCallback(&callback);
+    manager.removeChangeListener(&deviceWatcher);
     manager.closeAudioDevice();
     watchdogRunning.store(false, std::memory_order_release);
     if (watchdog.joinable())
@@ -830,6 +873,48 @@ juce::var runSafetySelfTest() {
         check->setProperty("briefMs", 50.0);
         check->setProperty("detected", detector.isSuspected());
         check->setProperty("passed", !detector.isSuspected());
+        checks.add(juce::var(check));
+    }
+
+    {
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Device loss during playback faults the engine");
+        check->setProperty("passed", deviceLossRequiresFault(false, true));
+        checks.add(juce::var(check));
+    }
+
+    {
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Device present keeps the engine running");
+        check->setProperty("passed", !deviceLossRequiresFault(true, true));
+        checks.add(juce::var(check));
+    }
+
+    {
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Muted idle device reconfiguration is not a fault");
+        check->setProperty("passed", !deviceLossRequiresFault(false, false));
+        checks.add(juce::var(check));
+    }
+
+    {
+        // The faulted flag must actually surface as a "faulted" status line so
+        // the bridge, UI, and native reconfirmation observe the faulted state.
+        SafetyAudioCallback faultedCallback;
+        faultedCallback.setDeviceFaulted(true);
+        faultedCallback.setEmergencyMuted(true);
+        juce::AudioDeviceManager emptyManager;
+        const auto status = currentStatus(emptyManager, faultedCallback, nullptr, nullptr);
+        const auto* statusObject = status.getDynamicObject();
+        const juce::String state =
+            statusObject ? statusObject->getProperty("state").toString() : juce::String();
+        const juce::String message =
+            statusObject ? statusObject->getProperty("message").toString() : juce::String();
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Device fault is reported as a faulted status");
+        check->setProperty(
+            "passed",
+            state == "faulted" && message.contains("disconnected"));
         checks.add(juce::var(check));
     }
 

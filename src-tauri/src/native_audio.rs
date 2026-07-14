@@ -55,6 +55,7 @@ struct NativeStatus {
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
     feedback_suspected: Option<bool>,
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -479,13 +480,17 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         "faulted" => AudioState::Faulted,
         _ => AudioState::Offline,
     };
-    let message = match state.clone() {
+    let fallback_message = match state.clone() {
         AudioState::Ready => "Native audio is ready through the safety chain.".into(),
         AudioState::Muted => "Native audio is connected and emergency-muted.".into(),
         AudioState::Starting => "Native audio is starting safely.".into(),
         AudioState::Faulted => "Native audio reported a fault; saved data is safe.".into(),
         AudioState::Offline => "Native audio is offline; saved data is safe.".into(),
     };
+    let message = native
+        .message
+        .filter(|m| !m.is_empty())
+        .unwrap_or(fallback_message);
     AudioStatus {
         state,
         driver: native.driver,
@@ -819,6 +824,18 @@ mod tests {
         assert_eq!(status.input_peak, 1.0);
         assert_eq!(status.output_peak, 0.0);
         assert!(status.message.contains("offline"));
+    }
+
+    #[test]
+    fn device_disconnect_status_reports_faulted_state() {
+        let native: NativeStatus = serde_json::from_value(serde_json::json!({
+            "state": "faulted",
+            "message": "Audio device disconnected; output is muted and any captured take is preserved."
+        }))
+        .expect("native status");
+        let status = native_status_to_audio_status(native);
+        assert!(matches!(status.state, AudioState::Faulted));
+        assert!(status.message.contains("device disconnected"));
     }
 
     #[test]

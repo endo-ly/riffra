@@ -18,6 +18,8 @@ public:
 
     void setEmergencyMuted(bool shouldMute) noexcept;
     [[nodiscard]] bool isEmergencyMuted() const noexcept;
+    void setDeviceFaulted(bool faulted) noexcept;
+    [[nodiscard]] bool isDeviceFaulted() const noexcept;
     void setMasterGainDb(float gainDb) noexcept;
     [[nodiscard]] float getMasterGainDb() const noexcept;
     [[nodiscard]] float getInputPeak() const noexcept;
@@ -68,6 +70,7 @@ private:
     static constexpr double kFadeInSeconds = 0.5;
 
     std::atomic<bool> emergencyMuted { true };
+    std::atomic<bool> deviceFaulted { false };
     std::atomic<float> targetGainLinear { juce::Decibels::decibelsToGain(-18.0f) };
     std::atomic<float> masterGainDb { -18.0f };
     std::atomic<float> inputPeak { 0.0f };

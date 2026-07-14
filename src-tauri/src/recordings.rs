@@ -451,6 +451,30 @@ mod tests {
     }
 
     #[test]
+    fn preserves_partial_recoverable_take_data() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-partial");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"recoverable","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":22050,"droppedBlocks":3}"#,
+        )
+        .unwrap();
+        fs::write(take.join("raw.wav"), b"partial raw").unwrap();
+        fs::write(take.join("processed.wav"), b"partial processed").unwrap();
+
+        let results = list(&root, Some("take-partial")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].state, "recoverable");
+        assert_eq!(results[0].error, None);
+        assert_eq!(results[0].samples_written, 22_050);
+        assert_eq!(results[0].dropped_blocks, 3);
+        assert!(results[0].raw_path.is_some());
+        assert!(results[0].processed_path.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn indexes_recording_provenance_when_present() {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-provenance");

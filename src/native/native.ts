@@ -5,6 +5,7 @@ import type {
   AudioStatus,
   BootstrapState,
   LibraryAsset,
+  MissingDependency,
   MidiEvent,
   MidiExportResult,
   MidiProbe,
@@ -430,6 +431,22 @@ export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatu
   }
 }
 
+export async function getMissingDependencies(): Promise<MissingDependency[]> {
+  try {
+    return await invoke<MissingDependency[]>('get_missing_dependencies');
+  } catch {
+    return [];
+  }
+}
+
+export async function relinkMissingDependency(oldPath: string, newPath: string): Promise<Session> {
+  return await invoke<Session>('relink_missing_dependency', { oldPath, newPath });
+}
+
+export async function disableMissingPlugin(deviceId: string): Promise<Session> {
+  return await invoke<Session>('disable_missing_plugin', { deviceId });
+}
+
 /**
  * createNativeApi returns the production NativeApi that delegates to the
  * invoke-backed helpers in this module. Behavior is identical to calling the
@@ -475,6 +492,9 @@ export function createNativeApi(): NativeApi {
     openMidiInput,
     closeMidiInput,
     configureSamplePads,
+    getMissingDependencies,
+    relinkMissingDependency,
+    disableMissingPlugin,
   };
 }
 

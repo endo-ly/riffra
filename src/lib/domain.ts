@@ -9,6 +9,7 @@ export interface RackDevice {
   gainDb: number;
   parameterValues: number[];
   stateData: string | null;
+  disabledPlaceholder?: boolean;
 }
 
 export interface RackMacro {
@@ -166,6 +167,14 @@ export interface RecoveryCandidate {
   sessionId: string;
   projectName: string | null;
   note: string;
+}
+
+export interface MissingDependency {
+  kind: 'file' | 'plugin' | string;
+  id: string;
+  name: string;
+  path: string;
+  usedBy: string[];
 }
 
 export interface RecordingStatus {

@@ -15,6 +15,8 @@ pub struct RackDevice {
     pub parameter_values: Vec<f32>,
     #[serde(default)]
     pub state_data: Option<String>,
+    #[serde(default)]
+    pub disabled_placeholder: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -275,6 +277,7 @@ impl ScratchSession {
                     gain_db: 0.0,
                     parameter_values: Vec::new(),
                     state_data: None,
+                    disabled_placeholder: false,
                 },
                 RackDevice {
                     id: "safety".into(),
@@ -285,6 +288,7 @@ impl ScratchSession {
                     gain_db: 0.0,
                     parameter_values: Vec::new(),
                     state_data: None,
+                    disabled_placeholder: false,
                 },
                 RackDevice {
                     id: "output".into(),
@@ -295,6 +299,7 @@ impl ScratchSession {
                     gain_db: -18.0,
                     parameter_values: Vec::new(),
                     state_data: None,
+                    disabled_placeholder: false,
                 },
             ],
             snapshots: Vec::new(),

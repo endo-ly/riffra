@@ -303,6 +303,7 @@ mod tests {
             gain_db: 0.0,
             parameter_values: Vec::new(),
             state_data: None,
+            disabled_placeholder: false,
         });
         let encoded = serde_json::to_vec(&session).unwrap();
         let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
@@ -360,6 +361,29 @@ mod tests {
             decoded.timeline[0].asset_path,
             r"C:\recordings\take-1\processed.wav"
         );
+    }
+
+    #[test]
+    fn caps_kept_generations_and_keeps_newest_on_prune() {
+        let root = test_root("generation-cap");
+        let store = SessionStore::new(&root);
+        let mut newest = ScratchSession::new(now_ms());
+        for index in 0..(GENERATIONS_TO_KEEP + 5) {
+            let mut session = ScratchSession::new(now_ms());
+            session.note = format!("generation-{index}");
+            store.save(&session).unwrap();
+            newest = session;
+        }
+        let candidates = store.recovery_candidates().unwrap();
+        assert!(
+            candidates.len() <= GENERATIONS_TO_KEEP,
+            "too many generations kept: {}",
+            candidates.len()
+        );
+        let (recovered, used_generation) = store.load_or_create().unwrap();
+        assert!(!used_generation);
+        assert_eq!(recovered.note, newest.note);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

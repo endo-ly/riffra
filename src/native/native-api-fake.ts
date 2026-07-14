@@ -4,6 +4,7 @@ import type {
   AudioStatus,
   BootstrapState,
   LibraryAsset,
+  MissingDependency,
   MidiEvent,
   MidiExportResult,
   MidiProbe,
@@ -70,6 +71,8 @@ export interface FakeNativeApiOptions {
   pluginParameters?: PluginParameter[];
   /** Samples written when a recording is stopped. */
   recordingSamples?: number;
+  /** Missing files/plugins the open session references (PRJ-004). */
+  missingDependencies?: MissingDependency[];
 }
 
 /**
@@ -91,6 +94,7 @@ export class FakeNativeApi implements NativeApi {
   pluginLoadFaulted: boolean;
   pluginParameters: PluginParameter[];
   recordingSamples: number;
+  missing: MissingDependency[];
   private recordingCounter = 0;
   private renderCounter = 0;
 
@@ -102,6 +106,7 @@ export class FakeNativeApi implements NativeApi {
     this.pluginLoadFaulted = options.pluginLoadFaulted ?? false;
     this.pluginParameters = options.pluginParameters ?? [];
     this.recordingSamples = options.recordingSamples ?? 22_050;
+    this.missing = options.missingDependencies ?? [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
   }
 
@@ -553,6 +558,47 @@ export class FakeNativeApi implements NativeApi {
       message: `${pads.length} sample pad mapping(s) applied.`,
     };
     return this.audio;
+  };
+
+  getMissingDependencies = async (): Promise<MissingDependency[]> => {
+    this.calls.push('getMissingDependencies');
+    return this.missing.slice();
+  };
+
+  relinkMissingDependency = async (oldPath: string, newPath: string): Promise<Session> => {
+    this.calls.push('relinkMissingDependency');
+    const session = this.bootstrapState.session;
+    const next: Session = {
+      ...session,
+      timeline: session.timeline.map((clip) =>
+        clip.assetPath === oldPath ? { ...clip, assetPath: newPath } : clip,
+      ),
+      samplePads: session.samplePads.map((pad) =>
+        pad.assetPath === oldPath ? { ...pad, assetPath: newPath } : pad,
+      ),
+      rack: session.rack.map((device) =>
+        device.path === oldPath ? { ...device, path: newPath, disabledPlaceholder: false } : device,
+      ),
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.missing = this.missing.filter((item) => item.path !== oldPath);
+    return next;
+  };
+
+  disableMissingPlugin = async (deviceId: string): Promise<Session> => {
+    this.calls.push('disableMissingPlugin');
+    const session = this.bootstrapState.session;
+    const next: Session = {
+      ...session,
+      rack: session.rack.map((device) =>
+        device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
+      ),
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    // A disabled placeholder is acknowledged, so it leaves the missing list
+    // (mirrors `collect_missing` skipping disabled-placeholder plugins).
+    this.missing = this.missing.filter((item) => item.id !== deviceId);
+    return next;
   };
 }
 
