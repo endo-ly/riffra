@@ -1,5 +1,43 @@
 import type { RecordingAsset, Session, TimelineClip } from './domain';
 
+function relocatedPath(path: string, previousDirectory: string, nextDirectory: string): string {
+  const previous = previousDirectory.replace(/[\\/]+$/, '');
+  if (path.toLocaleLowerCase() === previous.toLocaleLowerCase()) return nextDirectory;
+  const suffix = path.slice(previous.length);
+  if (
+    !path.toLocaleLowerCase().startsWith(previous.toLocaleLowerCase()) ||
+    !/^[\\/]/.test(suffix)
+  ) {
+    return path;
+  }
+  return `${nextDirectory}${suffix}`;
+}
+
+/** Keeps active-session references valid when an Inbox take is renamed or moved. */
+export function relocateRecordingReferences(
+  session: Session,
+  recording: RecordingAsset,
+  nextId: string,
+): Session {
+  const nextDirectory = nextId.replace(/^recording:/, '');
+  const nextName = nextDirectory.split(/[\\/]/).filter(Boolean).at(-1) ?? recording.name;
+  return {
+    ...session,
+    timeline: session.timeline.map((clip) => {
+      const assetPath = relocatedPath(clip.assetPath, recording.path, nextDirectory);
+      return assetPath === clip.assetPath
+        ? clip
+        : { ...clip, assetPath, name: clip.name === recording.name ? nextName : clip.name };
+    }),
+    samplePads: session.samplePads.map((pad) => {
+      const assetPath = relocatedPath(pad.assetPath, recording.path, nextDirectory);
+      return assetPath === pad.assetPath
+        ? pad
+        : { ...pad, assetPath, name: pad.name === recording.name ? nextName : pad.name };
+    }),
+  };
+}
+
 export function isUsableRecording(recording: RecordingAsset): boolean {
   return (
     recording.state === 'completed' &&

@@ -15,7 +15,11 @@ import type {
   ScanReport,
   SeparationResult,
 } from '@/lib/domain';
-import { createTimelineClip, isUsableRecording } from '@/lib/recordings';
+import {
+  createTimelineClip,
+  isUsableRecording,
+  relocateRecordingReferences,
+} from '@/lib/recordings';
 import {
   pluginParameterValuesForSession,
   shouldRestoreIndividualParameters,
@@ -141,10 +145,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const activeJobId = useRef<string | null>(null);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
-  const reloadRecordings = useCallback(() => {
-    void listRecordings().then(setRecordings);
+  const reloadRecordings = useCallback(async () => {
+    setRecordings(await listRecordings());
   }, [listRecordings]);
-  const inbox = useInbox(api, recordings, { reload: reloadRecordings });
   const {
     librarySection,
     setLibrarySection,
@@ -188,6 +191,29 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
+  const relocateActiveRecording = useCallback(
+    (recording: RecordingAsset, nextId: string) => {
+      setSession((current) =>
+        current ? relocateRecordingReferences(current, recording, nextId) : current,
+      );
+      const previousDirectory = recording.path.replace(/[\\/]+$/, '').toLocaleLowerCase();
+      setMissingDependencies((current) =>
+        current.filter((item) => {
+          const path = item.path.toLocaleLowerCase();
+          return !(
+            path === previousDirectory ||
+            (path.startsWith(previousDirectory) &&
+              /^[\\/]/.test(path.slice(previousDirectory.length)))
+          );
+        }),
+      );
+    },
+    [setSession, setMissingDependencies],
+  );
+  const inbox = useInbox(api, recordings, {
+    reload: reloadRecordings,
+    onRelocate: relocateActiveRecording,
+  });
 
   const audioHook = useAudio(api, {
     audio,

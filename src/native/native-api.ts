@@ -48,8 +48,8 @@ export interface NativeApi {
   listRecordings(query?: string): Promise<RecordingAsset[]>;
   renameRecording(id: string, name: string): Promise<string>;
   deleteRecording(id: string): Promise<void>;
-  archiveRecording(id: string): Promise<void>;
-  promoteRecording(id: string): Promise<void>;
+  archiveRecording(id: string): Promise<string>;
+  promoteRecording(id: string): Promise<string>;
   tagRecording(id: string, tag: string | null, note: string | null): Promise<LibraryAsset | null>;
   detectDuplicateRecordings(): Promise<string[][]>;
   searchLibrary(query: string): Promise<LibraryAsset[]>;

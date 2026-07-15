@@ -51,13 +51,15 @@ function makeInbox(): InboxController {
     selected: recordingA,
     duplicateGroups: [],
     duplicateIds: new Set([recordingA.id, recordingB.id]),
-    rename: vi.fn(),
-    remove: vi.fn(),
-    archive: vi.fn(),
-    promote: vi.fn(),
-    tag: vi.fn(),
-    preview: vi.fn(),
-    detectDuplicates: vi.fn(),
+    message: '1 duplicate group found (2 recordings).',
+    error: null,
+    rename: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+    archive: vi.fn().mockResolvedValue(undefined),
+    promote: vi.fn().mockResolvedValue(undefined),
+    tag: vi.fn().mockResolvedValue(null),
+    preview: vi.fn().mockResolvedValue(undefined),
+    detectDuplicates: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -106,8 +108,10 @@ describe('Inbox preservation zone (LIB-003)', () => {
     );
 
     expect(screen.getByLabelText('Find duplicates')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('1 duplicate group found');
     const selectA = screen.getByLabelText(`Select ${recordingA.name}`);
     expect(selectA).toBeInTheDocument();
+    expect(selectA.closest('.recording-row')).not.toHaveClass('plugin-row');
     // Duplicate takes are flagged for the user.
     expect(selectA.closest('.recording-row')).toHaveClass('duplicate');
 
@@ -123,6 +127,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     await user.click(screen.getByLabelText('Archive'));
     expect(inbox.archive).toHaveBeenCalledWith(recordingA.id);
 
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await user.click(screen.getByLabelText('Delete'));
     expect(inbox.remove).toHaveBeenCalledWith(recordingA.id);
 
@@ -165,5 +170,21 @@ describe('Inbox preservation zone (LIB-003)', () => {
       />,
     );
     expect(screen.getByLabelText(`Select ${broken.name}`)).toBeDisabled();
+  });
+
+  it('shows an Inbox operation error instead of a success message', () => {
+    const inbox = makeInbox();
+    inbox.message = null;
+    inbox.error = 'The audio engine is offline.';
+    render(
+      <LibraryPanel
+        library={libraryStub}
+        rack={rackStub}
+        recordings={recordingsStub}
+        inbox={inbox}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('The audio engine is offline.');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

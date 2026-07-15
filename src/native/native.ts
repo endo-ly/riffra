@@ -141,12 +141,12 @@ export async function deleteRecording(id: string): Promise<void> {
   await invoke('delete_recording', { id });
 }
 
-export async function archiveRecording(id: string): Promise<void> {
-  await invoke('archive_recording', { id });
+export async function archiveRecording(id: string): Promise<string> {
+  return await invoke<string>('archive_recording', { id });
 }
 
-export async function promoteRecording(id: string): Promise<void> {
-  await invoke('promote_recording', { id });
+export async function promoteRecording(id: string): Promise<string> {
+  return await invoke<string>('promote_recording', { id });
 }
 
 export async function tagRecording(

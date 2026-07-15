@@ -501,7 +501,7 @@ fn move_recording_out_of_inbox(
     data_root: &std::path::Path,
     id: &str,
     relocate: fn(&std::path::Path, &str) -> Result<String, String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let new_id = relocate(data_root, id)?;
     let (audio_path, midi_path) = recordings::media_paths(&new_id)?;
     library::relocate_recording(
@@ -510,16 +510,17 @@ fn move_recording_out_of_inbox(
         &new_id,
         audio_path.as_deref(),
         midi_path.as_deref(),
-    )
+    )?;
+    Ok(new_id)
 }
 
 #[tauri::command]
-fn archive_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
+fn archive_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
     move_recording_out_of_inbox(&state.data_root, &id, recordings::archive)
 }
 
 #[tauri::command]
-fn promote_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
+fn promote_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
     move_recording_out_of_inbox(&state.data_root, &id, recordings::promote)
 }
 
@@ -1712,7 +1713,8 @@ mod inbox_ipc_integration {
             .build()
             .unwrap();
         let response = get_ipc_response(&webview, request("archive_recording", json!({"id": id})));
-        assert!(response.is_ok());
+        let new_id = response.unwrap().deserialize::<String>().unwrap();
+        assert!(new_id.contains("archive"));
         let asset = library::search(&root, "take-a")
             .unwrap()
             .into_iter()
@@ -1732,7 +1734,8 @@ mod inbox_ipc_integration {
             .build()
             .unwrap();
         let response = get_ipc_response(&webview, request("promote_recording", json!({"id": id})));
-        assert!(response.is_ok());
+        let new_id = response.unwrap().deserialize::<String>().unwrap();
+        assert!(new_id.contains("library"));
         let asset = library::search(&root, "take-a")
             .unwrap()
             .into_iter()

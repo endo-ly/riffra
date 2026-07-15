@@ -293,18 +293,20 @@ export class FakeNativeApi implements NativeApi {
     this.recordings = this.recordings.filter((recording) => recording.id !== id);
   };
 
-  archiveRecording = async (id: string): Promise<void> => {
+  archiveRecording = async (id: string): Promise<string> => {
     this.calls.push('archiveRecording');
-    if (!this.recordings.some((recording) => recording.id === id))
-      throw new Error('Recording take was not found.');
+    const recording = this.recordings.find((item) => item.id === id);
+    if (!recording) throw new Error('Recording take was not found.');
     this.recordings = this.recordings.filter((recording) => recording.id !== id);
+    return `recording:${recording.path.replace(/([\\/])inbox\1/i, '$1archive$1')}`;
   };
 
-  promoteRecording = async (id: string): Promise<void> => {
+  promoteRecording = async (id: string): Promise<string> => {
     this.calls.push('promoteRecording');
-    if (!this.recordings.some((recording) => recording.id === id))
-      throw new Error('Recording take was not found.');
+    const recording = this.recordings.find((item) => item.id === id);
+    if (!recording) throw new Error('Recording take was not found.');
     this.recordings = this.recordings.filter((recording) => recording.id !== id);
+    return `recording:${recording.path.replace(/([\\/])inbox\1/i, '$1library$1')}`;
   };
 
   tagRecording = async (

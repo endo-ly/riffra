@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSession, type RecordingAsset } from '@/lib/domain';
-import { createTimelineClip, isUsableRecording } from '@/lib/recordings';
+import {
+  createTimelineClip,
+  isUsableRecording,
+  relocateRecordingReferences,
+} from '@/lib/recordings';
 
 const completedRecording = (): RecordingAsset => ({
   id: 'recording:take-1',
@@ -59,5 +63,43 @@ describe('recording availability', () => {
     expect(clip).not.toBeNull();
     expect(createTimelineClip({ ...session, timeline: [clip!] }, recording)).toBeNull();
     expect(createTimelineClip(session, { ...recording, state: 'recoverable' })).toBeNull();
+  });
+
+  it('updates timeline and sample-pad paths after an Inbox take is moved', () => {
+    const recording = completedRecording();
+    const clip = createTimelineClip(defaultSession(), recording)!;
+    const unrelatedPath = 'C:\\data\\take-10\\processed.wav';
+    const session = {
+      ...defaultSession(),
+      timeline: [clip, { ...clip, id: 'unrelated', assetPath: unrelatedPath }],
+      samplePads: [
+        {
+          id: 'pad-1',
+          name: recording.name,
+          assetPath: recording.rawPath!,
+          startMs: 0,
+          endMs: 0,
+          midiKey: 36,
+          gainDb: 0,
+          loopEnabled: false,
+        },
+      ],
+    };
+
+    const relocated = relocateRecordingReferences(
+      session,
+      recording,
+      'recording:C:\\data\\archive\\renamed-take',
+    );
+
+    expect(relocated.timeline[0]).toMatchObject({
+      assetPath: 'C:\\data\\archive\\renamed-take\\processed.wav',
+      name: 'renamed-take',
+    });
+    expect(relocated.samplePads[0]).toMatchObject({
+      assetPath: 'C:\\data\\archive\\renamed-take\\raw.wav',
+      name: 'renamed-take',
+    });
+    expect(relocated.timeline[1].assetPath).toBe(unrelatedPath);
   });
 });

@@ -615,6 +615,16 @@ kbd {
   color: var(--muted);
   font-size: 9px;
 }
+.inbox-message {
+  display: block;
+  margin: 6px 3px 10px;
+  color: #8ccbd6;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.inbox-message.error {
+  color: #ef7b78;
+}
 .plugin-row {
   width: 100%;
   display: grid;
@@ -650,6 +660,77 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.recording-row {
+  width: 100%;
+  margin-top: 2px;
+  background: transparent;
+  border-radius: 5px;
+}
+.recording-row:hover,
+.recording-row.selected {
+  background: var(--surface-2);
+}
+.recording-row.duplicate {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+.recording-select > span {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-content: center;
+  color: #9cdbe2;
+  font-size: 10px;
+  font-weight: 700;
+  background: linear-gradient(140deg, #27333d, #171d24);
+  border: 1px solid #35424e;
+  border-radius: 5px;
+}
+.recording-select > div {
+  min-width: 0;
+  flex: 1;
+}
+.recording-select strong,
+.recording-select small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recording-select strong {
+  color: #cbd3dc;
+  font-size: 10px;
+  font-weight: 500;
+}
+.recording-select small {
+  margin-top: 2px;
+  color: #626c77;
+  font-size: 8px;
+}
+.inbox-operations {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(85, 217, 232, 0.045);
+  border: 1px solid rgba(85, 217, 232, 0.18);
+  border-radius: 5px;
+}
+.inbox-operations header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #cbd3dc;
+  font-size: 9px;
+}
+.inbox-operations header small {
+  color: var(--muted);
+}
+.inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .plugin-row strong {
   color: #cbd3dc;

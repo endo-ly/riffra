@@ -525,7 +525,10 @@ fn hash_file(path: &Path) -> Result<u64, String> {
     let mut file =
         fs::File::open(path).map_err(|error| format!("Audio file could not be opened: {error}"))?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let mut buffer = [0u8; 1 << 20];
+    // Tauri invokes this command on the Windows main thread, whose stack is
+    // smaller than Rust's test-worker stack. Keep the 1 MiB read buffer on the
+    // heap so duplicate detection cannot terminate the app with stack overflow.
+    let mut buffer = vec![0u8; 1 << 20];
     use std::io::Read;
     loop {
         let read = file
@@ -937,6 +940,23 @@ mod tests {
         assert_eq!(group.len(), 2);
         assert!(group.iter().any(|id| id.ends_with("take-a")));
         assert!(group.iter().any(|id| id.ends_with("take-b")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_detection_runs_on_a_small_ui_thread_stack() {
+        let root = temp_root();
+        let _a = fixture_take(&root, "take-a", b"identical processed");
+        let _b = fixture_take(&root, "take-b", b"identical processed");
+        let worker_root = root.clone();
+        let duplicates = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(move || detect_duplicates(&worker_root))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(duplicates.len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 

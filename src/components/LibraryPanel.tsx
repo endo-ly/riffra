@@ -31,6 +31,10 @@ interface LibraryPanelProps {
 }
 
 export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelProps) {
+  const showHandledError = (operation: Promise<unknown>) => {
+    void operation.catch(() => undefined);
+  };
+
   return (
     <aside className="library-panel">
       <div className="panel-heading">
@@ -151,14 +155,22 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
             <button
               className="text-button"
               aria-label="Find duplicates"
-              onClick={() => void inbox.detectDuplicates()}
+              onClick={() => showHandledError(inbox.detectDuplicates())}
             >
               Find duplicates
             </button>
+            {inbox.error ? (
+              <small className="inbox-message error" role="alert">
+                {inbox.error}
+              </small>
+            ) : inbox.message ? (
+              <small className="inbox-message" role="status">
+                {inbox.message}
+              </small>
+            ) : null}
             {recordings.visibleRecordings.slice(0, 12).map((recording) => (
               <div
                 className={[
-                  'plugin-row',
                   'recording-row',
                   inbox.selectedId === recording.id ? 'selected' : '',
                   inbox.duplicateIds.has(recording.id) ? 'duplicate' : '',
@@ -175,6 +187,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   title={recording.error ?? recording.path}
                   style={{
                     flex: 1,
+                    width: '100%',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
@@ -212,20 +225,32 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
             {inbox.selected && (
               <InboxOperations
                 recording={inbox.selected}
-                onPreview={() => void inbox.preview(inbox.selected!)}
+                onPreview={() => showHandledError(inbox.preview(inbox.selected!))}
                 onAnalyze={() => recordings.onOpenRecording(inbox.selected!)}
-                onRename={async () => {
+                onRename={() => {
                   const name = window.prompt('Rename take', inbox.selected!.name);
-                  if (name && name.trim()) await inbox.rename(inbox.selected!.id, name.trim());
+                  if (name && name.trim()) {
+                    showHandledError(inbox.rename(inbox.selected!.id, name.trim()));
+                  }
                 }}
-                onTag={async () => {
+                onTag={() => {
                   const tag = window.prompt('Tag', '');
                   const note = window.prompt('Note', '');
-                  if (tag != null) await inbox.tag(inbox.selected!.id, tag || null, note || null);
+                  if (tag != null) {
+                    showHandledError(inbox.tag(inbox.selected!.id, tag || null, note || null));
+                  }
                 }}
-                onPromote={() => void inbox.promote(inbox.selected!.id)}
-                onArchive={() => void inbox.archive(inbox.selected!.id)}
-                onDelete={() => void inbox.remove(inbox.selected!.id)}
+                onPromote={() => showHandledError(inbox.promote(inbox.selected!.id))}
+                onArchive={() => showHandledError(inbox.archive(inbox.selected!.id))}
+                onDelete={() => {
+                  if (
+                    window.confirm(
+                      `Delete ${inbox.selected!.name}? Its Raw, Processed, and MIDI files will be removed.`,
+                    )
+                  ) {
+                    showHandledError(inbox.remove(inbox.selected!.id));
+                  }
+                }}
               />
             )}
           </>

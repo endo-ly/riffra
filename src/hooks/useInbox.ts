@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/lib/domain';
+import { audioCommandSucceeded } from '@/lib/audio-safety';
 import type { NativeApi } from '@/native/native-api';
 
 interface UseInboxOptions {
   reload: () => void | Promise<void>;
+  onRelocate?: (recording: RecordingAsset, nextId: string) => void;
 }
 
 /**
@@ -15,69 +17,136 @@ interface UseInboxOptions {
 export function useInbox(
   api: NativeApi,
   recordings: RecordingAsset[],
-  { reload }: UseInboxOptions,
+  { reload, onRelocate }: UseInboxOptions,
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duplicateGroups, setDuplicateGroups] = useState<string[][]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const selected = recordings.find((recording) => recording.id === selectedId) ?? null;
 
   const rename = useCallback(
     async (id: string, name: string) => {
-      await api.renameRecording(id, name);
-      await reload();
+      setError(null);
+      try {
+        const recording = recordings.find((item) => item.id === id);
+        const nextId = await api.renameRecording(id, name);
+        if (recording) onRelocate?.(recording, nextId);
+        await reload();
+        setSelectedId(nextId);
+        setMessage(`Renamed to ${name}.`);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
-    [api, reload],
+    [api, onRelocate, recordings, reload],
   );
 
   const remove = useCallback(
     async (id: string) => {
-      await api.deleteRecording(id);
-      setSelectedId((current) => (current === id ? null : current));
-      await reload();
+      setError(null);
+      try {
+        await api.deleteRecording(id);
+        setSelectedId((current) => (current === id ? null : current));
+        await reload();
+        setMessage('Recording deleted.');
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
     [api, reload],
   );
 
   const archive = useCallback(
     async (id: string) => {
-      await api.archiveRecording(id);
-      setSelectedId((current) => (current === id ? null : current));
-      await reload();
+      setError(null);
+      try {
+        const recording = recordings.find((item) => item.id === id);
+        const nextId = await api.archiveRecording(id);
+        if (recording) onRelocate?.(recording, nextId);
+        setSelectedId((current) => (current === id ? null : current));
+        await reload();
+        setMessage('Recording archived.');
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
-    [api, reload],
+    [api, onRelocate, recordings, reload],
   );
 
   const promote = useCallback(
     async (id: string) => {
-      await api.promoteRecording(id);
-      setSelectedId((current) => (current === id ? null : current));
-      await reload();
+      setError(null);
+      try {
+        const recording = recordings.find((item) => item.id === id);
+        const nextId = await api.promoteRecording(id);
+        if (recording) onRelocate?.(recording, nextId);
+        setSelectedId((current) => (current === id ? null : current));
+        await reload();
+        setMessage('Recording promoted to the library.');
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
-    [api, reload],
+    [api, onRelocate, recordings, reload],
   );
 
   const tag = useCallback(
     async (id: string, tag: string | null, note: string | null): Promise<LibraryAsset | null> => {
-      const updated = await api.tagRecording(id, tag, note);
-      if (!updated) return null;
-      await reload();
-      return updated;
+      setError(null);
+      try {
+        const updated = await api.tagRecording(id, tag, note);
+        if (!updated) throw new Error('The recording tag was not saved.');
+        await reload();
+        setMessage('Recording tag saved.');
+        return updated;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
     [api, reload],
   );
 
   const preview = useCallback(
     async (recording: RecordingAsset) => {
-      const path = recording.processedPath ?? recording.rawPath;
-      if (!path) throw new Error('Recording has no previewable audio file.');
-      await api.previewSample(path, 0, 0);
+      setError(null);
+      try {
+        const path = recording.processedPath ?? recording.rawPath;
+        if (!path) throw new Error('Recording has no previewable audio file.');
+        const status = await api.previewSample(path, 0, 0);
+        if (!audioCommandSucceeded(status)) {
+          throw new Error(status.message || 'The audio engine could not start the preview.');
+        }
+        setMessage(`Preview started: ${recording.name}.`);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
     },
     [api],
   );
 
   const detectDuplicates = useCallback(async () => {
-    setDuplicateGroups(await api.detectDuplicateRecordings());
+    setError(null);
+    try {
+      const groups = await api.detectDuplicateRecordings();
+      setDuplicateGroups(groups);
+      const count = new Set(groups.flat()).size;
+      setMessage(
+        groups.length === 0
+          ? 'No duplicate recordings found.'
+          : `${groups.length} duplicate group${groups.length === 1 ? '' : 's'} found (${count} recordings).`,
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    }
   }, [api]);
 
   const duplicateIds = new Set(duplicateGroups.flat());
@@ -88,6 +157,8 @@ export function useInbox(
     selected,
     duplicateGroups,
     duplicateIds,
+    message,
+    error,
     rename,
     remove,
     archive,
