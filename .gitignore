@@ -4,7 +4,6 @@ build/
 out/
 .vite/
 target/
-src-tauri/target/
 native/**/build/
 native/**/out/
 .vs/
@@ -26,7 +25,6 @@ native/**/out/
 *.wav
 *.flac
 *.riffra-recovery
-vendor/JUCE/
 
 .artifacts/
 *.tsbuildinfo
