@@ -56,7 +56,10 @@ pub fn collect_missing(session: &ScratchSession) -> Vec<MissingDependency> {
             let exists = device
                 .path
                 .as_ref()
-                .is_some_and(|path| Path::new(path).is_file());
+                // VST3 modules are regular files for some vendors and bundle
+                // directories for others. Missing-dependency detection only
+                // checks presence; plugin scanning owns validation.
+                .is_some_and(|path| Path::new(path).exists());
             if !exists {
                 missing.push(MissingDependency {
                     kind: "plugin".into(),
@@ -217,5 +220,28 @@ mod tests {
                 .iter()
                 .all(|item| item.path != "C:\\gone\\Lost.vst3")
         );
+    }
+
+    #[test]
+    fn existing_vst3_bundle_directory_is_not_reported_as_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-vst3-bundle-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let bundle = root.join("Present.vst3");
+        std::fs::create_dir_all(&bundle).unwrap();
+        let mut session = session_with_missing();
+        session
+            .rack
+            .iter_mut()
+            .find(|device| device.id == "plugin:gone")
+            .unwrap()
+            .path = Some(bundle.to_string_lossy().into_owned());
+
+        let missing = collect_missing(&session);
+
+        assert!(missing.iter().all(|item| item.kind != "plugin"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
