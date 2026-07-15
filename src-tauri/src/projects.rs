@@ -351,12 +351,20 @@ mod tests {
         assert_eq!(restored.timeline[0].pan, 0.25);
 
         assert_eq!(restored.tracks.len(), 2);
-        let bass = restored.tracks.iter().find(|track| track.id == "bass").unwrap();
+        let bass = restored
+            .tracks
+            .iter()
+            .find(|track| track.id == "bass")
+            .unwrap();
         assert_eq!(bass.gain_db, -6.0);
         assert!(bass.muted);
 
         assert_eq!(restored.rack.len(), 4);
-        let plugin = restored.rack.iter().find(|device| device.id == "plugin:rev").unwrap();
+        let plugin = restored
+            .rack
+            .iter()
+            .find(|device| device.id == "plugin:rev")
+            .unwrap();
         assert!(plugin.bypassed);
         assert_eq!(plugin.state_data.as_deref(), Some("opaque-plugin-state"));
         assert_eq!(plugin.parameter_values, vec![0.1, 0.2, 0.3]);

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::storage::MigrationNotice;
+use serde::{Deserialize, Serialize};
 
 pub const CURRENT_SESSION_FORMAT: u32 = 1;
 

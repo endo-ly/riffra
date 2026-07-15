@@ -406,7 +406,7 @@ fn list_recordings(
     query: Option<String>,
 ) -> Result<Vec<recordings::RecordingAsset>, String> {
     let assets = recordings::list(&state.data_root, query.as_deref())?;
-    let _ = library::sync_recordings(&state.data_root, &assets);
+    library::sync_recordings(&state.data_root, &assets)?;
     Ok(assets)
 }
 
@@ -458,6 +458,93 @@ async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> 
 #[tauri::command]
 fn read_midi_events(path: String) -> Result<Vec<recordings::MidiEvent>, String> {
     recordings::read_midi_events(&PathBuf::from(path))
+}
+
+fn rename_recording_impl(
+    data_root: &std::path::Path,
+    id: &str,
+    new_name: &str,
+) -> Result<String, String> {
+    let new_id = recordings::rename(data_root, id, new_name)?;
+    let (audio_path, midi_path) = recordings::media_paths(&new_id)?;
+    library::relocate_recording(
+        data_root,
+        id,
+        &new_id,
+        audio_path.as_deref(),
+        midi_path.as_deref(),
+    )?;
+    Ok(new_id)
+}
+
+#[tauri::command]
+fn rename_recording(
+    id: String,
+    new_name: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    rename_recording_impl(&state.data_root, &id, &new_name)
+}
+
+fn delete_recording_impl(data_root: &std::path::Path, id: &str) -> Result<(), String> {
+    recordings::delete(data_root, id)?;
+    library::remove_recording_assets(data_root, id)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    delete_recording_impl(&state.data_root, &id)
+}
+
+fn move_recording_out_of_inbox(
+    data_root: &std::path::Path,
+    id: &str,
+    relocate: fn(&std::path::Path, &str) -> Result<String, String>,
+) -> Result<(), String> {
+    let new_id = relocate(data_root, id)?;
+    let (audio_path, midi_path) = recordings::media_paths(&new_id)?;
+    library::relocate_recording(
+        data_root,
+        id,
+        &new_id,
+        audio_path.as_deref(),
+        midi_path.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn archive_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    move_recording_out_of_inbox(&state.data_root, &id, recordings::archive)
+}
+
+#[tauri::command]
+fn promote_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    move_recording_out_of_inbox(&state.data_root, &id, recordings::promote)
+}
+
+#[tauri::command]
+fn detect_duplicate_recordings(state: State<'_, AppState>) -> Result<Vec<Vec<String>>, String> {
+    recordings::detect_duplicates(&state.data_root)
+}
+
+fn tag_recording_impl(
+    data_root: &std::path::Path,
+    id: &str,
+    tag: Option<String>,
+    note: Option<String>,
+) -> Result<library::LibraryAsset, String> {
+    library::update_metadata(data_root, &library::recording_asset_id(id), tag, note)
+}
+
+#[tauri::command]
+fn tag_recording(
+    id: String,
+    tag: Option<String>,
+    note: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<library::LibraryAsset, String> {
+    tag_recording_impl(&state.data_root, &id, tag, note)
 }
 
 #[tauri::command]
@@ -1087,6 +1174,12 @@ pub fn run() {
             related_library_assets,
             analyze_audio,
             read_midi_events,
+            rename_recording,
+            delete_recording,
+            archive_recording,
+            promote_recording,
+            detect_duplicate_recordings,
+            tag_recording,
             separate_channels,
             list_separations,
             render_timeline,
@@ -1225,5 +1318,427 @@ mod tests {
                 offender.unwrap_or("?")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod inbox_integration {
+    //! LIB-003 結合テスト (test-strategy.md §4.3.3 Filesystem / 永続化)。
+    //! コマンド層の委譲先を一時ファイルシステム上で駆動し、Recording Manifest と
+    //! Raw / Processed ファイルの整合性、および Library Index と Filesystem の同期を検証する。
+    //! ユーザーの AppData / VST3 / 制作ファイルへは書き込まない（一時ディレクトリ使用）。
+    use super::{
+        delete_recording_impl, move_recording_out_of_inbox, rename_recording_impl,
+        tag_recording_impl,
+    };
+    use crate::{library, recordings};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    fn temp_root(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("riffra-inbox-it-{label}-{nanos}"))
+    }
+
+    fn seed_take(data_root: &Path, name: &str, processed: &[u8]) -> String {
+        let take = data_root.join("recordings").join("inbox").join(name);
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(take.join("raw.wav"), b"raw").unwrap();
+        fs::write(take.join("processed.wav"), processed).unwrap();
+        // Use the id exactly as the production indexer emits it (recordings::list),
+        // so Library lookups (recording:<id>) match the synced asset.
+        recordings::list(data_root, Some(name))
+            .unwrap()
+            .into_iter()
+            .find(|recording| recording.name == name)
+            .map(|recording| recording.id)
+            .unwrap()
+    }
+
+    fn seed_midi(data_root: &Path, name: &str) {
+        fs::write(
+            data_root
+                .join("recordings")
+                .join("inbox")
+                .join(name)
+                .join("midi.json"),
+            br#"{"version":1,"events":[]}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rename_keeps_manifest_integrity_and_updates_library_index() {
+        let root = temp_root("rename");
+        let id = seed_take(&root, "take-a", b"processed");
+        seed_midi(&root, "take-a");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let new_id = rename_recording_impl(&root, &id, "renamed").unwrap();
+        assert!(new_id.ends_with("renamed"));
+        let renamed = root.join("recordings/inbox/renamed");
+        assert!(renamed.is_dir());
+        // §4.3.3: Recording Manifest and Raw/Processed files move together.
+        assert!(renamed.join("manifest.json").is_file());
+        assert!(renamed.join("raw.wav").is_file());
+        assert!(renamed.join("processed.wav").is_file());
+        assert!(!root.join("recordings/inbox/take-a").exists());
+        // §4.3.3: Library Index stays in sync with the filesystem.
+        assert_eq!(
+            library::search(&root, "renamed")
+                .unwrap()
+                .iter()
+                .filter(|asset| asset.kind == "recording")
+                .count(),
+            1
+        );
+        assert_eq!(library::search(&root, "take-a").unwrap().len(), 0);
+        let renamed_assets = library::search(&root, "renamed").unwrap();
+        let recording = renamed_assets
+            .iter()
+            .find(|asset| asset.kind == "recording")
+            .unwrap();
+        let expected_renamed_path = root
+            .join("recordings")
+            .join("inbox")
+            .join("renamed")
+            .join("processed.wav")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            recording.path.as_deref(),
+            Some(expected_renamed_path.as_str())
+        );
+        assert!(renamed_assets.iter().any(|asset| asset.kind == "midi"));
+        assert!(library::search(&root, "take-a MIDI").unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_removes_take_and_library_index() {
+        let root = temp_root("delete");
+        let id = seed_take(&root, "take-a", b"processed");
+        seed_midi(&root, "take-a");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        delete_recording_impl(&root, &id).unwrap();
+        assert!(!root.join("recordings/inbox/take-a").exists());
+        assert!(library::search(&root, "take-a").unwrap().is_empty());
+        assert!(library::search(&root, "MIDI").unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_and_promote_move_out_of_inbox_but_preserve_library_entry() {
+        let root = temp_root("archive");
+        let archive_id = seed_take(&root, "take-archive", b"a");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        move_recording_out_of_inbox(&root, &archive_id, recordings::archive).unwrap();
+        assert!(root.join("recordings/archive/take-archive").is_dir());
+        assert!(recordings::list(&root, None).unwrap().is_empty());
+        // The archived take leaves the Inbox but is not lost from the Library.
+        let archived_assets = library::search(&root, "take-archive").unwrap();
+        let archived = archived_assets
+            .iter()
+            .find(|asset| asset.kind == "recording")
+            .unwrap();
+        let archived_path = archived.path.as_deref().unwrap();
+        assert!(std::path::Path::new(archived_path).is_file());
+        let expected_archived_path = root
+            .join("recordings")
+            .join("archive")
+            .join("take-archive")
+            .join("processed.wav")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(archived_path, expected_archived_path.as_str());
+
+        let promote_id = seed_take(&root, "take-promote", b"b");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        move_recording_out_of_inbox(&root, &promote_id, recordings::promote).unwrap();
+        assert!(root.join("recordings/library/take-promote").is_dir());
+        assert!(!root.join("recordings/inbox/take-promote").exists());
+        let promoted = library::search(&root, "take-promote")
+            .unwrap()
+            .into_iter()
+            .find(|asset| asset.kind == "recording")
+            .unwrap();
+        assert!(std::path::Path::new(promoted.path.as_deref().unwrap()).is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detect_duplicates_groups_identical_takes() {
+        let root = temp_root("dupes");
+        seed_take(&root, "take-a", b"identical");
+        seed_take(&root, "take-b", b"identical");
+        seed_take(&root, "take-c", b"different");
+        let groups = recordings::detect_duplicates(&root).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tag_updates_library_index_for_recording() {
+        let root = temp_root("tag");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let updated =
+            tag_recording_impl(&root, &id, Some("idea".into()), Some("keep".into())).unwrap();
+        assert_eq!(updated.tag.as_deref(), Some("idea"));
+        let assets = recordings::list(&root, None).unwrap();
+        library::sync_recordings(&root, &assets).unwrap();
+        let reloaded = library::search(&root, "idea").unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].note.as_deref(), Some("keep"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_rejects_path_traversal_and_leaves_filesystem_unchanged() {
+        let root = temp_root("traversal");
+        let id = seed_take(&root, "take-a", b"processed");
+        assert!(rename_recording_impl(&root, &id, "../escape").is_err());
+        assert!(root.join("recordings/inbox/take-a").is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(all(test, feature = "ipc-integration"))]
+mod inbox_ipc_integration {
+    //! LIB-003 §4.3.2 Tauriコマンド契約 (test-strategy.md §4.3.2)。
+    //! `tauri::test::mock_builder()` + `get_ipc_response()` でコマンド登録・JSON引数のDTOデシリアライズ・
+    //! Managed State 受渡し・戻り値のシリアライズ・コマンドからユースケースが呼ばれること検証する。
+    //! `ipc-integration` は通常テストとは別に実行するIPC結合テスト用のオプトインfeature。
+    //! Windowsで実行できない場合は、WebView2ランタイムとローダーDLLの構成を切り分ける。
+    use super::{
+        AppState, archive_recording, delete_recording, detect_duplicate_recordings,
+        promote_recording, rename_recording, tag_recording,
+    };
+    use crate::model::ScratchSession;
+    use crate::native_audio::AudioSupervisor;
+    use crate::storage::now_ms;
+    use crate::{jobs, library, recordings};
+    use serde_json::{Value, json};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Mutex,
+    };
+    use tauri::ipc::{CallbackFn, InvokeBody};
+    use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+    use tauri::webview::InvokeRequest;
+
+    fn temp_root(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("riffra-inbox-ipc-{label}-{nanos}"))
+    }
+
+    fn seed_take(data_root: &Path, name: &str, processed: &[u8]) -> String {
+        let take = data_root.join("recordings").join("inbox").join(name);
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(take.join("raw.wav"), b"raw").unwrap();
+        fs::write(take.join("processed.wav"), processed).unwrap();
+        recordings::list(data_root, Some(name))
+            .unwrap()
+            .into_iter()
+            .find(|recording| recording.name == name)
+            .map(|recording| recording.id)
+            .unwrap()
+    }
+
+    fn build_app(data_root: PathBuf) -> tauri::App<tauri::test::MockRuntime> {
+        mock_builder()
+            .manage(AppState {
+                data_root,
+                session: Mutex::new(ScratchSession::new(now_ms())),
+                audio: AudioSupervisor::offline("integration test"),
+                recovered_from_generation: false,
+                migration_notice: None,
+                safe_mode: false,
+                jobs: jobs::JobRegistry::default(),
+            })
+            .invoke_handler(tauri::generate_handler![
+                rename_recording,
+                delete_recording,
+                archive_recording,
+                promote_recording,
+                detect_duplicate_recordings,
+                tag_recording,
+            ])
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds")
+    }
+
+    fn request(cmd: &str, body: Value) -> InvokeRequest {
+        InvokeRequest {
+            cmd: cmd.into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: "http://tauri.localhost".parse().unwrap(),
+            body: InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_string(),
+        }
+    }
+
+    #[test]
+    fn rename_command_contract_serializes_new_id() {
+        let root = temp_root("rename");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(
+            &webview,
+            request("rename_recording", json!({"id": id, "newName": "renamed"})),
+        );
+        let new_id = response
+            .expect("rename returns the new id")
+            .deserialize::<String>()
+            .unwrap();
+        assert!(new_id.ends_with("renamed"));
+        assert!(root.join("recordings/inbox/renamed").is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_command_contract_returns_ok() {
+        let root = temp_root("delete");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(&webview, request("delete_recording", json!({"id": id})));
+        assert!(response.is_ok());
+        assert!(!root.join("recordings/inbox/take-a").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detect_duplicates_command_contract_returns_groups() {
+        let root = temp_root("dupes");
+        seed_take(&root, "take-a", b"identical");
+        seed_take(&root, "take-b", b"identical");
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response =
+            get_ipc_response(&webview, request("detect_duplicate_recordings", json!({})));
+        let groups = response.unwrap().deserialize::<Vec<Vec<String>>>().unwrap();
+        assert_eq!(groups.len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_command_contract_rejects_invalid_dto() {
+        let root = temp_root("traversal");
+        let id = seed_take(&root, "take-a", b"processed");
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(
+            &webview,
+            request(
+                "rename_recording",
+                json!({"id": id, "newName": "../escape"}),
+            ),
+        );
+        let error = response.unwrap_err();
+        assert!(
+            error
+                .as_str()
+                .unwrap_or_default()
+                .contains("single folder name")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tag_command_contract_serializes_library_asset() {
+        let root = temp_root("tag");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(
+            &webview,
+            request(
+                "tag_recording",
+                json!({"id": id, "tag": "idea", "note": "keep"}),
+            ),
+        );
+        let asset = response
+            .unwrap()
+            .deserialize::<library::LibraryAsset>()
+            .unwrap();
+        assert_eq!(asset.tag.as_deref(), Some("idea"));
+        assert_eq!(asset.note.as_deref(), Some("keep"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_command_contract_updates_library_path() {
+        let root = temp_root("archive");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(&webview, request("archive_recording", json!({"id": id})));
+        assert!(response.is_ok());
+        let asset = library::search(&root, "take-a")
+            .unwrap()
+            .into_iter()
+            .find(|asset| asset.kind == "recording")
+            .unwrap();
+        assert!(std::path::Path::new(asset.path.as_deref().unwrap()).is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn promote_command_contract_updates_library_path() {
+        let root = temp_root("promote");
+        let id = seed_take(&root, "take-a", b"processed");
+        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        let app = build_app(root.clone());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = get_ipc_response(&webview, request("promote_recording", json!({"id": id})));
+        assert!(response.is_ok());
+        let asset = library::search(&root, "take-a")
+            .unwrap()
+            .into_iter()
+            .find(|asset| asset.kind == "recording")
+            .unwrap();
+        assert!(std::path::Path::new(asset.path.as_deref().unwrap()).is_file());
+        let _ = fs::remove_dir_all(root);
     }
 }

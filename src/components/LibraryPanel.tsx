@@ -1,5 +1,6 @@
 import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
 import { librarySections } from '@/constants';
+import type { InboxController } from '@/hooks/useInbox';
 import { Icon } from './ui';
 
 interface LibraryPanelProps {
@@ -26,9 +27,10 @@ interface LibraryPanelProps {
     count: number;
     onOpenRecording: (recording: RecordingAsset) => void;
   };
+  inbox: InboxController;
 }
 
-export function LibraryPanel({ library, rack, recordings }: LibraryPanelProps) {
+export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelProps) {
   return (
     <aside className="library-panel">
       <div className="panel-heading">
@@ -146,36 +148,85 @@ export function LibraryPanel({ library, rack, recordings }: LibraryPanelProps) {
           </>
         ) : library.section === 'Recordings' ? (
           <>
+            <button
+              className="text-button"
+              aria-label="Find duplicates"
+              onClick={() => void inbox.detectDuplicates()}
+            >
+              Find duplicates
+            </button>
             {recordings.visibleRecordings.slice(0, 12).map((recording) => (
-              <button
-                className="plugin-row recording-row"
+              <div
+                className={[
+                  'plugin-row',
+                  'recording-row',
+                  inbox.selectedId === recording.id ? 'selected' : '',
+                  inbox.duplicateIds.has(recording.id) ? 'duplicate' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 key={recording.id}
-                disabled={Boolean(recording.error)}
-                onClick={() => void recordings.onOpenRecording(recording)}
-                title={recording.error ?? recording.path}
               >
-                <span>{recording.state === 'completed' ? '✓' : '!'}</span>
-                <div>
-                  <strong>{recording.name}</strong>
-                  <small>
-                    {recording.error ??
-                      `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${
-                        recording.missingSamples
-                          ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
-                          : ''
-                      }${recording.midiPath ? ' · MIDI' : ''}`}
-                  </small>
-                </div>
-                <i
-                  className={`stability ${recording.state === 'completed' && !recording.error ? 'validated' : 'quarantined'}`}
-                />
-              </button>
+                <button
+                  className="recording-select"
+                  aria-label={`Select ${recording.name}`}
+                  disabled={Boolean(recording.error)}
+                  onClick={() => inbox.setSelectedId(recording.id)}
+                  title={recording.error ?? recording.path}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: recording.error ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <span>{recording.state === 'completed' ? '✓' : '!'}</span>
+                  <div>
+                    <strong>{recording.name}</strong>
+                    <small>
+                      {recording.error ??
+                        `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${
+                          recording.missingSamples
+                            ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
+                            : ''
+                        }${recording.midiPath ? ' · MIDI' : ''}`}
+                    </small>
+                  </div>
+                  <i
+                    className={`stability ${recording.state === 'completed' && !recording.error ? 'validated' : 'quarantined'}`}
+                  />
+                </button>
+              </div>
             ))}
             {recordings.visibleRecordings.length === 0 && (
               <div className="library-empty">
                 <span>まだ録音がありません</span>
                 <small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small>
               </div>
+            )}
+            {inbox.selected && (
+              <InboxOperations
+                recording={inbox.selected}
+                onPreview={() => void inbox.preview(inbox.selected!)}
+                onAnalyze={() => recordings.onOpenRecording(inbox.selected!)}
+                onRename={async () => {
+                  const name = window.prompt('Rename take', inbox.selected!.name);
+                  if (name && name.trim()) await inbox.rename(inbox.selected!.id, name.trim());
+                }}
+                onTag={async () => {
+                  const tag = window.prompt('Tag', '');
+                  const note = window.prompt('Note', '');
+                  if (tag != null) await inbox.tag(inbox.selected!.id, tag || null, note || null);
+                }}
+                onPromote={() => void inbox.promote(inbox.selected!.id)}
+                onArchive={() => void inbox.archive(inbox.selected!.id)}
+                onDelete={() => void inbox.remove(inbox.selected!.id)}
+              />
             )}
           </>
         ) : (
@@ -193,5 +244,59 @@ export function LibraryPanel({ library, rack, recordings }: LibraryPanelProps) {
         </div>
       </button>
     </aside>
+  );
+}
+
+interface InboxOperationsProps {
+  recording: RecordingAsset;
+  onPreview: () => void;
+  onAnalyze: () => void;
+  onRename: () => void;
+  onTag: () => void;
+  onPromote: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}
+
+function InboxOperations({
+  recording,
+  onPreview,
+  onAnalyze,
+  onRename,
+  onTag,
+  onPromote,
+  onArchive,
+  onDelete,
+}: InboxOperationsProps) {
+  return (
+    <div className="inbox-operations" aria-label={`Inbox operations for ${recording.name}`}>
+      <header>
+        <strong>{recording.name}</strong>
+        <small>{recording.state}</small>
+      </header>
+      <div className="inbox-actions">
+        <button className="text-button" aria-label="Preview" onClick={onPreview}>
+          Preview
+        </button>
+        <button className="text-button" aria-label="Analyze" onClick={onAnalyze}>
+          Analyze
+        </button>
+        <button className="text-button" aria-label="Rename" onClick={onRename}>
+          Rename
+        </button>
+        <button className="text-button" aria-label="Tag" onClick={onTag}>
+          Tag
+        </button>
+        <button className="text-button" aria-label="Promote" onClick={onPromote}>
+          Promote
+        </button>
+        <button className="text-button" aria-label="Archive" onClick={onArchive}>
+          Archive
+        </button>
+        <button className="text-button danger" aria-label="Delete" onClick={onDelete}>
+          Delete
+        </button>
+      </div>
+    </div>
   );
 }

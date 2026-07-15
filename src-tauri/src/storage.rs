@@ -127,8 +127,9 @@ impl SessionStore {
     /// explicitly instead of being silently discarded.
     fn read_session_with_migration(&self, path: &Path) -> Result<ScratchSession, SessionLoadError> {
         let payload = fs::read(path).map_err(SessionLoadError::Corrupt)?;
-        let session: ScratchSession = serde_json::from_slice(&payload)
-            .map_err(|error| SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error)))?;
+        let session: ScratchSession = serde_json::from_slice(&payload).map_err(|error| {
+            SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error))
+        })?;
         if session.format_version != CURRENT_SESSION_FORMAT {
             let backup_path = self.write_migration_backup(path, &payload)?;
             return Err(SessionLoadError::UnsupportedFormat(MigrationNotice {
@@ -137,9 +138,9 @@ impl SessionStore {
                 backup_path,
             }));
         }
-        session
-            .validate_and_normalize()
-            .map_err(|error| SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error)))
+        session.validate_and_normalize().map_err(|error| {
+            SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error))
+        })
     }
 
     fn write_migration_backup(&self, original: &Path, payload: &[u8]) -> io::Result<PathBuf> {
@@ -147,10 +148,8 @@ impl SessionStore {
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or("current");
-        let backup_path = original.with_file_name(format!(
-            "{stem}.{MIGRATION_BACKUP_TAG}.{}.json",
-            now_ms()
-        ));
+        let backup_path =
+            original.with_file_name(format!("{stem}.{MIGRATION_BACKUP_TAG}.{}.json", now_ms()));
         fs::write(&backup_path, payload)?;
         Ok(backup_path)
     }
@@ -526,10 +525,7 @@ mod tests {
         store.save(&session).unwrap();
         let loaded = read_session(&root.join("scratch/current.json")).unwrap();
         let device = loaded.rack.last().expect("rack device preserved");
-        assert_eq!(
-            device.state_data.as_deref(),
-            Some("opaque-vst3-state-blob")
-        );
+        assert_eq!(device.state_data.as_deref(), Some("opaque-vst3-state-blob"));
         assert!(device.bypassed);
         assert_eq!(device.gain_db, -6.0);
         assert_eq!(device.parameter_values, vec![0.8, 0.3]);
@@ -686,7 +682,10 @@ mod tests {
             .expect("unsupported format must be reported explicitly");
         assert_eq!(notice.found_format, 0);
         assert_eq!(notice.expected_format, CURRENT_SESSION_FORMAT);
-        assert!(notice.backup_path.is_file(), "pre-conversion backup must exist");
+        assert!(
+            notice.backup_path.is_file(),
+            "pre-conversion backup must exist"
+        );
         let backup: ScratchSession =
             serde_json::from_slice(&fs::read(&notice.backup_path).unwrap()).unwrap();
         assert_eq!(

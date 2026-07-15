@@ -78,6 +78,8 @@ export interface FakeNativeApiOptions {
   recordingSamples?: number;
   /** Missing files/plugins the open session references (PRJ-004). */
   missingDependencies?: MissingDependency[];
+  /** Deterministic audio-content keys used by duplicate detection tests. */
+  duplicateContent?: Record<string, string>;
 }
 
 /**
@@ -100,6 +102,7 @@ export class FakeNativeApi implements NativeApi {
   pluginParameters: PluginParameter[];
   recordingSamples: number;
   missing: MissingDependency[];
+  private duplicateContent: Record<string, string>;
   private recordingCounter = 0;
   private renderCounter = 0;
   private jobCounter = 0;
@@ -114,6 +117,7 @@ export class FakeNativeApi implements NativeApi {
     this.pluginParameters = options.pluginParameters ?? [];
     this.recordingSamples = options.recordingSamples ?? 22_050;
     this.missing = options.missingDependencies ?? [];
+    this.duplicateContent = options.duplicateContent ?? {};
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
   }
 
@@ -255,6 +259,86 @@ export class FakeNativeApi implements NativeApi {
   relatedLibraryAssets = async (_id: string): Promise<LibraryAsset[]> => {
     this.calls.push('relatedLibraryAssets');
     return [];
+  };
+
+  renameRecording = async (id: string, name: string): Promise<string> => {
+    this.calls.push('renameRecording');
+    const recording = this.recordings.find((item) => item.id === id);
+    if (!recording) throw new Error('Recording take was not found.');
+    const directory = recording.path.replace(/[\\/][^\\/]+$/, '');
+    const nextPath = `${directory}\\${name}`;
+    const replacePath = (path: string | null) =>
+      path?.startsWith(recording.path) ? `${nextPath}${path.slice(recording.path.length)}` : path;
+    const nextId = `recording:${nextPath}`;
+    this.recordings = this.recordings.map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            id: nextId,
+            name,
+            path: nextPath,
+            rawPath: replacePath(item.rawPath),
+            processedPath: replacePath(item.processedPath),
+            midiPath: replacePath(item.midiPath),
+          }
+        : item,
+    );
+    return nextId;
+  };
+
+  deleteRecording = async (id: string): Promise<void> => {
+    this.calls.push('deleteRecording');
+    if (!this.recordings.some((recording) => recording.id === id))
+      throw new Error('Recording take was not found.');
+    this.recordings = this.recordings.filter((recording) => recording.id !== id);
+  };
+
+  archiveRecording = async (id: string): Promise<void> => {
+    this.calls.push('archiveRecording');
+    if (!this.recordings.some((recording) => recording.id === id))
+      throw new Error('Recording take was not found.');
+    this.recordings = this.recordings.filter((recording) => recording.id !== id);
+  };
+
+  promoteRecording = async (id: string): Promise<void> => {
+    this.calls.push('promoteRecording');
+    if (!this.recordings.some((recording) => recording.id === id))
+      throw new Error('Recording take was not found.');
+    this.recordings = this.recordings.filter((recording) => recording.id !== id);
+  };
+
+  tagRecording = async (
+    id: string,
+    tag: string | null,
+    note: string | null,
+  ): Promise<LibraryAsset | null> => {
+    this.calls.push('tagRecording');
+    const recording = this.recordings.find((item) => item.id === id);
+    if (!recording) throw new Error('Recording take was not found.');
+    return {
+      id: id.startsWith('recording:') ? id : `recording:${id}`,
+      name: recording.name,
+      kind: 'recording',
+      path: recording.processedPath ?? recording.rawPath ?? null,
+      tag,
+      note,
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      stability: 'validated',
+    };
+  };
+
+  detectDuplicateRecordings = async (): Promise<string[][]> => {
+    this.calls.push('detectDuplicateRecordings');
+    const byContent = new Map<string, string[]>();
+    for (const recording of this.recordings) {
+      const content = this.duplicateContent[recording.id];
+      if (content == null) continue;
+      const group = byContent.get(content) ?? [];
+      group.push(recording.id);
+      byContent.set(content, group);
+    }
+    return [...byContent.values()].filter((group) => group.length > 1);
   };
 
   analyzeAudio = async (path: string): Promise<AudioAnalysis | null> => {

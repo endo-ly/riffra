@@ -2,7 +2,7 @@ use crate::{
     model::ScratchSession, plugins::PluginEntry, recordings::RecordingAsset, storage::now_ms,
 };
 use rusqlite::{Connection, Row, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,7 +10,7 @@ use std::{
 
 const SEARCH_LIMIT: i64 = 200;
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryAsset {
     pub id: String,
@@ -72,6 +72,35 @@ fn upsert(connection: &Connection, asset: &LibraryAsset) -> Result<(), String> {
                 path = excluded.path,
                 tag = excluded.tag,
                 note = excluded.note,
+                updated_at_ms = excluded.updated_at_ms,
+                stability = excluded.stability",
+            params![
+                asset.id,
+                asset.name,
+                asset.kind,
+                asset.path,
+                asset.tag,
+                asset.note,
+                asset.created_at_ms.map(|value| value as i64),
+                asset.updated_at_ms.map(|value| value as i64),
+                asset.stability,
+            ],
+        )
+        .map_err(|error| format!("Library asset could not be indexed: {error}"))?;
+    Ok(())
+}
+
+fn upsert_preserving_metadata(connection: &Connection, asset: &LibraryAsset) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO assets (id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                kind = excluded.kind,
+                path = excluded.path,
+                tag = COALESCE(assets.tag, excluded.tag),
+                note = COALESCE(assets.note, excluded.note),
                 updated_at_ms = excluded.updated_at_ms,
                 stability = excluded.stability",
             params![
@@ -196,10 +225,14 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
     let connection = open(data_root)?;
     let indexed_at = now_ms();
     for recording in recordings {
-        upsert(
+        let recording_id = recording_asset_id(&recording.id);
+        let recording_key = recording_id
+            .strip_prefix("recording:")
+            .unwrap_or(recording_id.as_str());
+        upsert_preserving_metadata(
             &connection,
             &LibraryAsset {
-                id: format!("recording:{}", recording.id),
+                id: recording_id.clone(),
                 name: recording.name.clone(),
                 kind: "recording".into(),
                 path: recording
@@ -223,8 +256,8 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
             },
         )?;
         if let Some(midi_path) = recording.midi_path.as_ref() {
-            let midi_id = format!("midi:{}", recording.id);
-            upsert(
+            let midi_id = format!("midi:{recording_key}");
+            upsert_preserving_metadata(
                 &connection,
                 &LibraryAsset {
                     id: midi_id.clone(),
@@ -243,8 +276,8 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
             )?;
             connection
                 .execute(
-                    "INSERT OR IGNORE INTO asset_relations (asset_id, related_asset_id, relation) VALUES (?1, ?2, 'derived-from')",
-                    params![midi_id, format!("recording:{}", recording.id)],
+                "INSERT OR IGNORE INTO asset_relations (asset_id, related_asset_id, relation) VALUES (?1, ?2, 'derived-from')",
+                    params![midi_id, recording_id],
                 )
                 .map_err(|error| format!("Library MIDI recording relation could not be indexed: {error}"))?;
         }
@@ -313,6 +346,114 @@ pub fn update_metadata(
     statement
         .query_row(params![id], row_to_asset)
         .map_err(|error| format!("Library asset could not be read after update: {error}"))
+}
+
+pub fn recording_asset_id(id: &str) -> String {
+    if id.starts_with("recording:") {
+        id.to_owned()
+    } else {
+        format!("recording:{id}")
+    }
+}
+
+fn recording_key(id: &str) -> &str {
+    id.strip_prefix("recording:").unwrap_or(id)
+}
+
+pub fn remove_recording_assets(data_root: &Path, id: &str) -> Result<(), String> {
+    let key = recording_key(id);
+    let connection = open(data_root)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("Library cleanup transaction could not start: {error}"))?;
+    for asset_id in [format!("recording:{key}"), format!("midi:{key}")] {
+        transaction
+            .execute("DELETE FROM assets WHERE id = ?1", params![asset_id])
+            .map_err(|error| format!("Library asset could not be removed: {error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM asset_relations WHERE asset_id = ?1 OR related_asset_id = ?1",
+                params![asset_id],
+            )
+            .map_err(|error| format!("Library relation could not be removed: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Library cleanup could not be committed: {error}"))
+}
+
+pub fn relocate_recording(
+    data_root: &Path,
+    old_id: &str,
+    new_id: &str,
+    audio_path: Option<&str>,
+    midi_path: Option<&str>,
+) -> Result<(), String> {
+    let old_key = recording_key(old_id);
+    let new_key = recording_key(new_id);
+    if old_key == new_key {
+        return Ok(());
+    }
+    let old_recording_id = format!("recording:{old_key}");
+    let new_recording_id = format!("recording:{new_key}");
+    let old_midi_id = format!("midi:{old_key}");
+    let new_midi_id = format!("midi:{new_key}");
+    let new_name = Path::new(new_key)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Recording name could not be derived during relocation.".to_string())?;
+    let mut connection = open(data_root)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Library relocation transaction could not start: {error}"))?;
+    let changed = transaction
+        .execute(
+            "UPDATE assets SET id = ?1, name = ?2, path = ?3 WHERE id = ?4",
+            params![new_recording_id, new_name, audio_path, old_recording_id],
+        )
+        .map_err(|error| format!("Recording Library entry could not be relocated: {error}"))?;
+    if changed == 0 {
+        return Err("Recording Library entry was not found.".into());
+    }
+    transaction
+        .execute(
+            "UPDATE asset_relations SET asset_id = ?1 WHERE asset_id = ?2",
+            params![new_recording_id, old_recording_id],
+        )
+        .map_err(|error| format!("Recording Library relations could not be relocated: {error}"))?;
+    transaction
+        .execute(
+            "UPDATE asset_relations SET related_asset_id = ?1 WHERE related_asset_id = ?2",
+            params![new_recording_id, old_recording_id],
+        )
+        .map_err(|error| format!("Recording Library relations could not be relocated: {error}"))?;
+
+    transaction
+        .execute(
+            "UPDATE assets SET id = ?1, name = ?2, path = ?3 WHERE id = ?4",
+            params![
+                new_midi_id,
+                format!("{new_name} MIDI"),
+                midi_path,
+                old_midi_id
+            ],
+        )
+        .map_err(|error| format!("MIDI Library entry could not be relocated: {error}"))?;
+    transaction
+        .execute(
+            "UPDATE asset_relations SET asset_id = ?1 WHERE asset_id = ?2",
+            params![new_midi_id, old_midi_id],
+        )
+        .map_err(|error| format!("MIDI Library relations could not be relocated: {error}"))?;
+    transaction
+        .execute(
+            "UPDATE asset_relations SET related_asset_id = ?1 WHERE related_asset_id = ?2",
+            params![new_midi_id, old_midi_id],
+        )
+        .map_err(|error| format!("MIDI Library relations could not be relocated: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Library relocation could not be committed: {error}"))
 }
 
 pub fn related(data_root: &Path, id: &str) -> Result<Vec<LibraryAsset>, String> {

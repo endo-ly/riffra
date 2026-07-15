@@ -31,6 +31,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { workspaces } from '@/constants';
 import { useLibrary } from './useLibrary';
+import { useInbox } from './useInbox';
 import { useSession } from './useSession';
 import { useAudio } from './useAudio';
 
@@ -140,6 +141,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const activeJobId = useRef<string | null>(null);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
+  const reloadRecordings = useCallback(() => {
+    void listRecordings().then(setRecordings);
+  }, [listRecordings]);
+  const inbox = useInbox(api, recordings, { reload: reloadRecordings });
   const {
     librarySection,
     setLibrarySection,
@@ -931,6 +936,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     visiblePlugins,
     visibleRecordings,
     usableRecordings,
+    inbox,
     setScanMessage,
     api,
   };

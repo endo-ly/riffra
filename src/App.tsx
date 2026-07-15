@@ -45,6 +45,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     visiblePlugins,
     visibleRecordings,
     usableRecordings,
+    inbox,
     selectedLibraryAsset,
     relatedAssets,
     selectedPluginName,
@@ -220,6 +221,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           count: recordings.length,
           onOpenRecording: openRecordingAnalysis,
         }}
+        inbox={inbox}
       />
 
       <section className="workspace">

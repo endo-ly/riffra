@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -186,6 +186,24 @@ fn resolve_take_file(directory: &Path, file: Option<&str>, label: &str) -> Resul
         return Err(format!("{label} file is missing from the take directory."));
     }
     Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn media_paths(take_id: &str) -> Result<(Option<String>, Option<String>), String> {
+    let directory = Path::new(take_id.strip_prefix("recording:").unwrap_or(take_id));
+    let manifest = read_manifest(&directory.join("manifest.json"))?;
+    let processed = manifest
+        .processed_file
+        .as_deref()
+        .and_then(|file| resolve_take_file(directory, Some(file), "Processed").ok());
+    let raw = manifest
+        .raw_file
+        .as_deref()
+        .and_then(|file| resolve_take_file(directory, Some(file), "Raw").ok());
+    let midi = directory
+        .join("midi.json")
+        .is_file()
+        .then(|| directory.join("midi.json").to_string_lossy().into_owned());
+    Ok((processed.or(raw), midi))
 }
 
 fn validate_manifest(
@@ -406,6 +424,169 @@ pub fn save_provenance(directory: &Path, provenance: &RecordingProvenance) -> st
         }
     }
     Ok(())
+}
+
+/// Resolve a take identifier to its directory inside the Inbox, refusing
+/// anything that is not a direct child of `<data_root>/recordings/inbox`. This
+/// keeps every Inbox mutation inside the preservation zone and blocks path
+/// traversal (LIB-003).
+fn inbox_take_dir(data_root: &Path, take_id: &str) -> Result<PathBuf, String> {
+    let path_str = take_id.strip_prefix("recording:").unwrap_or(take_id).trim();
+    if path_str.is_empty() {
+        return Err("Recording take id is empty.".into());
+    }
+    let take_dir = PathBuf::from(path_str);
+    if !take_dir.is_dir() {
+        return Err("Recording take directory was not found.".into());
+    }
+    let inbox_root = data_root.join("recordings").join("inbox");
+    fs::create_dir_all(&inbox_root)
+        .map_err(|error| format!("Recording Inbox could not be prepared: {error}"))?;
+    let inbox_root = fs::canonicalize(&inbox_root)
+        .map_err(|error| format!("Recording Inbox could not be resolved: {error}"))?;
+    let take_dir = fs::canonicalize(&take_dir)
+        .map_err(|error| format!("Recording take could not be resolved: {error}"))?;
+    let relative = take_dir
+        .strip_prefix(&inbox_root)
+        .map_err(|_| "Recording take is not inside the Inbox.".to_string())?;
+    if relative.components().count() != 1
+        || !matches!(relative.components().next(), Some(Component::Normal(_)))
+    {
+        return Err("Recording take must be a direct child of the Inbox.".into());
+    }
+    Ok(take_dir)
+}
+
+fn take_name(take_dir: &Path) -> Result<String, String> {
+    take_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_owned())
+        .ok_or_else(|| "Recording take name could not be read.".to_string())
+}
+
+fn display_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    value.strip_prefix("\\\\?\\").unwrap_or(&value).to_owned()
+}
+
+fn move_take(take_dir: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination.parent().unwrap_or(destination))
+        .map_err(|error| format!("Recording destination could not be prepared: {error}"))?;
+    if destination.exists() {
+        return Err("A recording already exists at the destination.".into());
+    }
+    fs::rename(take_dir, destination)
+        .map_err(|error| format!("Recording could not be moved: {error}"))
+}
+
+pub fn rename(data_root: &Path, take_id: &str, new_name: &str) -> Result<String, String> {
+    let take_dir = inbox_take_dir(data_root, take_id)?;
+    let name = new_name.trim();
+    if name.is_empty() || name == "." || name == ".." || Path::new(name).components().count() != 1 {
+        return Err("New take name must be a single folder name without separators.".into());
+    }
+    let destination = take_dir
+        .parent()
+        .ok_or_else(|| "Recording Inbox could not be resolved.".to_string())?
+        .join(name);
+    move_take(&take_dir, &destination)?;
+    Ok(format!("recording:{}", display_path(&destination)))
+}
+
+pub fn delete(data_root: &Path, take_id: &str) -> Result<(), String> {
+    let take_dir = inbox_take_dir(data_root, take_id)?;
+    fs::remove_dir_all(&take_dir)
+        .map_err(|error| format!("Recording could not be deleted: {error}"))
+}
+
+pub fn archive(data_root: &Path, take_id: &str) -> Result<String, String> {
+    let take_dir = inbox_take_dir(data_root, take_id)?;
+    let destination = data_root
+        .join("recordings")
+        .join("archive")
+        .join(take_name(&take_dir)?);
+    move_take(&take_dir, &destination)?;
+    Ok(format!("recording:{}", display_path(&destination)))
+}
+
+pub fn promote(data_root: &Path, take_id: &str) -> Result<String, String> {
+    let take_dir = inbox_take_dir(data_root, take_id)?;
+    let destination = data_root
+        .join("recordings")
+        .join("library")
+        .join(take_name(&take_dir)?);
+    move_take(&take_dir, &destination)?;
+    Ok(format!("recording:{}", display_path(&destination)))
+}
+
+fn hash_file(path: &Path) -> Result<u64, String> {
+    use std::hash::{Hash, Hasher};
+    let mut file =
+        fs::File::open(path).map_err(|error| format!("Audio file could not be opened: {error}"))?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut buffer = [0u8; 1 << 20];
+    use std::io::Read;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Audio file could not be read: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        buffer[..read].hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+/// Group Inbox takes that share identical primary audio content. The primary
+/// file is the processed WAV when present, otherwise the raw WAV. Returns only
+/// groups with more than one member (LIB-003 Duplicate Detection).
+pub fn detect_duplicates(data_root: &Path) -> Result<Vec<Vec<String>>, String> {
+    use std::collections::HashMap;
+    let inbox = data_root.join("recordings").join("inbox");
+    if !inbox.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = fs::read_dir(&inbox)
+        .map_err(|error| format!("Recording Inbox could not be read: {error}"))?;
+    let mut by_hash: HashMap<u64, Vec<String>> = HashMap::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Recording Inbox entry could not be read: {error}"))?;
+        let take_dir = entry.path();
+        if !take_dir.is_dir() {
+            continue;
+        }
+        let manifest = match read_manifest(&take_dir.join("manifest.json")) {
+            Ok(manifest) => manifest,
+            Err(_) => continue,
+        };
+        let primary = manifest
+            .processed_file
+            .as_deref()
+            .and_then(|file| resolve_take_file(&take_dir, Some(file), "Processed").ok())
+            .or_else(|| {
+                manifest
+                    .raw_file
+                    .as_deref()
+                    .and_then(|file| resolve_take_file(&take_dir, Some(file), "Raw").ok())
+            });
+        let Some(file) = primary else {
+            continue;
+        };
+        match hash_file(Path::new(&file)) {
+            Ok(hash) => by_hash
+                .entry(hash)
+                .or_default()
+                .push(format!("recording:{}", take_dir.to_string_lossy())),
+            Err(_) => continue,
+        }
+    }
+    Ok(by_hash
+        .into_values()
+        .filter(|group| group.len() > 1)
+        .collect())
 }
 
 #[cfg(test)]
@@ -677,6 +858,148 @@ mod tests {
         let events = read_midi_events(&path).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].note, 60);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn fixture_take(root: &Path, name: &str, processed: &[u8]) -> String {
+        let take = root.join("recordings/inbox").join(name);
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(take.join("raw.wav"), b"raw audio").unwrap();
+        fs::write(take.join("processed.wav"), processed).unwrap();
+        format!("recording:{}", take.to_string_lossy())
+    }
+
+    #[test]
+    fn renames_an_inbox_take_inside_the_preservation_zone() {
+        let root = temp_root();
+        let id = fixture_take(&root, "take-1", b"processed audio");
+        let renamed = rename(&root, &id, "take-renamed").unwrap();
+        assert!(renamed.ends_with("take-renamed"));
+        assert!(root.join("recordings/inbox/take-renamed").is_dir());
+        assert!(!root.join("recordings/inbox/take-1").exists());
+        assert!(rename(&root, &renamed, "../escape").is_err());
+        assert!(rename(&root, &renamed, "").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deletes_an_inbox_take() {
+        let root = temp_root();
+        let id = fixture_take(&root, "take-1", b"processed audio");
+        delete(&root, &id).unwrap();
+        assert!(!root.join("recordings/inbox/take-1").exists());
+        assert!(delete(&root, &id).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archives_and_promotes_an_inbox_take_out_of_the_inbox() {
+        let root = temp_root();
+        let id = fixture_take(&root, "take-1", b"processed audio");
+        archive(&root, &id).unwrap();
+        assert!(root.join("recordings/archive/take-1").is_dir());
+        assert!(!root.join("recordings/inbox/take-1").exists());
+
+        let promoted = fixture_take(&root, "take-2", b"processed audio 2");
+        promote(&root, &promoted).unwrap();
+        assert!(root.join("recordings/library/take-2").is_dir());
+        assert!(!root.join("recordings/inbox/take-2").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refuses_take_ids_outside_the_inbox() {
+        let root = temp_root();
+        let outside = root.join("recordings/elsewhere");
+        fs::create_dir_all(&outside).unwrap();
+        let id = format!("recording:{}", outside.to_string_lossy());
+        assert!(rename(&root, &id, "nope").is_err());
+        assert!(delete(&root, &id).is_err());
+        assert!(archive(&root, &id).is_err());
+        assert!(promote(&root, &id).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_duplicate_inbox_takes_by_audio_content() {
+        let root = temp_root();
+        let _a = fixture_take(&root, "take-a", b"identical processed");
+        let _b = fixture_take(&root, "take-b", b"identical processed");
+        let _c = fixture_take(&root, "take-c", b"different processed");
+        let duplicates = detect_duplicates(&root).unwrap();
+        assert_eq!(duplicates.len(), 1);
+        let group = &duplicates[0];
+        assert_eq!(group.len(), 2);
+        assert!(group.iter().any(|id| id.ends_with("take-a")));
+        assert!(group.iter().any(|id| id.ends_with("take-b")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reports_no_duplicates_when_all_takes_differ() {
+        let root = temp_root();
+        let _a = fixture_take(&root, "take-a", b"one");
+        let _b = fixture_take(&root, "take-b", b"two");
+        assert!(detect_duplicates(&root).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_detection_falls_back_to_raw_when_processed_is_missing() {
+        let root = temp_root();
+        let first = root.join("recordings/inbox/take-raw");
+        fs::create_dir_all(&first).unwrap();
+        fs::write(
+            first.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(first.join("raw.wav"), b"same raw audio").unwrap();
+
+        let second = root.join("recordings/inbox/take-processed");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(
+            second.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(second.join("raw.wav"), b"different raw audio").unwrap();
+        fs::write(second.join("processed.wav"), b"same raw audio").unwrap();
+
+        let duplicates = detect_duplicates(&root).unwrap();
+        assert_eq!(duplicates.len(), 1);
+        assert_eq!(duplicates[0].len(), 2);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_detection_never_hashes_manifest_paths_outside_the_take() {
+        let root = temp_root();
+        let outside = root.join("recordings/outside.wav");
+        fs::create_dir_all(outside.parent().unwrap()).unwrap();
+        fs::write(&outside, b"outside audio").unwrap();
+
+        let malicious = root.join("recordings/inbox/malicious");
+        fs::create_dir_all(&malicious).unwrap();
+        fs::write(
+            malicious.join("manifest.json"),
+            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"../../outside.wav","sampleRate":44100.0,"samplesWritten":44100}"#,
+        )
+        .unwrap();
+        fs::write(malicious.join("raw.wav"), b"safe audio").unwrap();
+
+        let normal = fixture_take(&root, "normal", b"outside audio");
+        let duplicates = detect_duplicates(&root).unwrap();
+        assert!(
+            duplicates.is_empty(),
+            "malicious manifest must not join normal take"
+        );
+        assert!(normal.starts_with("recording:"));
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -31,6 +31,8 @@ vendor/JUCE/
 .artifacts/
 *.tsbuildinfo
 src-tauri/gen/
+src-tauri/err.txt
+src-tauri/out.txt
 .husky/_
 .codex/
 .agents/

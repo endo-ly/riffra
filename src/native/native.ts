@@ -133,6 +133,34 @@ export async function listRecordings(query?: string): Promise<RecordingAsset[]> 
   }
 }
 
+export async function renameRecording(id: string, name: string): Promise<string> {
+  return invoke<string>('rename_recording', { id, newName: name });
+}
+
+export async function deleteRecording(id: string): Promise<void> {
+  await invoke('delete_recording', { id });
+}
+
+export async function archiveRecording(id: string): Promise<void> {
+  await invoke('archive_recording', { id });
+}
+
+export async function promoteRecording(id: string): Promise<void> {
+  await invoke('promote_recording', { id });
+}
+
+export async function tagRecording(
+  id: string,
+  tag: string | null,
+  note: string | null,
+): Promise<LibraryAsset | null> {
+  return await invoke<LibraryAsset>('tag_recording', { id, tag, note });
+}
+
+export async function detectDuplicateRecordings(): Promise<string[][]> {
+  return await invoke<string[][]>('detect_duplicate_recordings');
+}
+
 export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
   try {
@@ -536,6 +564,12 @@ export function createNativeApi(): NativeApi {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
+    renameRecording,
+    deleteRecording,
+    archiveRecording,
+    promoteRecording,
+    tagRecording,
+    detectDuplicateRecordings,
   };
 }
 
