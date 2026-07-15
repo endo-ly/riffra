@@ -578,7 +578,7 @@ export function WorkspaceArrange({
     });
   };
   return (
-    <div className="workspace-scroll arrange-view">
+    <div className="arrange-view">
       <section className="play-header">
         <div>
           <span className="eyebrow">NON-DESTRUCTIVE TIMELINE</span>

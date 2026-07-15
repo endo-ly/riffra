@@ -469,6 +469,45 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_render_never_creates_a_completed_or_partial_output() {
+        let root = std::env::temp_dir().join(format!("riffra-render-cancel-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.wav");
+        write_mono_test_wav(&source);
+        let mut session = ScratchSession::new(now_ms());
+        session.timeline.push(crate::model::TimelineClip {
+            id: "clip:cancel".into(),
+            asset_path: source.to_string_lossy().into_owned(),
+            name: "cancel".into(),
+            track_id: "main".into(),
+            start_ms: 0,
+            duration_ms: 100,
+            source_in_ms: 0,
+            source_out_ms: 0,
+            loop_enabled: false,
+            gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
+            muted: false,
+        });
+        let cancelled = AtomicBool::new(true);
+
+        let result = render_timeline_with_options_cancel(
+            &root,
+            &session,
+            99,
+            RenderOptions::default(),
+            Some(&cancelled),
+        );
+
+        assert!(result.is_err());
+        assert!(!root.join("exports/render-99/timeline.wav").exists());
+        assert!(!root.join("exports/render-99/timeline.wav.partial").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn applies_bounded_master_gain_after_clip_mix() {
         let mut samples = vec![0.5_f32, -0.5, f32::NAN, 2.0];
         apply_master_gain(&mut samples, -6.0);

@@ -272,7 +272,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           />
         )}
         {session.workspace === 'arrange' && (
-          <>
+          <div className="workspace-scroll arrange-workspace-stack">
             <WorkspaceArrange
               session={session}
               setSession={setSession}
@@ -297,7 +297,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               onStop={() => void stopTimelinePreview()}
               previewing={renderPreviewing}
             />
-          </>
+          </div>
         )}
         {session.workspace === 'sample' && (
           <>
