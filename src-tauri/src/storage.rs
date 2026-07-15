@@ -1,4 +1,5 @@
-use crate::model::{RecoveryCandidate, ScratchSession};
+use crate::model::{CURRENT_SESSION_FORMAT, RecoveryCandidate, ScratchSession};
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -8,6 +9,57 @@ use std::{
 
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
+const MIGRATION_BACKUP_TAG: &str = "migration-backup";
+
+/// Result of loading the active session, including how the load resolved.
+#[derive(Debug, Clone)]
+pub struct LoadedSession {
+    pub session: ScratchSession,
+    pub recovered_from_generation: bool,
+    pub migration: Option<MigrationNotice>,
+}
+
+/// Explicit record produced when a session file uses an unsupported format version.
+///
+/// The original file is never modified or deleted by the migration reader; a byte-identical
+/// backup is written before any fallback so the user's data stays recoverable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationNotice {
+    pub found_format: u32,
+    pub expected_format: u32,
+    pub backup_path: PathBuf,
+}
+
+/// Failure mode while reading a session file.
+#[derive(Debug)]
+pub enum SessionLoadError {
+    Corrupt(io::Error),
+    UnsupportedFormat(MigrationNotice),
+}
+
+impl From<io::Error> for SessionLoadError {
+    fn from(error: io::Error) -> Self {
+        SessionLoadError::Corrupt(error)
+    }
+}
+
+impl std::fmt::Display for SessionLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionLoadError::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
+            SessionLoadError::UnsupportedFormat(notice) => write!(
+                formatter,
+                "session format {} is unsupported (expected {}); original backed up to {}",
+                notice.found_format,
+                notice.expected_format,
+                notice.backup_path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SessionLoadError {}
 
 #[derive(Debug)]
 pub struct SessionStore {
@@ -29,22 +81,87 @@ impl SessionStore {
         fs::create_dir_all(&self.generations_dir)
     }
 
-    pub fn load_or_create(&self) -> io::Result<(ScratchSession, bool)> {
+    pub fn load_or_create(&self) -> Result<LoadedSession, SessionLoadError> {
         self.ensure_layout()?;
         let current = self.scratch_dir.join("current.json");
-        if let Ok(session) = read_session(&current) {
-            return Ok((session, false));
+        let mut migration_notice = None;
+        if current.is_file() {
+            match self.read_session_with_migration(&current) {
+                Ok(session) => {
+                    return Ok(LoadedSession {
+                        session,
+                        recovered_from_generation: false,
+                        migration: None,
+                    });
+                }
+                Err(SessionLoadError::UnsupportedFormat(notice)) => {
+                    // The original file stays on disk and a byte-identical backup already exists,
+                    // so falling back must not lose data. The mismatch is reported explicitly.
+                    migration_notice = Some(notice);
+                }
+                Err(SessionLoadError::Corrupt(_)) => {
+                    // Unreadable current file: fall through to the newest valid generation.
+                }
+            }
         }
 
-        for candidate in self.generation_files_newest_first()? {
-            if let Ok(session) = read_session(&candidate) {
-                return Ok((session, true));
-            }
+        if let Some(session) = self.newest_valid_generation()? {
+            return Ok(LoadedSession {
+                session,
+                recovered_from_generation: true,
+                migration: migration_notice,
+            });
         }
 
         let session = ScratchSession::new(now_ms());
         self.save(&session)?;
-        Ok((session, false))
+        Ok(LoadedSession {
+            session,
+            recovered_from_generation: false,
+            migration: migration_notice,
+        })
+    }
+
+    /// Reads the active session and confirms its format version. On a version mismatch a
+    /// pre-conversion backup of the original bytes is written and the mismatch is reported
+    /// explicitly instead of being silently discarded.
+    fn read_session_with_migration(&self, path: &Path) -> Result<ScratchSession, SessionLoadError> {
+        let payload = fs::read(path).map_err(SessionLoadError::Corrupt)?;
+        let session: ScratchSession = serde_json::from_slice(&payload)
+            .map_err(|error| SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error)))?;
+        if session.format_version != CURRENT_SESSION_FORMAT {
+            let backup_path = self.write_migration_backup(path, &payload)?;
+            return Err(SessionLoadError::UnsupportedFormat(MigrationNotice {
+                found_format: session.format_version,
+                expected_format: CURRENT_SESSION_FORMAT,
+                backup_path,
+            }));
+        }
+        session
+            .validate_and_normalize()
+            .map_err(|error| SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error)))
+    }
+
+    fn write_migration_backup(&self, original: &Path, payload: &[u8]) -> io::Result<PathBuf> {
+        let stem = original
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("current");
+        let backup_path = original.with_file_name(format!(
+            "{stem}.{MIGRATION_BACKUP_TAG}.{}.json",
+            now_ms()
+        ));
+        fs::write(&backup_path, payload)?;
+        Ok(backup_path)
+    }
+
+    fn newest_valid_generation(&self) -> io::Result<Option<ScratchSession>> {
+        for candidate in self.generation_files_newest_first()? {
+            if let Ok(session) = read_session(&candidate) {
+                return Ok(Some(session));
+            }
+        }
+        Ok(None)
     }
 
     pub fn save(&self, session: &ScratchSession) -> io::Result<()> {
@@ -237,9 +354,10 @@ mod tests {
         store.save(&second).unwrap();
         fs::write(root.join("scratch/current.json"), b"not json").unwrap();
 
-        let (recovered, used_generation) = store.load_or_create().unwrap();
-        assert!(used_generation);
-        assert_eq!(recovered.note, "recover me");
+        let loaded = store.load_or_create().unwrap();
+        assert!(loaded.recovered_from_generation);
+        assert_eq!(loaded.session.note, "recover me");
+        assert!(loaded.migration.is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -257,9 +375,10 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         let restored = store.restore_generation(&candidates[0].file_name).unwrap();
         assert_eq!(restored.note, "stable choice");
-        let (current, recovered) = store.load_or_create().unwrap();
-        assert!(!recovered);
-        assert_eq!(current.note, "stable choice");
+        let loaded = store.load_or_create().unwrap();
+        assert!(!loaded.recovered_from_generation);
+        assert_eq!(loaded.session.note, "stable choice");
+        assert!(loaded.migration.is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -433,9 +552,10 @@ mod tests {
             "too many generations kept: {}",
             candidates.len()
         );
-        let (recovered, used_generation) = store.load_or_create().unwrap();
-        assert!(!used_generation);
-        assert_eq!(recovered.note, newest.note);
+        let loaded = store.load_or_create().unwrap();
+        assert!(!loaded.recovered_from_generation);
+        assert_eq!(loaded.session.note, newest.note);
+        assert!(loaded.migration.is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -460,5 +580,88 @@ mod tests {
         let normalized = session.validate_and_normalize().unwrap();
         assert_eq!(normalized.sample_pads[0].midi_key, 36);
         assert_eq!(normalized.sample_pads[0].end_ms, 1_000);
+    }
+
+    fn write_current_with_format(root: &Path, format_version: u32) {
+        let mut value = serde_json::to_value(ScratchSession::new(now_ms())).unwrap();
+        value["formatVersion"] = serde_json::Value::from(format_version);
+        let scratch = root.join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(
+            scratch.join("current.json"),
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn loads_current_format_without_migration() {
+        let root = test_root("migration-current");
+        let store = SessionStore::new(&root);
+        store.save(&ScratchSession::new(now_ms())).unwrap();
+        let loaded = store.load_or_create().unwrap();
+        assert!(loaded.migration.is_none());
+        assert!(!loaded.recovered_from_generation);
+        assert_eq!(loaded.session.format_version, CURRENT_SESSION_FORMAT);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn backs_up_and_reports_unsupported_older_format() {
+        let root = test_root("migration-older");
+        write_current_with_format(&root, 0);
+        let store = SessionStore::new(&root);
+        let loaded = store.load_or_create().unwrap();
+        let notice = loaded
+            .migration
+            .expect("unsupported format must be reported explicitly");
+        assert_eq!(notice.found_format, 0);
+        assert_eq!(notice.expected_format, CURRENT_SESSION_FORMAT);
+        assert!(notice.backup_path.is_file(), "pre-conversion backup must exist");
+        let backup: ScratchSession =
+            serde_json::from_slice(&fs::read(&notice.backup_path).unwrap()).unwrap();
+        assert_eq!(
+            backup.format_version, 0,
+            "backup preserves the original format version"
+        );
+        assert!(
+            root.join("scratch/current.json").is_file(),
+            "original file is preserved on disk"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn backs_up_and_reports_newer_format() {
+        let root = test_root("migration-newer");
+        write_current_with_format(&root, 99);
+        let store = SessionStore::new(&root);
+        let loaded = store.load_or_create().unwrap();
+        let notice = loaded
+            .migration
+            .expect("unsupported format must be reported explicitly");
+        assert_eq!(notice.found_format, 99);
+        assert_eq!(notice.expected_format, CURRENT_SESSION_FORMAT);
+        assert!(notice.backup_path.is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovers_from_generation_when_format_unsupported() {
+        let root = test_root("migration-generation");
+        let store = SessionStore::new(&root);
+        let mut base = ScratchSession::new(now_ms());
+        base.note = "generation choice".into();
+        store.save(&base).unwrap();
+        store.save(&ScratchSession::new(now_ms())).unwrap();
+        write_current_with_format(&root, 0);
+        let loaded = store.load_or_create().unwrap();
+        assert!(loaded.recovered_from_generation);
+        assert_eq!(loaded.session.note, "generation choice");
+        let notice = loaded
+            .migration
+            .expect("unsupported format must be reported explicitly");
+        assert_eq!(notice.found_format, 0);
+        let _ = fs::remove_dir_all(root);
     }
 }

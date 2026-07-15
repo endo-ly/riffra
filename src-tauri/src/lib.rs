@@ -21,7 +21,7 @@ use native_audio::AudioSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Mutex};
-use storage::{SessionStore, now_ms};
+use storage::{MigrationNotice, SessionStore, now_ms};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
 
@@ -32,6 +32,7 @@ struct AppState {
     session: Mutex<ScratchSession>,
     audio: AudioSupervisor,
     recovered_from_generation: bool,
+    migration_notice: Option<MigrationNotice>,
     safe_mode: bool,
     jobs: jobs::JobRegistry,
 }
@@ -42,6 +43,7 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
         session: state.session.lock().map_err(lock_error)?.clone(),
         recovered_from_generation: state.recovered_from_generation,
         safe_mode: state.safe_mode,
+        migration: state.migration_notice.clone(),
         native_available: true,
         recovery_candidates: SessionStore::new(&state.data_root)
             .recovery_candidates()
@@ -1025,8 +1027,10 @@ pub fn run() {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
             std::fs::create_dir_all(&data_root)?;
-            let (mut session, recovered_from_generation) =
-                SessionStore::new(&data_root).load_or_create()?;
+            let loaded = SessionStore::new(&data_root).load_or_create()?;
+            let mut session = loaded.session;
+            let recovered_from_generation = loaded.recovered_from_generation;
+            let migration_notice = loaded.migration;
             session.emergency_muted = true;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -1057,6 +1061,7 @@ pub fn run() {
                 session: Mutex::new(session),
                 audio,
                 recovered_from_generation,
+                migration_notice,
                 safe_mode,
                 jobs: jobs::JobRegistry::default(),
             });

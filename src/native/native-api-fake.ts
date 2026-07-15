@@ -691,6 +691,7 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
     recoveryCandidates: [],
     dataRoot: 'fake://data-root',
     vst3Root: defaultVst3Root,
+    migration: null,
     ...overrides,
   };
 }

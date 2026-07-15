@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::storage::MigrationNotice;
 
 pub const CURRENT_SESSION_FORMAT: u32 = 1;
 
@@ -584,6 +585,7 @@ pub struct BootstrapState {
     pub recovery_candidates: Vec<RecoveryCandidate>,
     pub data_root: String,
     pub vst3_root: String,
+    pub migration: Option<MigrationNotice>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
