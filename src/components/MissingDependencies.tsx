@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import type { MissingDependency } from '@/lib/domain';
 import { Icon } from './ui';
+import styles from './MissingDependencies.module.css';
 
 interface MissingDependenciesProps {
   missing: MissingDependency[];
@@ -26,7 +28,7 @@ export function MissingDependencies({
   if (missing.length === 0) return null;
 
   return (
-    <section className="missing-dependencies" aria-label="Missing dependencies">
+    <section className={styles.missingDependencies} aria-label="Missing dependencies">
       <header>
         <span className="eyebrow">MISSING DEPENDENCIES · {missing.length}</span>
         <p>
@@ -39,14 +41,14 @@ export function MissingDependencies({
           const key = `${item.kind}:${item.id}`;
           const newPath = relinkTargets[key] ?? '';
           return (
-            <li key={key} className={`missing-item missing-${item.kind}`}>
-              <div className="missing-detail">
+            <li key={key} className={clsx(styles.missingItem, `missing-${item.kind}`)}>
+              <div className={styles.missingDetail}>
                 <strong>{item.name}</strong>
-                <small className="missing-kind">{item.kind}</small>
-                <small className="missing-path">{item.path || 'no path stored'}</small>
-                <small className="missing-used-by">used by: {item.usedBy.join(', ')}</small>
+                <small className={styles.missingKind}>{item.kind}</small>
+                <small className={styles.missingPath}>{item.path || 'no path stored'}</small>
+                <small className={styles.missingUsedBy}>used by: {item.usedBy.join(', ')}</small>
               </div>
-              <div className="missing-actions">
+              <div className={styles.missingActions}>
                 <input
                   aria-label={`Relink path for ${item.name}`}
                   placeholder="Replacement path"
