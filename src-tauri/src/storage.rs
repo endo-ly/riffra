@@ -508,6 +508,75 @@ mod tests {
     }
 
     #[test]
+    fn preserves_plugin_state_through_storage_round_trip() {
+        let root = test_root("plugin-state");
+        let store = SessionStore::new(&root);
+        let mut session = ScratchSession::new(now_ms());
+        session.rack.push(RackDevice {
+            id: "plugin:amplitube".into(),
+            name: "AmpliTube 5".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3".into()),
+            bypassed: true,
+            gain_db: -6.0,
+            parameter_values: vec![0.8, 0.3],
+            state_data: Some("opaque-vst3-state-blob".into()),
+            disabled_placeholder: false,
+        });
+        store.save(&session).unwrap();
+        let loaded = read_session(&root.join("scratch/current.json")).unwrap();
+        let device = loaded.rack.last().expect("rack device preserved");
+        assert_eq!(
+            device.state_data.as_deref(),
+            Some("opaque-vst3-state-blob")
+        );
+        assert!(device.bypassed);
+        assert_eq!(device.gain_db, -6.0);
+        assert_eq!(device.parameter_values, vec![0.8, 0.3]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preserves_plugin_state_within_snapshot_round_trip() {
+        let root = test_root("plugin-snapshot");
+        let store = SessionStore::new(&root);
+        let mut session = ScratchSession::new(now_ms());
+        session.rack.push(RackDevice {
+            id: "plugin:valhalla".into(),
+            name: "ValhallaSupermassive".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\VST3\ValhallaSupermassive.vst3".into()),
+            bypassed: false,
+            gain_db: -3.0,
+            parameter_values: vec![0.25, 0.5, 0.75],
+            state_data: Some("opaque-snapshot-state".into()),
+            disabled_placeholder: false,
+        });
+        session.snapshots.push(SessionSnapshot {
+            id: "snapshot:B".into(),
+            name: "B".into(),
+            created_at_ms: now_ms(),
+            description: "Wet space".into(),
+            tag: None,
+            parent_id: None,
+            master_db: -12.0,
+            rack: session.rack.clone(),
+            macros: session.macros.clone(),
+        });
+        store.save(&session).unwrap();
+        let loaded = read_session(&root.join("scratch/current.json")).unwrap();
+        let device = loaded
+            .snapshots
+            .last()
+            .and_then(|snapshot| snapshot.rack.last())
+            .expect("snapshot rack preserved");
+        assert_eq!(device.state_data.as_deref(), Some("opaque-snapshot-state"));
+        assert_eq!(device.parameter_values, vec![0.25, 0.5, 0.75]);
+        assert_eq!(device.gain_db, -3.0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn preserves_non_destructive_timeline_clip() {
         let mut session = ScratchSession::new(now_ms());
         session.timeline.push(TimelineClip {

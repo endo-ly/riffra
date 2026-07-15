@@ -250,4 +250,127 @@ mod tests {
         assert!(imported.timeline[0].asset_path.contains("assets"));
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn project_round_trip_preserves_full_content() {
+        let root = std::env::temp_dir().join(format!("riffra-project-roundtrip-{}", now_ms()));
+        let source = root.join("take.wav");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&source, b"wav").unwrap();
+
+        let mut session = ScratchSession::new(now_ms());
+        session.project_name = Some("Full Session".into());
+        session.workspace = crate::model::Workspace::Arrange;
+        session.audio_driver = Some("ASIO".into());
+        session.audio_sample_rate = Some(48_000);
+        session.audio_buffer_size = Some(480);
+        session.loop_enabled = true;
+        session.master_db = -12.0;
+        session.timeline.push(crate::model::TimelineClip {
+            id: "clip:take".into(),
+            asset_path: source.to_string_lossy().into_owned(),
+            name: "take".into(),
+            track_id: "main".into(),
+            start_ms: 0,
+            duration_ms: 100,
+            source_in_ms: 0,
+            source_out_ms: 0,
+            loop_enabled: false,
+            gain_db: -3.0,
+            fade_in_ms: 5,
+            fade_out_ms: 5,
+            pan: 0.25,
+            muted: false,
+        });
+        session.tracks.push(crate::model::TimelineTrack {
+            id: "bass".into(),
+            name: "Bass".into(),
+            gain_db: -6.0,
+            pan: -0.5,
+            muted: true,
+            solo: false,
+        });
+        session.rack.push(crate::model::RackDevice {
+            id: "plugin:rev".into(),
+            name: "Reverb".into(),
+            kind: crate::model::DeviceKind::Plugin,
+            path: Some(r"C:\VST3\reverb.vst3".into()),
+            bypassed: true,
+            gain_db: 0.0,
+            parameter_values: vec![0.1, 0.2, 0.3],
+            state_data: Some("opaque-plugin-state".into()),
+            disabled_placeholder: false,
+        });
+        session.midi_clips.push(crate::model::MidiClip {
+            id: "midi:1".into(),
+            name: "melody".into(),
+            start_ms: 0,
+            duration_ms: 500,
+            notes: vec![crate::model::MidiNote {
+                id: "n1".into(),
+                note: 60,
+                start_ms: 0,
+                duration_ms: 100,
+                velocity: 100,
+                channel: 1,
+            }],
+            muted: false,
+        });
+        session.ai_history.push(crate::model::AiChangeSet {
+            id: "ai:1".into(),
+            created_at_ms: now_ms(),
+            permission: "Apply".into(),
+            target: "clip:1".into(),
+            current_gain_db: 0.0,
+            proposed_gain_db: -3.0,
+            reason: "Match reference RMS".into(),
+            expected_effect: "Closer perceived level".into(),
+            risk: "Low · reversible".into(),
+            context: vec!["analysis".into(), "selectedClip".into()],
+            applied: true,
+        });
+        session.macros[0].value = 0.9_f32;
+
+        let exported = export(&root, &session, 7).unwrap();
+        assert_eq!(exported.asset_count, 1);
+
+        fs::remove_file(&source).unwrap();
+        let restored = import(Path::new(&exported.path)).unwrap();
+
+        assert_eq!(restored.project_name, session.project_name);
+        assert_eq!(restored.workspace, crate::model::Workspace::Arrange);
+        assert_eq!(restored.audio_driver.as_deref(), Some("ASIO"));
+        assert_eq!(restored.audio_sample_rate, Some(48_000));
+        assert_eq!(restored.audio_buffer_size, Some(480));
+        assert!(restored.loop_enabled);
+        assert_eq!(restored.master_db, -12.0);
+
+        assert_eq!(restored.timeline.len(), 1);
+        assert!(restored.timeline[0].asset_path.contains("assets"));
+        assert_eq!(restored.timeline[0].gain_db, -3.0);
+        assert_eq!(restored.timeline[0].pan, 0.25);
+
+        assert_eq!(restored.tracks.len(), 2);
+        let bass = restored.tracks.iter().find(|track| track.id == "bass").unwrap();
+        assert_eq!(bass.gain_db, -6.0);
+        assert!(bass.muted);
+
+        assert_eq!(restored.rack.len(), 4);
+        let plugin = restored.rack.iter().find(|device| device.id == "plugin:rev").unwrap();
+        assert!(plugin.bypassed);
+        assert_eq!(plugin.state_data.as_deref(), Some("opaque-plugin-state"));
+        assert_eq!(plugin.parameter_values, vec![0.1, 0.2, 0.3]);
+
+        assert_eq!(restored.midi_clips.len(), 1);
+        assert_eq!(restored.midi_clips[0].notes.len(), 1);
+        assert_eq!(restored.midi_clips[0].notes[0].note, 60);
+
+        assert_eq!(restored.ai_history.len(), 1);
+        assert_eq!(restored.ai_history[0].target, "clip:1");
+        assert_eq!(restored.ai_history[0].permission, "Apply");
+
+        assert!((restored.macros[0].value - 0.9_f32).abs() < f32::EPSILON);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }
