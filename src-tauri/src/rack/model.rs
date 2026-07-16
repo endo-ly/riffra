@@ -11,7 +11,7 @@
 //! definition it came from, and saving an edited instance always mints a *new*
 //! definition asset with a fresh id rather than overwriting the original.
 
-use crate::domain::asset::{Asset, AssetKind};
+use crate::asset::{Asset, AssetKind};
 use serde::{Deserialize, Serialize};
 
 /// Functional role of a slot in the rack signal chain.

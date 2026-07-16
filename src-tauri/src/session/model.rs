@@ -6,9 +6,9 @@
 //! settings. It deliberately does not own audio/MIDI file bodies, the Library
 //! index, recording files, or background-job state.
 
-use crate::domain::DomainError;
-use crate::domain::asset::AssetId;
-use crate::domain::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
+use crate::asset::AssetId;
+use crate::errors::DomainError;
+use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use serde::{Deserialize, Serialize};
 
 /// Current v2 session format version.
@@ -712,7 +712,7 @@ fn normalize_sample_pads(pads: &mut [SamplePad]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::asset::{Provenance, mint_asset_id};
+    use crate::asset::{Provenance, mint_asset_id};
 
     fn clip(track_id: &str, asset_id: AssetId) -> AudioClip {
         AudioClip {

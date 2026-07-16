@@ -1,6 +1,6 @@
 use crate::{
-    assets, domain::asset::AssetId, domain::session::CreativeSession, plugins::PluginEntry,
-    recordings::RecordingAsset, storage::now_ms,
+    asset, asset::AssetId, plugins::PluginEntry, recording::RecordingAsset,
+    session::CreativeSession, storage::now_ms,
 };
 use rusqlite::{Connection, Row, params};
 use serde::{Deserialize, Serialize};
@@ -147,7 +147,7 @@ pub fn sync_session(data_root: &Path, session: &CreativeSession) -> Result<(), S
         .rack
         .devices
         .iter()
-        .filter(|device| device.kind == crate::domain::rack::DeviceKind::Plugin)
+        .filter(|device| device.kind == crate::rack::DeviceKind::Plugin)
     {
         let id = format!("rack-device:{}", device.id);
         upsert(
@@ -330,9 +330,9 @@ pub fn update_metadata(
         .map(|value| value.trim().chars().take(16_384).collect::<String>())
         .filter(|value| !value.is_empty());
     if let Ok(asset_id) = AssetId::from_normalized(id)
-        && assets::load(data_root, &asset_id).is_some()
+        && asset::load(data_root, &asset_id).is_some()
     {
-        assets::update_metadata(data_root, &asset_id, tag.clone(), note.clone())?;
+        asset::update_metadata(data_root, &asset_id, tag.clone(), note.clone())?;
         let connection = open(data_root)?;
         return connection
             .query_row(
@@ -513,8 +513,8 @@ fn row_to_asset(row: &Row<'_>) -> rusqlite::Result<LibraryAsset> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::rack::{DeviceKind, RackDevice};
-    use crate::domain::session::CreativeSession;
+    use crate::rack::{DeviceKind, RackDevice};
+    use crate::session::CreativeSession;
 
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-library-{name}-{}", now_ms()))

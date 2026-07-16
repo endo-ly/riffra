@@ -10,7 +10,7 @@
 //!   instead of mutating an existing one;
 //! * only management metadata (name, tag, note) may change for a kept id.
 
-use crate::domain::DomainError;
+use crate::errors::DomainError;
 use serde::{Deserialize, Serialize};
 use std::{
     sync::atomic::{AtomicU64, Ordering},

@@ -1,6 +1,6 @@
-use crate::assets;
-use crate::domain::asset::{AssetId, AssetKind, Provenance};
-use crate::domain::session::CreativeSession;
+use crate::asset;
+use crate::asset::{AssetId, AssetKind, Provenance};
+use crate::session::CreativeSession;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -94,7 +94,7 @@ pub fn export(
         if assets.len() >= 256 {
             break;
         }
-        let Some(location) = assets::resolve_content_location(data_root, &asset_id) else {
+        let Some(location) = asset::resolve_content_location(data_root, &asset_id) else {
             assets.push(PackagedAsset {
                 asset_id: asset_id.clone(),
                 name: "missing".into(),
@@ -186,7 +186,7 @@ fn import_packaged_asset(
     if !packaged.is_file() {
         return Ok(());
     }
-    if let Some(existing) = assets::load(data_root, &asset.asset_id) {
+    if let Some(existing) = asset::load(data_root, &asset.asset_id) {
         if Path::new(&existing.content_location).is_file() {
             let existing_hash = hash_file(Path::new(&existing.content_location))?;
             if existing_hash != asset.content_hash {
@@ -202,7 +202,7 @@ fn import_packaged_asset(
         let destination = unique_import_destination(data_root, &asset.name, &packaged)?;
         fs::copy(&packaged, &destination)
             .map_err(|error| format!("Imported asset could not be restored: {error}"))?;
-        assets::register_with_id(
+        asset::register_with_id(
             data_root,
             &asset.asset_id,
             AssetKind::Audio,
@@ -215,7 +215,7 @@ fn import_packaged_asset(
     let destination = unique_import_destination(data_root, &asset.name, &packaged)?;
     fs::copy(&packaged, &destination)
         .map_err(|error| format!("Imported asset could not be copied: {error}"))?;
-    assets::register_with_id(
+    asset::register_with_id(
         data_root,
         &asset.asset_id,
         AssetKind::Audio,
@@ -316,15 +316,15 @@ fn hash_file(path: &Path) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::asset::{AssetId, AssetKind};
-    use crate::domain::session::{AudioClip, CreativeSession};
+    use crate::asset::{AssetId, AssetKind};
+    use crate::session::{AudioClip, CreativeSession};
     use crate::storage::now_ms;
 
     fn register(root: &Path, name: &str, content: &[u8]) -> AssetId {
         let path = root.join(name);
         fs::create_dir_all(root).unwrap();
         fs::write(&path, content).unwrap();
-        assets::register(root, AssetKind::Audio, name, &path.to_string_lossy(), None).unwrap()
+        asset::register(root, AssetKind::Audio, name, &path.to_string_lossy(), None).unwrap()
     }
 
     fn session_with_clip(root: &Path, asset_id: AssetId) -> CreativeSession {
@@ -376,7 +376,7 @@ mod tests {
         // record so import must restore the asset from the package.
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
-        let location = assets::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
         assert_eq!(fs::read(&location).unwrap(), b"wav-bytes");
         let _ = fs::remove_dir_all(root);
     }
@@ -390,7 +390,7 @@ mod tests {
         let exported = export(&root, &session, 9).unwrap();
 
         // Replace the canonical content with different bytes under the same id.
-        let location = assets::resolve_content_location(&root, &asset_id).unwrap();
+        let location = asset::resolve_content_location(&root, &asset_id).unwrap();
         fs::write(&location, b"different").unwrap();
 
         let result = import(&root, Path::new(&exported.path));

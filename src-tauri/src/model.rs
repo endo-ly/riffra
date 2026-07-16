@@ -1,14 +1,14 @@
 use crate::storage::MigrationNotice;
 use serde::{Deserialize, Serialize};
 
-// Shared production types live in `domain` and are re-exported here so existing
+// Shared production types live in feature modules and are re-exported here so existing
 // call sites keep resolving against a single definition. v1-only types (the
 // six-variant Workspace, asset-path TimelineClip/SamplePad, and ScratchSession)
 // remain below for migration reading only.
 #[cfg(test)]
-pub use crate::domain::rack::DeviceKind;
-pub use crate::domain::rack::{RackDevice, RackMacro};
-pub use crate::domain::session::{AiChangeSet, MidiClip, SessionSnapshot, Track as TimelineTrack};
+pub(crate) use crate::rack::DeviceKind;
+pub(crate) use crate::rack::{RackDevice, RackMacro};
+pub(crate) use crate::session::{AiChangeSet, MidiClip, SessionSnapshot, Track as TimelineTrack};
 
 pub const CURRENT_SESSION_FORMAT: u32 = 1;
 
@@ -482,7 +482,7 @@ pub struct RecoveryCandidate {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
-    pub session: crate::domain::session::CreativeSession,
+    pub session: crate::session::CreativeSession,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
     pub native_available: bool,

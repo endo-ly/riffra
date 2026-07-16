@@ -1,22 +1,23 @@
 mod analysis;
-mod assets;
+mod asset;
 mod diagnostics;
-mod domain;
+mod errors;
 mod jobs;
 mod library;
 mod midi;
-mod migration;
 mod missing;
 mod model;
 mod native_audio;
 mod plugins;
 mod projects;
-mod recordings;
+mod rack;
+mod recording;
 mod render;
 mod separation;
+mod session;
 mod storage;
 
-use crate::domain::session::{CreativeSession, SamplePad as DomainSamplePad};
+use crate::session::{CreativeSession, SamplePad as DomainSamplePad};
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
     SamplePad,
@@ -117,10 +118,10 @@ fn save_rack_definition(
     name: String,
     path: String,
     state: State<'_, AppState>,
-) -> Result<crate::domain::asset::AssetId, String> {
+) -> Result<crate::asset::AssetId, String> {
     let definition = {
         let session = state.session.lock().map_err(lock_error)?;
-        crate::domain::rack::RackDefinition::from_instance(&session.rack)
+        crate::rack::RackDefinition::from_instance(&session.rack)
     };
     let path = PathBuf::from(path);
     if path.as_os_str().is_empty() {
@@ -134,7 +135,7 @@ fn save_rack_definition(
         .map_err(|error| format!("Rack definition could not be encoded: {error}"))?;
     std::fs::write(&path, payload)
         .map_err(|error| format!("Rack definition could not be saved: {error}"))?;
-    assets::register_rack_definition(
+    asset::register_rack_definition(
         &state.data_root,
         &definition,
         &name,
@@ -143,14 +144,12 @@ fn save_rack_definition(
 }
 
 #[tauri::command]
-fn load_rack_definition(path: String) -> Result<crate::domain::rack::RackInstance, String> {
+fn load_rack_definition(path: String) -> Result<crate::rack::RackInstance, String> {
     let payload = std::fs::read(&path)
         .map_err(|error| format!("Rack definition could not be read: {error}"))?;
-    let definition: crate::domain::rack::RackDefinition = serde_json::from_slice(&payload)
+    let definition: crate::rack::RackDefinition = serde_json::from_slice(&payload)
         .map_err(|error| format!("Rack definition is invalid: {error}"))?;
-    Ok(crate::domain::rack::RackInstance::from_definition(
-        &definition,
-    ))
+    Ok(crate::rack::RackInstance::from_definition(&definition))
 }
 
 #[tauri::command]
@@ -461,8 +460,8 @@ fn cancel_background_job(
 fn list_recordings(
     state: State<'_, AppState>,
     query: Option<String>,
-) -> Result<Vec<recordings::RecordingAsset>, String> {
-    let assets = recordings::list(&state.data_root, query.as_deref())?;
+) -> Result<Vec<recording::RecordingAsset>, String> {
+    let assets = recording::list(&state.data_root, query.as_deref())?;
     library::sync_recordings(&state.data_root, &assets)?;
     Ok(assets)
 }
@@ -513,8 +512,8 @@ async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> 
 }
 
 #[tauri::command]
-fn read_midi_events(path: String) -> Result<Vec<recordings::MidiEvent>, String> {
-    recordings::read_midi_events(&PathBuf::from(path))
+fn read_midi_events(path: String) -> Result<Vec<recording::MidiEvent>, String> {
+    recording::read_midi_events(&PathBuf::from(path))
 }
 
 fn rename_recording_impl(
@@ -522,8 +521,8 @@ fn rename_recording_impl(
     id: &str,
     new_name: &str,
 ) -> Result<String, String> {
-    let new_id = recordings::rename(data_root, id, new_name)?;
-    let (audio_path, midi_path) = recordings::media_paths(&new_id)?;
+    let new_id = recording::rename(data_root, id, new_name)?;
+    let (audio_path, midi_path) = recording::media_paths(&new_id)?;
     library::relocate_recording(
         data_root,
         id,
@@ -533,7 +532,7 @@ fn rename_recording_impl(
     )?;
     let old_directory = id.strip_prefix("recording:").unwrap_or(id);
     let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
-    assets::relocate_content_location(data_root, old_directory, new_directory)?;
+    asset::relocate_content_location(data_root, old_directory, new_directory)?;
     Ok(new_id)
 }
 
@@ -547,7 +546,7 @@ fn rename_recording(
 }
 
 fn delete_recording_impl(data_root: &std::path::Path, id: &str) -> Result<(), String> {
-    recordings::delete(data_root, id)?;
+    recording::delete(data_root, id)?;
     library::remove_recording_assets(data_root, id)?;
     Ok(())
 }
@@ -563,7 +562,7 @@ fn move_recording_out_of_inbox(
     relocate: fn(&std::path::Path, &str) -> Result<String, String>,
 ) -> Result<String, String> {
     let new_id = relocate(data_root, id)?;
-    let (audio_path, midi_path) = recordings::media_paths(&new_id)?;
+    let (audio_path, midi_path) = recording::media_paths(&new_id)?;
     library::relocate_recording(
         data_root,
         id,
@@ -573,23 +572,23 @@ fn move_recording_out_of_inbox(
     )?;
     let old_directory = id.strip_prefix("recording:").unwrap_or(id);
     let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
-    assets::relocate_content_location(data_root, old_directory, new_directory)?;
+    asset::relocate_content_location(data_root, old_directory, new_directory)?;
     Ok(new_id)
 }
 
 #[tauri::command]
 fn archive_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    move_recording_out_of_inbox(&state.data_root, &id, recordings::archive)
+    move_recording_out_of_inbox(&state.data_root, &id, recording::archive)
 }
 
 #[tauri::command]
 fn promote_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    move_recording_out_of_inbox(&state.data_root, &id, recordings::promote)
+    move_recording_out_of_inbox(&state.data_root, &id, recording::promote)
 }
 
 #[tauri::command]
 fn detect_duplicate_recordings(state: State<'_, AppState>) -> Result<Vec<Vec<String>>, String> {
-    recordings::detect_duplicates(&state.data_root)
+    recording::detect_duplicates(&state.data_root)
 }
 
 fn tag_recording_impl(
@@ -698,7 +697,7 @@ fn relink_missing_dependency(
     new_path: String,
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
-    let asset_id = crate::domain::asset::AssetId::from_normalized(asset_id)
+    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     let mut session = state.session.lock().map_err(lock_error)?.clone();
     session = missing::relink(&state.data_root, &session, &asset_id, &new_path)?;
@@ -790,14 +789,14 @@ fn register_audio_asset(
     path: String,
     name: String,
     state: State<'_, AppState>,
-) -> Result<crate::domain::asset::AssetId, String> {
-    let provenance = crate::domain::asset::Provenance::imported();
-    if let Some(existing) = assets::find_by_content_location(&state.data_root, &path) {
+) -> Result<crate::asset::AssetId, String> {
+    let provenance = crate::asset::Provenance::imported();
+    if let Some(existing) = asset::find_by_content_location(&state.data_root, &path) {
         return Ok(existing);
     }
-    assets::register(
+    asset::register(
         &state.data_root,
-        crate::domain::asset::AssetKind::Audio,
+        crate::asset::AssetKind::Audio,
         &name,
         &path,
         Some(provenance),
@@ -809,12 +808,9 @@ fn resolve_asset_content_location(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let asset_id = crate::domain::asset::AssetId::from_normalized(asset_id)
+    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    Ok(assets::resolve_content_location(
-        &state.data_root,
-        &asset_id,
-    ))
+    Ok(asset::resolve_content_location(&state.data_root, &asset_id))
 }
 
 #[tauri::command]
@@ -839,7 +835,7 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     let directory = inbox.join(format!("take-{}", now_ms()));
     let mut status = state.audio.start_recording(&directory)?;
     let capture = state.session.lock().ok().map(|session| {
-        let mut capture = crate::domain::recording::RecordingCapture::start(
+        let mut capture = crate::recording::RecordingCapture::start(
             format!("capture:{}", directory.to_string_lossy()),
             session.session_id.clone(),
             now_ms(),
@@ -849,7 +845,7 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
         capture
     });
     if let Some(capture) = capture
-        && let Err(error) = recordings::save_capture_start(&directory, capture)
+        && let Err(error) = recording::save_capture_start(&directory, capture)
     {
         status.message = format!(
             "Recording started, but capture metadata could not be saved: {error}. Audio files remain active."
@@ -859,7 +855,7 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
         .session
         .lock()
         .ok()
-        .map(|session| recordings::RecordingProvenance {
+        .map(|session| recording::RecordingProvenance {
             recorded_at_ms: now_ms(),
             session_id: session.session_id.clone(),
             workspace: format!("{:?}", session.workspace).to_lowercase(),
@@ -869,7 +865,7 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
             source: "raw DI + processed safety path".into(),
         });
     if let Some(provenance) = provenance {
-        if let Err(error) = recordings::save_provenance(&directory, &provenance) {
+        if let Err(error) = recording::save_provenance(&directory, &provenance) {
             status.message = format!(
                 "Recording started, but provenance could not be saved: {error}. Audio files remain active."
             );
@@ -887,16 +883,16 @@ fn register_recording_outputs(
     directory: &std::path::Path,
 ) -> Result<(), String> {
     let take_id = format!("recording:{}", directory.to_string_lossy());
-    let (raw_path, processed_path, midi_path) = recordings::audio_paths(&take_id)?;
+    let (raw_path, processed_path, midi_path) = recording::audio_paths(&take_id)?;
     let raw_asset_id = raw_path
         .as_deref()
         .map(|path| {
-            assets::register(
+            asset::register(
                 data_root,
-                crate::domain::asset::AssetKind::Audio,
+                crate::asset::AssetKind::Audio,
                 "Raw recording",
                 path,
-                Some(crate::domain::asset::Provenance::recorded_root()),
+                Some(crate::asset::Provenance::recorded_root()),
             )
         })
         .transpose()?;
@@ -904,22 +900,22 @@ fn register_recording_outputs(
         .as_deref()
         .map(|path| {
             if let Some(source) = raw_asset_id.as_ref() {
-                assets::register_derived(
+                asset::register_derived(
                     data_root,
                     std::slice::from_ref(source),
-                    crate::domain::asset::AssetKind::Audio,
+                    crate::asset::AssetKind::Audio,
                     "Processed recording",
                     path,
-                    crate::domain::asset::ProvenanceOperation::Processed,
+                    crate::asset::ProvenanceOperation::Processed,
                     serde_json::Map::new(),
                 )
             } else {
-                assets::register(
+                asset::register(
                     data_root,
-                    crate::domain::asset::AssetKind::Audio,
+                    crate::asset::AssetKind::Audio,
                     "Processed recording",
                     path,
-                    Some(crate::domain::asset::Provenance::imported()),
+                    Some(crate::asset::Provenance::imported()),
                 )
             }
         })
@@ -927,16 +923,16 @@ fn register_recording_outputs(
     let midi_asset_id = midi_path
         .as_deref()
         .map(|path| {
-            assets::register(
+            asset::register(
                 data_root,
-                crate::domain::asset::AssetKind::Midi,
+                crate::asset::AssetKind::Midi,
                 "Recording MIDI",
                 path,
-                Some(crate::domain::asset::Provenance::recorded_root()),
+                Some(crate::asset::Provenance::recorded_root()),
             )
         })
         .transpose()?;
-    recordings::save_asset_ids(directory, raw_asset_id, processed_asset_id, midi_asset_id)
+    recording::save_asset_ids(directory, raw_asset_id, processed_asset_id, midi_asset_id)
         .map_err(|error| format!("Recording Asset IDs could not be saved: {error}"))
 }
 
@@ -1143,7 +1139,7 @@ fn configure_sample_pads(
         if pad.end_ms <= pad.start_ms {
             return Err(format!("Sample pad '{}' has an invalid slice.", pad.name));
         }
-        let content_location = assets::resolve_content_location(&state.data_root, &pad.asset_id)
+        let content_location = asset::resolve_content_location(&state.data_root, &pad.asset_id)
             .ok_or_else(|| format!("Sample pad '{}' references an unresolved asset.", pad.name))?;
         native_pads.push(SamplePad {
             id: pad.id.clone(),
@@ -1422,7 +1418,7 @@ mod tests {
         apply_effective_audio_settings, effective_audio_preference_message, parse_midi_probe,
         safe_mode_from_args,
     };
-    use crate::domain::session::CreativeSession;
+    use crate::session::CreativeSession;
 
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
@@ -1532,7 +1528,7 @@ mod inbox_integration {
         delete_recording_impl, move_recording_out_of_inbox, rename_recording_impl,
         tag_recording_impl,
     };
-    use crate::{library, recordings};
+    use crate::{library, recording};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1556,9 +1552,9 @@ mod inbox_integration {
         .unwrap();
         fs::write(take.join("raw.wav"), b"raw").unwrap();
         fs::write(take.join("processed.wav"), processed).unwrap();
-        // Use the id exactly as the production indexer emits it (recordings::list),
+        // Use the id exactly as the production indexer emits it (recording::list),
         // so Library lookups (recording:<id>) match the synced asset.
-        recordings::list(data_root, Some(name))
+        recording::list(data_root, Some(name))
             .unwrap()
             .into_iter()
             .find(|recording| recording.name == name)
@@ -1583,7 +1579,7 @@ mod inbox_integration {
         let root = temp_root("rename");
         let id = seed_take(&root, "take-a", b"processed");
         seed_midi(&root, "take-a");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let new_id = rename_recording_impl(&root, &id, "renamed").unwrap();
         assert!(new_id.ends_with("renamed"));
         let renamed = root.join("recordings/inbox/renamed");
@@ -1629,7 +1625,7 @@ mod inbox_integration {
         let root = temp_root("delete");
         let id = seed_take(&root, "take-a", b"processed");
         seed_midi(&root, "take-a");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         delete_recording_impl(&root, &id).unwrap();
         assert!(!root.join("recordings/inbox/take-a").exists());
         assert!(library::search(&root, "take-a").unwrap().is_empty());
@@ -1641,10 +1637,10 @@ mod inbox_integration {
     fn archive_and_promote_move_out_of_inbox_but_preserve_library_entry() {
         let root = temp_root("archive");
         let archive_id = seed_take(&root, "take-archive", b"a");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
-        move_recording_out_of_inbox(&root, &archive_id, recordings::archive).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
+        move_recording_out_of_inbox(&root, &archive_id, recording::archive).unwrap();
         assert!(root.join("recordings/archive/take-archive").is_dir());
-        assert!(recordings::list(&root, None).unwrap().is_empty());
+        assert!(recording::list(&root, None).unwrap().is_empty());
         // The archived take leaves the Inbox but is not lost from the Library.
         let archived_assets = library::search(&root, "take-archive").unwrap();
         let archived = archived_assets
@@ -1663,8 +1659,8 @@ mod inbox_integration {
         assert_eq!(archived_path, expected_archived_path.as_str());
 
         let promote_id = seed_take(&root, "take-promote", b"b");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
-        move_recording_out_of_inbox(&root, &promote_id, recordings::promote).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
+        move_recording_out_of_inbox(&root, &promote_id, recording::promote).unwrap();
         assert!(root.join("recordings/library/take-promote").is_dir());
         assert!(!root.join("recordings/inbox/take-promote").exists());
         let promoted = library::search(&root, "take-promote")
@@ -1682,7 +1678,7 @@ mod inbox_integration {
         seed_take(&root, "take-a", b"identical");
         seed_take(&root, "take-b", b"identical");
         seed_take(&root, "take-c", b"different");
-        let groups = recordings::detect_duplicates(&root).unwrap();
+        let groups = recording::detect_duplicates(&root).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);
         let _ = fs::remove_dir_all(root);
@@ -1692,11 +1688,11 @@ mod inbox_integration {
     fn tag_updates_library_index_for_recording() {
         let root = temp_root("tag");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let updated =
             tag_recording_impl(&root, &id, Some("idea".into()), Some("keep".into())).unwrap();
         assert_eq!(updated.tag.as_deref(), Some("idea"));
-        let assets = recordings::list(&root, None).unwrap();
+        let assets = recording::list(&root, None).unwrap();
         library::sync_recordings(&root, &assets).unwrap();
         let reloaded = library::search(&root, "idea").unwrap();
         assert_eq!(reloaded.len(), 1);
@@ -1725,10 +1721,10 @@ mod inbox_ipc_integration {
         AppState, archive_recording, delete_recording, detect_duplicate_recordings,
         promote_recording, rename_recording, tag_recording,
     };
-    use crate::model::ScratchSession;
     use crate::native_audio::AudioSupervisor;
+    use crate::session::CreativeSession;
     use crate::storage::now_ms;
-    use crate::{jobs, library, recordings};
+    use crate::{jobs, library, recording};
     use serde_json::{Value, json};
     use std::{
         fs,
@@ -1757,7 +1753,7 @@ mod inbox_ipc_integration {
         .unwrap();
         fs::write(take.join("raw.wav"), b"raw").unwrap();
         fs::write(take.join("processed.wav"), processed).unwrap();
-        recordings::list(data_root, Some(name))
+        recording::list(data_root, Some(name))
             .unwrap()
             .into_iter()
             .find(|recording| recording.name == name)
@@ -1769,7 +1765,7 @@ mod inbox_ipc_integration {
         mock_builder()
             .manage(AppState {
                 data_root,
-                session: Mutex::new(ScratchSession::new(now_ms())),
+                session: Mutex::new(CreativeSession::new(now_ms())),
                 audio: AudioSupervisor::offline("integration test"),
                 recovered_from_generation: false,
                 migration_notice: None,
@@ -1804,7 +1800,7 @@ mod inbox_ipc_integration {
     fn rename_command_contract_serializes_new_id() {
         let root = temp_root("rename");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let app = build_app(root.clone());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
@@ -1826,7 +1822,7 @@ mod inbox_ipc_integration {
     fn delete_command_contract_returns_ok() {
         let root = temp_root("delete");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let app = build_app(root.clone());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
@@ -1882,7 +1878,7 @@ mod inbox_ipc_integration {
     fn tag_command_contract_serializes_library_asset() {
         let root = temp_root("tag");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let app = build_app(root.clone());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
@@ -1907,7 +1903,7 @@ mod inbox_ipc_integration {
     fn archive_command_contract_updates_library_path() {
         let root = temp_root("archive");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let app = build_app(root.clone());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
@@ -1928,7 +1924,7 @@ mod inbox_ipc_integration {
     fn promote_command_contract_updates_library_path() {
         let root = temp_root("promote");
         let id = seed_take(&root, "take-a", b"processed");
-        library::sync_recordings(&root, &recordings::list(&root, None).unwrap()).unwrap();
+        library::sync_recordings(&root, &recording::list(&root, None).unwrap()).unwrap();
         let app = build_app(root.clone());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()

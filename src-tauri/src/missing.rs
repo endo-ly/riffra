@@ -1,7 +1,7 @@
-use crate::assets;
-use crate::domain::asset::{AssetId, AssetKind, Provenance};
-use crate::domain::rack::DeviceKind;
-use crate::domain::session::CreativeSession;
+use crate::asset;
+use crate::asset::{AssetId, AssetKind, Provenance};
+use crate::rack::DeviceKind;
+use crate::session::CreativeSession;
 use serde::Serialize;
 use std::path::Path;
 
@@ -23,7 +23,7 @@ pub struct MissingDependency {
 }
 
 fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
-    assets::resolve_content_location(data_root, asset_id)
+    asset::resolve_content_location(data_root, asset_id)
 }
 
 /// Collects every referenced audio asset or plugin binary whose content is not
@@ -126,7 +126,7 @@ pub fn relink(
         .and_then(|stem| stem.to_str())
         .filter(|name| !name.is_empty())
         .unwrap_or("audio");
-    let new_asset_id = assets::register(
+    let new_asset_id = asset::register(
         data_root,
         AssetKind::Audio,
         name,
@@ -163,9 +163,9 @@ pub fn mark_disabled_placeholder(session: &CreativeSession, device_id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::asset::AssetId;
-    use crate::domain::rack::{DeviceKind, RackDevice};
-    use crate::domain::session::{AudioClip, CreativeSession};
+    use crate::asset::AssetId;
+    use crate::rack::{DeviceKind, RackDevice};
+    use crate::session::{AudioClip, CreativeSession};
     use crate::storage::now_ms;
 
     fn root() -> std::path::PathBuf {
@@ -250,7 +250,7 @@ mod tests {
                 .iter()
                 .all(|clip| clip.asset_id != old_asset_id)
         );
-        let location = assets::resolve_content_location(&data_root, &new_id).unwrap();
+        let location = asset::resolve_content_location(&data_root, &new_id).unwrap();
         assert_eq!(location, replacement.to_string_lossy());
         let _ = std::fs::remove_dir_all(data_root);
     }

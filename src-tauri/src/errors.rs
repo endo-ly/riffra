@@ -1,28 +1,10 @@
-//! Riffra domain model.
-//!
-//! The domain owns the canonical production-state types and the rules that keep
-//! them consistent. Persistence ([`crate::storage`], [`crate::library`]) and the
-//! audio runtime ([`crate::native_audio`]) translate between these types and
-//! their storage/wire representations; they never redefine production rules.
-//!
-//! Layering:
-//! ```text
-//! asset  ->  rack  ->  session  ->  recording
-//! ```
-//! `asset` is the foundation; `rack`, `session`, and `recording` build on it.
-
-pub mod asset;
-pub mod rack;
-pub mod recording;
-pub mod session;
-
 use serde::{Deserialize, Serialize};
 
-/// A domain rule violation reported to callers as a structured error.
+/// A cross-feature rule violation reported to callers as a structured error.
 ///
 /// The display form is lower-case per repository convention.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum DomainError {
+pub(crate) enum DomainError {
     InvalidAssetId(String),
     InvalidProvenance(String),
     InvalidClip(String),

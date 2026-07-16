@@ -1,6 +1,5 @@
-use crate::domain::session::{CREATIVE_SESSION_FORMAT, CreativeSession};
-use crate::migration::migrate_v1_to_v2;
 use crate::model::{CURRENT_SESSION_FORMAT, ScratchSession};
+use crate::session::{CREATIVE_SESSION_FORMAT, CreativeSession, migrate_v1_to_v2};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -531,7 +530,7 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::rack::DeviceKind;
+    use crate::rack::DeviceKind;
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -609,14 +608,11 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
-        session.workspace = crate::domain::session::Workspace::Arrange;
+        session.workspace = crate::session::Workspace::Arrange;
         store.save(&session).unwrap();
         let loaded = store.load_or_create().unwrap();
         assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
-        assert_eq!(
-            loaded.session.workspace,
-            crate::domain::session::Workspace::Arrange
-        );
+        assert_eq!(loaded.session.workspace, crate::session::Workspace::Arrange);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let _ = fs::remove_dir_all(root);
     }
@@ -657,10 +653,7 @@ mod tests {
         let store = SessionStore::new(&root);
         let loaded = store.load_or_create().unwrap();
         assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
-        assert_eq!(
-            loaded.session.workspace,
-            crate::domain::session::Workspace::Design
-        );
+        assert_eq!(loaded.session.workspace, crate::session::Workspace::Design);
         let clip = &loaded.session.arrangement.audio_clips[0];
         assert_eq!(clip.position_ms, 100);
         assert!(clip.asset_id.as_str().starts_with("asset:"));

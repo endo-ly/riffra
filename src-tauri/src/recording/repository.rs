@@ -1,9 +1,7 @@
 use crate::{
-    domain::{
-        asset::AssetId,
-        recording::{RecordingCapture, RecordingCaptureStatus},
-    },
+    asset::AssetId,
     model::RackDevice,
+    recording::{RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };
 use serde::{Deserialize, Serialize};
@@ -432,7 +430,7 @@ pub fn save_asset_ids(
     capture.raw_audio_asset_id = manifest.raw_asset_id.clone();
     capture.processed_audio_asset_id = manifest.processed_asset_id.clone();
     capture.midi_asset_id = manifest.midi_asset_id.clone();
-    capture.dropout_information = crate::domain::recording::DropoutInformation {
+    capture.dropout_information = crate::recording::DropoutInformation {
         samples_written: manifest.samples_written.unwrap_or_default(),
         dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
         missing_samples: manifest.missing_samples.unwrap_or_default(),

@@ -1,7 +1,7 @@
 //! v1 -> v2 session migration.
 //!
 //! Converts a legacy [`crate::model::ScratchSession`] (format version 1) into a
-//! canonical [`CreativeSession`](crate::domain::session::CreativeSession)
+//! canonical [`CreativeSession`](crate::session::CreativeSession)
 //! (format version 2).
 //!
 //! Migration is pure: it reads a legacy session and the Asset store, and
@@ -15,14 +15,14 @@
 //! silently dropping or fabricating a reference — the legacy session and its
 //! backup remain intact for the user to repair.
 
-use crate::assets;
-use crate::domain::asset::{AssetId, AssetKind, Provenance};
-use crate::domain::rack::RackInstance;
-use crate::domain::session::{
+use crate::asset;
+use crate::asset::{AssetId, AssetKind, Provenance};
+use crate::model::{ScratchSession, Workspace as LegacyWorkspace};
+use crate::rack::RackInstance;
+use crate::session::{
     Arrangement, AudioClip, CREATIVE_SESSION_FORMAT, CreativeSession, DesignContext, DesignTool,
     PlayState, SampleInstrumentState, SamplePad, SessionSettings, Workspace,
 };
-use crate::model::{ScratchSession, Workspace as LegacyWorkspace};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -167,9 +167,9 @@ fn resolve_audio_asset(
     if let Some(existing) = cache.get(content_location) {
         return Ok(existing.clone());
     }
-    let asset_id = match assets::find_by_content_location(data_root, content_location) {
+    let asset_id = match asset::find_by_content_location(data_root, content_location) {
         Some(existing) => existing,
-        None => assets::register(
+        None => asset::register(
             data_root,
             AssetKind::Audio,
             derive_asset_name(content_location),
@@ -191,13 +191,7 @@ fn derive_asset_name(content_location: &str) -> &str {
 
 fn convert_rack(
     legacy: &ScratchSession,
-) -> Result<
-    (
-        Vec<crate::domain::rack::RackDevice>,
-        Vec<crate::domain::rack::RackMacro>,
-    ),
-    String,
-> {
+) -> Result<(Vec<crate::rack::RackDevice>, Vec<crate::rack::RackMacro>), String> {
     let devices = convert_via_json(&legacy.rack)?;
     let macros = convert_via_json(&legacy.macros)?;
     Ok((devices, macros))
@@ -220,12 +214,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::rack::DeviceKind;
-    use crate::domain::session::MidiNote;
     use crate::model::{
         AiChangeSet, DeviceKind as LegacyDeviceKind, MidiClip, RackDevice, SamplePad,
         SessionSnapshot, TimelineClip, TimelineTrack,
     };
+    use crate::rack::DeviceKind;
+    use crate::session::MidiNote;
     use crate::storage::now_ms;
 
     fn root(label: &str) -> std::path::PathBuf {

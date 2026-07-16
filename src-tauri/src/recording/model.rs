@@ -9,9 +9,9 @@
 //! State transitions are defined here and only here. Terminal states
 //! (`Completed`, `Recoverable`, `Failed`) cannot return to `Recording`.
 
-use crate::domain::DomainError;
-use crate::domain::asset::AssetId;
-use crate::domain::rack::RackDevice;
+use crate::asset::AssetId;
+use crate::errors::DomainError;
+use crate::rack::RackDevice;
 use serde::{Deserialize, Serialize};
 
 /// The status of a [`RecordingCapture`].

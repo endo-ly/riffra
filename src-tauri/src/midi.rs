@@ -1,4 +1,4 @@
-use crate::domain::session::CreativeSession;
+use crate::session::CreativeSession;
 use serde::Serialize;
 use std::{fs, path::Path};
 
@@ -141,7 +141,7 @@ fn write_var_len(mut value: u64) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::{
-        domain::session::{CreativeSession, MidiClip, MidiNote},
+        session::{CreativeSession, MidiClip, MidiNote},
         storage::now_ms,
     };
 

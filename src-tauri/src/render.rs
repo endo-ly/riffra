@@ -1,7 +1,7 @@
 use crate::{
     analysis::{decode_sample, parse_wav},
-    assets,
-    domain::session::{AudioClip, CreativeSession},
+    asset,
+    session::{AudioClip, CreativeSession},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -46,7 +46,7 @@ pub struct RenderResult {
 /// Resolves an audio clip's asset to its content file, failing explicitly when
 /// the asset is not registered so a render never silently reads a stale path.
 fn clip_source(data_root: &Path, clip: &AudioClip) -> Result<PathBuf, String> {
-    assets::resolve_content_location(data_root, &clip.asset_id)
+    asset::resolve_content_location(data_root, &clip.asset_id)
         .map(PathBuf::from)
         .ok_or_else(|| {
             format!(
@@ -317,13 +317,13 @@ pub fn render_timeline_with_options_cancel(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let rendered_asset_id = assets::register_derived(
+    let rendered_asset_id = asset::register_derived(
         data_root,
         &source_ids,
-        crate::domain::asset::AssetKind::Audio,
+        crate::asset::AssetKind::Audio,
         "Timeline render",
         &path.to_string_lossy(),
-        crate::domain::asset::ProvenanceOperation::Rendered,
+        crate::asset::ProvenanceOperation::Rendered,
         serde_json::Map::from_iter([
             (
                 "normalize".into(),
@@ -481,14 +481,14 @@ fn write_float_wav(path: &Path, sample_rate: u32, samples: &[f32]) -> io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::asset::{AssetId, AssetKind};
-    use crate::domain::session::Track;
-    use crate::{analysis::analyze, assets, storage::now_ms};
+    use crate::asset::{AssetId, AssetKind};
+    use crate::session::Track;
+    use crate::{analysis::analyze, asset, storage::now_ms};
 
     fn register_source(root: &Path, name: &str) -> AssetId {
         let source = root.join(name);
         write_mono_test_wav(&source);
-        assets::register(
+        asset::register(
             root,
             AssetKind::Audio,
             name,

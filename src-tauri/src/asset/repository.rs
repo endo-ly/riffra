@@ -15,10 +15,8 @@
 //! [`AssetId`]. A failure at any step leaves already-written metadata and files
 //! intact.
 
-use crate::domain::asset::{
-    Asset, AssetId, AssetKind, Provenance, ProvenanceOperation, mint_asset_id,
-};
-use crate::domain::rack::RackDefinition;
+use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation, mint_asset_id};
+use crate::rack::RackDefinition;
 use crate::storage::now_ms;
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -583,7 +581,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::asset::ProvenanceOperation;
+    use crate::asset::ProvenanceOperation;
 
     fn root(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
