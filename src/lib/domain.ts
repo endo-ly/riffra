@@ -309,6 +309,10 @@ export interface RecordingCaptureDto {
   completedAtMs?: number | null;
   sampleRate?: number | null;
   inputDevice?: string | null;
+  workspace?: string | null;
+  masterDb?: number | null;
+  countInBeats?: number | null;
+  source?: string | null;
   rackSnapshot: RackDevice[];
   rawAudioAssetId?: AssetId | null;
   processedAudioAssetId?: AssetId | null;

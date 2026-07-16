@@ -19,8 +19,10 @@ export function MidiClipEditor({
   );
   const [exportMessage, setExportMessage] = useState('');
   const importRecording = async (recording: RecordingAsset) => {
-    if (!recording.midiPath) return;
-    const events = await api.readMidiEvents(recording.midiPath);
+    if (!recording.midiAssetId) return;
+    const midiPath = await api.resolveAssetContentLocation(recording.midiAssetId);
+    if (!midiPath) return;
+    const events = await api.readMidiEvents(midiPath);
     const notes = notesFromMidiEvents(events);
     if (!notes.length) {
       setMessage('No note-on/note-off pairs were found in that MIDI sidecar.');
@@ -136,7 +138,7 @@ export function MidiClipEditor({
       {exportMessage && <small className="render-message">{exportMessage}</small>}
       <div className="midi-import-list">
         {recordings
-          .filter((recording) => recording.midiPath)
+          .filter((recording) => recording.midiAssetId)
           .slice(0, 8)
           .map((recording) => (
             <button
@@ -147,7 +149,7 @@ export function MidiClipEditor({
               Import {recording.name}
             </button>
           ))}
-        {!recordings.some((recording) => recording.midiPath) && (
+        {!recordings.some((recording) => recording.midiAssetId) && (
           <small className="inspector-copy">
             Quick Record a MIDI input to create an editable sidecar.
           </small>

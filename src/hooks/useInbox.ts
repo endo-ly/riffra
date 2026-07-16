@@ -117,7 +117,9 @@ export function useInbox(
     async (recording: RecordingAsset) => {
       setError(null);
       try {
-        const path = recording.processedPath ?? recording.rawPath;
+        const assetId = recording.processedAssetId ?? recording.rawAssetId;
+        if (!assetId) throw new Error('Recording has no canonical audio Asset ID.');
+        const path = await api.resolveAssetContentLocation(assetId);
         if (!path) throw new Error('Recording has no previewable audio file.');
         const status = await api.previewSample(path, 0, 0);
         if (!audioCommandSucceeded(status)) {

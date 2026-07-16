@@ -26,7 +26,7 @@ pub enum RecordingCaptureStatus {
 }
 
 impl RecordingCaptureStatus {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Recording => "recording",
             Self::Completing => "completing",
@@ -67,6 +67,16 @@ pub struct RecordingCapture {
     pub sample_rate: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_device: Option<String>,
+    /// Session context captured at recording start. These replace the
+    /// duplicated fields formerly written to `provenance.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_db: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_in_beats: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     #[serde(default)]
     pub rack_snapshot: Vec<RackDevice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +104,10 @@ impl RecordingCapture {
             completed_at_ms: None,
             sample_rate: None,
             input_device: None,
+            workspace: None,
+            master_db: None,
+            count_in_beats: None,
+            source: None,
             rack_snapshot: Vec::new(),
             raw_audio_asset_id: None,
             processed_audio_asset_id: None,

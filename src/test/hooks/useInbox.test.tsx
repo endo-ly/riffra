@@ -19,6 +19,9 @@ function recording(id: string, name: string): RecordingAsset {
     processedFile: 'processed.wav',
     rawPath: `C:\\inbox\\${name}\\raw.wav`,
     processedPath: `C:\\inbox\\${name}\\processed.wav`,
+    rawAssetId: `asset:${name}-raw`,
+    processedAssetId: `asset:${name}-processed`,
+    midiAssetId: null,
     midiFile: null,
     midiPath: null,
     sampleRate: 44_100,
@@ -102,9 +105,13 @@ describe('useInbox', () => {
     expect(result.current.error).toBe('native failed');
   });
 
-  it('previews the processed file and falls back to raw audio', async () => {
+  it('previews canonical processed and raw Assets', async () => {
     const processed = recording('recording:processed', 'processed');
-    const raw = { ...recording('recording:raw', 'raw'), processedPath: null };
+    const raw = {
+      ...recording('recording:raw', 'raw'),
+      processedAssetId: null,
+      processedPath: null,
+    };
     const api = new FakeNativeApi({ recordings: [processed, raw] });
     const preview = vi.spyOn(api, 'previewSample');
     const { result } = renderHook(() => useInbox(api, [processed, raw], { reload: vi.fn() }));
@@ -114,8 +121,8 @@ describe('useInbox', () => {
       await result.current.preview(raw);
     });
 
-    expect(preview).toHaveBeenNthCalledWith(1, processed.processedPath, 0, 0);
-    expect(preview).toHaveBeenNthCalledWith(2, raw.rawPath, 0, 0);
+    expect(preview).toHaveBeenNthCalledWith(1, 'C:\\fake\\asset.wav', 0, 0);
+    expect(preview).toHaveBeenNthCalledWith(2, 'C:\\fake\\asset.wav', 0, 0);
     expect(result.current.message).toBe('Preview started: raw.');
   });
 
