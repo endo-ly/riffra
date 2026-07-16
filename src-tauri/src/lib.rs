@@ -17,7 +17,7 @@ mod separation;
 mod session;
 mod storage;
 
-use crate::session::{CreativeSession, SamplePad as DomainSamplePad};
+use crate::session::{AudioClipPatch, CreativeSession, SamplePad as DomainSamplePad};
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
     SamplePad,
@@ -214,6 +214,142 @@ fn add_audio_clip_to_arrangement(
     queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session.clone();
     Ok(session)
+}
+
+/// Applies a Domain-level mutation to the current session's [`Arrangement`],
+/// re-validates the whole session, persists the result, and returns the
+/// updated session. Used by every Arrangement editing command so the
+/// save/commit boundary stays in one place.
+fn apply_arrangement_edit(
+    state: &State<'_, AppState>,
+    edit: impl FnOnce(&mut crate::session::Arrangement) -> Result<(), crate::errors::DomainError>,
+) -> Result<CreativeSession, String> {
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    edit(&mut session.arrangement).map_err(|error| error.to_string())?;
+    session = session.validate_and_normalize()?;
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| format!("Arrangement edit could not be saved: {error}"))?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
+}
+
+#[tauri::command]
+fn update_audio_clip(
+    clip_id: String,
+    patch: AudioClipPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    apply_arrangement_edit(&state, |arrangement| {
+        arrangement.update_audio_clip(&clip_id, patch)
+    })
+}
+
+#[tauri::command]
+fn move_audio_clip_to_track(
+    clip_id: String,
+    track_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    if track_id.trim().is_empty() {
+        return Err("Target track id must not be empty.".into());
+    }
+    apply_arrangement_edit(&state, |arrangement| {
+        if !arrangement.has_track(&track_id) {
+            return Err(crate::errors::DomainError::UnknownTrack(track_id.clone()));
+        }
+        arrangement.update_audio_clip(
+            &clip_id,
+            AudioClipPatch {
+                track_id: Some(track_id),
+                ..Default::default()
+            },
+        )
+    })
+}
+
+#[tauri::command]
+fn set_audio_clip_muted(
+    clip_id: String,
+    muted: bool,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    apply_arrangement_edit(&state, |arrangement| {
+        arrangement.update_audio_clip(
+            &clip_id,
+            AudioClipPatch {
+                muted: Some(muted),
+                ..Default::default()
+            },
+        )
+    })
+}
+
+#[tauri::command]
+fn set_audio_clip_loop(
+    clip_id: String,
+    loop_enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    apply_arrangement_edit(&state, |arrangement| {
+        arrangement.update_audio_clip(
+            &clip_id,
+            AudioClipPatch {
+                loop_enabled: Some(loop_enabled),
+                ..Default::default()
+            },
+        )
+    })
+}
+
+#[tauri::command]
+fn duplicate_audio_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let new_id = format!("{clip_id}:copy:{}", now_ms());
+    apply_arrangement_edit(&state, |arrangement| {
+        arrangement.duplicate_audio_clip(&clip_id, new_id)
+    })
+}
+
+#[tauri::command]
+fn split_audio_clip(
+    clip_id: String,
+    at_offset_ms: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let new_id = format!("{clip_id}:split:{}", now_ms());
+    apply_arrangement_edit(&state, |arrangement| {
+        let offset = match at_offset_ms {
+            Some(value) => value,
+            None => {
+                let Some(clip) = arrangement
+                    .audio_clips
+                    .iter()
+                    .find(|clip| clip.id == clip_id)
+                else {
+                    return Err(crate::errors::DomainError::InvalidClip(format!(
+                        "Audio clip '{clip_id}' not found."
+                    )));
+                };
+                clip.duration_ms / 2
+            }
+        };
+        arrangement.split_audio_clip(&clip_id, offset, new_id)
+    })
+}
+
+#[tauri::command]
+fn remove_audio_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    apply_arrangement_edit(&state, |arrangement| {
+        arrangement.remove_audio_clip(&clip_id)
+    })
 }
 
 #[tauri::command]
@@ -1414,6 +1550,13 @@ pub fn run() {
             save_rack_definition,
             load_rack_definition,
             add_audio_clip_to_arrangement,
+            update_audio_clip,
+            move_audio_clip_to_track,
+            set_audio_clip_muted,
+            set_audio_clip_loop,
+            duplicate_audio_clip,
+            split_audio_clip,
+            remove_audio_clip,
             import_scratch_session,
             scan_vst3_folder,
             start_analysis_job,

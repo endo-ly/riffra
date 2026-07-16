@@ -224,6 +224,8 @@ impl SessionStore {
     }
 
     pub fn save(&self, session: &CreativeSession) -> io::Result<()> {
+        crate::asset::validate_session_references(&self.data_root, session)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         self.ensure_layout()?;
         let current = self.scratch_dir.join("current.json");
         let payload = serde_json::to_vec_pretty(session)
@@ -530,7 +532,9 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asset::{AssetId, AssetKind};
     use crate::rack::DeviceKind;
+    use crate::session::AudioClip;
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -614,6 +618,56 @@ mod tests {
         assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
         assert_eq!(loaded.session.workspace, crate::session::Workspace::Arrange);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_rejects_a_session_with_an_unknown_asset_reference() {
+        let root = test_root("save-unknown-asset");
+        let store = SessionStore::new(&root);
+        let mut session = CreativeSession::new(now_ms());
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:unknown".into(),
+            track_id: "main".into(),
+            asset_id: AssetId::from_normalized("asset:unknown-0").unwrap(),
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "unknown".into(),
+        });
+
+        let error = store.save(&session).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!root.join("scratch/current.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_accepts_a_registered_asset_when_its_content_file_is_missing() {
+        let root = test_root("save-missing-content");
+        let wav = root.join("take.wav");
+        write_wav(&wav);
+        let asset_id = crate::asset::register(
+            &root,
+            AssetKind::Audio,
+            "take",
+            &wav.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        fs::remove_file(&wav).unwrap();
+
+        let mut session = CreativeSession::new(now_ms());
+        session.design_context.target_asset_id = Some(asset_id);
+        SessionStore::new(&root).save(&session).unwrap();
+        assert!(root.join("scratch/current.json").is_file());
         let _ = fs::remove_dir_all(root);
     }
 

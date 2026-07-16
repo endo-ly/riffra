@@ -5,6 +5,7 @@ import type {
   BackgroundJobStatus,
   BootstrapState,
   AssetId,
+  AudioClipPatch,
   LibraryAsset,
   MissingDependency,
   MidiEvent,
@@ -109,6 +110,19 @@ export interface NativeApi {
     durationMs: number,
     trackId?: string,
   ): Promise<CreativeSession | null>;
+
+  /**
+   * Commits a partial update to an existing audio clip through the Rust
+   * Arrangement Domain. The Domain applies the canonical clamp and validation
+   * rules and returns the updated session.
+   */
+  updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
+  moveAudioClipToTrack(clipId: string, trackId: string): Promise<CreativeSession | null>;
+  setAudioClipMuted(clipId: string, muted: boolean): Promise<CreativeSession | null>;
+  setAudioClipLoop(clipId: string, loopEnabled: boolean): Promise<CreativeSession | null>;
+  duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
+  splitAudioClip(clipId: string, atOffsetMs?: number): Promise<CreativeSession | null>;
+  removeAudioClip(clipId: string): Promise<CreativeSession | null>;
 
   saveRackDefinition(name: string, path: string): Promise<AssetId | null>;
   loadRackDefinition(path: string): Promise<RackInstance | null>;

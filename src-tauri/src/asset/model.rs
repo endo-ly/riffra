@@ -12,19 +12,12 @@
 
 use crate::errors::DomainError;
 use serde::{Deserialize, Serialize};
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-/// Monotonic counter combined with a wall-clock timestamp makes minted ids
-/// unique within a process without relying on an external dependency.
-static ASSET_COUNTER: AtomicU64 = AtomicU64::new(0);
+use uuid::Uuid;
 
 /// Stable, globally-unique identifier for an `Asset`.
 ///
-/// The string form is `asset:<milliseconds>-<counter>` so ids sort
-/// chronologically while remaining unique across rapid successive minting.
+/// The string form is `asset:<UUIDv7>`. Existing timestamp/counter ids remain
+/// valid through [`AssetId::from_normalized`] and are never rewritten.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AssetId(String);
@@ -54,10 +47,6 @@ impl AssetId {
     /// The underlying string value.
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    fn mint_raw(now_ms: u64, counter: u64) -> Self {
-        Self(format!("asset:{now_ms}-{counter}"))
     }
 }
 
@@ -162,18 +151,13 @@ pub struct Asset {
     pub favorite: bool,
 }
 
-/// Mint a new globally-unique [`AssetId`] using the current wall clock.
+/// Mint a new globally-unique [`AssetId`] using UUIDv7.
+///
+/// UUIDv7 carries creation-time ordering while its random component provides
+/// uniqueness across processes and machines. The `asset:` namespace is kept
+/// stable so serialized sessions and project manifests remain self-describing.
 pub fn mint_asset_id() -> AssetId {
-    AssetId::mint_raw(now_ms(), ASSET_COUNTER.fetch_add(1, Ordering::Relaxed))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
+    AssetId(format!("asset:{}", Uuid::now_v7()))
 }
 
 impl Asset {
@@ -292,6 +276,8 @@ mod tests {
         );
         assert_ne!(a.id, b.id);
         assert!(a.id.as_str().starts_with("asset:"));
+        let uuid = Uuid::parse_str(a.id.as_str().strip_prefix("asset:").unwrap()).unwrap();
+        assert_eq!(uuid.get_version_num(), 7);
     }
 
     #[test]
@@ -388,6 +374,7 @@ mod tests {
         assert!(AssetId::from_normalized("").is_err());
         assert!(AssetId::from_normalized("C:\\path.wav").is_err());
         assert!(AssetId::from_normalized("asset:1-0").is_ok());
+        assert!(AssetId::from_normalized(format!("asset:{}", Uuid::now_v7())).is_ok());
     }
 
     #[test]

@@ -50,6 +50,26 @@ export interface AudioClip {
   muted: boolean;
 }
 
+/**
+ * Partial update for an existing AudioClip. Only the supplied fields are
+ * committed to the Rust Domain, which applies the canonical clamping and
+ * validation rules. React keeps no parallel copy of those rules.
+ */
+export interface AudioClipPatch {
+  name?: string;
+  trackId?: string;
+  positionMs?: number;
+  durationMs?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  gainDb?: number;
+  pan?: number;
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  loopEnabled?: boolean;
+  muted?: boolean;
+}
+
 export interface Track {
   id: string;
   name: string;

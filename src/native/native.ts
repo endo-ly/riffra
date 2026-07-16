@@ -4,6 +4,7 @@ import type {
   AudioDeviceProbe,
   AudioStatus,
   AssetId,
+  AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
@@ -524,6 +525,80 @@ export async function addAudioClipToArrangement(
   }
 }
 
+export async function updateAudioClip(
+  clipId: string,
+  patch: AudioClipPatch,
+): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('update_audio_clip', { clipId, patch });
+  } catch {
+    return null;
+  }
+}
+
+export async function moveAudioClipToTrack(
+  clipId: string,
+  trackId: string,
+): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('move_audio_clip_to_track', { clipId, trackId });
+  } catch {
+    return null;
+  }
+}
+
+export async function setAudioClipMuted(
+  clipId: string,
+  muted: boolean,
+): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('set_audio_clip_muted', { clipId, muted });
+  } catch {
+    return null;
+  }
+}
+
+export async function setAudioClipLoop(
+  clipId: string,
+  loopEnabled: boolean,
+): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('set_audio_clip_loop', { clipId, loopEnabled });
+  } catch {
+    return null;
+  }
+}
+
+export async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('duplicate_audio_clip', { clipId });
+  } catch {
+    return null;
+  }
+}
+
+export async function splitAudioClip(
+  clipId: string,
+  atOffsetMs?: number,
+): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('split_audio_clip', {
+      clipId,
+      atOffsetMs: atOffsetMs ?? null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('remove_audio_clip', { clipId });
+  } catch {
+    return null;
+  }
+}
+
 export async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
   try {
     return await invoke<AssetId>('save_rack_definition', { name, path });
@@ -604,6 +679,13 @@ export function createNativeApi(): NativeApi {
     relinkMissingDependency,
     disableMissingPlugin,
     addAudioClipToArrangement,
+    updateAudioClip,
+    moveAudioClipToTrack,
+    setAudioClipMuted,
+    setAudioClipLoop,
+    duplicateAudioClip,
+    splitAudioClip,
+    removeAudioClip,
     saveRackDefinition,
     loadRackDefinition,
     renameRecording,

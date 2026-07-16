@@ -17,6 +17,7 @@
 
 use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation, mint_asset_id};
 use crate::rack::RackDefinition;
+use crate::session::CreativeSession;
 use crate::storage::now_ms;
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -478,6 +479,46 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String
     location.filter(|value| !value.is_empty())
 }
 
+/// Verifies that every canonical AssetId referenced by a session has a
+/// corresponding canonical Asset record.
+///
+/// This intentionally does not inspect the content file. A canonical record
+/// whose file has gone missing is still a valid session reference and is
+/// surfaced separately as a missing dependency by the missing-dependency
+/// workflow.
+pub fn validate_session_references(
+    data_root: &Path,
+    session: &CreativeSession,
+) -> Result<(), String> {
+    let mut references = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| ("arrangement audio clip", clip.id.as_str(), &clip.asset_id))
+        .chain(
+            session
+                .play_state
+                .sample_instrument
+                .pads
+                .iter()
+                .map(|pad| ("sample pad", pad.id.as_str(), &pad.asset_id)),
+        )
+        .collect::<Vec<_>>();
+    if let Some(asset_id) = session.design_context.target_asset_id.as_ref() {
+        references.push(("design target", "target", asset_id));
+    }
+
+    let mut checked = std::collections::HashSet::new();
+    for (reference_kind, reference_id, asset_id) in references {
+        if checked.insert(asset_id.clone()) && load(data_root, asset_id).is_none() {
+            return Err(format!(
+                "Session references unknown AssetId {asset_id} ({reference_kind} '{reference_id}')."
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Loads a full canonical [`Asset`] by id, including its provenance source ids.
 pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
     let connection = open(data_root).ok()?;
@@ -582,6 +623,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::asset::ProvenanceOperation;
+    use crate::session::{AudioClip, CreativeSession, SamplePad};
 
     fn root(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -690,6 +732,107 @@ mod tests {
         let root = root("none");
         let orphan = AssetId::from_normalized("asset:orphan-0").unwrap();
         assert!(resolve_content_location(&root, &orphan).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn register_with_id_preserves_a_legacy_asset_id() {
+        let root = root("legacy-id");
+        let wav = root.join("legacy.wav");
+        write_wav(&wav);
+        let legacy_id = AssetId::from_normalized("asset:1700000000000-3").unwrap();
+        register_with_id(
+            &root,
+            &legacy_id,
+            AssetKind::Audio,
+            "legacy",
+            &wav.to_string_lossy(),
+            Some(Provenance::imported()),
+        )
+        .unwrap();
+
+        assert_eq!(load(&root, &legacy_id).unwrap().id, legacy_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_rejects_unknown_arrangement_asset() {
+        let root = root("validate-clip");
+        let asset_id = AssetId::from_normalized("asset:unknown-0").unwrap();
+        let mut session = CreativeSession::new(1_000);
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:unknown".into(),
+            track_id: "main".into(),
+            asset_id,
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "unknown".into(),
+        });
+
+        let error = validate_session_references(&root, &session).unwrap_err();
+        assert!(error.contains("arrangement audio clip 'clip:unknown'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_rejects_unknown_sample_pad() {
+        let root = root("validate-pad");
+        let asset_id = AssetId::from_normalized("asset:unknown-pad-0").unwrap();
+        let mut session = CreativeSession::new(1_000);
+        session.play_state.sample_instrument.pads.push(SamplePad {
+            id: "pad:unknown".into(),
+            name: "unknown".into(),
+            asset_id,
+            start_ms: 0,
+            end_ms: 100,
+            midi_key: 36,
+            gain_db: 0.0,
+            loop_enabled: false,
+        });
+
+        let error = validate_session_references(&root, &session).unwrap_err();
+        assert!(error.contains("sample pad 'pad:unknown'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_rejects_unknown_design_target() {
+        let root = root("validate-design-target");
+        let asset_id = AssetId::from_normalized("asset:unknown-target-0").unwrap();
+        let mut session = CreativeSession::new(1_000);
+        session.design_context.target_asset_id = Some(asset_id);
+
+        let error = validate_session_references(&root, &session).unwrap_err();
+        assert!(error.contains("design target 'target'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_allows_a_registered_asset_with_missing_file() {
+        let root = root("validate-missing-content");
+        let wav = root.join("take.wav");
+        write_wav(&wav);
+        let asset_id = register(
+            &root,
+            AssetKind::Audio,
+            "take",
+            &wav.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        std::fs::remove_file(&wav).unwrap();
+
+        let mut session = CreativeSession::new(1_000);
+        session.design_context.target_asset_id = Some(asset_id);
+        assert!(validate_session_references(&root, &session).is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
 }

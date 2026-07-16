@@ -1,142 +1,70 @@
-import type { CreativeSession } from '@/lib/domain';
+import { useCallback, useState } from 'react';
+import type { AudioClip, AudioClipPatch, CreativeSession } from '@/lib/domain';
+import type { NativeApi } from '@/native/native-api';
+
+type NumericField =
+  | 'positionMs'
+  | 'durationMs'
+  | 'sourceStartMs'
+  | 'sourceEndMs'
+  | 'gainDb'
+  | 'fadeInMs'
+  | 'fadeOutMs'
+  | 'pan';
+
+const NUMERIC_FIELDS: readonly NumericField[] = [
+  'positionMs',
+  'durationMs',
+  'sourceStartMs',
+  'sourceEndMs',
+  'gainDb',
+  'fadeInMs',
+  'fadeOutMs',
+  'pan',
+];
+
+const FIELD_LABELS: Record<NumericField, string> = {
+  positionMs: 'Start ms',
+  durationMs: 'Length ms',
+  sourceStartMs: 'Source in',
+  sourceEndMs: 'Source out',
+  gainDb: 'Gain dB',
+  fadeInMs: 'Fade in',
+  fadeOutMs: 'Fade out',
+  pan: 'Pan',
+};
+
+const FIELD_STEP: Partial<Record<NumericField, string>> = {
+  gainDb: '0.5',
+  pan: '0.05',
+};
+
+const FIELD_MIN: Partial<Record<NumericField, string>> = {
+  positionMs: '0',
+  durationMs: '1',
+  sourceStartMs: '0',
+  sourceEndMs: '0',
+  gainDb: '-90',
+  fadeInMs: '0',
+  fadeOutMs: '0',
+  pan: '-1',
+};
+
+const FIELD_MAX: Partial<Record<NumericField, string>> = {
+  gainDb: '24',
+  pan: '1',
+};
 
 export function TimelineClipInspector({
   session,
   setSession,
+  api,
 }: {
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
+  api: NativeApi;
 }) {
   if (!session.arrangement.audioClips.length) return null;
-  const update = (
-    id: string,
-    field:
-      | 'positionMs'
-      | 'durationMs'
-      | 'sourceStartMs'
-      | 'sourceEndMs'
-      | 'gainDb'
-      | 'fadeInMs'
-      | 'fadeOutMs'
-      | 'pan',
-    value: number,
-  ) => {
-    const safeValue = Number.isFinite(value) ? value : 0;
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) => {
-          if (clip.id !== id) return clip;
-          if (field === 'positionMs')
-            return { ...clip, positionMs: Math.max(0, Math.round(safeValue)) };
-          if (field === 'durationMs')
-            return { ...clip, durationMs: Math.max(1, Math.round(safeValue)) };
-          if (field === 'sourceStartMs')
-            return { ...clip, sourceStartMs: Math.max(0, Math.round(safeValue)) };
-          if (field === 'sourceEndMs')
-            return { ...clip, sourceEndMs: Math.max(0, Math.round(safeValue)) };
-          if (field === 'gainDb')
-            return { ...clip, gainDb: Math.max(-90, Math.min(24, safeValue)) };
-          if (field === 'fadeInMs')
-            return {
-              ...clip,
-              fadeInMs: Math.max(0, Math.min(clip.durationMs, Math.round(safeValue))),
-            };
-          if (field === 'fadeOutMs')
-            return {
-              ...clip,
-              fadeOutMs: Math.max(0, Math.min(clip.durationMs, Math.round(safeValue))),
-            };
-          return { ...clip, pan: Math.max(-1, Math.min(1, safeValue)) };
-        }),
-      },
-    });
-  };
-  const setTrack = (id: string, trackId: string) =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) =>
-          clip.id === id ? { ...clip, trackId } : clip,
-        ),
-      },
-    });
-  const toggleMute = (id: string) =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) =>
-          clip.id === id ? { ...clip, muted: !clip.muted } : clip,
-        ),
-      },
-    });
-  const toggleLoop = (id: string) =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) =>
-          clip.id === id ? { ...clip, loopEnabled: !clip.loopEnabled } : clip,
-        ),
-      },
-    });
-  const duplicate = (id: string) => {
-    const index = session.arrangement.audioClips.findIndex((clip) => clip.id === id);
-    if (index < 0) return;
-    const clip = session.arrangement.audioClips[index];
-    const copy = {
-      ...clip,
-      id: `${clip.id}:copy:${Date.now()}`,
-      name: `${clip.name} copy`,
-      positionMs: clip.positionMs + clip.durationMs,
-    };
-    const audioClips = [...session.arrangement.audioClips];
-    audioClips.splice(index + 1, 0, copy);
-    setSession({ ...session, arrangement: { ...session.arrangement, audioClips } });
-  };
-  const split = (id: string) => {
-    const index = session.arrangement.audioClips.findIndex((clip) => clip.id === id);
-    if (index < 0) return;
-    const clip = session.arrangement.audioClips[index];
-    const firstDuration = Math.floor(clip.durationMs / 2);
-    if (firstDuration < 1) return;
-    const secondDuration = clip.durationMs - firstDuration;
-    const sourceEnd = clip.sourceEndMs || clip.sourceStartMs + clip.durationMs;
-    const sourceSplit = Math.min(sourceEnd, clip.sourceStartMs + firstDuration);
-    const secondSourceOut = clip.loopEnabled
-      ? clip.sourceEndMs
-      : clip.sourceEndMs > 0 && sourceEnd > sourceSplit
-        ? sourceEnd
-        : 0;
-    const first = {
-      ...clip,
-      durationMs: firstDuration,
-      sourceEndMs: clip.loopEnabled ? clip.sourceEndMs : sourceSplit,
-    };
-    const second = {
-      ...clip,
-      id: `${clip.id}:split:${Date.now()}`,
-      name: `${clip.name} 2`,
-      positionMs: clip.positionMs + firstDuration,
-      durationMs: secondDuration,
-      sourceStartMs: clip.loopEnabled ? clip.sourceStartMs : sourceSplit,
-      sourceEndMs: secondSourceOut,
-    };
-    const audioClips = [...session.arrangement.audioClips];
-    audioClips.splice(index, 1, first, second);
-    setSession({ ...session, arrangement: { ...session.arrangement, audioClips } });
-  };
-  const remove = (id: string) =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.filter((clip) => clip.id !== id),
-      },
-    });
   return (
     <section className="section-card timeline-editor">
       <header>
@@ -147,120 +75,169 @@ export function TimelineClipInspector({
         <small>Source WAVs remain unchanged</small>
       </header>
       {session.arrangement.audioClips.map((clip) => (
-        <div
-          className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? 'muted' : ''}`}
+        <ClipEditRow
           key={clip.id}
-        >
-          <div className="timeline-edit-name">
-            <strong>{clip.name}</strong>
-            <small>{clip.assetId}</small>
-          </div>
-          <label>
-            <span>Track</span>
-            <select
-              value={clip.trackId}
-              onChange={(event) => setTrack(clip.id, event.target.value)}
-            >
-              {session.arrangement.tracks.map((track) => (
-                <option value={track.id} key={track.id}>
-                  {track.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Start ms</span>
-            <input
-              type="number"
-              min="0"
-              value={clip.positionMs}
-              onChange={(event) => update(clip.id, 'positionMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Length ms</span>
-            <input
-              type="number"
-              min="1"
-              value={clip.durationMs}
-              onChange={(event) => update(clip.id, 'durationMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Source in</span>
-            <input
-              type="number"
-              min="0"
-              value={clip.sourceStartMs}
-              onChange={(event) => update(clip.id, 'sourceStartMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Source out</span>
-            <input
-              type="number"
-              min="0"
-              value={clip.sourceEndMs}
-              onChange={(event) => update(clip.id, 'sourceEndMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Gain dB</span>
-            <input
-              type="number"
-              min="-90"
-              max="24"
-              step="0.5"
-              value={clip.gainDb}
-              onChange={(event) => update(clip.id, 'gainDb', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Fade in</span>
-            <input
-              type="number"
-              min="0"
-              value={clip.fadeInMs}
-              onChange={(event) => update(clip.id, 'fadeInMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Fade out</span>
-            <input
-              type="number"
-              min="0"
-              value={clip.fadeOutMs}
-              onChange={(event) => update(clip.id, 'fadeOutMs', Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Pan</span>
-            <input
-              type="number"
-              min="-1"
-              max="1"
-              step="0.05"
-              value={clip.pan}
-              onChange={(event) => update(clip.id, 'pan', Number(event.target.value))}
-            />
-          </label>
-          <button className="text-button" onClick={() => toggleLoop(clip.id)}>
-            {clip.loopEnabled ? 'Loop on' : 'Loop'}
-          </button>
-          <button className="text-button" onClick={() => duplicate(clip.id)}>
-            Duplicate
-          </button>
-          <button className="text-button" onClick={() => split(clip.id)}>
-            Split
-          </button>
-          <button className="text-button" onClick={() => toggleMute(clip.id)}>
-            {clip.muted ? 'Unmute' : 'Mute'}
-          </button>
-          <button className="text-button danger" onClick={() => remove(clip.id)}>
-            Remove
-          </button>
-        </div>
+          clip={clip}
+          session={session}
+          setSession={setSession}
+          api={api}
+        />
       ))}
     </section>
+  );
+}
+
+type DraftMap = Partial<Record<NumericField, string>>;
+
+function ClipEditRow({
+  clip,
+  session,
+  setSession,
+  api,
+}: {
+  clip: AudioClip;
+  session: CreativeSession;
+  setSession: (value: CreativeSession) => void;
+  api: NativeApi;
+}) {
+  const [drafts, setDrafts] = useState<DraftMap>({});
+
+  const displayedValue = (field: NumericField) =>
+    field in drafts ? String(drafts[field]) : String(clip[field]);
+
+  const stageDraft = (field: NumericField, raw: string) =>
+    setDrafts((current) => ({ ...current, [field]: raw }));
+
+  const commitField = useCallback(
+    async (field: NumericField) => {
+      const raw = drafts[field];
+      if (raw === undefined) return;
+      const parsed = Number(raw);
+      setDrafts((current) => {
+        if (!(field in current)) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+      if (!Number.isFinite(parsed)) return;
+      if (parsed === clip[field]) return;
+      const next = await api.updateAudioClip(clip.id, { [field]: parsed } as AudioClipPatch);
+      if (next) setSession(next);
+    },
+    [api, clip, drafts, setSession],
+  );
+
+  const commitAllDrafts = useCallback(async (): Promise<void> => {
+    const patch: AudioClipPatch = {};
+    let hasPatch = false;
+    for (const field of NUMERIC_FIELDS) {
+      const raw = drafts[field];
+      if (raw === undefined) continue;
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed !== clip[field]) {
+        patch[field] = parsed;
+        hasPatch = true;
+      }
+    }
+    if (!hasPatch) {
+      setDrafts({});
+      return;
+    }
+    setDrafts({});
+    const next = await api.updateAudioClip(clip.id, patch);
+    if (next) setSession(next);
+  }, [api, clip, drafts, setSession]);
+
+  const changeTrack = useCallback(
+    async (trackId: string) => {
+      await commitAllDrafts();
+      const next = await api.moveAudioClipToTrack(clip.id, trackId);
+      if (next) setSession(next);
+    },
+    [api, clip.id, commitAllDrafts, setSession],
+  );
+
+  const toggleMute = useCallback(async () => {
+    await commitAllDrafts();
+    const next = await api.setAudioClipMuted(clip.id, !clip.muted);
+    if (next) setSession(next);
+  }, [api, clip.id, clip.muted, commitAllDrafts, setSession]);
+
+  const toggleLoop = useCallback(async () => {
+    await commitAllDrafts();
+    const next = await api.setAudioClipLoop(clip.id, !clip.loopEnabled);
+    if (next) setSession(next);
+  }, [api, clip.id, clip.loopEnabled, commitAllDrafts, setSession]);
+
+  const duplicate = useCallback(async () => {
+    await commitAllDrafts();
+    const next = await api.duplicateAudioClip(clip.id);
+    if (next) setSession(next);
+  }, [api, clip.id, commitAllDrafts, setSession]);
+
+  const split = useCallback(async () => {
+    await commitAllDrafts();
+    const next = await api.splitAudioClip(clip.id, Math.floor(clip.durationMs / 2));
+    if (next) setSession(next);
+  }, [api, clip.id, clip.durationMs, commitAllDrafts, setSession]);
+
+  const remove = useCallback(async () => {
+    await commitAllDrafts();
+    const next = await api.removeAudioClip(clip.id);
+    if (next) setSession(next);
+  }, [api, clip.id, commitAllDrafts, setSession]);
+
+  return (
+    <div className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? 'muted' : ''}`}>
+      <div className="timeline-edit-name">
+        <strong>{clip.name}</strong>
+        <small>{clip.assetId}</small>
+      </div>
+      <label>
+        <span>Track</span>
+        <select value={clip.trackId} onChange={(event) => void changeTrack(event.target.value)}>
+          {session.arrangement.tracks.map((track) => (
+            <option value={track.id} key={track.id}>
+              {track.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {NUMERIC_FIELDS.map((field) => (
+        <label key={field}>
+          <span>{FIELD_LABELS[field]}</span>
+          <input
+            type="number"
+            min={FIELD_MIN[field]}
+            max={FIELD_MAX[field]}
+            step={FIELD_STEP[field]}
+            value={displayedValue(field)}
+            onChange={(event) => stageDraft(field, event.target.value)}
+            onBlur={() => void commitField(field)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                (event.target as HTMLInputElement).blur();
+              }
+            }}
+          />
+        </label>
+      ))}
+      <button className="text-button" onClick={() => void toggleLoop()}>
+        {clip.loopEnabled ? 'Loop on' : 'Loop'}
+      </button>
+      <button className="text-button" onClick={() => void duplicate()}>
+        Duplicate
+      </button>
+      <button className="text-button" onClick={() => void split()}>
+        Split
+      </button>
+      <button className="text-button" onClick={() => void toggleMute()}>
+        {clip.muted ? 'Unmute' : 'Mute'}
+      </button>
+      <button className="text-button danger" onClick={() => void remove()}>
+        Remove
+      </button>
+    </div>
   );
 }

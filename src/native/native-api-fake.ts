@@ -3,6 +3,8 @@ import type {
   AudioDeviceProbe,
   AudioStatus,
   AssetId,
+  AudioClip,
+  AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
@@ -811,6 +813,156 @@ export class FakeNativeApi implements NativeApi {
     this.bootstrapState = { ...this.bootstrapState, session: next };
     this.savedSessions.push(next);
     return next;
+  };
+
+  /**
+   * Shared helper for the Arrangement editing commands. Mirrors the production
+   * "edit + persist + return updated session" loop without re-implementing the
+   * Rust Domain clamp rules; the fake trusts the caller and records a save.
+   * Returns null when the referenced clip is missing so tests can assert the
+   * not-found path the way the production runtime surfaces it.
+   */
+  private commitArrangementEdit(
+    edit: (clips: AudioClip[]) => AudioClip[] | null,
+  ): CreativeSession | null {
+    const session = this.bootstrapState.session;
+    const next = edit(session.arrangement.audioClips);
+    if (!next) return null;
+    const updated: CreativeSession = {
+      ...session,
+      updatedAtMs: Date.now(),
+      arrangement: { ...session.arrangement, audioClips: next },
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: updated };
+    this.savedSessions.push(updated);
+    return updated;
+  }
+
+  private replaceClip = (
+    clips: AudioClip[],
+    clipId: string,
+    patch: AudioClipPatch,
+  ): AudioClip[] | null => {
+    const index = clips.findIndex((clip) => clip.id === clipId);
+    if (index < 0) return null;
+    const current = clips[index];
+    const replacement: AudioClip = {
+      id: current.id,
+      name: patch.name ?? current.name,
+      trackId: patch.trackId ?? current.trackId,
+      assetId: current.assetId,
+      positionMs: patch.positionMs ?? current.positionMs,
+      durationMs: patch.durationMs ?? current.durationMs,
+      sourceStartMs: patch.sourceStartMs ?? current.sourceStartMs,
+      sourceEndMs: patch.sourceEndMs ?? current.sourceEndMs,
+      gainDb: patch.gainDb ?? current.gainDb,
+      pan: patch.pan ?? current.pan,
+      fadeInMs: patch.fadeInMs ?? current.fadeInMs,
+      fadeOutMs: patch.fadeOutMs ?? current.fadeOutMs,
+      loopEnabled: patch.loopEnabled ?? current.loopEnabled,
+      muted: patch.muted ?? current.muted,
+    };
+    const next = clips.slice();
+    next.splice(index, 1, replacement);
+    return next;
+  };
+
+  updateAudioClip = async (
+    clipId: string,
+    patch: AudioClipPatch,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('updateAudioClip');
+    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, patch));
+  };
+
+  moveAudioClipToTrack = async (
+    clipId: string,
+    trackId: string,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('moveAudioClipToTrack');
+    const session = this.bootstrapState.session;
+    if (!session.arrangement.tracks.some((track) => track.id === trackId)) return null;
+    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { trackId }));
+  };
+
+  setAudioClipMuted = async (clipId: string, muted: boolean): Promise<CreativeSession | null> => {
+    this.calls.push('setAudioClipMuted');
+    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { muted }));
+  };
+
+  setAudioClipLoop = async (
+    clipId: string,
+    loopEnabled: boolean,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('setAudioClipLoop');
+    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { loopEnabled }));
+  };
+
+  duplicateAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
+    this.calls.push('duplicateAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      const index = clips.findIndex((clip) => clip.id === clipId);
+      if (index < 0) return null;
+      const original = clips[index];
+      const copy: AudioClip = {
+        ...original,
+        id: `${original.id}:copy:${Date.now()}`,
+        name: `${original.name} copy`,
+        positionMs: original.positionMs + original.durationMs,
+      };
+      const next = clips.slice();
+      next.splice(index + 1, 0, copy);
+      return next;
+    });
+  };
+
+  splitAudioClip = async (clipId: string, atOffsetMs?: number): Promise<CreativeSession | null> => {
+    this.calls.push('splitAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      const index = clips.findIndex((clip) => clip.id === clipId);
+      if (index < 0) return null;
+      const original = clips[index];
+      const offset = atOffsetMs ?? Math.floor(original.durationMs / 2);
+      if (offset <= 0 || offset >= original.durationMs) return null;
+      const loopEnabled = original.loopEnabled;
+      const firstDuration = offset;
+      const secondDuration = original.durationMs - offset;
+      const effectiveSourceEnd =
+        original.sourceEndMs > 0
+          ? original.sourceEndMs
+          : original.sourceStartMs + original.durationMs;
+      const sourceSplit = Math.min(effectiveSourceEnd, original.sourceStartMs + firstDuration);
+      const first: AudioClip = {
+        ...original,
+        durationMs: firstDuration,
+        sourceEndMs: loopEnabled ? original.sourceEndMs : sourceSplit,
+      };
+      const secondSourceEnd = loopEnabled
+        ? original.sourceEndMs
+        : original.sourceEndMs > 0 && effectiveSourceEnd > sourceSplit
+          ? original.sourceEndMs
+          : 0;
+      const second: AudioClip = {
+        ...original,
+        id: `${original.id}:split:${Date.now()}`,
+        name: `${original.name} 2`,
+        positionMs: original.positionMs + firstDuration,
+        durationMs: secondDuration,
+        sourceStartMs: loopEnabled ? original.sourceStartMs : sourceSplit,
+        sourceEndMs: secondSourceEnd,
+      };
+      const next = clips.slice();
+      next.splice(index, 1, first, second);
+      return next;
+    });
+  };
+
+  removeAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
+    this.calls.push('removeAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      if (!clips.some((clip) => clip.id === clipId)) return null;
+      return clips.filter((clip) => clip.id !== clipId);
+    });
   };
 
   resolveAssetContentLocation = async (_assetId: AssetId): Promise<string | null> => {

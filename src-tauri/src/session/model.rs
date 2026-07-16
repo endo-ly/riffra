@@ -131,6 +131,60 @@ pub struct AudioClip {
     pub name: String,
 }
 
+impl AudioClip {
+    /// Clamps and normalizes the production-managed numeric fields in place.
+    ///
+    /// This is the single canonical place where clip gain, pan, and fade
+    /// limits live; callers supply raw values and rely on this method instead
+    /// of replicating the rule.
+    pub(crate) fn normalize_fields(&mut self) {
+        if !self.gain_db.is_finite() {
+            self.gain_db = 0.0;
+        }
+        self.gain_db = self.gain_db.clamp(-90.0, 24.0);
+        if !self.pan.is_finite() {
+            self.pan = 0.0;
+        }
+        self.pan = self.pan.clamp(-1.0, 1.0);
+        self.fade_in_ms = self.fade_in_ms.min(self.duration_ms);
+        self.fade_out_ms = self.fade_out_ms.min(self.duration_ms);
+    }
+}
+
+/// A partial update for an existing [`AudioClip`].
+///
+/// Only the supplied fields are written; `None` fields keep the clip's current
+/// value. Numeric normalization (gain, pan, fade clamping) is applied by the
+/// domain, so callers may pass unclamped values.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioClipPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_start_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_end_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain_db: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_in_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_out_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted: Option<bool>,
+}
+
 /// The Arrange workspace's production state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -198,6 +252,228 @@ impl Arrangement {
             )));
         }
         self.audio_clips.push(clip);
+        Ok(())
+    }
+
+    /// Applies a partial update to an existing audio clip and normalizes the
+    /// resulting values through the canonical domain rules (track existence,
+    /// source range, gain/pan/fade clamps).
+    ///
+    /// The clip is identified by `clip_id`; missing fields on `patch` keep the
+    /// clip's current value. Asset references are not changed here, so no
+    /// asset-store lookup is needed.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::InvalidClip`] when the clip cannot be found, the
+    /// target track is missing, the source range becomes inverted, or the
+    /// clip's required identity fields end up empty.
+    pub fn update_audio_clip(
+        &mut self,
+        clip_id: &str,
+        patch: AudioClipPatch,
+    ) -> Result<(), DomainError> {
+        let index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        // Take the clip out of the slice so we can mutate it while still
+        // consulting `self.tracks` for the track existence rule.
+        let mut clip = self.audio_clips[index].clone();
+        if let Some(name) = patch.name {
+            clip.name = name;
+        }
+        if let Some(track_id) = patch.track_id {
+            clip.track_id = track_id;
+        }
+        if let Some(position_ms) = patch.position_ms {
+            clip.position_ms = position_ms;
+        }
+        if let Some(duration_ms) = patch.duration_ms {
+            clip.duration_ms = duration_ms;
+        }
+        if let Some(source_start_ms) = patch.source_start_ms {
+            clip.source_start_ms = source_start_ms;
+        }
+        if let Some(source_end_ms) = patch.source_end_ms {
+            clip.source_end_ms = source_end_ms;
+        }
+        if let Some(gain_db) = patch.gain_db {
+            clip.gain_db = gain_db;
+        }
+        if let Some(pan) = patch.pan {
+            clip.pan = pan;
+        }
+        if let Some(fade_in_ms) = patch.fade_in_ms {
+            clip.fade_in_ms = fade_in_ms;
+        }
+        if let Some(fade_out_ms) = patch.fade_out_ms {
+            clip.fade_out_ms = fade_out_ms;
+        }
+        if let Some(loop_enabled) = patch.loop_enabled {
+            clip.loop_enabled = loop_enabled;
+        }
+        if let Some(muted) = patch.muted {
+            clip.muted = muted;
+        }
+        if clip.id.trim().is_empty()
+            || clip.name.trim().is_empty()
+            || clip.track_id.trim().is_empty()
+            || clip.asset_id.as_str().trim().is_empty()
+        {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip '{}' requires non-empty id, name, track and asset id.",
+                clip.id
+            )));
+        }
+        if clip.duration_ms == 0 {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip '{}' must have a positive duration.",
+                clip.id
+            )));
+        }
+        clip.normalize_fields();
+        self.validate_audio_clip(&clip)?;
+        self.audio_clips[index] = clip;
+        Ok(())
+    }
+
+    /// Creates a copy of an existing clip with a fresh `new_id`, sharing the
+    /// source [`AssetId`]. The duplicate is placed on the same track, right
+    /// after the original clip, with identical parameters.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::InvalidClip`] when the source clip cannot be
+    /// found or `new_id` is already in use.
+    pub fn duplicate_audio_clip(
+        &mut self,
+        clip_id: &str,
+        new_id: String,
+    ) -> Result<(), DomainError> {
+        if new_id.trim().is_empty() {
+            return Err(DomainError::InvalidClip(
+                "Duplicate clip id must not be empty.".into(),
+            ));
+        }
+        if self.audio_clips.iter().any(|clip| clip.id == new_id) {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip id '{new_id}' is already in use."
+            )));
+        }
+        let index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        let mut copy = self.audio_clips[index].clone();
+        copy.id = new_id;
+        copy.name = format!("{} copy", copy.name);
+        copy.position_ms = copy.position_ms.saturating_add(copy.duration_ms);
+        copy.normalize_fields();
+        self.audio_clips.insert(index + 1, copy);
+        Ok(())
+    }
+
+    /// Splits an existing clip into two pieces at `at_offset_ms` (relative to
+    /// the clip's `position_ms`). The original clip becomes the first piece; a
+    /// new clip with `new_clip_id` is inserted as the second piece, on the same
+    /// track, sharing the source [`AssetId`].
+    ///
+    /// The split point must satisfy `0 < at_offset_ms < duration_ms`. Source
+    /// ranges are adjusted so the two pieces reference contiguous regions of
+    /// the same source; `loop_enabled` clips keep their original source window
+    /// on both pieces because the loop repeats the same source material.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::InvalidClip`] when the source clip cannot be
+    /// found, `at_offset_ms` is outside the clip's duration, or `new_clip_id`
+    /// is empty or already in use.
+    pub fn split_audio_clip(
+        &mut self,
+        clip_id: &str,
+        at_offset_ms: u64,
+        new_clip_id: String,
+    ) -> Result<(), DomainError> {
+        if new_clip_id.trim().is_empty() {
+            return Err(DomainError::InvalidClip(
+                "Split clip id must not be empty.".into(),
+            ));
+        }
+        if self.audio_clips.iter().any(|clip| clip.id == new_clip_id) {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip id '{new_clip_id}' is already in use."
+            )));
+        }
+        let index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        if at_offset_ms == 0 || at_offset_ms >= self.audio_clips[index].duration_ms {
+            return Err(DomainError::InvalidClip(format!(
+                "Split offset for clip '{clip_id}' must be inside its duration."
+            )));
+        }
+        let original = self.audio_clips[index].clone();
+        let loop_enabled = original.loop_enabled;
+        let first_duration = at_offset_ms;
+        let second_duration = original.duration_ms - at_offset_ms;
+        // Effective source end honours the `0 == to end of source` convention.
+        let effective_source_end = if original.source_end_ms > 0 {
+            original.source_end_ms
+        } else {
+            original
+                .source_start_ms
+                .saturating_add(original.duration_ms)
+        };
+        let source_split = effective_source_end.min(original.source_start_ms + first_duration);
+        let mut first = original.clone();
+        first.duration_ms = first_duration;
+        if !loop_enabled {
+            first.source_end_ms = source_split;
+        }
+        first.normalize_fields();
+
+        let mut second = original.clone();
+        second.id = new_clip_id;
+        second.name = format!("{} 2", original.name);
+        second.position_ms = original.position_ms + first_duration;
+        second.duration_ms = second_duration;
+        if !loop_enabled {
+            second.source_start_ms = source_split;
+            second.source_end_ms =
+                if original.source_end_ms > 0 && effective_source_end > source_split {
+                    original.source_end_ms
+                } else {
+                    0
+                };
+        }
+        second.normalize_fields();
+
+        self.audio_clips[index] = first;
+        self.audio_clips.insert(index + 1, second);
+        Ok(())
+    }
+
+    /// Removes the audio clip with the given id.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::InvalidClip`] when the clip cannot be found.
+    pub fn remove_audio_clip(&mut self, clip_id: &str) -> Result<(), DomainError> {
+        let index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        self.audio_clips.remove(index);
         Ok(())
     }
 }
@@ -632,13 +908,10 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         if !clip.gain_db.is_finite() {
             return Err(format!("Audio clip '{}' has an invalid gain.", clip.id));
         }
-        clip.gain_db = clip.gain_db.clamp(-90.0, 24.0);
-        clip.fade_in_ms = clip.fade_in_ms.min(clip.duration_ms);
-        clip.fade_out_ms = clip.fade_out_ms.min(clip.duration_ms);
         if !clip.pan.is_finite() {
             return Err(format!("Audio clip '{}' has an invalid pan.", clip.id));
         }
-        clip.pan = clip.pan.clamp(-1.0, 1.0);
+        clip.normalize_fields();
         let mut candidate = Arrangement {
             tracks: arrangement.tracks.clone(),
             audio_clips: Vec::new(),
@@ -800,6 +1073,243 @@ mod tests {
             .unwrap();
         assert_eq!(arrangement.audio_clips.len(), 1);
         assert_eq!(arrangement.audio_clips[0].asset_id, asset);
+    }
+
+    fn arrangement_with_clip(asset: AssetId) -> Arrangement {
+        let mut arrangement = Arrangement {
+            tracks: vec![
+                Track::main(),
+                Track {
+                    id: "extra".into(),
+                    name: "Extra".into(),
+                    gain_db: 0.0,
+                    pan: 0.0,
+                    muted: false,
+                    solo: false,
+                },
+            ],
+            audio_clips: Vec::new(),
+            midi_clips: Vec::new(),
+        };
+        let mut clip = clip("main", asset);
+        clip.id = "clip:1".into();
+        clip.position_ms = 1_000;
+        clip.duration_ms = 1_000;
+        clip.source_start_ms = 0;
+        clip.source_end_ms = 0;
+        arrangement
+            .add_audio_clip(clip, |_| true)
+            .expect("seed clip is valid");
+        arrangement
+    }
+
+    #[test]
+    fn update_audio_clip_applies_canonical_clamps_and_keeps_other_fields() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .update_audio_clip(
+                "clip:1",
+                AudioClipPatch {
+                    gain_db: Some(999.0),
+                    pan: Some(-5.0),
+                    fade_in_ms: Some(10_000),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let updated = arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == "clip:1")
+            .expect("clip remains");
+        assert_eq!(updated.gain_db, 24.0);
+        assert_eq!(updated.pan, -1.0);
+        // Fades are clamped against the clip's 1000 ms duration, not the requested 10_000.
+        assert_eq!(updated.fade_in_ms, 1_000);
+        // Untouched fields are preserved.
+        assert_eq!(updated.position_ms, 1_000);
+    }
+
+    #[test]
+    fn update_audio_clip_rejects_move_to_missing_track() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        let error = arrangement
+            .update_audio_clip(
+                "clip:1",
+                AudioClipPatch {
+                    track_id: Some("ghost".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(error, DomainError::UnknownTrack(_)));
+        // The clip stays on its original track.
+        assert_eq!(arrangement.audio_clips[0].track_id, "main");
+    }
+
+    #[test]
+    fn update_audio_clip_rejects_inverted_source_range_after_patch() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        let error = arrangement
+            .update_audio_clip(
+                "clip:1",
+                AudioClipPatch {
+                    source_start_ms: Some(800),
+                    source_end_ms: Some(100),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+
+    #[test]
+    fn update_audio_clip_reports_unknown_clip() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        let error = arrangement
+            .update_audio_clip(
+                "missing",
+                AudioClipPatch {
+                    muted: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+
+    #[test]
+    fn duplicate_audio_clip_creates_new_id_and_shares_asset_at_adjacent_position() {
+        let asset = mint_asset_id();
+        let mut arrangement = arrangement_with_clip(asset.clone());
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:1:copy:1".into())
+            .unwrap();
+        assert_eq!(arrangement.audio_clips.len(), 2);
+        let original = &arrangement.audio_clips[0];
+        let copy = &arrangement.audio_clips[1];
+        assert_eq!(original.id, "clip:1");
+        assert_eq!(copy.id, "clip:1:copy:1");
+        // Asset is shared; only the position differs.
+        assert_eq!(copy.asset_id, original.asset_id);
+        assert_eq!(copy.asset_id, asset);
+        assert_eq!(
+            copy.position_ms,
+            original.position_ms + original.duration_ms
+        );
+        assert_eq!(copy.track_id, original.track_id);
+    }
+
+    #[test]
+    fn duplicate_audio_clip_rejects_reused_id_and_missing_source() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        assert!(matches!(
+            arrangement
+                .duplicate_audio_clip("clip:1", "clip:1".into())
+                .unwrap_err(),
+            DomainError::InvalidClip(_)
+        ));
+        assert!(matches!(
+            arrangement
+                .duplicate_audio_clip("missing", "clip:1:copy:1".into())
+                .unwrap_err(),
+            DomainError::InvalidClip(_)
+        ));
+        assert_eq!(arrangement.audio_clips.len(), 1);
+    }
+
+    #[test]
+    fn split_audio_clip_produces_contiguous_pieces_sharing_asset_and_track() {
+        let asset = mint_asset_id();
+        let mut arrangement = arrangement_with_clip(asset.clone());
+        let original = arrangement.audio_clips[0].clone();
+        arrangement
+            .split_audio_clip("clip:1", 400, "clip:1:split:1".into())
+            .unwrap();
+        assert_eq!(arrangement.audio_clips.len(), 2);
+        let first = &arrangement.audio_clips[0];
+        let second = &arrangement.audio_clips[1];
+        assert_eq!(first.id, "clip:1");
+        assert_eq!(second.id, "clip:1:split:1");
+        assert_eq!(first.asset_id, asset);
+        assert_eq!(second.asset_id, asset);
+        assert_eq!(first.track_id, original.track_id);
+        assert_eq!(second.track_id, original.track_id);
+        assert_eq!(first.duration_ms, 400);
+        assert_eq!(second.duration_ms, 600);
+        assert_eq!(second.position_ms, original.position_ms + 400);
+        // source_end_ms == 0 means "to end of source"; splitting that clip
+        // leaves the second half continuing to the end of the source.
+        assert_eq!(first.source_end_ms, original.source_start_ms + 400);
+        assert_eq!(second.source_end_ms, 0);
+        assert_eq!(second.source_start_ms, original.source_start_ms + 400);
+    }
+
+    #[test]
+    fn split_audio_clip_keeps_loop_source_window_on_both_pieces() {
+        let asset = mint_asset_id();
+        let mut arrangement = arrangement_with_clip(asset);
+        arrangement
+            .update_audio_clip(
+                "clip:1",
+                AudioClipPatch {
+                    loop_enabled: Some(true),
+                    source_end_ms: Some(500),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        arrangement
+            .split_audio_clip("clip:1", 400, "clip:1:split:1".into())
+            .unwrap();
+        let first = &arrangement.audio_clips[0];
+        let second = &arrangement.audio_clips[1];
+        assert!(first.loop_enabled);
+        assert!(second.loop_enabled);
+        // Loop clips keep the same source window on both halves.
+        assert_eq!(first.source_start_ms, 0);
+        assert_eq!(first.source_end_ms, 500);
+        assert_eq!(second.source_start_ms, 0);
+        assert_eq!(second.source_end_ms, 500);
+    }
+
+    #[test]
+    fn split_audio_clip_rejects_out_of_range_offset() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        assert!(matches!(
+            arrangement
+                .split_audio_clip("clip:1", 0, "clip:1:split:1".into())
+                .unwrap_err(),
+            DomainError::InvalidClip(_)
+        ));
+        assert!(matches!(
+            arrangement
+                .split_audio_clip("clip:1", 1_000, "clip:1:split:1".into())
+                .unwrap_err(),
+            DomainError::InvalidClip(_)
+        ));
+        assert_eq!(arrangement.audio_clips.len(), 1);
+    }
+
+    #[test]
+    fn remove_audio_clip_drops_only_the_target() {
+        let asset = mint_asset_id();
+        let mut arrangement = arrangement_with_clip(asset);
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:1:copy:1".into())
+            .unwrap();
+        arrangement.remove_audio_clip("clip:1").unwrap();
+        assert_eq!(arrangement.audio_clips.len(), 1);
+        assert_eq!(arrangement.audio_clips[0].id, "clip:1:copy:1");
+    }
+
+    #[test]
+    fn remove_audio_clip_reports_unknown_clip() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        assert!(matches!(
+            arrangement.remove_audio_clip("missing").unwrap_err(),
+            DomainError::InvalidClip(_)
+        ));
     }
 
     #[test]

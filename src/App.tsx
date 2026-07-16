@@ -286,7 +286,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               recordings={usableRecordings}
               onPlaceRecording={placeRecording}
             />
-            <TimelineClipInspector session={session} setSession={setSession} />
+            <TimelineClipInspector session={session} setSession={setSession} api={nativeApi} />
             <MidiClipEditor
               session={session}
               setSession={setSession}
@@ -344,6 +344,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               referenceId={referenceId}
               session={session}
               setSession={setSession}
+              api={nativeApi}
               onSelect={(recording) => void selectReference(recording)}
               onPreview={(recording) => void previewReference(recording)}
               onStop={() => void stopReferencePreview()}

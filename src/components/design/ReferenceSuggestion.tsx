@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AiChangeSet, AudioAnalysis, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
+import type { NativeApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
 
 export function ReferenceSuggestion({
@@ -10,6 +11,7 @@ export function ReferenceSuggestion({
   referenceId,
   session,
   setSession,
+  api,
   onSelect,
   onPreview,
   onStop,
@@ -25,6 +27,7 @@ export function ReferenceSuggestion({
   referenceId: string | null;
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
+  api: NativeApi;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;
@@ -71,7 +74,7 @@ export function ReferenceSuggestion({
     targetClip && comparison
       ? Math.max(-90, Math.min(24, targetClip.gainDb + comparison.loudnessMatchGainDb))
       : null;
-  const applySuggestion = () => {
+  const applySuggestion = async () => {
     if (
       !comparison ||
       !targetClip ||
@@ -80,6 +83,11 @@ export function ReferenceSuggestion({
       session.settings.aiPermission !== 'Apply'
     )
       return;
+    // Commit the gain change through the Rust Arrangement Domain so the
+    // canonical clamp and validation rules run there. React no longer mutates
+    // audioClips directly for this edit.
+    const updated = await api.updateAudioClip(targetClip.id, { gainDb: proposedGain });
+    if (!updated) return;
     const changeSet: AiChangeSet = {
       id: `ai:${Date.now()}`,
       createdAtMs: Date.now(),
@@ -94,16 +102,10 @@ export function ReferenceSuggestion({
       applied: true,
     };
     setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) =>
-          clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip,
-        ),
-      },
+      ...updated,
       settings: {
-        ...session.settings,
-        aiHistory: [...session.settings.aiHistory, changeSet].slice(-128),
+        ...updated.settings,
+        aiHistory: [...updated.settings.aiHistory, changeSet].slice(-128),
       },
     });
     setApplied(true);
@@ -243,7 +245,7 @@ export function ReferenceSuggestion({
                 <button
                   className="text-button"
                   disabled={!selected || applied || session.settings.aiPermission !== 'Apply'}
-                  onClick={applySuggestion}
+                  onClick={() => void applySuggestion()}
                 >
                   Apply selected
                 </button>
