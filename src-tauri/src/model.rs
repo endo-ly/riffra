@@ -1,50 +1,16 @@
 use crate::storage::MigrationNotice;
 use serde::{Deserialize, Serialize};
 
+// Shared production types live in `domain` and are re-exported here so existing
+// call sites keep resolving against a single definition. v1-only types (the
+// six-variant Workspace, asset-path TimelineClip/SamplePad, and ScratchSession)
+// remain below for migration reading only.
+#[cfg(test)]
+pub use crate::domain::rack::DeviceKind;
+pub use crate::domain::rack::{RackDevice, RackMacro};
+pub use crate::domain::session::{AiChangeSet, MidiClip, SessionSnapshot, Track as TimelineTrack};
+
 pub const CURRENT_SESSION_FORMAT: u32 = 1;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RackDevice {
-    pub id: String,
-    pub name: String,
-    pub kind: DeviceKind,
-    pub path: Option<String>,
-    pub bypassed: bool,
-    pub gain_db: f64,
-    #[serde(default)]
-    pub parameter_values: Vec<f32>,
-    #[serde(default)]
-    pub state_data: Option<String>,
-    #[serde(default)]
-    pub disabled_placeholder: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RackMacro {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub value: f32,
-    #[serde(default)]
-    pub parameter_index: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSnapshot {
-    pub id: String,
-    pub name: String,
-    pub created_at_ms: u64,
-    pub description: String,
-    pub tag: Option<String>,
-    pub parent_id: Option<String>,
-    pub master_db: f64,
-    pub rack: Vec<RackDevice>,
-    #[serde(default)]
-    pub macros: Vec<RackMacro>,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -78,45 +44,6 @@ fn default_track_id() -> String {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct TimelineTrack {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub gain_db: f64,
-    #[serde(default)]
-    pub pan: f64,
-    #[serde(default)]
-    pub muted: bool,
-    #[serde(default)]
-    pub solo: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiNote {
-    pub id: String,
-    pub note: u8,
-    pub start_ms: u64,
-    pub duration_ms: u64,
-    pub velocity: u8,
-    pub channel: u8,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiClip {
-    pub id: String,
-    pub name: String,
-    pub start_ms: u64,
-    pub duration_ms: u64,
-    #[serde(default)]
-    pub notes: Vec<MidiNote>,
-    #[serde(default)]
-    pub muted: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct SamplePad {
     pub id: String,
     pub name: String,
@@ -130,33 +57,7 @@ pub struct SamplePad {
     pub loop_enabled: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct AiChangeSet {
-    pub id: String,
-    pub created_at_ms: u64,
-    pub permission: String,
-    pub target: String,
-    pub current_gain_db: f64,
-    pub proposed_gain_db: f64,
-    pub reason: String,
-    pub expected_effect: String,
-    pub risk: String,
-    #[serde(default)]
-    pub context: Vec<String>,
-    pub applied: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum DeviceKind {
-    Input,
-    Plugin,
-    Utility,
-    Output,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Workspace {
     Home,
@@ -241,6 +142,7 @@ fn default_ai_context() -> Vec<String> {
     vec!["analysis".into(), "selectedClip".into()]
 }
 
+#[cfg(test)]
 const AI_CONTEXT_IDS: &[&str] = &[
     "selectedRack",
     "parameterList",
@@ -254,6 +156,7 @@ const AI_CONTEXT_IDS: &[&str] = &[
 ];
 
 impl ScratchSession {
+    #[cfg(test)]
     pub fn new(now_ms: u64) -> Self {
         Self {
             format_version: CURRENT_SESSION_FORMAT,
@@ -316,6 +219,7 @@ impl ScratchSession {
         }
     }
 
+    #[cfg(test)]
     pub fn validate_and_normalize(mut self) -> Result<Self, String> {
         if self.format_version != CURRENT_SESSION_FORMAT {
             return Err(format!(
@@ -578,7 +482,7 @@ pub struct RecoveryCandidate {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
-    pub session: ScratchSession,
+    pub session: crate::domain::session::CreativeSession,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
     pub native_available: bool,

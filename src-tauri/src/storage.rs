@@ -1,4 +1,6 @@
-use crate::model::{CURRENT_SESSION_FORMAT, RecoveryCandidate, ScratchSession};
+use crate::domain::session::{CREATIVE_SESSION_FORMAT, CreativeSession};
+use crate::migration::migrate_v1_to_v2;
+use crate::model::{CURRENT_SESSION_FORMAT, ScratchSession};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -10,19 +12,22 @@ use std::{
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
 const MIGRATION_BACKUP_TAG: &str = "migration-backup";
+const V1_FORMAT: u32 = CURRENT_SESSION_FORMAT;
 
 /// Result of loading the active session, including how the load resolved.
 #[derive(Debug, Clone)]
 pub struct LoadedSession {
-    pub session: ScratchSession,
+    pub session: CreativeSession,
     pub recovered_from_generation: bool,
     pub migration: Option<MigrationNotice>,
 }
 
-/// Explicit record produced when a session file uses an unsupported format version.
+/// Explicit record produced when a session file uses an unsupported format
+/// version, or when a v1 session could not be migrated.
 ///
-/// The original file is never modified or deleted by the migration reader; a byte-identical
-/// backup is written before any fallback so the user's data stays recoverable.
+/// The original file is never modified or deleted by the migration reader; a
+/// byte-identical backup is written before any fallback so the user's data
+/// stays recoverable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MigrationNotice {
@@ -40,15 +45,15 @@ pub enum SessionLoadError {
 
 impl From<io::Error> for SessionLoadError {
     fn from(error: io::Error) -> Self {
-        SessionLoadError::Corrupt(error)
+        Self::Corrupt(error)
     }
 }
 
 impl std::fmt::Display for SessionLoadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SessionLoadError::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
-            SessionLoadError::UnsupportedFormat(notice) => write!(
+            Self::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
+            Self::UnsupportedFormat(notice) => write!(
                 formatter,
                 "session format {} is unsupported (expected {}); original backed up to {}",
                 notice.found_format,
@@ -63,6 +68,7 @@ impl std::error::Error for SessionLoadError {}
 
 #[derive(Debug)]
 pub struct SessionStore {
+    data_root: PathBuf,
     scratch_dir: PathBuf,
     generations_dir: PathBuf,
 }
@@ -72,6 +78,7 @@ impl SessionStore {
         let scratch_dir = data_root.join("scratch");
         let generations_dir = scratch_dir.join("generations");
         Self {
+            data_root: data_root.to_path_buf(),
             scratch_dir,
             generations_dir,
         }
@@ -84,9 +91,8 @@ impl SessionStore {
     pub fn load_or_create(&self) -> Result<LoadedSession, SessionLoadError> {
         self.ensure_layout()?;
         let current = self.scratch_dir.join("current.json");
-        let mut migration_notice = None;
         if current.is_file() {
-            match self.read_session_with_migration(&current) {
+            match self.read_active(&current) {
                 Ok(session) => {
                     return Ok(LoadedSession {
                         session,
@@ -94,13 +100,31 @@ impl SessionStore {
                         migration: None,
                     });
                 }
-                Err(SessionLoadError::UnsupportedFormat(notice)) => {
-                    // The original file stays on disk and a byte-identical backup already exists,
-                    // so falling back must not lose data. The mismatch is reported explicitly.
-                    migration_notice = Some(notice);
+                Err(ActiveReadFailure::UnsupportedFormat(notice)) => {
+                    if let Some(session) = self.newest_valid_generation()? {
+                        return Ok(LoadedSession {
+                            session,
+                            recovered_from_generation: true,
+                            migration: Some(notice),
+                        });
+                    }
+                    // An unsupported current session must never be replaced by a
+                    // fresh v2 file. Keep the original available for manual
+                    // recovery and make the format distinction explicit.
+                    return Err(SessionLoadError::UnsupportedFormat(notice));
                 }
-                Err(SessionLoadError::Corrupt(_)) => {
-                    // Unreadable current file: fall through to the newest valid generation.
+                Err(ActiveReadFailure::Corrupt(error)) => {
+                    if let Some(session) = self.newest_valid_generation()? {
+                        return Ok(LoadedSession {
+                            session,
+                            recovered_from_generation: true,
+                            migration: None,
+                        });
+                    }
+                    // A corrupt current session with no valid generation is a
+                    // hard load failure. Creating a new file here would destroy
+                    // the only recoverable copy of the user's session.
+                    return Err(SessionLoadError::Corrupt(error));
                 }
             }
         }
@@ -109,61 +133,98 @@ impl SessionStore {
             return Ok(LoadedSession {
                 session,
                 recovered_from_generation: true,
-                migration: migration_notice,
+                migration: None,
             });
         }
 
-        let session = ScratchSession::new(now_ms());
+        let session = CreativeSession::new(now_ms());
         self.save(&session)?;
         Ok(LoadedSession {
             session,
             recovered_from_generation: false,
-            migration: migration_notice,
+            migration: None,
         })
     }
 
-    /// Reads the active session and confirms its format version. On a version mismatch a
-    /// pre-conversion backup of the original bytes is written and the mismatch is reported
-    /// explicitly instead of being silently discarded.
-    fn read_session_with_migration(&self, path: &Path) -> Result<ScratchSession, SessionLoadError> {
-        let payload = fs::read(path).map_err(SessionLoadError::Corrupt)?;
-        let session: ScratchSession = serde_json::from_slice(&payload).map_err(|error| {
-            SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error))
-        })?;
-        if session.format_version != CURRENT_SESSION_FORMAT {
-            let backup_path = self.write_migration_backup(path, &payload)?;
-            return Err(SessionLoadError::UnsupportedFormat(MigrationNotice {
-                found_format: session.format_version,
-                expected_format: CURRENT_SESSION_FORMAT,
-                backup_path,
-            }));
+    /// Reads the active session file. v2 loads directly; v1 is backed up
+    /// byte-for-byte, migrated to v2, and persisted only after conversion
+    /// succeeds. Unknown versions and corrupt payloads are reported without
+    /// replacing the original file.
+    fn read_active(&self, path: &Path) -> Result<CreativeSession, ActiveReadFailure> {
+        let payload = fs::read(path).map_err(ActiveReadFailure::Corrupt)?;
+        let raw = match parse_raw_session(&payload) {
+            Ok(raw) => raw,
+            Err(ActiveReadFailure::UnsupportedFormat(mut notice)) => {
+                if notice.backup_path.as_os_str().is_empty() {
+                    notice.backup_path = self
+                        .write_migration_backup(path, &payload)
+                        .unwrap_or_else(|_| self.backup_path_for(path));
+                }
+                return Err(ActiveReadFailure::UnsupportedFormat(notice));
+            }
+            Err(error) => return Err(error),
+        };
+        match raw {
+            RawSession::V2(session) => session
+                .validate_and_normalize()
+                .map_err(|error| ActiveReadFailure::Corrupt(corrupt_io_error(&error))),
+            RawSession::V1(legacy) => {
+                // Preserve the v1 bytes before any conversion or fallback.
+                let backup_path = self
+                    .write_migration_backup(path, &payload)
+                    .unwrap_or_else(|_| self.backup_path_for(path));
+                match migrate_v1_to_v2(&legacy, &self.data_root)
+                    .and_then(|session| session.validate_and_normalize())
+                {
+                    Ok(session) => {
+                        self.save(&session).map_err(ActiveReadFailure::Corrupt)?;
+                        Ok(session)
+                    }
+                    Err(error) => Err(ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
+                        "v1 session migration failed; original backed up to {}: {error}",
+                        backup_path.display()
+                    )))),
+                }
+            }
         }
-        session.validate_and_normalize().map_err(|error| {
-            SessionLoadError::Corrupt(io::Error::new(io::ErrorKind::InvalidData, error))
-        })
     }
 
-    fn write_migration_backup(&self, original: &Path, payload: &[u8]) -> io::Result<PathBuf> {
+    fn backup_path_for(&self, original: &Path) -> PathBuf {
         let stem = original
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or("current");
-        let backup_path =
-            original.with_file_name(format!("{stem}.{MIGRATION_BACKUP_TAG}.{}.json", now_ms()));
+        original.with_file_name(format!("{stem}.{MIGRATION_BACKUP_TAG}.{}.json", now_ms()))
+    }
+
+    fn write_migration_backup(&self, original: &Path, payload: &[u8]) -> io::Result<PathBuf> {
+        let backup_path = self.backup_path_for(original);
         fs::write(&backup_path, payload)?;
         Ok(backup_path)
     }
 
-    fn newest_valid_generation(&self) -> io::Result<Option<ScratchSession>> {
+    fn newest_valid_generation(&self) -> io::Result<Option<CreativeSession>> {
         for candidate in self.generation_files_newest_first()? {
-            if let Ok(session) = read_session(&candidate) {
+            if let Ok(session) = self.read_generation(&candidate) {
                 return Ok(Some(session));
             }
         }
         Ok(None)
     }
 
-    pub fn save(&self, session: &ScratchSession) -> io::Result<()> {
+    /// Reads a generation file as a v2 session, migrating v1 generations on
+    /// the fly so recovery never offers a session the app cannot open.
+    fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
+        let payload = fs::read(path)?;
+        match parse_raw_session(&payload).map_err(invalid_data)? {
+            RawSession::V2(session) => session.validate_and_normalize().map_err(invalid_data),
+            RawSession::V1(legacy) => migrate_v1_to_v2(&legacy, &self.data_root)
+                .and_then(|session| session.validate_and_normalize())
+                .map_err(invalid_data),
+        }
+    }
+
+    pub fn save(&self, session: &CreativeSession) -> io::Result<()> {
         self.ensure_layout()?;
         let current = self.scratch_dir.join("current.json");
         let payload = serde_json::to_vec_pretty(session)
@@ -191,14 +252,7 @@ impl SessionStore {
             file.sync_all()?;
         }
 
-        if let Err(error) = fs::rename(&temporary, &current) {
-            if current.exists() {
-                fs::remove_file(&current)?;
-                fs::rename(&temporary, &current)?;
-            } else {
-                return Err(error);
-            }
-        }
+        replace_file(&temporary, &current)?;
         self.prune_generations()
     }
 
@@ -206,24 +260,23 @@ impl SessionStore {
         self.ensure_layout()?;
         let mut candidates = Vec::new();
         for path in self.generation_files_newest_first()? {
-            let Ok(session) = read_session(&path) else {
+            let Ok(payload) = fs::read(&path) else {
                 continue;
             };
-            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            let Some(mut metadata) = peek_recovery_metadata(&payload) else {
                 continue;
             };
-            candidates.push(RecoveryCandidate {
-                file_name: file_name.to_owned(),
-                updated_at_ms: session.updated_at_ms,
-                session_id: session.session_id,
-                project_name: session.project_name,
-                note: session.note,
-            });
+            metadata.file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            candidates.push(metadata);
         }
         Ok(candidates)
     }
 
-    pub fn restore_generation(&self, file_name: &str) -> io::Result<ScratchSession> {
+    pub fn restore_generation(&self, file_name: &str) -> io::Result<CreativeSession> {
         if file_name.trim().is_empty()
             || file_name
                 != Path::new(file_name)
@@ -238,7 +291,7 @@ impl SessionStore {
             ));
         }
         let path = self.generations_dir.join(file_name);
-        let session = read_session(&path)?;
+        let session = self.read_generation(&path)?;
         self.save(&session)?;
         Ok(session)
     }
@@ -266,6 +319,109 @@ impl SessionStore {
         }
         Ok(())
     }
+}
+
+enum ActiveReadFailure {
+    Corrupt(io::Error),
+    UnsupportedFormat(MigrationNotice),
+}
+
+impl std::fmt::Display for ActiveReadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
+            Self::UnsupportedFormat(notice) => {
+                SessionLoadError::UnsupportedFormat(notice.clone()).fmt(formatter)
+            }
+        }
+    }
+}
+
+impl From<io::Error> for ActiveReadFailure {
+    fn from(error: io::Error) -> Self {
+        Self::Corrupt(error)
+    }
+}
+
+enum RawSession {
+    V2(CreativeSession),
+    V1(ScratchSession),
+}
+
+fn parse_raw_session(payload: &[u8]) -> Result<RawSession, ActiveReadFailure> {
+    let value: serde_json::Value = serde_json::from_slice(payload).map_err(|error| {
+        ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
+            "session is not valid JSON: {error}"
+        )))
+    })?;
+    let version = value
+        .get("formatVersion")
+        .and_then(serde_json::Value::as_u64)
+        .map(|value| u32::try_from(value).unwrap_or(u32::MAX));
+    match version {
+        Some(CREATIVE_SESSION_FORMAT) => {
+            let session: CreativeSession = serde_json::from_value(value).map_err(|error| {
+                ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
+                    "v2 session is invalid: {error}"
+                )))
+            })?;
+            Ok(RawSession::V2(session))
+        }
+        Some(V1_FORMAT) => {
+            let session: ScratchSession = serde_json::from_value(value).map_err(|error| {
+                ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
+                    "v1 session is invalid: {error}"
+                )))
+            })?;
+            Ok(RawSession::V1(session))
+        }
+        Some(other) => Err(ActiveReadFailure::UnsupportedFormat(MigrationNotice {
+            found_format: other,
+            expected_format: CREATIVE_SESSION_FORMAT,
+            backup_path: PathBuf::new(),
+        })),
+        None => Err(ActiveReadFailure::Corrupt(corrupt_io_error(
+            "session is missing a formatVersion field.",
+        ))),
+    }
+}
+
+/// Extracts recovery-listing metadata from a session payload without performing
+/// a full (and asset-registering) migration, so listing candidates never
+/// mutates the Asset store.
+fn peek_recovery_metadata(payload: &[u8]) -> Option<RecoveryCandidate> {
+    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let session_id = value
+        .get("sessionId")
+        .and_then(serde_json::Value::as_str)?
+        .to_owned();
+    let updated_at_ms = value
+        .get("updatedAtMs")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let project_name = value
+        .get("projectName")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    // v2 stores the note under settings.note; v1 stores it at the top level.
+    let note = value
+        .get("note")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("settings")
+                .and_then(|settings| settings.get("note"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("")
+        .to_owned();
+    Some(RecoveryCandidate {
+        file_name: String::new(),
+        updated_at_ms,
+        session_id,
+        project_name,
+        note,
+    })
 }
 
 fn required_space(payload_bytes: u64, current_bytes: u64) -> u64 {
@@ -298,7 +454,6 @@ fn available_space(directory: &Path) -> io::Result<Option<u64>> {
     let mut path = directory.as_os_str().encode_wide().collect::<Vec<_>>();
     path.push(0);
     let mut free_bytes = 0_u64;
-    // The directory is created before this check, so Windows can resolve the volume.
     let success =
         unsafe { GetDiskFreeSpaceExW(path.as_ptr(), &mut free_bytes, null_mut(), null_mut()) };
     if success == 0 {
@@ -313,12 +468,45 @@ fn available_space(_directory: &Path) -> io::Result<Option<u64>> {
     Ok(None)
 }
 
-fn read_session(path: &Path) -> io::Result<ScratchSession> {
-    let payload = fs::read(path)?;
-    serde_json::from_slice::<ScratchSession>(&payload)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-        .validate_and_normalize()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+fn corrupt_io_error(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_owned())
+}
+
+fn invalid_data<E: std::fmt::Display>(error: E) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+}
+
+/// Replaces a session file without deleting the old file first. Windows does
+/// not let `std::fs::rename` overwrite an existing destination, so use the
+/// native replace primitive there; the fallback platforms already provide an
+/// atomic same-filesystem rename.
+fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+        let mut source = temporary.as_os_str().encode_wide().collect::<Vec<_>>();
+        source.push(0);
+        let mut target = destination.as_os_str().encode_wide().collect::<Vec<_>>();
+        target.push(0);
+        let success = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                target.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if success == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(temporary, destination)
+    }
 }
 
 pub fn now_ms() -> u64 {
@@ -330,258 +518,125 @@ pub fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryCandidate {
+    pub file_name: String,
+    pub updated_at_ms: u64,
+    pub session_id: String,
+    pub project_name: Option<String>,
+    pub note: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        AiChangeSet, DeviceKind, RackDevice, SamplePad, SessionSnapshot, TimelineClip,
-    };
+    use crate::domain::rack::DeviceKind;
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
+    }
+
+    fn write_wav(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"RIFF\0\0\0\0WAVE").unwrap();
     }
 
     #[test]
     fn keeps_last_valid_generation_when_current_is_corrupt() {
         let root = test_root("recovery");
         let store = SessionStore::new(&root);
-        let mut first = ScratchSession::new(now_ms());
-        first.note = "recover me".into();
+        let mut first = CreativeSession::new(now_ms());
+        first.settings.note = "recover me".into();
         store.save(&first).unwrap();
         let mut second = first.clone();
-        second.note = "newer".into();
+        second.settings.note = "newer".into();
         store.save(&second).unwrap();
         fs::write(root.join("scratch/current.json"), b"not json").unwrap();
 
         let loaded = store.load_or_create().unwrap();
         assert!(loaded.recovered_from_generation);
-        assert_eq!(loaded.session.note, "recover me");
-        assert!(loaded.migration.is_none());
+        assert_eq!(loaded.session.settings.note, "recover me");
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn lists_and_restores_valid_recovery_generations() {
-        let root = test_root("recovery-candidates");
+    fn refuses_to_replace_a_corrupt_current_when_no_generation_exists() {
+        let root = test_root("corrupt-without-recovery");
         let store = SessionStore::new(&root);
-        let mut first = ScratchSession::new(now_ms());
-        first.note = "stable choice".into();
-        store.save(&first).unwrap();
-        let mut second = first.clone();
-        second.note = "newer choice".into();
-        store.save(&second).unwrap();
-        let candidates = store.recovery_candidates().unwrap();
-        assert_eq!(candidates.len(), 1);
-        let restored = store.restore_generation(&candidates[0].file_name).unwrap();
-        assert_eq!(restored.note, "stable choice");
-        let loaded = store.load_or_create().unwrap();
-        assert!(!loaded.recovered_from_generation);
-        assert_eq!(loaded.session.note, "stable choice");
-        assert!(loaded.migration.is_none());
+        store.ensure_layout().unwrap();
+        let current = root.join("scratch/current.json");
+        fs::write(&current, b"not json").unwrap();
+        let original = fs::read(&current).unwrap();
+
+        let error = store.load_or_create().unwrap_err();
+        assert!(matches!(error, SessionLoadError::Corrupt(_)));
+        assert_eq!(fs::read(&current).unwrap(), original);
+        assert!(!root.join("scratch/current.json").is_dir());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn rejects_recovery_paths_outside_generation_directory() {
-        let root = test_root("recovery-path");
+    fn backs_up_and_refuses_to_replace_an_unsupported_current() {
+        let root = test_root("unsupported");
         let store = SessionStore::new(&root);
-        let error = store.restore_generation("..\\current.json").unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        store.ensure_layout().unwrap();
+        let current = root.join("scratch/current.json");
+        let payload = br#"{"formatVersion":99,"sessionId":"future","updatedAtMs":1}"#;
+        fs::write(&current, payload).unwrap();
+
+        let error = store.load_or_create().unwrap_err();
+        let SessionLoadError::UnsupportedFormat(notice) = error else {
+            panic!("unsupported session format should remain distinguishable");
+        };
+        assert_eq!(notice.found_format, 99);
+        assert_eq!(fs::read(&current).unwrap(), payload);
+        assert!(notice.backup_path.is_file());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn clamps_unsafe_master_gain_before_persisting() {
-        let mut session = ScratchSession::new(now_ms());
-        session.master_db = 12.0;
+        let mut session = CreativeSession::new(now_ms());
+        session.settings.master_db = 12.0;
         let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.master_db, 0.0);
+        assert_eq!(normalized.settings.master_db, 0.0);
     }
 
     #[test]
-    fn preserves_audio_driver_preference() {
-        let mut session = ScratchSession::new(now_ms());
-        session.audio_driver = Some("ASIO".into());
-        let encoded = serde_json::to_vec(&session).unwrap();
-        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.audio_driver.as_deref(), Some("ASIO"));
-    }
-
-    #[test]
-    fn preserves_bounded_count_in_preference() {
-        let mut session = ScratchSession::new(now_ms());
-        session.count_in_beats = 4;
-        let normalized = session.clone().validate_and_normalize().unwrap();
-        assert_eq!(normalized.count_in_beats, 4);
-        session.count_in_beats = 9;
-        assert!(session.validate_and_normalize().is_err());
-    }
-
-    #[test]
-    fn preserves_ai_permission_and_context_preferences() {
-        let mut session = ScratchSession::new(now_ms());
-        session.ai_permission = "Apply".into();
-        session.ai_context = vec!["selectedRack".into(), "analysis".into()];
-        let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.ai_permission, "Apply");
-        assert_eq!(normalized.ai_context, vec!["selectedRack", "analysis"]);
-    }
-
-    #[test]
-    fn rejects_unknown_ai_permission_and_context() {
-        let mut session = ScratchSession::new(now_ms());
-        session.ai_permission = "Auto".into();
-        assert!(session.validate_and_normalize().is_err());
-
-        let mut session = ScratchSession::new(now_ms());
-        session.ai_context = vec!["unknown".into(), "analysis".into(), "analysis".into()];
-        let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.ai_context, vec!["analysis"]);
-    }
-
-    #[test]
-    fn preserves_reversible_ai_change_set_history() {
-        let mut session = ScratchSession::new(now_ms());
-        session.ai_history.push(AiChangeSet {
-            id: "ai:1".into(),
-            created_at_ms: now_ms(),
-            permission: "Apply".into(),
-            target: "clip:1".into(),
-            current_gain_db: 0.0,
-            proposed_gain_db: -3.0,
-            reason: "Match reference RMS".into(),
-            expected_effect: "Closer perceived level".into(),
-            risk: "Low · reversible".into(),
-            context: vec!["analysis".into(), "selectedClip".into()],
-            applied: true,
-        });
-        let encoded = serde_json::to_vec(&session).unwrap();
-        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.ai_history.len(), 1);
-        assert_eq!(decoded.ai_history[0].target, "clip:1");
-        assert!(decoded.ai_history[0].applied);
-    }
-
-    #[test]
-    fn preserves_persisted_plugin_path() {
-        let mut session = ScratchSession::new(now_ms());
-        session.rack.push(RackDevice {
-            id: "plugin:amplitube".into(),
-            name: "AmpliTube 5".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
-        let encoded = serde_json::to_vec(&session).unwrap();
-        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
+    fn loads_and_round_trips_a_v2_session() {
+        let root = test_root("v2-roundtrip");
+        let store = SessionStore::new(&root);
+        let mut session = CreativeSession::new(now_ms());
+        session.project_name = Some("Clean".into());
+        session.workspace = crate::domain::session::Workspace::Arrange;
+        store.save(&session).unwrap();
+        let loaded = store.load_or_create().unwrap();
+        assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
         assert_eq!(
-            decoded
-                .rack
-                .last()
-                .and_then(|device| device.path.as_deref()),
-            Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3")
+            loaded.session.workspace,
+            crate::domain::session::Workspace::Arrange
         );
-    }
-
-    #[test]
-    fn preserves_a_b_snapshot_state() {
-        let mut session = ScratchSession::new(now_ms());
-        session.snapshots.push(SessionSnapshot {
-            id: "snapshot:A".into(),
-            name: "A".into(),
-            created_at_ms: now_ms(),
-            description: "Clean reference".into(),
-            tag: Some("reference".into()),
-            parent_id: None,
-            master_db: -18.0,
-            rack: session.rack.clone(),
-            macros: session.macros.clone(),
-        });
-        let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.snapshots[0].name, "A");
-        assert_eq!(normalized.snapshots[0].rack.len(), 3);
-    }
-
-    #[test]
-    fn preserves_plugin_state_through_storage_round_trip() {
-        let root = test_root("plugin-state");
-        let store = SessionStore::new(&root);
-        let mut session = ScratchSession::new(now_ms());
-        session.rack.push(RackDevice {
-            id: "plugin:amplitube".into(),
-            name: "AmpliTube 5".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\Program Files\Common Files\VST3\AmpliTube 5.vst3".into()),
-            bypassed: true,
-            gain_db: -6.0,
-            parameter_values: vec![0.8, 0.3],
-            state_data: Some("opaque-vst3-state-blob".into()),
-            disabled_placeholder: false,
-        });
-        store.save(&session).unwrap();
-        let loaded = read_session(&root.join("scratch/current.json")).unwrap();
-        let device = loaded.rack.last().expect("rack device preserved");
-        assert_eq!(device.state_data.as_deref(), Some("opaque-vst3-state-blob"));
-        assert!(device.bypassed);
-        assert_eq!(device.gain_db, -6.0);
-        assert_eq!(device.parameter_values, vec![0.8, 0.3]);
+        assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn preserves_plugin_state_within_snapshot_round_trip() {
-        let root = test_root("plugin-snapshot");
-        let store = SessionStore::new(&root);
-        let mut session = ScratchSession::new(now_ms());
-        session.rack.push(RackDevice {
-            id: "plugin:valhalla".into(),
-            name: "ValhallaSupermassive".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\VST3\ValhallaSupermassive.vst3".into()),
-            bypassed: false,
-            gain_db: -3.0,
-            parameter_values: vec![0.25, 0.5, 0.75],
-            state_data: Some("opaque-snapshot-state".into()),
-            disabled_placeholder: false,
-        });
-        session.snapshots.push(SessionSnapshot {
-            id: "snapshot:B".into(),
-            name: "B".into(),
-            created_at_ms: now_ms(),
-            description: "Wet space".into(),
-            tag: None,
-            parent_id: None,
-            master_db: -12.0,
-            rack: session.rack.clone(),
-            macros: session.macros.clone(),
-        });
-        store.save(&session).unwrap();
-        let loaded = read_session(&root.join("scratch/current.json")).unwrap();
-        let device = loaded
-            .snapshots
-            .last()
-            .and_then(|snapshot| snapshot.rack.last())
-            .expect("snapshot rack preserved");
-        assert_eq!(device.state_data.as_deref(), Some("opaque-snapshot-state"));
-        assert_eq!(device.parameter_values, vec![0.25, 0.5, 0.75]);
-        assert_eq!(device.gain_db, -3.0);
-        let _ = fs::remove_dir_all(root);
-    }
+    fn migrates_a_v1_session_to_v2_with_asset_backed_clips() {
+        let root = test_root("v1-to-v2");
+        let wav = root.join("take.wav");
+        write_wav(&wav);
 
-    #[test]
-    fn preserves_non_destructive_timeline_clip() {
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(TimelineClip {
-            id: "clip:take-1".into(),
-            asset_path: r"C:\recordings\take-1\processed.wav".into(),
-            name: "take-1".into(),
+        let mut legacy = ScratchSession::new(now_ms());
+        assert!(legacy.clone().validate_and_normalize().is_ok());
+        legacy.workspace = crate::model::Workspace::Sample;
+        legacy.timeline.push(crate::model::TimelineClip {
+            id: "clip:1".into(),
+            asset_path: wav.to_string_lossy().into_owned(),
+            name: "take".into(),
             track_id: "main".into(),
-            start_ms: 250,
-            duration_ms: 1_000,
+            start_ms: 100,
+            duration_ms: 500,
             source_in_ms: 0,
             source_out_ms: 0,
             loop_enabled: false,
@@ -591,36 +646,81 @@ mod tests {
             pan: 0.0,
             muted: false,
         });
-        let encoded = serde_json::to_vec(&session).unwrap();
-        let decoded: ScratchSession = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.timeline[0].start_ms, 250);
+        let scratch = root.join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(
+            scratch.join("current.json"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let store = SessionStore::new(&root);
+        let loaded = store.load_or_create().unwrap();
+        assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
         assert_eq!(
-            decoded.timeline[0].asset_path,
-            r"C:\recordings\take-1\processed.wav"
+            loaded.session.workspace,
+            crate::domain::session::Workspace::Design
         );
+        let clip = &loaded.session.arrangement.audio_clips[0];
+        assert_eq!(clip.position_ms, 100);
+        assert!(clip.asset_id.as_str().starts_with("asset:"));
+        assert!(
+            root.join("scratch")
+                .read_dir()
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .contains(MIGRATION_BACKUP_TAG)
+                }),
+            "a byte-identical v1 backup must be preserved"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn caps_kept_generations_and_keeps_newest_on_prune() {
-        let root = test_root("generation-cap");
-        let store = SessionStore::new(&root);
-        let mut newest = ScratchSession::new(now_ms());
-        for index in 0..(GENERATIONS_TO_KEEP + 5) {
-            let mut session = ScratchSession::new(now_ms());
-            session.note = format!("generation-{index}");
-            store.save(&session).unwrap();
-            newest = session;
-        }
-        let candidates = store.recovery_candidates().unwrap();
+    fn failed_v1_migration_preserves_the_original_and_does_not_create_v2() {
+        let root = test_root("v1-failure");
+        let mut legacy = ScratchSession::new(now_ms());
+        legacy.timeline.push(crate::model::TimelineClip {
+            id: "clip:missing".into(),
+            asset_path: root.join("missing.wav").to_string_lossy().into_owned(),
+            name: "missing".into(),
+            track_id: "main".into(),
+            start_ms: 0,
+            duration_ms: 100,
+            source_in_ms: 0,
+            source_out_ms: 0,
+            loop_enabled: false,
+            gain_db: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            pan: 0.0,
+            muted: false,
+        });
+        let scratch = root.join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        let payload = serde_json::to_vec_pretty(&legacy).unwrap();
+        let current = scratch.join("current.json");
+        fs::write(&current, &payload).unwrap();
+
+        let error = SessionStore::new(&root).load_or_create().unwrap_err();
+        assert!(matches!(error, SessionLoadError::Corrupt(_)));
+        assert_eq!(fs::read(&current).unwrap(), payload);
         assert!(
-            candidates.len() <= GENERATIONS_TO_KEEP,
-            "too many generations kept: {}",
-            candidates.len()
+            scratch
+                .read_dir()
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .contains(MIGRATION_BACKUP_TAG)
+                })
         );
-        let loaded = store.load_or_create().unwrap();
-        assert!(!loaded.recovered_from_generation);
-        assert_eq!(loaded.session.note, newest.note);
-        assert!(loaded.migration.is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -630,106 +730,13 @@ mod tests {
     }
 
     #[test]
-    fn preserves_sample_pad_mapping() {
-        let mut session = ScratchSession::new(now_ms());
-        session.sample_pads.push(SamplePad {
-            id: "pad:take-1".into(),
-            name: "take-1".into(),
-            asset_path: r"C:\recordings\take-1\processed.wav".into(),
-            start_ms: 0,
-            end_ms: 1_000,
-            midi_key: 36,
-            gain_db: 0.0,
-            loop_enabled: false,
-        });
-        let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.sample_pads[0].midi_key, 36);
-        assert_eq!(normalized.sample_pads[0].end_ms, 1_000);
-    }
-
-    fn write_current_with_format(root: &Path, format_version: u32) {
-        let mut value = serde_json::to_value(ScratchSession::new(now_ms())).unwrap();
-        value["formatVersion"] = serde_json::Value::from(format_version);
-        let scratch = root.join("scratch");
-        fs::create_dir_all(&scratch).unwrap();
-        fs::write(
-            scratch.join("current.json"),
-            serde_json::to_vec_pretty(&value).unwrap(),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn loads_current_format_without_migration() {
-        let root = test_root("migration-current");
-        let store = SessionStore::new(&root);
-        store.save(&ScratchSession::new(now_ms())).unwrap();
-        let loaded = store.load_or_create().unwrap();
-        assert!(loaded.migration.is_none());
-        assert!(!loaded.recovered_from_generation);
-        assert_eq!(loaded.session.format_version, CURRENT_SESSION_FORMAT);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn backs_up_and_reports_unsupported_older_format() {
-        let root = test_root("migration-older");
-        write_current_with_format(&root, 0);
-        let store = SessionStore::new(&root);
-        let loaded = store.load_or_create().unwrap();
-        let notice = loaded
-            .migration
-            .expect("unsupported format must be reported explicitly");
-        assert_eq!(notice.found_format, 0);
-        assert_eq!(notice.expected_format, CURRENT_SESSION_FORMAT);
-        assert!(
-            notice.backup_path.is_file(),
-            "pre-conversion backup must exist"
-        );
-        let backup: ScratchSession =
-            serde_json::from_slice(&fs::read(&notice.backup_path).unwrap()).unwrap();
-        assert_eq!(
-            backup.format_version, 0,
-            "backup preserves the original format version"
-        );
-        assert!(
-            root.join("scratch/current.json").is_file(),
-            "original file is preserved on disk"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn backs_up_and_reports_newer_format() {
-        let root = test_root("migration-newer");
-        write_current_with_format(&root, 99);
-        let store = SessionStore::new(&root);
-        let loaded = store.load_or_create().unwrap();
-        let notice = loaded
-            .migration
-            .expect("unsupported format must be reported explicitly");
-        assert_eq!(notice.found_format, 99);
-        assert_eq!(notice.expected_format, CURRENT_SESSION_FORMAT);
-        assert!(notice.backup_path.is_file());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recovers_from_generation_when_format_unsupported() {
-        let root = test_root("migration-generation");
-        let store = SessionStore::new(&root);
-        let mut base = ScratchSession::new(now_ms());
-        base.note = "generation choice".into();
-        store.save(&base).unwrap();
-        store.save(&ScratchSession::new(now_ms())).unwrap();
-        write_current_with_format(&root, 0);
-        let loaded = store.load_or_create().unwrap();
-        assert!(loaded.recovered_from_generation);
-        assert_eq!(loaded.session.note, "generation choice");
-        let notice = loaded
-            .migration
-            .expect("unsupported format must be reported explicitly");
-        assert_eq!(notice.found_format, 0);
-        let _ = fs::remove_dir_all(root);
+    fn default_session_carries_arrangement_and_safe_rack() {
+        let session = CreativeSession::new(now_ms())
+            .validate_and_normalize()
+            .unwrap();
+        assert_eq!(session.arrangement.tracks.len(), 1);
+        assert_eq!(session.rack.devices.len(), 3);
+        assert!(session.settings.emergency_muted);
+        assert_eq!(session.rack.devices[0].kind, DeviceKind::Input);
     }
 }
