@@ -2,7 +2,7 @@ import type { AudioStatus, Session } from '@/lib/domain';
 import clsx from 'clsx';
 import { DEFAULT_TEMPO_BPM } from '@/constants';
 import type { NativeApi } from '@/native/native-api';
-import { Icon, Meter } from './ui';
+import { Icon, Meter } from '../shared/ui';
 import styles from './TransportBar.module.css';
 
 interface TransportBarProps {

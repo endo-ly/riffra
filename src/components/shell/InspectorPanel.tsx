@@ -1,5 +1,5 @@
 import type { AudioStatus, BootstrapState, Session } from '@/lib/domain';
-import { Icon } from './ui';
+import { Icon } from '../shared/ui';
 import styles from './InspectorPanel.module.css';
 
 interface InspectorPanelProps {

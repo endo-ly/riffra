@@ -1,7 +1,7 @@
 import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
-import { Icon } from './ui';
+import { Icon } from '../shared/ui';
 
 interface LibraryPanelProps {
   library: {

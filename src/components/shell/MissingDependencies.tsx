@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { MissingDependency } from '@/lib/domain';
-import { Icon } from './ui';
+import { Icon } from '../shared/ui';
 import styles from './MissingDependencies.module.css';
 
 interface MissingDependenciesProps {

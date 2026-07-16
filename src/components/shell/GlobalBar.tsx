@@ -1,7 +1,7 @@
 import type { AudioStatus, Session, Workspace } from '@/lib/domain';
 import clsx from 'clsx';
 import { workspaces } from '@/constants';
-import { Icon } from './ui';
+import { Icon } from '../shared/ui';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
