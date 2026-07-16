@@ -62,7 +62,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     separations,
     separationBusy,
     separationMessage,
-    separationPreviewingPath,
+    separationPreviewingAssetId,
     renderResult,
     stemResults,
     renderMessage,
@@ -104,6 +104,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     editSelectedLibraryAsset,
     loadPluginIntoRack,
     openRecordingAnalysis,
+    openLibraryAssetAnalysis,
     recoverAudio,
     exportSession,
     importSession,
@@ -121,6 +122,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     previewTimelineRender,
     stopTimelinePreview,
     createSamplePad,
+    saveCurrentRack,
+    loadSavedRack,
     previewSamplePad,
     stopPreview,
     connectMidiInput,
@@ -211,6 +214,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           onSelectAsset: selectLibraryAsset,
           onPreviewAsset: previewSelectedLibraryAsset,
           onEditAsset: editSelectedLibraryAsset,
+          onOpenInDesign: openLibraryAssetAnalysis,
         }}
         rack={{
           plugins,
@@ -268,6 +272,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
             onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)}
             onClearPlugin={() => void clearPluginFromRack()}
+            onSaveRack={() => void saveCurrentRack()}
+            onLoadRack={() => void loadSavedRack()}
             onCaptureSnapshot={captureSnapshot}
             onRecallSnapshot={(slot) => void recallSnapshot(slot)}
           />
@@ -355,11 +361,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             results={separations}
             busyId={separationBusy}
             message={separationMessage}
-            previewingPath={separationPreviewingPath}
+            previewingAssetId={separationPreviewingAssetId}
             onSeparate={(recording) => void runSeparation(recording)}
-            onPreview={(path) => void previewSeparation(path)}
+            onPreview={(assetId) => void previewSeparation(assetId)}
             onStop={() => void stopSeparationPreview()}
-            onAddToTimeline={(path, name) => void addSeparationToTimeline(path, name)}
+            onAddToTimeline={(assetId, name, durationMs) =>
+              void addSeparationToTimeline(assetId, name, durationMs)
+            }
           />
         )}
         {!(['home', 'play', 'design', 'arrange'] as Workspace[]).includes(session.workspace) && (

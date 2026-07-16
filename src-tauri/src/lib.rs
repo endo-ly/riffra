@@ -153,6 +153,70 @@ fn load_rack_definition(path: String) -> Result<crate::rack::RackInstance, Strin
 }
 
 #[tauri::command]
+fn add_audio_clip_to_arrangement(
+    asset_id: String,
+    name: String,
+    duration_ms: u64,
+    track_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    if name.trim().is_empty() {
+        return Err("Audio clip name must not be empty.".into());
+    }
+    if duration_ms == 0 {
+        return Err("Audio clip duration must be greater than zero.".into());
+    }
+    let mut session = state.session.lock().map_err(lock_error)?.clone();
+    let track_id = track_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            session
+                .arrangement
+                .tracks
+                .first()
+                .map(|track| track.id.clone())
+        })
+        .ok_or_else(|| "Arrangement has no track for the new audio clip.".to_string())?;
+    let position_ms = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
+        .max()
+        .unwrap_or(0);
+    let clip = crate::session::AudioClip {
+        id: format!("clip:{}:{}", asset_id.as_str(), now_ms()),
+        name,
+        track_id,
+        asset_id,
+        position_ms,
+        duration_ms,
+        source_start_ms: 0,
+        source_end_ms: 0,
+        gain_db: 0.0,
+        fade_in_ms: 0,
+        fade_out_ms: 0,
+        pan: 0.0,
+        loop_enabled: false,
+        muted: false,
+    };
+    session
+        .arrangement
+        .add_audio_clip(clip, |id| asset::load(&state.data_root, id).is_some())
+        .map_err(|error| error.to_string())?;
+    session.workspace = crate::session::Workspace::Arrange;
+    session.updated_at_ms = now_ms();
+    SessionStore::new(&state.data_root)
+        .save(&session)
+        .map_err(|error| format!("Arrangement clip could not be saved: {error}"))?;
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok(session)
+}
+
+#[tauri::command]
 fn import_scratch_session(
     path: String,
     state: State<'_, AppState>,
@@ -231,8 +295,30 @@ fn serialized_job_result<T: Serialize>(result: &T) -> Result<Value, String> {
         .map_err(|error| format!("Job result could not be encoded: {error}"))
 }
 
+fn resolve_audio_asset(data_root: &std::path::Path, value: &str) -> Result<PathBuf, String> {
+    let asset_id = crate::asset::AssetId::from_normalized(value)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    let asset = asset::load(data_root, &asset_id)
+        .ok_or_else(|| format!("Audio asset is not registered: {asset_id}"))?;
+    if asset.kind != crate::asset::AssetKind::Audio {
+        return Err(format!("Asset {asset_id} is not an audio asset."));
+    }
+    let path = PathBuf::from(asset.content_location);
+    if !path.is_file() {
+        return Err(format!(
+            "Audio asset content does not exist: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
 #[tauri::command]
-fn start_analysis_job(path: String, state: State<'_, AppState>) -> Result<jobs::JobStatus, String> {
+fn start_analysis_job(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<jobs::JobStatus, String> {
+    let path = resolve_audio_asset(&state.data_root, &asset_id)?;
     let (id, status) = state.jobs.start("analysis");
     let jobs = state.jobs.clone();
     let data_root = state.data_root.clone();
@@ -241,7 +327,7 @@ fn start_analysis_job(path: String, state: State<'_, AppState>) -> Result<jobs::
         let Some(cancelled) = jobs.cancellation_flag(&id) else {
             return;
         };
-        let result = analysis::analyze_with_cancel(&PathBuf::from(path), Some(cancelled.as_ref()));
+        let result = analysis::analyze_with_cancel(&path, Some(cancelled.as_ref()));
         match result {
             Ok(result) => match serialized_job_result(&result) {
                 Ok(value) => jobs.complete(&id, value, "Audio analysis completed."),
@@ -255,9 +341,13 @@ fn start_analysis_job(path: String, state: State<'_, AppState>) -> Result<jobs::
 
 #[tauri::command]
 fn start_separation_job(
-    path: String,
+    asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<jobs::JobStatus, String> {
+    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    asset::load(&state.data_root, &asset_id)
+        .ok_or_else(|| format!("Source asset is not registered: {asset_id}"))?;
     let (id, status) = state.jobs.start("separation");
     let jobs = state.jobs.clone();
     let data_root = state.data_root.clone();
@@ -266,9 +356,9 @@ fn start_separation_job(
         let Some(cancelled) = jobs.cancellation_flag(&id) else {
             return;
         };
-        let result = separation::separate_channels_with_cancel(
-            &PathBuf::from(path),
-            &data_root.join("separations"),
+        let result = separation::separate_asset_with_cancel(
+            &data_root,
+            &asset_id,
             now_ms(),
             Some(cancelled.as_ref()),
         );
@@ -504,8 +594,11 @@ async fn related_library_assets(
 }
 
 #[tauri::command]
-async fn analyze_audio(path: String) -> Result<analysis::AudioAnalysis, String> {
-    let path = PathBuf::from(path);
+async fn analyze_asset(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<analysis::AudioAnalysis, String> {
+    let path = resolve_audio_asset(&state.data_root, &asset_id)?;
     tauri::async_runtime::spawn_blocking(move || analysis::analyze(&path))
         .await
         .map_err(|error| format!("Audio analysis task failed: {error}"))?
@@ -608,21 +701,6 @@ fn tag_recording(
     state: State<'_, AppState>,
 ) -> Result<library::LibraryAsset, String> {
     tag_recording_impl(&state.data_root, &id, tag, note)
-}
-
-#[tauri::command]
-async fn separate_channels(
-    path: String,
-    state: State<'_, AppState>,
-) -> Result<separation::SeparationResult, String> {
-    let source = PathBuf::from(path);
-    let output_root = state.data_root.join("separations");
-    let created_at_ms = now_ms();
-    tauri::async_runtime::spawn_blocking(move || {
-        separation::separate_channels(&source, &output_root, created_at_ms)
-    })
-    .await
-    .map_err(|error| format!("Separation task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -781,25 +859,6 @@ fn preview_sample(
         looped.unwrap_or(false),
         gain.unwrap_or(1.0),
         voice_key,
-    )
-}
-
-#[tauri::command]
-fn register_audio_asset(
-    path: String,
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<crate::asset::AssetId, String> {
-    let provenance = crate::asset::Provenance::imported();
-    if let Some(existing) = asset::find_by_content_location(&state.data_root, &path) {
-        return Ok(existing);
-    }
-    asset::register(
-        &state.data_root,
-        crate::asset::AssetKind::Audio,
-        &name,
-        &path,
-        Some(provenance),
     )
 }
 
@@ -1354,6 +1413,7 @@ pub fn run() {
             export_scratch_session,
             save_rack_definition,
             load_rack_definition,
+            add_audio_clip_to_arrangement,
             import_scratch_session,
             scan_vst3_folder,
             start_analysis_job,
@@ -1367,7 +1427,7 @@ pub fn run() {
             search_library,
             update_library_asset,
             related_library_assets,
-            analyze_audio,
+            analyze_asset,
             read_midi_events,
             rename_recording,
             delete_recording,
@@ -1375,7 +1435,6 @@ pub fn run() {
             promote_recording,
             detect_duplicate_recordings,
             tag_recording,
-            separate_channels,
             list_separations,
             render_timeline,
             render_timeline_stems,
@@ -1383,7 +1442,6 @@ pub fn run() {
             load_plugin,
             clear_plugin,
             preview_sample,
-            register_audio_asset,
             resolve_asset_content_location,
             stop_preview,
             stop_preview_for_key,

@@ -168,6 +168,7 @@ export function ReferenceSuggestion({
         recordings={recordings}
         references={references}
         referenceId={referenceId}
+        targetAssetId={session.designContext.targetAssetId}
         onSelect={onSelect}
         onPreview={onPreview}
         onStop={onStop}

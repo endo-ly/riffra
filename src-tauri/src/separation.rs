@@ -1,9 +1,10 @@
 use crate::analysis::{decode_sample, parse_wav};
+use crate::asset::{self, AssetId, AssetKind, ProvenanceOperation};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -11,31 +12,94 @@ use std::{
 #[serde(rename_all = "camelCase")]
 pub struct SeparationResult {
     pub id: String,
-    pub source_path: String,
-    pub left_path: String,
-    pub right_path: String,
+    pub source_asset_id: AssetId,
+    pub left_asset_id: AssetId,
+    pub right_asset_id: AssetId,
+    pub duration_ms: u64,
     pub state: String,
     pub created_at_ms: u64,
     pub message: String,
 }
 
-pub fn separate_channels(
-    source: &Path,
-    output_root: &Path,
-    created_at_ms: u64,
-) -> Result<SeparationResult, String> {
-    separate_channels_with_cancel(source, output_root, created_at_ms, None)
+struct SeparationFiles {
+    output_dir: PathBuf,
+    left_path: PathBuf,
+    right_path: PathBuf,
+    duration_ms: u64,
 }
 
-pub fn separate_channels_with_cancel(
+pub fn separate_asset_with_cancel(
+    data_root: &Path,
+    source_asset_id: &AssetId,
+    created_at_ms: u64,
+    cancelled: Option<&AtomicBool>,
+) -> Result<SeparationResult, String> {
+    let source_asset = asset::load(data_root, source_asset_id)
+        .ok_or_else(|| format!("Source asset is not registered: {source_asset_id}"))?;
+    if source_asset.kind != AssetKind::Audio {
+        return Err(format!(
+            "Separation requires an audio source asset, got {:?}.",
+            source_asset.kind
+        ));
+    }
+    let source = PathBuf::from(&source_asset.content_location);
+    if !source.is_file() {
+        return Err(format!(
+            "Source asset content does not exist: {}",
+            source.display()
+        ));
+    }
+    let files = separate_channels_files(
+        &source,
+        &data_root.join("separations"),
+        created_at_ms,
+        cancelled,
+    )?;
+    let mut left_parameters = serde_json::Map::new();
+    left_parameters.insert("channel".into(), serde_json::Value::String("left".into()));
+    let left_asset_id = asset::register_derived(
+        data_root,
+        std::slice::from_ref(source_asset_id),
+        AssetKind::Audio,
+        &format!("Left - {}", source_asset.name),
+        &files.left_path.to_string_lossy(),
+        ProvenanceOperation::Separated,
+        left_parameters,
+    )?;
+    let mut right_parameters = serde_json::Map::new();
+    right_parameters.insert("channel".into(), serde_json::Value::String("right".into()));
+    let right_asset_id = asset::register_derived(
+        data_root,
+        std::slice::from_ref(source_asset_id),
+        AssetKind::Audio,
+        &format!("Right - {}", source_asset.name),
+        &files.right_path.to_string_lossy(),
+        ProvenanceOperation::Separated,
+        right_parameters,
+    )?;
+    let result = SeparationResult {
+        id: format!("separation:{created_at_ms}"),
+        source_asset_id: source_asset_id.clone(),
+        left_asset_id,
+        right_asset_id,
+        duration_ms: files.duration_ms,
+        state: "completed".into(),
+        created_at_ms,
+        message:
+            "Stereo channels were separated into canonical assets without modifying the source WAV."
+                .into(),
+    };
+    write_manifest(&files.output_dir.join("manifest.json"), &result)
+        .map_err(|error| format!("Separation manifest could not be saved: {error}"))?;
+    Ok(result)
+}
+
+fn separate_channels_files(
     source: &Path,
     output_root: &Path,
     created_at_ms: u64,
     cancelled: Option<&AtomicBool>,
-) -> Result<SeparationResult, String> {
-    if !source.is_file() {
-        return Err(format!("Audio file does not exist: {}", source.display()));
-    }
+) -> Result<SeparationFiles, String> {
     if !source
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
@@ -125,18 +189,12 @@ pub fn separate_channels_with_cancel(
     fs::rename(&right_partial, &right)
         .map_err(|error| format!("Right channel output could not be finalized: {error}"))?;
 
-    let result = SeparationResult {
-        id: format!("separation:{created_at_ms}"),
-        source_path: source.to_string_lossy().into_owned(),
-        left_path: left.to_string_lossy().into_owned(),
-        right_path: right.to_string_lossy().into_owned(),
-        state: "completed".into(),
-        created_at_ms,
-        message: "Stereo channels were separated without modifying the source WAV.".into(),
-    };
-    write_manifest(&output_dir.join("manifest.json"), &result)
-        .map_err(|error| format!("Separation manifest could not be saved: {error}"))?;
-    Ok(result)
+    Ok(SeparationFiles {
+        output_dir,
+        left_path: left,
+        right_path: right,
+        duration_ms: frames as u64 * 1000 / u64::from(wav.sample_rate),
+    })
 }
 
 pub fn list(output_root: &Path) -> Result<Vec<SeparationResult>, String> {
@@ -211,12 +269,45 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let source = root.join("stereo.wav");
         write_stereo_test_wav(&source);
-        let result = separate_channels(&source, &root.join("separations"), 42).unwrap();
+        let source_asset_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Stereo",
+            &source.to_string_lossy(),
+            Some(crate::asset::Provenance::imported()),
+        )
+        .unwrap();
+        let result = separate_asset_with_cancel(&root, &source_asset_id, 42, None).unwrap();
         assert_eq!(result.state, "completed");
-        assert!(Path::new(&result.left_path).is_file());
-        assert!(Path::new(&result.right_path).is_file());
+        assert!(
+            Path::new(
+                &asset::load(&root, &result.left_asset_id)
+                    .unwrap()
+                    .content_location
+            )
+            .is_file()
+        );
+        assert!(
+            Path::new(
+                &asset::load(&root, &result.right_asset_id)
+                    .unwrap()
+                    .content_location
+            )
+            .is_file()
+        );
+        let left_path = asset::load(&root, &result.left_asset_id)
+            .unwrap()
+            .content_location;
+        assert_eq!(
+            asset::load(&root, &result.left_asset_id)
+                .unwrap()
+                .provenance
+                .unwrap()
+                .operation,
+            ProvenanceOperation::Separated
+        );
         assert_eq!(analyze(&source).unwrap().channels, 2);
-        assert_eq!(analyze(Path::new(&result.left_path)).unwrap().channels, 1);
+        assert_eq!(analyze(Path::new(&left_path)).unwrap().channels, 1);
         assert_eq!(list(&root).unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
     }

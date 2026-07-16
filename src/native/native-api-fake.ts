@@ -20,6 +20,7 @@ import type {
   ScanReport,
   CreativeSession,
   SeparationResult,
+  RackInstance,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import type { NativeApi } from './native-api';
@@ -167,14 +168,25 @@ export class FakeNativeApi implements NativeApi {
     return { root, startedAtMs: 1, finishedAtMs: 2, plugins: this.plugins, issues: [] };
   };
 
-  startAnalysisJob = async (path: string): Promise<BackgroundJobStatus> => {
+  startAnalysisJob = async (assetId: AssetId): Promise<BackgroundJobStatus> => {
     this.calls.push('startAnalysisJob');
-    return this.completeFakeJob('analysis', await this.analyzeAudio(path));
+    return this.completeFakeJob('analysis', await this.analyzeAsset(assetId));
   };
 
-  startSeparationJob = async (path: string): Promise<BackgroundJobStatus> => {
+  startSeparationJob = async (assetId: AssetId): Promise<BackgroundJobStatus> => {
     this.calls.push('startSeparationJob');
-    return this.completeFakeJob('separation', await this.separateChannels(path));
+    const result: SeparationResult = {
+      id: `sep:${++this.renderCounter}`,
+      sourceAssetId: assetId,
+      leftAssetId: `asset:fake-left-${this.renderCounter}`,
+      rightAssetId: `asset:fake-right-${this.renderCounter}`,
+      durationMs: 1_000,
+      state: 'completed',
+      createdAtMs: 1,
+      message: 'Fake split completed.',
+    };
+    this.separations = [result, ...this.separations.filter((item) => item.id !== result.id)];
+    return this.completeFakeJob('separation', result);
   };
 
   startRenderJob = async (options: RenderOptions): Promise<BackgroundJobStatus> => {
@@ -344,10 +356,10 @@ export class FakeNativeApi implements NativeApi {
     return [...byContent.values()].filter((group) => group.length > 1);
   };
 
-  analyzeAudio = async (path: string): Promise<AudioAnalysis | null> => {
-    this.calls.push('analyzeAudio');
+  analyzeAsset = async (assetId: AssetId): Promise<AudioAnalysis | null> => {
+    this.calls.push('analyzeAsset');
     return {
-      path,
+      path: `fake://assets/${assetId}.wav`,
       sampleRate: 48_000,
       channels: 2,
       bitsPerSample: 24,
@@ -397,19 +409,6 @@ export class FakeNativeApi implements NativeApi {
   listSeparations = async (): Promise<SeparationResult[]> => {
     this.calls.push('listSeparations');
     return this.separations.slice();
-  };
-
-  separateChannels = async (path: string): Promise<SeparationResult | null> => {
-    this.calls.push('separateChannels');
-    return {
-      id: `sep:${++this.renderCounter}`,
-      sourcePath: path,
-      leftPath: 'fake://L.wav',
-      rightPath: 'fake://R.wav',
-      state: 'completed',
-      createdAtMs: 1,
-      message: 'Fake split completed.',
-    };
   };
 
   renderTimeline = async (options: RenderOptions): Promise<RenderResult | null> => {
@@ -597,6 +596,9 @@ export class FakeNativeApi implements NativeApi {
         processedFile: `${id}-processed.wav`,
         rawPath: `fake://${id}-raw.wav`,
         processedPath: `fake://${id}-processed.wav`,
+        rawAssetId: `asset:${id}-raw`,
+        processedAssetId: `asset:${id}-processed`,
+        midiAssetId: null,
         midiFile: null,
         midiPath: null,
         sampleRate: 48_000,
@@ -766,14 +768,64 @@ export class FakeNativeApi implements NativeApi {
     return next;
   };
 
-  registerAudioAsset = async (_path: string, _name: string): Promise<AssetId | null> => {
-    this.calls.push('registerAudioAsset');
-    return `asset:fake-${++this.renderCounter}`;
+  addAudioClipToArrangement = async (
+    assetId: AssetId,
+    name: string,
+    durationMs: number,
+    trackId?: string,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('addAudioClipToArrangement');
+    const session = this.bootstrapState.session;
+    const selectedTrack = trackId ?? session.arrangement.tracks[0]?.id ?? 'main';
+    const positionMs = session.arrangement.audioClips.reduce(
+      (end, clip) => Math.max(end, clip.positionMs + clip.durationMs),
+      0,
+    );
+    const next: CreativeSession = {
+      ...session,
+      workspace: 'arrange',
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...session.arrangement,
+        audioClips: [
+          ...session.arrangement.audioClips,
+          {
+            id: `clip:${assetId}:${Date.now()}`,
+            name,
+            trackId: selectedTrack,
+            assetId,
+            positionMs,
+            durationMs,
+            sourceStartMs: 0,
+            sourceEndMs: 0,
+            gainDb: 0,
+            pan: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            loopEnabled: false,
+            muted: false,
+          },
+        ],
+      },
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return next;
   };
 
   resolveAssetContentLocation = async (_assetId: AssetId): Promise<string | null> => {
     this.calls.push('resolveAssetContentLocation');
     return 'C:\\fake\\asset.wav';
+  };
+
+  saveRackDefinition = async (_name: string, _path: string): Promise<AssetId | null> => {
+    this.calls.push('saveRackDefinition');
+    return `asset:fake-rack-${++this.renderCounter}`;
+  };
+
+  loadRackDefinition = async (_path: string): Promise<RackInstance | null> => {
+    this.calls.push('loadRackDefinition');
+    return this.bootstrapState.session.rack;
   };
 
   private completeFakeJob(kind: BackgroundJobStatus['kind'], result: unknown): BackgroundJobStatus {

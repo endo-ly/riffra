@@ -14,6 +14,7 @@ import type {
   ProjectExport,
   RecordingAsset,
   RecoveryCandidate,
+  RackInstance,
   RenderOptions,
   RenderResult,
   SamplePad,
@@ -98,12 +99,12 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
   }
 }
 
-export async function startAnalysisJob(path: string): Promise<BackgroundJobStatus> {
-  return await invoke<BackgroundJobStatus>('start_analysis_job', { path });
+export async function startAnalysisJob(assetId: AssetId): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_analysis_job', { assetId });
 }
 
-export async function startSeparationJob(path: string): Promise<BackgroundJobStatus> {
-  return await invoke<BackgroundJobStatus>('start_separation_job', { path });
+export async function startSeparationJob(assetId: AssetId): Promise<BackgroundJobStatus> {
+  return await invoke<BackgroundJobStatus>('start_separation_job', { assetId });
 }
 
 export async function startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus> {
@@ -191,9 +192,9 @@ export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> 
   }
 }
 
-export async function analyzeAudio(path: string): Promise<AudioAnalysis | null> {
+export async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null> {
   try {
-    return await invoke<AudioAnalysis>('analyze_audio', { path });
+    return await invoke<AudioAnalysis>('analyze_asset', { assetId });
   } catch {
     return null;
   }
@@ -239,14 +240,6 @@ export async function listSeparations(): Promise<SeparationResult[]> {
     return await invoke<SeparationResult[]>('list_separations');
   } catch {
     return [];
-  }
-}
-
-export async function separateChannels(path: string): Promise<SeparationResult | null> {
-  try {
-    return await invoke<SeparationResult>('separate_channels', { path });
-  } catch {
-    return null;
   }
 }
 
@@ -513,9 +506,35 @@ export async function disableMissingPlugin(deviceId: string): Promise<CreativeSe
   return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
 }
 
-export async function registerAudioAsset(path: string, name: string): Promise<AssetId | null> {
+export async function addAudioClipToArrangement(
+  assetId: AssetId,
+  name: string,
+  durationMs: number,
+  trackId?: string,
+): Promise<CreativeSession | null> {
   try {
-    return await invoke<AssetId>('register_audio_asset', { path, name });
+    return await invoke<CreativeSession>('add_audio_clip_to_arrangement', {
+      assetId,
+      name,
+      durationMs,
+      trackId: trackId ?? null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
+  try {
+    return await invoke<AssetId>('save_rack_definition', { name, path });
+  } catch {
+    return null;
+  }
+}
+
+export async function loadRackDefinition(path: string): Promise<RackInstance | null> {
+  try {
+    return await invoke<RackInstance>('load_rack_definition', { path });
   } catch {
     return null;
   }
@@ -554,12 +573,11 @@ export function createNativeApi(): NativeApi {
     searchLibrary,
     updateLibraryAsset,
     relatedLibraryAssets,
-    analyzeAudio,
+    analyzeAsset,
     readMidiEvents,
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
-    separateChannels,
     renderTimeline,
     renderTimelineStems,
     exportMidi,
@@ -585,7 +603,9 @@ export function createNativeApi(): NativeApi {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
-    registerAudioAsset,
+    addAudioClipToArrangement,
+    saveRackDefinition,
+    loadRackDefinition,
     renameRecording,
     deleteRecording,
     archiveRecording,

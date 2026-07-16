@@ -17,6 +17,7 @@ import type {
   SamplePad,
   ScanReport,
   CreativeSession,
+  RackInstance,
   SeparationResult,
 } from '@/lib/domain';
 
@@ -39,8 +40,8 @@ export interface NativeApi {
   importSession(path: string): Promise<CreativeSession | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
-  startAnalysisJob(path: string): Promise<BackgroundJobStatus>;
-  startSeparationJob(path: string): Promise<BackgroundJobStatus>;
+  startAnalysisJob(assetId: AssetId): Promise<BackgroundJobStatus>;
+  startSeparationJob(assetId: AssetId): Promise<BackgroundJobStatus>;
   startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
   startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus>;
   startScanJob(path?: string): Promise<BackgroundJobStatus>;
@@ -61,13 +62,12 @@ export interface NativeApi {
   ): Promise<LibraryAsset | null>;
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 
-  analyzeAudio(path: string): Promise<AudioAnalysis | null>;
+  analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
   readMidiEvents(path: string): Promise<MidiEvent[]>;
   probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
 
   listSeparations(): Promise<SeparationResult[]>;
-  separateChannels(path: string): Promise<SeparationResult | null>;
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
   renderTimelineStems(options: RenderOptions): Promise<RenderResult[]>;
   exportMidi(): Promise<MidiExportResult | null>;
@@ -103,9 +103,17 @@ export interface NativeApi {
   closeMidiInput(): Promise<AudioStatus>;
   configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;
   resolveAssetContentLocation(assetId: AssetId): Promise<string | null>;
+  addAudioClipToArrangement(
+    assetId: AssetId,
+    name: string,
+    durationMs: number,
+    trackId?: string,
+  ): Promise<CreativeSession | null>;
+
+  saveRackDefinition(name: string, path: string): Promise<AssetId | null>;
+  loadRackDefinition(path: string): Promise<RackInstance | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
   relinkMissingDependency(assetId: AssetId, newPath: string): Promise<CreativeSession>;
   disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
-  registerAudioAsset(path: string, name: string): Promise<AssetId | null>;
 }

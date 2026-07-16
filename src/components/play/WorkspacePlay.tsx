@@ -10,6 +10,8 @@ export function WorkspacePlay({
   onTogglePluginBypass,
   onSetPluginParameter,
   onClearPlugin,
+  onSaveRack,
+  onLoadRack,
   onCaptureSnapshot,
   onRecallSnapshot,
 }: {
@@ -21,6 +23,8 @@ export function WorkspacePlay({
   onTogglePluginBypass: (bypassed: boolean) => void;
   onSetPluginParameter: (index: number, value: number) => void;
   onClearPlugin: () => void;
+  onSaveRack: () => void;
+  onLoadRack: () => void;
   onCaptureSnapshot: (slot: 'A' | 'B') => void;
   onRecallSnapshot: (slot: 'A' | 'B') => void;
 }) {
@@ -141,6 +145,23 @@ export function WorkspacePlay({
           <h3>Main Out</h3>
           <small>Safety limited</small>
         </article>
+      </section>
+      <section className="section-card rack-library-actions">
+        <header>
+          <div>
+            <span className="eyebrow">RACK LIBRARY</span>
+            <h2>Reusable rack definition</h2>
+          </div>
+          <small>Asset-backed snapshots of the current rack</small>
+        </header>
+        <div className="button-row">
+          <button className="text-button" onClick={onSaveRack}>
+            Save Rack
+          </button>
+          <button className="text-button" onClick={onLoadRack}>
+            Load Rack
+          </button>
+        </div>
       </section>
       {audio.plugin?.loaded && audio.plugin.parameters.length > 0 && (
         <section className="section-card plugin-parameters">

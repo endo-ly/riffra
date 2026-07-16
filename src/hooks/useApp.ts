@@ -3,10 +3,12 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  AssetId,
   BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
   MissingDependency,
+  LibraryAsset,
   MidiProbe,
   PluginEntry,
   RecordingAsset,
@@ -15,11 +17,7 @@ import type {
   ScanReport,
   SeparationResult,
 } from '@/lib/domain';
-import {
-  createTimelineClip,
-  isUsableRecording,
-  relocateRecordingReferences,
-} from '@/lib/recordings';
+import { isUsableRecording } from '@/lib/recordings';
 import {
   pluginParameterValuesForSession,
   shouldRestoreIndividualParameters,
@@ -50,7 +48,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getBackgroundJob,
     cancelBackgroundJob,
     listRecordings,
-    analyzeAudio,
+    analyzeAsset,
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
@@ -69,8 +67,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
-    registerAudioAsset,
     resolveAssetContentLocation,
+    addAudioClipToArrangement,
+    saveRackDefinition,
+    loadRackDefinition,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({
@@ -114,7 +114,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [separationMessage, setSeparationMessage] = useState(
     'Ready for a local stereo channel split.',
   );
-  const [separationPreviewingPath, setSeparationPreviewingPath] = useState<string | null>(null);
+  const [separationPreviewingAssetId, setSeparationPreviewingAssetId] = useState<AssetId | null>(
+    null,
+  );
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [stemResults, setStemResults] = useState<RenderResult[]>([]);
   const [renderPreviewing, setRenderPreviewing] = useState(false);
@@ -194,11 +196,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
-  const relocateActiveRecording = useCallback(
-    (recording: RecordingAsset, nextId: string) => {
-      setSession((current) =>
-        current ? relocateRecordingReferences(current, recording, nextId) : current,
-      );
+  const clearRelocatedMissingDependencies = useCallback(
+    (recording: RecordingAsset) => {
       const previousDirectory = recording.path.replace(/[\\/]+$/, '').toLocaleLowerCase();
       setMissingDependencies((current) =>
         current.filter((item) => {
@@ -211,11 +210,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         }),
       );
     },
-    [setSession, setMissingDependencies],
+    [setMissingDependencies],
   );
   const inbox = useInbox(api, recordings, {
     reload: reloadRecordings,
-    onRelocate: relocateActiveRecording,
+    onRelocate: clearRelocatedMissingDependencies,
   });
 
   const audioHook = useAudio(api, {
@@ -385,10 +384,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     async (recording: RecordingAsset) => {
       if (!isUsableRecording(recording)) return;
       if (recording.error) return;
-      const path = recording.processedPath ?? recording.rawPath;
-      if (!path) return;
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
+      if (!assetId) return;
       await runBackgroundJob(
-        () => startAnalysisJob(path),
+        () => startAnalysisJob(assetId),
         (result) => {
           if (!result || typeof result !== 'object') return;
           setAnalysis(result as AudioAnalysis);
@@ -397,7 +396,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               ? {
                   ...current,
                   workspace: 'design',
-                  designContext: { ...current.designContext, activeTool: 'analyze' },
+                  designContext: {
+                    ...current.designContext,
+                    activeTool: 'analyze',
+                    targetAssetId: assetId,
+                  },
                 }
               : current,
           );
@@ -408,45 +411,100 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     [runBackgroundJob, startAnalysisJob],
   );
 
+  const openLibraryAssetAnalysis = useCallback(
+    async (asset: LibraryAsset) => {
+      if (asset.kind !== 'audio') return;
+      const result = await analyzeAsset(asset.id);
+      if (!result) return;
+      setAnalysis(result);
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              workspace: 'design',
+              designContext: {
+                ...current.designContext,
+                activeTool: 'analyze',
+                targetAssetId: asset.id,
+              },
+            }
+          : current,
+      );
+    },
+    [analyzeAsset],
+  );
+
+  const saveCurrentRack = useCallback(async () => {
+    if (!session) return;
+    const path = window.prompt('Rack definition path', 'rack-definition.json');
+    if (!path?.trim()) return;
+    const name = window.prompt('Rack definition name', 'Rack Definition');
+    if (!name?.trim()) return;
+    await saveRackDefinition(name.trim(), path.trim());
+  }, [saveRackDefinition, session]);
+
+  const loadSavedRack = useCallback(async () => {
+    const path = window.prompt('Rack definition path to load', 'rack-definition.json');
+    if (!path?.trim()) return;
+    const rack = await loadRackDefinition(path.trim());
+    if (!rack) return;
+    setSession((current) => (current ? { ...current, rack } : current));
+  }, [loadRackDefinition]);
+
   const selectReference = useCallback(
     async (recording: RecordingAsset) => {
       if (recording.error) return;
-      const path = recording.processedPath ?? recording.rawPath;
-      if (!path) return;
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
+      if (!assetId) return;
       setReferenceId(recording.id);
       const existing = referenceAnalyses[recording.id];
       if (existing) return;
-      const next = await analyzeAudio(path);
+      const next = await analyzeAsset(assetId);
       if (next) setReferenceAnalyses((current) => ({ ...current, [recording.id]: next }));
     },
-    [referenceAnalyses],
+    [analyzeAsset, referenceAnalyses],
   );
 
   const previewReference = useCallback(
     async (recording: RecordingAsset) => {
       if (recording.error) return;
-      const path = recording.processedPath ?? recording.rawPath;
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
+      if (!assetId) return;
+      const path = await resolveAssetContentLocation(assetId);
       if (!path) return;
       await stopSamplePreview();
       setAudio(await previewSample(path, 0, 0, referenceLoopPreview));
       setReferencePreviewingId(recording.id);
       setReferenceSyncPreviewing(false);
     },
-    [referenceLoopPreview],
+    [referenceLoopPreview, resolveAssetContentLocation, stopSamplePreview],
   );
 
   const previewReferencePair = useCallback(async () => {
-    if (!analysis || !referenceId) return;
+    const targetAssetId = session?.designContext.targetAssetId;
+    if (!analysis || !targetAssetId || !referenceId) return;
     const reference = recordings.find((recording) => recording.id === referenceId);
     if (!reference) return;
-    const referencePath = reference.processedPath ?? reference.rawPath;
-    if (!referencePath) return;
+    const referenceAssetId = reference.processedAssetId ?? reference.rawAssetId;
+    if (!referenceAssetId) return;
+    const targetPath = await resolveAssetContentLocation(targetAssetId);
+    const referencePath = await resolveAssetContentLocation(referenceAssetId);
+    if (!targetPath || !referencePath) return;
     await stopSamplePreview();
-    await previewSample(analysis.path, 0, 0, referenceLoopPreview);
+    await previewSample(targetPath, 0, 0, referenceLoopPreview);
     setAudio(await previewSample(referencePath, 0, 0, referenceLoopPreview));
     setReferencePreviewingId(null);
     setReferenceSyncPreviewing(true);
-  }, [analysis, recordings, referenceId, referenceLoopPreview]);
+  }, [
+    analysis,
+    previewSample,
+    recordings,
+    referenceId,
+    referenceLoopPreview,
+    resolveAssetContentLocation,
+    session,
+    stopSamplePreview,
+  ]);
 
   const stopReferencePreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -457,12 +515,25 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const runSeparation = useCallback(
     async (recording: RecordingAsset) => {
       if (recording.error) return;
-      const path = recording.processedPath ?? recording.rawPath;
-      if (!path) return;
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
+      if (!assetId) return;
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              workspace: 'design',
+              designContext: {
+                ...current.designContext,
+                activeTool: 'separate',
+                targetAssetId: assetId,
+              },
+            }
+          : current,
+      );
       setSeparationBusy(recording.id);
       setSeparationMessage('Writing Left / Right WAV assets…');
       await runBackgroundJob(
-        () => startSeparationJob(path),
+        () => startSeparationJob(assetId),
         (value) => {
           const result = value as SeparationResult;
           setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
@@ -475,55 +546,28 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     [runBackgroundJob, startSeparationJob],
   );
 
-  const previewSeparation = useCallback(async (path: string) => {
-    setAudio(await previewSample(path, 0, 0));
-    setSeparationPreviewingPath(path);
-  }, []);
+  const previewSeparation = useCallback(
+    async (assetId: AssetId) => {
+      const path = await resolveAssetContentLocation(assetId);
+      if (!path) return;
+      setAudio(await previewSample(path, 0, 0));
+      setSeparationPreviewingAssetId(assetId);
+    },
+    [previewSample, resolveAssetContentLocation],
+  );
 
   const stopSeparationPreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
-    setSeparationPreviewingPath(null);
-  }, []);
+    setSeparationPreviewingAssetId(null);
+  }, [stopSamplePreview]);
 
   const addSeparationToTimeline = useCallback(
-    async (path: string, name: string) => {
+    async (assetId: AssetId, name: string, durationMs: number) => {
       if (!session) return;
-      const metrics = await analyzeAudio(path);
-      const assetId = await registerAudioAsset(path, name);
-      if (!assetId) return;
-      const durationMs = metrics?.durationMs ?? 1_000;
-      const startMs = Math.max(
-        0,
-        ...session.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
-      );
-      setSession({
-        ...session,
-        arrangement: {
-          ...session.arrangement,
-          audioClips: [
-            ...session.arrangement.audioClips,
-            {
-              id: `clip:separation:${Date.now()}`,
-              assetId,
-              name,
-              trackId: session.arrangement.tracks[0]?.id ?? 'main',
-              positionMs: startMs,
-              durationMs,
-              sourceStartMs: 0,
-              sourceEndMs: 0,
-              loopEnabled: false,
-              gainDb: 0,
-              fadeInMs: 0,
-              fadeOutMs: 0,
-              pan: 0,
-              muted: false,
-            },
-          ],
-        },
-        workspace: 'arrange',
-      });
+      const next = await addAudioClipToArrangement(assetId, name, durationMs);
+      if (next) setSession(next);
     },
-    [analyzeAudio, registerAudioAsset, session],
+    [addAudioClipToArrangement, session],
   );
 
   const runTimelineRender = useCallback(
@@ -651,30 +695,22 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const placeRecording = useCallback(
     async (recording: RecordingAsset) => {
       if (!session) return;
-      const path = recording.processedPath ?? recording.rawPath;
-      if (!path) return;
-      const assetId = await registerAudioAsset(path, recording.name);
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
       if (!assetId) return;
-      const clip = createTimelineClip(session, recording, assetId);
-      if (!clip) return;
-      setSession({
-        ...session,
-        arrangement: {
-          ...session.arrangement,
-          audioClips: [...session.arrangement.audioClips, clip],
-        },
-        workspace: 'arrange',
-      });
+      const durationMs = Math.max(
+        1,
+        Math.round((recording.samplesWritten / (recording.sampleRate ?? 1)) * 1_000),
+      );
+      const next = await addAudioClipToArrangement(assetId, recording.name, durationMs);
+      if (next) setSession(next);
     },
-    [registerAudioAsset, session],
+    [addAudioClipToArrangement, session],
   );
 
   const createSamplePad = useCallback(
     async (recording: RecordingAsset) => {
       if (!session || recording.error) return;
-      const sourcePath = recording.processedPath ?? recording.rawPath;
-      if (!sourcePath) return;
-      const assetId = await registerAudioAsset(sourcePath, recording.name);
+      const assetId = recording.processedAssetId ?? recording.rawAssetId;
       if (
         !assetId ||
         session.playState.sampleInstrument.pads.some((pad) => pad.assetId === assetId)
@@ -707,10 +743,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
           },
         },
         workspace: 'design',
-        designContext: { ...session.designContext, activeTool: 'sample' },
+        designContext: { ...session.designContext, activeTool: 'sample', targetAssetId: assetId },
       });
     },
-    [registerAudioAsset, session],
+    [session],
   );
 
   useEffect(() => {
@@ -893,8 +929,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setSeparationBusy,
     separationMessage,
     setSeparationMessage,
-    separationPreviewingPath,
-    setSeparationPreviewingPath,
+    separationPreviewingAssetId,
+    setSeparationPreviewingAssetId,
     renderResult,
     setRenderResult,
     stemResults,
@@ -966,6 +1002,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     captureSnapshot,
     recallSnapshot,
     openRecordingAnalysis,
+    openLibraryAssetAnalysis,
     selectReference,
     previewReference,
     previewReferencePair,
@@ -984,6 +1021,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     stopPreview,
     placeRecording,
     createSamplePad,
+    saveCurrentRack,
+    loadSavedRack,
     switchWorkspace,
     switchDesignTool,
     renameSession,

@@ -19,6 +19,7 @@ interface LibraryPanelProps {
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
     onEditAsset: () => void;
+    onOpenInDesign: (asset: LibraryAsset) => void;
   };
   rack: {
     plugins: PluginEntry[];
@@ -110,6 +111,14 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                     <button className="text-button" onClick={() => void library.onEditAsset()}>
                       Edit
                     </button>
+                    {library.selectedAsset.kind === 'audio' && (
+                      <button
+                        className="text-button"
+                        onClick={() => void library.onOpenInDesign(library.selectedAsset!)}
+                      >
+                        Analyze in Design
+                      </button>
+                    )}
                   </div>
                 </header>
                 <small>Tag: {library.selectedAsset.tag ?? '—'}</small>

@@ -1,11 +1,11 @@
-import type { RecordingAsset, SeparationResult } from '@/lib/domain';
+import type { AssetId, RecordingAsset, SeparationResult } from '@/lib/domain';
 
 export function WorkspaceSeparate({
   recordings,
   results,
   busyId,
   message,
-  previewingPath,
+  previewingAssetId,
   onSeparate,
   onPreview,
   onStop,
@@ -15,11 +15,11 @@ export function WorkspaceSeparate({
   results: SeparationResult[];
   busyId: string | null;
   message: string;
-  previewingPath: string | null;
+  previewingAssetId: AssetId | null;
   onSeparate: (recording: RecordingAsset) => void;
-  onPreview: (path: string) => void;
+  onPreview: (assetId: AssetId) => void;
   onStop: () => void;
-  onAddToTimeline: (path: string, name: string) => void;
+  onAddToTimeline: (assetId: AssetId, name: string, durationMs: number) => void;
 }) {
   return (
     <div className="workspace-scroll separate-view">
@@ -77,7 +77,12 @@ export function WorkspaceSeparate({
           <p className="inspector-copy">No separation result has been created yet.</p>
         ) : (
           results.slice(0, 8).map((result) => {
-            const sourceName = result.sourcePath.split('\\').pop() ?? 'Stem';
+            const sourceName =
+              recordings.find(
+                (recording) =>
+                  recording.rawAssetId === result.sourceAssetId ||
+                  recording.processedAssetId === result.sourceAssetId,
+              )?.name ?? result.sourceAssetId;
             return (
               <article className="separation-result" key={result.id}>
                 <div>
@@ -88,35 +93,51 @@ export function WorkspaceSeparate({
                 </div>
                 <div className="separation-paths">
                   <span>
-                    LEFT <code>{result.leftPath}</code>
+                    LEFT <code>{result.leftAssetId}</code>
                     <button
                       className="text-button"
                       onClick={() =>
-                        previewingPath === result.leftPath ? onStop() : onPreview(result.leftPath)
+                        previewingAssetId === result.leftAssetId
+                          ? onStop()
+                          : onPreview(result.leftAssetId)
                       }
                     >
-                      {previewingPath === result.leftPath ? 'Stop' : 'Preview'}
+                      {previewingAssetId === result.leftAssetId ? 'Stop' : 'Preview'}
                     </button>
                     <button
                       className="text-button"
-                      onClick={() => onAddToTimeline(result.leftPath, `Left · ${sourceName}`)}
+                      onClick={() =>
+                        onAddToTimeline(
+                          result.leftAssetId,
+                          `Left · ${sourceName}`,
+                          result.durationMs,
+                        )
+                      }
                     >
                       Add to Timeline
                     </button>
                   </span>
                   <span>
-                    RIGHT <code>{result.rightPath}</code>
+                    RIGHT <code>{result.rightAssetId}</code>
                     <button
                       className="text-button"
                       onClick={() =>
-                        previewingPath === result.rightPath ? onStop() : onPreview(result.rightPath)
+                        previewingAssetId === result.rightAssetId
+                          ? onStop()
+                          : onPreview(result.rightAssetId)
                       }
                     >
-                      {previewingPath === result.rightPath ? 'Stop' : 'Preview'}
+                      {previewingAssetId === result.rightAssetId ? 'Stop' : 'Preview'}
                     </button>
                     <button
                       className="text-button"
-                      onClick={() => onAddToTimeline(result.rightPath, `Right · ${sourceName}`)}
+                      onClick={() =>
+                        onAddToTimeline(
+                          result.rightAssetId,
+                          `Right · ${sourceName}`,
+                          result.durationMs,
+                        )
+                      }
                     >
                       Add to Timeline
                     </button>

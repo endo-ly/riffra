@@ -75,6 +75,7 @@ const libraryStub = {
   onSelectAsset: vi.fn(),
   onPreviewAsset: vi.fn(),
   onEditAsset: vi.fn(),
+  onOpenInDesign: vi.fn(),
 };
 
 const rackStub = {

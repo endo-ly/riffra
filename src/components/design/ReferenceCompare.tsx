@@ -1,4 +1,4 @@
-import type { AudioAnalysis, RecordingAsset } from '@/lib/domain';
+import type { AssetId, AudioAnalysis, RecordingAsset } from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 
 export function ReferenceCompare({
@@ -6,6 +6,7 @@ export function ReferenceCompare({
   recordings,
   references,
   referenceId,
+  targetAssetId,
   onSelect,
   onPreview,
   onStop,
@@ -19,6 +20,7 @@ export function ReferenceCompare({
   recordings: RecordingAsset[];
   references: Record<string, AudioAnalysis>;
   referenceId: string | null;
+  targetAssetId: AssetId | null;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;
@@ -31,7 +33,8 @@ export function ReferenceCompare({
   const reference = recordings.find((recording) => recording.id === referenceId) ?? null;
   const current =
     recordings.find(
-      (recording) => (recording.processedPath ?? recording.rawPath) === analysis?.path,
+      (recording) =>
+        recording.processedAssetId === targetAssetId || recording.rawAssetId === targetAssetId,
     ) ?? null;
   const comparison =
     analysis && reference ? compareAnalyses(analysis, references[reference.id] ?? analysis) : null;

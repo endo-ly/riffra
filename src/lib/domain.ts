@@ -426,9 +426,10 @@ export interface AudioDeviceProbe {
 
 export interface SeparationResult {
   id: string;
-  sourcePath: string;
-  leftPath: string;
-  rightPath: string;
+  sourceAssetId: AssetId;
+  leftAssetId: AssetId;
+  rightAssetId: AssetId;
+  durationMs: number;
   state: string;
   createdAtMs: number;
   message: string;
