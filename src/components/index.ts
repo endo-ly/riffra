@@ -1,11 +1,11 @@
 export { Icon, Meter } from './shared/ui';
 export { EmptyWorkspace } from './shared/EmptyWorkspace';
 
-export { GlobalBar } from './shell/GlobalBar';
-export { InspectorPanel } from './shell/InspectorPanel';
-export { LibraryPanel } from './shell/LibraryPanel';
-export { TransportBar } from './shell/TransportBar';
-export { MissingDependencies } from './shell/MissingDependencies';
+export { GlobalBar } from './layout/GlobalBar';
+export { InspectorPanel } from './layout/InspectorPanel';
+export { LibraryPanel } from './layout/LibraryPanel';
+export { TransportBar } from './layout/TransportBar';
+export { MissingDependencies } from './layout/MissingDependencies';
 
 export { WorkspaceHome } from './home/WorkspaceHome';
 export { AudioDevices } from './home/AudioDevices';
