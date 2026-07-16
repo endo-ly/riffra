@@ -1,4 +1,11 @@
-use crate::model::RackDevice;
+use crate::{
+    domain::{
+        asset::AssetId,
+        recording::{RecordingCapture, RecordingCaptureStatus},
+    },
+    model::RackDevice,
+    storage::now_ms,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -20,6 +27,10 @@ pub struct RecordingAsset {
     pub processed_file: Option<String>,
     pub raw_path: Option<String>,
     pub processed_path: Option<String>,
+    pub raw_asset_id: Option<AssetId>,
+    pub processed_asset_id: Option<AssetId>,
+    pub midi_asset_id: Option<AssetId>,
+    pub capture: Option<RecordingCapture>,
     pub midi_file: Option<String>,
     pub midi_path: Option<String>,
     pub sample_rate: Option<u32>,
@@ -78,6 +89,11 @@ struct RecordingManifest {
     dropout_start_sample: Option<u64>,
     dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
+    raw_asset_id: Option<AssetId>,
+    processed_asset_id: Option<AssetId>,
+    midi_asset_id: Option<AssetId>,
+    #[serde(default)]
+    capture: Option<RecordingCapture>,
 }
 
 /// A process interruption can leave the native writer's partial WAVs and a
@@ -98,6 +114,18 @@ fn recover_interrupted_manifest(directory: &Path, manifest: &mut RecordingManife
     let Some(samples) = partial_wav_samples(&bytes) else {
         return false;
     };
+    let mut capture = manifest.capture.take().unwrap_or_else(|| {
+        RecordingCapture::start(
+            format!("capture:{}", directory.to_string_lossy()),
+            "unknown",
+            now_ms(),
+        )
+    });
+    if capture.status == RecordingCaptureStatus::Recording {
+        let _ = capture.transition(RecordingCaptureStatus::Recoverable, now_ms());
+    }
+    capture.dropout_information.samples_written = samples;
+    manifest.capture = Some(capture);
     manifest.state = Some("recoverable".into());
     manifest.samples_written = Some(samples);
     manifest.recovery_status = Some("partial".into());
@@ -189,6 +217,15 @@ fn resolve_take_file(directory: &Path, file: Option<&str>, label: &str) -> Resul
 }
 
 pub fn media_paths(take_id: &str) -> Result<(Option<String>, Option<String>), String> {
+    let (raw, processed, midi) = audio_paths(take_id)?;
+    Ok((processed.or(raw), midi))
+}
+
+/// Resolves each recording product independently so the Asset layer can keep
+/// Raw, Processed, and MIDI identities in the take manifest.
+pub type RecordingAudioPaths = (Option<String>, Option<String>, Option<String>);
+
+pub fn audio_paths(take_id: &str) -> Result<RecordingAudioPaths, String> {
     let directory = Path::new(take_id.strip_prefix("recording:").unwrap_or(take_id));
     let manifest = read_manifest(&directory.join("manifest.json"))?;
     let processed = manifest
@@ -203,7 +240,7 @@ pub fn media_paths(take_id: &str) -> Result<(Option<String>, Option<String>), St
         .join("midi.json")
         .is_file()
         .then(|| directory.join("midi.json").to_string_lossy().into_owned());
-    Ok((processed.or(raw), midi))
+    Ok((raw, processed, midi))
 }
 
 fn validate_manifest(
@@ -332,6 +369,10 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_file: manifest.processed_file,
             raw_path,
             processed_path,
+            raw_asset_id: manifest.raw_asset_id,
+            processed_asset_id: manifest.processed_asset_id,
+            midi_asset_id: manifest.midi_asset_id,
+            capture: manifest.capture,
             midi_file,
             midi_path,
             sample_rate: manifest.sample_rate.and_then(normalize_sample_rate),
@@ -352,6 +393,64 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     Ok(assets)
+}
+
+/// Stores the canonical product ids in the take manifest. The audio files are
+/// never rewritten; only the recovery/index metadata is atomically replaced.
+pub fn save_asset_ids(
+    directory: &Path,
+    raw_asset_id: Option<AssetId>,
+    processed_asset_id: Option<AssetId>,
+    midi_asset_id: Option<AssetId>,
+) -> std::io::Result<()> {
+    let manifest_path = directory.join("manifest.json");
+    let mut manifest = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
+    manifest.raw_asset_id = raw_asset_id;
+    manifest.processed_asset_id = processed_asset_id;
+    manifest.midi_asset_id = midi_asset_id;
+    let mut capture = manifest.capture.take().unwrap_or_else(|| {
+        RecordingCapture::start(
+            format!("capture:{}", directory.to_string_lossy()),
+            "unknown",
+            now_ms(),
+        )
+    });
+    if capture.status == RecordingCaptureStatus::Recording {
+        let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
+    }
+    let target = if manifest.state.as_deref() == Some("recoverable") {
+        RecordingCaptureStatus::Recoverable
+    } else if manifest.state.as_deref() == Some("failed") {
+        RecordingCaptureStatus::Failed
+    } else {
+        RecordingCaptureStatus::Completed
+    };
+    if capture.status == RecordingCaptureStatus::Completing {
+        let _ = capture.transition(target, now_ms());
+    }
+    capture.sample_rate = manifest.sample_rate.and_then(normalize_sample_rate);
+    capture.raw_audio_asset_id = manifest.raw_asset_id.clone();
+    capture.processed_audio_asset_id = manifest.processed_asset_id.clone();
+    capture.midi_asset_id = manifest.midi_asset_id.clone();
+    capture.dropout_information = crate::domain::recording::DropoutInformation {
+        samples_written: manifest.samples_written.unwrap_or_default(),
+        dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
+        missing_samples: manifest.missing_samples.unwrap_or_default(),
+        dropout_start_sample: manifest.dropout_start_sample,
+        dropout_end_sample: manifest.dropout_end_sample,
+    };
+    manifest.capture = Some(capture);
+    persist_recovered_manifest(&manifest_path, &manifest)
+}
+
+/// Persists the capture identity and session snapshot at recording start. The
+/// native writer remains responsible for the audio files and legacy manifest
+/// fields; this nested capture is the canonical recording-event representation.
+pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::io::Result<()> {
+    let manifest_path = directory.join("manifest.json");
+    let mut manifest = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
+    manifest.capture = Some(capture);
+    persist_recovered_manifest(&manifest_path, &manifest)
 }
 
 pub fn read_midi_events(path: &Path) -> Result<Vec<MidiEvent>, String> {
@@ -800,6 +899,13 @@ mod tests {
         let recovered_manifest = read_manifest(&take.join("manifest.json")).unwrap();
         assert_eq!(recovered_manifest.state.as_deref(), Some("recoverable"));
         assert_eq!(recovered_manifest.samples_written, Some(2));
+        assert_eq!(
+            recovered_manifest
+                .capture
+                .as_ref()
+                .map(|capture| capture.status),
+            Some(RecordingCaptureStatus::Recoverable)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

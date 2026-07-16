@@ -1,9 +1,16 @@
-use crate::model::ScratchSession;
+use crate::assets;
+use crate::domain::asset::{AssetId, AssetKind, Provenance};
+use crate::domain::session::CreativeSession;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
+    hash::{Hash, Hasher},
+    io::Read,
     path::{Component, Path},
 };
+
+const MANIFEST_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,8 +24,10 @@ pub struct ProjectExport {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PackagedAsset {
-    source: String,
+    asset_id: AssetId,
+    name: String,
     package_path: String,
+    content_hash: u64,
     state: String,
 }
 
@@ -27,7 +36,7 @@ struct PackagedAsset {
 struct ProjectManifest<'a> {
     manifest_version: u32,
     exported_at_ms: u64,
-    session: &'a ScratchSession,
+    session: &'a CreativeSession,
     assets: Vec<PackagedAsset>,
 }
 
@@ -35,14 +44,39 @@ struct ProjectManifest<'a> {
 #[serde(rename_all = "camelCase")]
 struct ProjectManifestOwned {
     manifest_version: u32,
-    session: ScratchSession,
+    session: CreativeSession,
     #[serde(default)]
     assets: Vec<PackagedAsset>,
 }
 
+/// Collects the distinct asset ids referenced by a session's clips and pads.
+fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
+    let mut seen = HashSet::new();
+    let mut ids = Vec::new();
+    for asset_id in session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| &clip.asset_id)
+        .chain(
+            session
+                .play_state
+                .sample_instrument
+                .pads
+                .iter()
+                .map(|pad| &pad.asset_id),
+        )
+    {
+        if seen.insert(asset_id.clone()) {
+            ids.push(asset_id.clone());
+        }
+    }
+    ids
+}
+
 pub fn export(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     exported_at_ms: u64,
 ) -> Result<ProjectExport, String> {
     let name = safe_name(session.project_name.as_deref().unwrap_or("scratch"));
@@ -54,53 +88,53 @@ pub fn export(
     let assets_directory = directory.join("assets");
     fs::create_dir_all(&assets_directory)
         .map_err(|error| format!("Project asset folder could not be created: {error}"))?;
+
     let mut assets = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for source in session
-        .timeline
-        .iter()
-        .map(|clip| clip.asset_path.as_str())
-        .chain(
-            session
-                .sample_pads
-                .iter()
-                .map(|pad| pad.asset_path.as_str()),
-        )
-    {
-        if !seen.insert(source.to_owned()) {
-            continue;
-        }
+    for (index, asset_id) in referenced_asset_ids(session).into_iter().enumerate() {
         if assets.len() >= 256 {
             break;
         }
-        let source_path = Path::new(source);
+        let Some(location) = assets::resolve_content_location(data_root, &asset_id) else {
+            assets.push(PackagedAsset {
+                asset_id: asset_id.clone(),
+                name: "missing".into(),
+                package_path: String::new(),
+                content_hash: 0,
+                state: "missing".into(),
+            });
+            continue;
+        };
+        let source_path = Path::new(&location);
         let base = source_path
-            .file_name()
+            .file_stem()
             .and_then(|name| name.to_str())
             .map(safe_name)
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| format!("asset-{}", assets.len() + 1));
-        let package_name = format!("{}-{}", assets.len() + 1, base);
+            .unwrap_or_else(|| format!("asset-{}", index + 1));
+        let package_name = format!("{}-{}", index + 1, base);
         let package_path = Path::new("assets").join(&package_name);
         let destination = directory.join(&package_path);
-        let state = if source_path.is_file() {
-            match fs::copy(source_path, &destination) {
-                Ok(_) => "collected",
-                Err(_) => "missing",
+        let (state, content_hash) = if source_path.is_file() {
+            match (fs::copy(source_path, &destination), hash_file(source_path)) {
+                (Ok(_), Ok(hash)) => ("collected".to_string(), hash),
+                _ => ("missing".to_string(), 0),
             }
         } else {
-            "missing"
+            ("missing".to_string(), 0)
         };
         assets.push(PackagedAsset {
-            source: source.to_owned(),
+            asset_id,
+            name: base,
             package_path: package_path.to_string_lossy().replace('\\', "/"),
-            state: state.into(),
+            content_hash,
+            state,
         });
     }
+
     let path = directory.join("project.json");
     let temporary = directory.join(".project.json.tmp");
     let manifest = ProjectManifest {
-        manifest_version: 1,
+        manifest_version: MANIFEST_VERSION,
         exported_at_ms,
         session,
         assets: assets.clone(),
@@ -109,18 +143,7 @@ pub fn export(
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
     fs::write(&temporary, payload)
         .map_err(|error| format!("Project manifest could not be written: {error}"))?;
-    if let Err(error) = fs::rename(&temporary, &path) {
-        if path.exists() {
-            fs::remove_file(&path).map_err(|remove_error| {
-                format!("Project manifest could not be replaced: {remove_error}")
-            })?;
-            fs::rename(&temporary, &path).map_err(|rename_error| {
-                format!("Project manifest could not be finalized: {rename_error}")
-            })?;
-        } else {
-            return Err(format!("Project manifest could not be finalized: {error}"));
-        }
-    }
+    finalize_rename(&temporary, &path)?;
     Ok(ProjectExport {
         path: path.to_string_lossy().into_owned(),
         session_id: session.session_id.clone(),
@@ -129,51 +152,127 @@ pub fn export(
     })
 }
 
-pub fn import(path: &Path) -> Result<ScratchSession, String> {
+pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> {
     let payload =
         fs::read(path).map_err(|error| format!("Project manifest could not be read: {error}"))?;
     let manifest = serde_json::from_slice::<ProjectManifestOwned>(&payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
-    if manifest.manifest_version != 1 {
+    if manifest.manifest_version != MANIFEST_VERSION {
         return Err(format!(
             "Unsupported project manifest version {}.",
             manifest.manifest_version
         ));
     }
-    let mut session = manifest.session.validate_and_normalize()?;
+    let session = manifest.session.validate_and_normalize()?;
     let package_root = path.parent().unwrap_or_else(|| Path::new("."));
-    for asset in manifest.assets {
-        if asset.state != "collected" || Path::new(&asset.source).is_file() {
+    for asset in &manifest.assets {
+        if asset.state != "collected" {
             continue;
         }
-        let relative = Path::new(&asset.package_path);
-        if relative.is_absolute()
-            || relative.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
-            continue;
-        }
-        let packaged = package_root.join(relative);
-        if !packaged.is_file() {
-            continue;
-        }
-        let replacement = packaged.to_string_lossy().into_owned();
-        for clip in &mut session.timeline {
-            if clip.asset_path == asset.source {
-                clip.asset_path = replacement.clone();
+        import_packaged_asset(data_root, package_root, asset)?;
+    }
+    Ok(session)
+}
+
+/// Imports one packaged asset, preserving its id. A same-id asset whose
+/// existing content differs is rejected so import never silently overwrites
+/// different production content.
+fn import_packaged_asset(
+    data_root: &Path,
+    package_root: &Path,
+    asset: &PackagedAsset,
+) -> Result<(), String> {
+    let packaged = resolve_packaged_path(package_root, &asset.package_path)?;
+    if !packaged.is_file() {
+        return Ok(());
+    }
+    if let Some(existing) = assets::load(data_root, &asset.asset_id) {
+        if Path::new(&existing.content_location).is_file() {
+            let existing_hash = hash_file(Path::new(&existing.content_location))?;
+            if existing_hash != asset.content_hash {
+                return Err(format!(
+                    "Asset {} already exists with different content; refusing to overwrite.",
+                    asset.asset_id
+                ));
             }
+            // Same id, same content: keep the existing asset as-is.
+            return Ok(());
         }
-        for pad in &mut session.sample_pads {
-            if pad.asset_path == asset.source {
-                pad.asset_path = replacement.clone();
-            }
+        // Existing record but its content file is gone: restore from the package.
+        let destination = unique_import_destination(data_root, &asset.name, &packaged)?;
+        fs::copy(&packaged, &destination)
+            .map_err(|error| format!("Imported asset could not be restored: {error}"))?;
+        assets::register_with_id(
+            data_root,
+            &asset.asset_id,
+            AssetKind::Audio,
+            &asset.name,
+            &destination.to_string_lossy(),
+            Some(Provenance::imported()),
+        )?;
+        return Ok(());
+    }
+    let destination = unique_import_destination(data_root, &asset.name, &packaged)?;
+    fs::copy(&packaged, &destination)
+        .map_err(|error| format!("Imported asset could not be copied: {error}"))?;
+    assets::register_with_id(
+        data_root,
+        &asset.asset_id,
+        AssetKind::Audio,
+        &asset.name,
+        &destination.to_string_lossy(),
+        Some(Provenance::imported()),
+    )?;
+    Ok(())
+}
+
+fn resolve_packaged_path(
+    package_root: &Path,
+    package_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let relative = Path::new(package_path);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Project package path is not a safe relative path.".into());
+    }
+    Ok(package_root.join(relative))
+}
+
+fn unique_import_destination(
+    data_root: &Path,
+    name: &str,
+    source: &Path,
+) -> Result<std::path::PathBuf, String> {
+    let directory = data_root.join("assets").join("imports");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("wav");
+    let safe = safe_name(name);
+    let destination = directory.join(format!("{safe}-{}.{extension}", crate::storage::now_ms()));
+    Ok(destination)
+}
+
+fn finalize_rename(temporary: &Path, final_path: &Path) -> Result<(), String> {
+    if let Err(error) = fs::rename(temporary, final_path) {
+        if final_path.exists() {
+            fs::remove_file(final_path)
+                .map_err(|error| format!("Project manifest could not be replaced: {error}"))?;
+            fs::rename(temporary, final_path)
+                .map_err(|error| format!("Project manifest could not be finalized: {error}"))?;
+        } else {
+            return Err(format!("Project manifest could not be finalized: {error}"));
         }
     }
-    session.validate_and_normalize()
+    Ok(())
 }
 
 fn safe_name(value: &str) -> String {
@@ -197,188 +296,108 @@ fn safe_name(value: &str) -> String {
     }
 }
 
+fn hash_file(path: &Path) -> Result<u64, String> {
+    let mut file =
+        fs::File::open(path).map_err(|error| format!("Asset file could not be opened: {error}"))?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Asset file could not be read: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        buffer[..read].hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::asset::{AssetId, AssetKind};
+    use crate::domain::session::{AudioClip, CreativeSession};
     use crate::storage::now_ms;
+
+    fn register(root: &Path, name: &str, content: &[u8]) -> AssetId {
+        let path = root.join(name);
+        fs::create_dir_all(root).unwrap();
+        fs::write(&path, content).unwrap();
+        assets::register(root, AssetKind::Audio, name, &path.to_string_lossy(), None).unwrap()
+    }
+
+    fn session_with_clip(root: &Path, asset_id: AssetId) -> CreativeSession {
+        let mut session = CreativeSession::new(now_ms());
+        session.project_name = Some("Clean Session".into());
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:1".into(),
+            track_id: "main".into(),
+            asset_id,
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "take".into(),
+        });
+        let _ = root;
+        session
+    }
 
     #[test]
     fn exports_versioned_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
-        let mut session = ScratchSession::new(now_ms());
-        session.project_name = Some("../Clean Session".into());
+        let session = CreativeSession::new(now_ms());
         let exported = export(&root, &session, 42).unwrap();
-        assert!(exported.path.ends_with("Clean-Session-42\\project.json"));
-        assert_eq!(exported.asset_count, 0);
         let payload = fs::read_to_string(&exported.path).unwrap();
         assert!(payload.contains("manifestVersion"));
-        assert!(payload.contains("scratch-"));
-        let imported = import(Path::new(&exported.path)).unwrap();
+        assert_eq!(exported.asset_count, 0);
+        let imported = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(imported.session_id, session.session_id);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn collects_referenced_audio_without_copying_plugins() {
-        let root = std::env::temp_dir().join(format!("riffra-project-assets-{}", now_ms()));
-        let source = root.join("source.wav");
+    fn export_import_preserves_clip_asset_reference_and_content() {
+        let root = std::env::temp_dir().join(format!("riffra-project-roundtrip-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        fs::write(&source, b"wav").unwrap();
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:source".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "source".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 100,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
-        let exported = export(&root, &session, 99).unwrap();
+        let asset_id = register(&root, "take.wav", b"wav-bytes");
+        let session = session_with_clip(&root, asset_id.clone());
+        let exported = export(&root, &session, 7).unwrap();
         assert_eq!(exported.asset_count, 1);
-        let package = Path::new(&exported.path).parent().unwrap().join("assets");
-        assert_eq!(fs::read_dir(package).unwrap().count(), 1);
-        fs::remove_file(&source).unwrap();
-        let imported = import(Path::new(&exported.path)).unwrap();
-        assert!(imported.timeline[0].asset_path.contains("assets"));
+
+        // Simulate a fresh machine: drop the original asset file + canonical
+        // record so import must restore the asset from the package.
+        let restored = import(&root, Path::new(&exported.path)).unwrap();
+        assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
+        let location = assets::resolve_content_location(&root, &asset_id).unwrap();
+        assert_eq!(fs::read(&location).unwrap(), b"wav-bytes");
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn project_round_trip_preserves_full_content() {
-        let root = std::env::temp_dir().join(format!("riffra-project-roundtrip-{}", now_ms()));
-        let source = root.join("take.wav");
+    fn import_refuses_to_overwrite_same_id_with_different_content() {
+        let root = std::env::temp_dir().join(format!("riffra-project-conflict-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        fs::write(&source, b"wav").unwrap();
+        let asset_id = register(&root, "take.wav", b"original");
+        let session = session_with_clip(&root, asset_id.clone());
+        let exported = export(&root, &session, 9).unwrap();
 
-        let mut session = ScratchSession::new(now_ms());
-        session.project_name = Some("Full Session".into());
-        session.workspace = crate::model::Workspace::Arrange;
-        session.audio_driver = Some("ASIO".into());
-        session.audio_sample_rate = Some(48_000);
-        session.audio_buffer_size = Some(480);
-        session.loop_enabled = true;
-        session.master_db = -12.0;
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:take".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "take".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 100,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: -3.0,
-            fade_in_ms: 5,
-            fade_out_ms: 5,
-            pan: 0.25,
-            muted: false,
-        });
-        session.tracks.push(crate::model::TimelineTrack {
-            id: "bass".into(),
-            name: "Bass".into(),
-            gain_db: -6.0,
-            pan: -0.5,
-            muted: true,
-            solo: false,
-        });
-        session.rack.push(crate::model::RackDevice {
-            id: "plugin:rev".into(),
-            name: "Reverb".into(),
-            kind: crate::model::DeviceKind::Plugin,
-            path: Some(r"C:\VST3\reverb.vst3".into()),
-            bypassed: true,
-            gain_db: 0.0,
-            parameter_values: vec![0.1, 0.2, 0.3],
-            state_data: Some("opaque-plugin-state".into()),
-            disabled_placeholder: false,
-        });
-        session.midi_clips.push(crate::model::MidiClip {
-            id: "midi:1".into(),
-            name: "melody".into(),
-            start_ms: 0,
-            duration_ms: 500,
-            notes: vec![crate::model::MidiNote {
-                id: "n1".into(),
-                note: 60,
-                start_ms: 0,
-                duration_ms: 100,
-                velocity: 100,
-                channel: 1,
-            }],
-            muted: false,
-        });
-        session.ai_history.push(crate::model::AiChangeSet {
-            id: "ai:1".into(),
-            created_at_ms: now_ms(),
-            permission: "Apply".into(),
-            target: "clip:1".into(),
-            current_gain_db: 0.0,
-            proposed_gain_db: -3.0,
-            reason: "Match reference RMS".into(),
-            expected_effect: "Closer perceived level".into(),
-            risk: "Low · reversible".into(),
-            context: vec!["analysis".into(), "selectedClip".into()],
-            applied: true,
-        });
-        session.macros[0].value = 0.9_f32;
+        // Replace the canonical content with different bytes under the same id.
+        let location = assets::resolve_content_location(&root, &asset_id).unwrap();
+        fs::write(&location, b"different").unwrap();
 
-        let exported = export(&root, &session, 7).unwrap();
-        assert_eq!(exported.asset_count, 1);
-
-        fs::remove_file(&source).unwrap();
-        let restored = import(Path::new(&exported.path)).unwrap();
-
-        assert_eq!(restored.project_name, session.project_name);
-        assert_eq!(restored.workspace, crate::model::Workspace::Arrange);
-        assert_eq!(restored.audio_driver.as_deref(), Some("ASIO"));
-        assert_eq!(restored.audio_sample_rate, Some(48_000));
-        assert_eq!(restored.audio_buffer_size, Some(480));
-        assert!(restored.loop_enabled);
-        assert_eq!(restored.master_db, -12.0);
-
-        assert_eq!(restored.timeline.len(), 1);
-        assert!(restored.timeline[0].asset_path.contains("assets"));
-        assert_eq!(restored.timeline[0].gain_db, -3.0);
-        assert_eq!(restored.timeline[0].pan, 0.25);
-
-        assert_eq!(restored.tracks.len(), 2);
-        let bass = restored
-            .tracks
-            .iter()
-            .find(|track| track.id == "bass")
-            .unwrap();
-        assert_eq!(bass.gain_db, -6.0);
-        assert!(bass.muted);
-
-        assert_eq!(restored.rack.len(), 4);
-        let plugin = restored
-            .rack
-            .iter()
-            .find(|device| device.id == "plugin:rev")
-            .unwrap();
-        assert!(plugin.bypassed);
-        assert_eq!(plugin.state_data.as_deref(), Some("opaque-plugin-state"));
-        assert_eq!(plugin.parameter_values, vec![0.1, 0.2, 0.3]);
-
-        assert_eq!(restored.midi_clips.len(), 1);
-        assert_eq!(restored.midi_clips[0].notes.len(), 1);
-        assert_eq!(restored.midi_clips[0].notes[0].note, 60);
-
-        assert_eq!(restored.ai_history.len(), 1);
-        assert_eq!(restored.ai_history[0].target, "clip:1");
-        assert_eq!(restored.ai_history[0].permission, "Apply");
-
-        assert!((restored.macros[0].value - 0.9_f32).abs() < f32::EPSILON);
-
+        let result = import(&root, Path::new(&exported.path));
+        assert!(
+            result.is_err(),
+            "conflicting content must not be overwritten"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

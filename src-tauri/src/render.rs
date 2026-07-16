@@ -1,6 +1,7 @@
 use crate::{
     analysis::{decode_sample, parse_wav},
-    model::ScratchSession,
+    assets,
+    domain::session::{AudioClip, CreativeSession},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,9 +43,22 @@ pub struct RenderResult {
     pub message: String,
 }
 
+/// Resolves an audio clip's asset to its content file, failing explicitly when
+/// the asset is not registered so a render never silently reads a stale path.
+fn clip_source(data_root: &Path, clip: &AudioClip) -> Result<PathBuf, String> {
+    assets::resolve_content_location(data_root, &clip.asset_id)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!(
+                "Audio clip '{}' references an unresolvable asset {}.",
+                clip.name, clip.asset_id
+            )
+        })
+}
+
 pub fn render_timeline_with_options(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<RenderResult, String> {
@@ -53,14 +67,15 @@ pub fn render_timeline_with_options(
 
 pub fn render_timeline_with_options_cancel(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
-    let has_solo = session.tracks.iter().any(|track| track.solo);
+    let has_solo = session.arrangement.tracks.iter().any(|track| track.solo);
     let clips = session
-        .timeline
+        .arrangement
+        .audio_clips
         .iter()
         .filter(|clip| !clip.muted)
         .filter(|clip| {
@@ -72,6 +87,7 @@ pub fn render_timeline_with_options_cancel(
         })
         .filter(|clip| {
             let track = session
+                .arrangement
                 .tracks
                 .iter()
                 .find(|track| track.id == clip.track_id);
@@ -87,7 +103,7 @@ pub fn render_timeline_with_options_cancel(
     let mut sample_rate = None;
     let mut total_frames = 0_u64;
     for clip in &clips {
-        let source = PathBuf::from(&clip.asset_path);
+        let source = clip_source(data_root, clip)?;
         let bytes = fs::read(&source).map_err(|error| {
             format!("Timeline source '{}' could not be read: {error}", clip.name)
         })?;
@@ -119,13 +135,16 @@ pub fn render_timeline_with_options_cancel(
         let bytes_per_sample = usize::from(wav.bits_per_sample / 8);
         let frame_bytes = bytes_per_sample * usize::from(wav.channels);
         let source_frames = (wav.data_len / frame_bytes) as u64;
-        let start_frame = clip.start_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
+        let start_frame = clip.position_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
         let duration_frames = clip.duration_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
-        let source_in_frame = clip.source_in_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
-        let source_out_frame = if clip.source_out_ms == 0 {
+        let source_in_frame = clip
+            .source_start_ms
+            .saturating_mul(u64::from(wav.sample_rate))
+            / 1_000;
+        let source_out_frame = if clip.source_end_ms == 0 {
             source_frames
         } else {
-            clip.source_out_ms
+            clip.source_end_ms
                 .saturating_mul(u64::from(wav.sample_rate))
                 / 1_000
         }
@@ -186,14 +205,15 @@ pub fn render_timeline_with_options_cancel(
                     clip.name
                 )
             })?;
-        let start_frame = (clip.start_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
+        let start_frame =
+            (clip.position_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
         let requested = (clip.duration_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
         let source_start_frame =
-            (clip.source_in_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
-        let source_end_frame = if clip.source_out_ms == 0 {
+            (clip.source_start_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
+        let source_end_frame = if clip.source_end_ms == 0 {
             source_frames
         } else {
-            (clip.source_out_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize
+            (clip.source_end_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize
         }
         .min(source_frames);
         let source_range =
@@ -202,6 +222,7 @@ pub fn render_timeline_with_options_cancel(
             continue;
         }
         let track = session
+            .arrangement
             .tracks
             .iter()
             .find(|track| track.id == clip.track_id);
@@ -271,7 +292,7 @@ pub fn render_timeline_with_options_cancel(
         }
     }
 
-    apply_master_gain(&mut output, session.master_db);
+    apply_master_gain(&mut output, session.settings.master_db);
     if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
         return Err("Timeline render cancelled; no partial result was promoted.".into());
     }
@@ -290,8 +311,32 @@ pub fn render_timeline_with_options_cancel(
         .map_err(|error| format!("Timeline render could not be written: {error}"))?;
     fs::rename(&partial, &path)
         .map_err(|error| format!("Timeline render could not be finalized: {error}"))?;
+    let source_ids = clips
+        .iter()
+        .map(|clip| clip.asset_id.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let rendered_asset_id = assets::register_derived(
+        data_root,
+        &source_ids,
+        crate::domain::asset::AssetKind::Audio,
+        "Timeline render",
+        &path.to_string_lossy(),
+        crate::domain::asset::ProvenanceOperation::Rendered,
+        serde_json::Map::from_iter([
+            (
+                "normalize".into(),
+                serde_json::Value::Bool(options.normalize),
+            ),
+            (
+                "rangeStartMs".into(),
+                serde_json::Value::from(options.range_start_ms),
+            ),
+        ]),
+    )?;
     let result = RenderResult {
-        id: format!("render:{created_at_ms}"),
+        id: rendered_asset_id.to_string(),
         path: path.to_string_lossy().into_owned(),
         sample_rate,
         frames: output_frames,
@@ -321,7 +366,7 @@ pub fn render_timeline_with_options_cancel(
 
 pub fn render_stems_with_options(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<Vec<RenderResult>, String> {
@@ -330,22 +375,24 @@ pub fn render_stems_with_options(
 
 pub fn render_stems_with_options_cancel(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
     cancelled: Option<&AtomicBool>,
 ) -> Result<Vec<RenderResult>, String> {
     let mut stem_session = session.clone();
-    for track in &mut stem_session.tracks {
+    for track in &mut stem_session.arrangement.tracks {
         track.muted = false;
         track.solo = false;
     }
     let track_ids = stem_session
+        .arrangement
         .tracks
         .iter()
         .filter(|track| {
             stem_session
-                .timeline
+                .arrangement
+                .audio_clips
                 .iter()
                 .any(|clip| clip.track_id == track.id && !clip.muted)
         })
@@ -434,31 +481,55 @@ fn write_float_wav(path: &Path, sample_rate: u32, samples: &[f32]) -> io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{analysis::analyze, model::ScratchSession, storage::now_ms};
+    use crate::domain::asset::{AssetId, AssetKind};
+    use crate::domain::session::Track;
+    use crate::{analysis::analyze, assets, storage::now_ms};
+
+    fn register_source(root: &Path, name: &str) -> AssetId {
+        let source = root.join(name);
+        write_mono_test_wav(&source);
+        assets::register(
+            root,
+            AssetKind::Audio,
+            name,
+            &source.to_string_lossy(),
+            None,
+        )
+        .unwrap()
+    }
+
+    fn clip(id: &str, track_id: &str, asset_id: AssetId) -> AudioClip {
+        AudioClip {
+            id: id.into(),
+            track_id: track_id.into(),
+            asset_id,
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: id.into(),
+        }
+    }
 
     #[test]
     fn renders_non_destructive_timeline_to_stereo_float_wav() {
         let root = std::env::temp_dir().join(format!("riffra-render-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.wav");
-        write_mono_test_wav(&source);
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:test".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "source".into(),
-            track_id: "main".into(),
-            start_ms: 100,
-            duration_ms: 200,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: -6.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
+        let asset_id = register_source(&root, "source.wav");
+        let mut session = CreativeSession::new(now_ms());
+        session
+            .arrangement
+            .audio_clips
+            .push(clip("clip:test", "main", asset_id));
+        session.arrangement.audio_clips[0].position_ms = 100;
+        session.arrangement.audio_clips[0].duration_ms = 200;
+        session.arrangement.audio_clips[0].gain_db = -6.0;
         let result =
             render_timeline_with_options(&root, &session, 42, RenderOptions::default()).unwrap();
         assert_eq!(result.clip_count, 1);
@@ -472,25 +543,12 @@ mod tests {
     fn cancelled_render_never_creates_a_completed_or_partial_output() {
         let root = std::env::temp_dir().join(format!("riffra-render-cancel-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.wav");
-        write_mono_test_wav(&source);
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:cancel".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "cancel".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 100,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
+        let asset_id = register_source(&root, "source.wav");
+        let mut session = CreativeSession::new(now_ms());
+        session
+            .arrangement
+            .audio_clips
+            .push(clip("clip:cancel", "main", asset_id));
         let cancelled = AtomicBool::new(true);
 
         let result = render_timeline_with_options_cancel(
@@ -521,25 +579,13 @@ mod tests {
     fn loops_a_non_destructive_source_range_to_clip_length() {
         let root = std::env::temp_dir().join(format!("riffra-render-loop-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.wav");
-        write_mono_test_wav(&source);
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:loop".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "loop".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 200,
-            source_in_ms: 0,
-            source_out_ms: 50,
-            loop_enabled: true,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
+        let asset_id = register_source(&root, "source.wav");
+        let mut session = CreativeSession::new(now_ms());
+        let mut looped = clip("clip:loop", "main", asset_id);
+        looped.duration_ms = 200;
+        looped.source_end_ms = 50;
+        looped.loop_enabled = true;
+        session.arrangement.audio_clips.push(looped);
         let result =
             render_timeline_with_options(&root, &session, 43, RenderOptions::default()).unwrap();
         assert_eq!(result.frames, 8_820);
@@ -550,25 +596,11 @@ mod tests {
     fn renders_only_the_requested_timeline_range() {
         let root = std::env::temp_dir().join(format!("riffra-render-range-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.wav");
-        write_mono_test_wav(&source);
-        let mut session = ScratchSession::new(now_ms());
-        session.timeline.push(crate::model::TimelineClip {
-            id: "clip:range".into(),
-            asset_path: source.to_string_lossy().into_owned(),
-            name: "range".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 200,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
+        let asset_id = register_source(&root, "source.wav");
+        let mut session = CreativeSession::new(now_ms());
+        let mut ranged = clip("clip:range", "main", asset_id);
+        ranged.duration_ms = 200;
+        session.arrangement.audio_clips.push(ranged);
         let result = render_timeline_with_options(
             &root,
             &session,
@@ -591,10 +623,9 @@ mod tests {
     fn renders_one_stem_for_each_audible_track() {
         let root = std::env::temp_dir().join(format!("riffra-render-stems-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.wav");
-        write_mono_test_wav(&source);
-        let mut session = ScratchSession::new(now_ms());
-        session.tracks.push(crate::model::TimelineTrack {
+        let asset_id = register_source(&root, "source.wav");
+        let mut session = CreativeSession::new(now_ms());
+        session.arrangement.tracks.push(Track {
             id: "alt".into(),
             name: "Alt".into(),
             gain_db: 0.0,
@@ -602,24 +633,14 @@ mod tests {
             muted: true,
             solo: false,
         });
-        for (id, track_id) in [("clip:main", "main"), ("clip:alt", "alt")] {
-            session.timeline.push(crate::model::TimelineClip {
-                id: id.into(),
-                asset_path: source.to_string_lossy().into_owned(),
-                name: id.into(),
-                track_id: track_id.into(),
-                start_ms: 0,
-                duration_ms: 100,
-                source_in_ms: 0,
-                source_out_ms: 0,
-                loop_enabled: false,
-                gain_db: 0.0,
-                fade_in_ms: 0,
-                fade_out_ms: 0,
-                pan: 0.0,
-                muted: false,
-            });
-        }
+        session
+            .arrangement
+            .audio_clips
+            .push(clip("clip:main", "main", asset_id.clone()));
+        session
+            .arrangement
+            .audio_clips
+            .push(clip("clip:alt", "alt", asset_id));
         let results =
             render_stems_with_options(&root, &session, 50, RenderOptions::default()).unwrap();
         assert_eq!(results.len(), 2);

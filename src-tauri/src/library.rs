@@ -1,5 +1,6 @@
 use crate::{
-    model::ScratchSession, plugins::PluginEntry, recordings::RecordingAsset, storage::now_ms,
+    assets, domain::asset::AssetId, domain::session::CreativeSession, plugins::PluginEntry,
+    recordings::RecordingAsset, storage::now_ms,
 };
 use rusqlite::{Connection, Row, params};
 use serde::{Deserialize, Serialize};
@@ -119,7 +120,7 @@ fn upsert_preserving_metadata(connection: &Connection, asset: &LibraryAsset) -> 
     Ok(())
 }
 
-pub fn sync_session(data_root: &Path, session: &ScratchSession) -> Result<(), String> {
+pub fn sync_session(data_root: &Path, session: &CreativeSession) -> Result<(), String> {
     let connection = open(data_root)?;
     let project_id = format!("project:{}", session.session_id);
     let project = LibraryAsset {
@@ -136,7 +137,7 @@ pub fn sync_session(data_root: &Path, session: &ScratchSession) -> Result<(), St
                 .into_owned(),
         ),
         tag: None,
-        note: (!session.note.is_empty()).then(|| session.note.clone()),
+        note: (!session.settings.note.is_empty()).then(|| session.settings.note.clone()),
         created_at_ms: Some(session.updated_at_ms),
         updated_at_ms: Some(session.updated_at_ms),
         stability: "saved".into(),
@@ -144,8 +145,9 @@ pub fn sync_session(data_root: &Path, session: &ScratchSession) -> Result<(), St
     upsert(&connection, &project)?;
     for device in session
         .rack
+        .devices
         .iter()
-        .filter(|device| device.kind == crate::model::DeviceKind::Plugin)
+        .filter(|device| device.kind == crate::domain::rack::DeviceKind::Plugin)
     {
         let id = format!("rack-device:{}", device.id);
         upsert(
@@ -174,7 +176,7 @@ pub fn sync_session(data_root: &Path, session: &ScratchSession) -> Result<(), St
             )
             .map_err(|error| format!("Library relation could not be indexed: {error}"))?;
     }
-    for clip in &session.midi_clips {
+    for clip in &session.arrangement.midi_clips {
         let id = format!("midi-clip:{}", clip.id);
         upsert(
             &connection,
@@ -327,6 +329,20 @@ pub fn update_metadata(
     let note = note
         .map(|value| value.trim().chars().take(16_384).collect::<String>())
         .filter(|value| !value.is_empty());
+    if let Ok(asset_id) = AssetId::from_normalized(id)
+        && assets::load(data_root, &asset_id).is_some()
+    {
+        assets::update_metadata(data_root, &asset_id, tag.clone(), note.clone())?;
+        let connection = open(data_root)?;
+        return connection
+            .query_row(
+                "SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability
+                 FROM assets WHERE id = ?1",
+                params![id],
+                row_to_asset,
+            )
+            .map_err(|error| format!("Library asset could not be read after update: {error}"));
+    }
     let connection = open(data_root)?;
     let changed = connection
         .execute(
@@ -497,7 +513,8 @@ fn row_to_asset(row: &Row<'_>) -> rusqlite::Result<LibraryAsset> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ScratchSession;
+    use crate::domain::rack::{DeviceKind, RackDevice};
+    use crate::domain::session::CreativeSession;
 
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-library-{name}-{}", now_ms()))
@@ -506,7 +523,7 @@ mod tests {
     #[test]
     fn indexes_session_and_finds_assets_across_kinds() {
         let directory = root("search");
-        let session = ScratchSession::new(now_ms());
+        let session = CreativeSession::new(now_ms());
         sync_session(&directory, &session).unwrap();
         let results = search(&directory, "project").unwrap();
         assert_eq!(results.len(), 1);
@@ -517,11 +534,11 @@ mod tests {
     #[test]
     fn updates_metadata_and_traverses_related_assets() {
         let directory = root("metadata");
-        let mut session = ScratchSession::new(now_ms());
-        session.rack.push(crate::model::RackDevice {
+        let mut session = CreativeSession::new(now_ms());
+        session.rack.devices.push(RackDevice {
             id: "plugin:test".into(),
             name: "Test Plugin".into(),
-            kind: crate::model::DeviceKind::Plugin,
+            kind: DeviceKind::Plugin,
             path: Some("C:\\Test.vst3".into()),
             bypassed: false,
             gain_db: 0.0,

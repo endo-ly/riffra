@@ -1,4 +1,4 @@
-use crate::model::ScratchSession;
+use crate::domain::session::CreativeSession;
 use serde::Serialize;
 use std::{fs, path::Path};
 
@@ -27,11 +27,16 @@ struct MidiMessage {
 
 pub fn export(
     data_root: &Path,
-    session: &ScratchSession,
+    session: &CreativeSession,
     created_at_ms: u64,
 ) -> Result<MidiExportResult, String> {
     let mut messages = Vec::new();
-    for clip in session.midi_clips.iter().filter(|clip| !clip.muted) {
+    for clip in session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| !clip.muted)
+    {
         for note in &clip.notes {
             let start_ms = clip.start_ms.saturating_add(note.start_ms);
             let end_ms = start_ms.saturating_add(note.duration_ms.max(1));
@@ -94,7 +99,12 @@ pub fn export(
         id: format!("midi-export:{created_at_ms}"),
         path: path.to_string_lossy().into_owned(),
         note_count,
-        clip_count: session.midi_clips.iter().filter(|clip| !clip.muted).count(),
+        clip_count: session
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| !clip.muted)
+            .count(),
         state: "completed".into(),
         message: "MIDI clips exported as a standard Type 0 file; source session remains unchanged."
             .into(),
@@ -131,15 +141,15 @@ fn write_var_len(mut value: u64) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::{
-        model::{MidiClip, MidiNote, ScratchSession},
+        domain::session::{CreativeSession, MidiClip, MidiNote},
         storage::now_ms,
     };
 
     #[test]
     fn exports_standard_midi_with_a_note_pair() {
         let root = std::env::temp_dir().join(format!("riffra-midi-{}", now_ms()));
-        let mut session = ScratchSession::new(now_ms());
-        session.midi_clips.push(MidiClip {
+        let mut session = CreativeSession::new(now_ms());
+        session.arrangement.midi_clips.push(MidiClip {
             id: "midi:test".into(),
             name: "Test".into(),
             start_ms: 0,

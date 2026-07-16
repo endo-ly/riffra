@@ -1,8 +1,11 @@
 mod analysis;
+mod assets;
 mod diagnostics;
+mod domain;
 mod jobs;
 mod library;
 mod midi;
+mod migration;
 mod missing;
 mod model;
 mod native_audio;
@@ -13,9 +16,10 @@ mod render;
 mod separation;
 mod storage;
 
+use crate::domain::session::{CreativeSession, SamplePad as DomainSamplePad};
 use model::{
-    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, SamplePad,
-    ScratchSession,
+    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
+    SamplePad,
 };
 use native_audio::AudioSupervisor;
 use serde::{Deserialize, Serialize};
@@ -29,7 +33,7 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
 struct AppState {
     data_root: PathBuf,
-    session: Mutex<ScratchSession>,
+    session: Mutex<CreativeSession>,
     audio: AudioSupervisor,
     recovered_from_generation: bool,
     migration_notice: Option<MigrationNotice>,
@@ -47,13 +51,22 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
         native_available: true,
         recovery_candidates: SessionStore::new(&state.data_root)
             .recovery_candidates()
-            .map_err(|error| format!("Recovery candidates could not be read: {error}"))?,
+            .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
+            .into_iter()
+            .map(|candidate| RecoveryCandidate {
+                file_name: candidate.file_name,
+                updated_at_ms: candidate.updated_at_ms,
+                session_id: candidate.session_id,
+                project_name: candidate.project_name,
+                note: candidate.note,
+            })
+            .collect(),
         data_root: state.data_root.to_string_lossy().into_owned(),
         vst3_root: DEFAULT_VST3_ROOT.into(),
     })
 }
 
-fn queue_session_index(data_root: &std::path::Path, session: &ScratchSession) {
+fn queue_session_index(data_root: &std::path::Path, session: &CreativeSession) {
     let data_root = data_root.to_path_buf();
     let session = session.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -62,7 +75,10 @@ fn queue_session_index(data_root: &std::path::Path, session: &ScratchSession) {
 }
 
 #[tauri::command]
-fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> Result<(), String> {
+fn save_scratch_session(
+    session: CreativeSession,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut session = session.validate_and_normalize()?;
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
@@ -81,7 +97,7 @@ fn save_scratch_session(session: ScratchSession, state: State<'_, AppState>) -> 
 fn restore_recovery_generation(
     file_name: String,
     state: State<'_, AppState>,
-) -> Result<ScratchSession, String> {
+) -> Result<CreativeSession, String> {
     let session = SessionStore::new(&state.data_root)
         .restore_generation(&file_name)
         .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
@@ -97,11 +113,52 @@ fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::Projec
 }
 
 #[tauri::command]
+fn save_rack_definition(
+    name: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<crate::domain::asset::AssetId, String> {
+    let definition = {
+        let session = state.session.lock().map_err(lock_error)?;
+        crate::domain::rack::RackDefinition::from_instance(&session.rack)
+    };
+    let path = PathBuf::from(path);
+    if path.as_os_str().is_empty() {
+        return Err("Rack definition path must not be empty.".into());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Rack definition folder could not be created: {error}"))?;
+    }
+    let payload = serde_json::to_vec_pretty(&definition)
+        .map_err(|error| format!("Rack definition could not be encoded: {error}"))?;
+    std::fs::write(&path, payload)
+        .map_err(|error| format!("Rack definition could not be saved: {error}"))?;
+    assets::register_rack_definition(
+        &state.data_root,
+        &definition,
+        &name,
+        &path.to_string_lossy(),
+    )
+}
+
+#[tauri::command]
+fn load_rack_definition(path: String) -> Result<crate::domain::rack::RackInstance, String> {
+    let payload = std::fs::read(&path)
+        .map_err(|error| format!("Rack definition could not be read: {error}"))?;
+    let definition: crate::domain::rack::RackDefinition = serde_json::from_slice(&payload)
+        .map_err(|error| format!("Rack definition is invalid: {error}"))?;
+    Ok(crate::domain::rack::RackInstance::from_definition(
+        &definition,
+    ))
+}
+
+#[tauri::command]
 fn import_scratch_session(
     path: String,
     state: State<'_, AppState>,
-) -> Result<ScratchSession, String> {
-    let session = projects::import(&PathBuf::from(path))?;
+) -> Result<CreativeSession, String> {
+    let session = projects::import(&state.data_root, &PathBuf::from(path))?;
     SessionStore::new(&state.data_root)
         .save(&session)
         .map_err(|error| format!("Imported project could not be persisted: {error}"))?;
@@ -474,6 +531,9 @@ fn rename_recording_impl(
         audio_path.as_deref(),
         midi_path.as_deref(),
     )?;
+    let old_directory = id.strip_prefix("recording:").unwrap_or(id);
+    let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
+    assets::relocate_content_location(data_root, old_directory, new_directory)?;
     Ok(new_id)
 }
 
@@ -511,6 +571,9 @@ fn move_recording_out_of_inbox(
         audio_path.as_deref(),
         midi_path.as_deref(),
     )?;
+    let old_directory = id.strip_prefix("recording:").unwrap_or(id);
+    let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
+    assets::relocate_content_location(data_root, old_directory, new_directory)?;
     Ok(new_id)
 }
 
@@ -626,17 +689,19 @@ fn get_missing_dependencies(
     state: State<'_, AppState>,
 ) -> Result<Vec<missing::MissingDependency>, String> {
     let session = state.session.lock().map_err(lock_error)?;
-    Ok(missing::collect_missing(&session))
+    Ok(missing::collect_missing(&state.data_root, &session))
 }
 
 #[tauri::command]
 fn relink_missing_dependency(
-    old_path: String,
+    asset_id: String,
     new_path: String,
     state: State<'_, AppState>,
-) -> Result<ScratchSession, String> {
+) -> Result<CreativeSession, String> {
+    let asset_id = crate::domain::asset::AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
     let mut session = state.session.lock().map_err(lock_error)?.clone();
-    session = missing::relink(&session, &old_path, &new_path);
+    session = missing::relink(&state.data_root, &session, &asset_id, &new_path)?;
     session = session.validate_and_normalize()?;
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
@@ -651,7 +716,7 @@ fn relink_missing_dependency(
 fn disable_missing_plugin(
     device_id: String,
     state: State<'_, AppState>,
-) -> Result<ScratchSession, String> {
+) -> Result<CreativeSession, String> {
     let mut session = state.session.lock().map_err(lock_error)?.clone();
     session = missing::mark_disabled_placeholder(&session, &device_id);
     session = session.validate_and_normalize()?;
@@ -668,7 +733,7 @@ fn disable_missing_plugin(
 fn set_emergency_mute(muted: bool, state: State<'_, AppState>) -> Result<AudioStatus, String> {
     let audio = state.audio.set_emergency_mute(muted)?;
     if let Ok(mut session) = state.session.lock() {
-        session.emergency_muted = muted;
+        session.settings.emergency_muted = muted;
     }
     Ok(audio)
 }
@@ -721,6 +786,38 @@ fn preview_sample(
 }
 
 #[tauri::command]
+fn register_audio_asset(
+    path: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<crate::domain::asset::AssetId, String> {
+    let provenance = crate::domain::asset::Provenance::imported();
+    if let Some(existing) = assets::find_by_content_location(&state.data_root, &path) {
+        return Ok(existing);
+    }
+    assets::register(
+        &state.data_root,
+        crate::domain::asset::AssetKind::Audio,
+        &name,
+        &path,
+        Some(provenance),
+    )
+}
+
+#[tauri::command]
+fn resolve_asset_content_location(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let asset_id = crate::domain::asset::AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    Ok(assets::resolve_content_location(
+        &state.data_root,
+        &asset_id,
+    ))
+}
+
+#[tauri::command]
 fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     state.audio.stop_preview()
 }
@@ -741,6 +838,23 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     })?;
     let directory = inbox.join(format!("take-{}", now_ms()));
     let mut status = state.audio.start_recording(&directory)?;
+    let capture = state.session.lock().ok().map(|session| {
+        let mut capture = crate::domain::recording::RecordingCapture::start(
+            format!("capture:{}", directory.to_string_lossy()),
+            session.session_id.clone(),
+            now_ms(),
+        );
+        capture.sample_rate = status.sample_rate;
+        capture.rack_snapshot = session.rack.devices.clone();
+        capture
+    });
+    if let Some(capture) = capture
+        && let Err(error) = recordings::save_capture_start(&directory, capture)
+    {
+        status.message = format!(
+            "Recording started, but capture metadata could not be saved: {error}. Audio files remain active."
+        );
+    }
     let provenance = state
         .session
         .lock()
@@ -749,9 +863,9 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
             recorded_at_ms: now_ms(),
             session_id: session.session_id.clone(),
             workspace: format!("{:?}", session.workspace).to_lowercase(),
-            master_db: session.master_db,
-            count_in_beats: session.count_in_beats,
-            rack: session.rack.clone(),
+            master_db: session.settings.master_db,
+            count_in_beats: session.settings.count_in_beats,
+            rack: session.rack.devices.clone(),
             source: "raw DI + processed safety path".into(),
         });
     if let Some(provenance) = provenance {
@@ -768,9 +882,81 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     Ok(status)
 }
 
+fn register_recording_outputs(
+    data_root: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<(), String> {
+    let take_id = format!("recording:{}", directory.to_string_lossy());
+    let (raw_path, processed_path, midi_path) = recordings::audio_paths(&take_id)?;
+    let raw_asset_id = raw_path
+        .as_deref()
+        .map(|path| {
+            assets::register(
+                data_root,
+                crate::domain::asset::AssetKind::Audio,
+                "Raw recording",
+                path,
+                Some(crate::domain::asset::Provenance::recorded_root()),
+            )
+        })
+        .transpose()?;
+    let processed_asset_id = processed_path
+        .as_deref()
+        .map(|path| {
+            if let Some(source) = raw_asset_id.as_ref() {
+                assets::register_derived(
+                    data_root,
+                    std::slice::from_ref(source),
+                    crate::domain::asset::AssetKind::Audio,
+                    "Processed recording",
+                    path,
+                    crate::domain::asset::ProvenanceOperation::Processed,
+                    serde_json::Map::new(),
+                )
+            } else {
+                assets::register(
+                    data_root,
+                    crate::domain::asset::AssetKind::Audio,
+                    "Processed recording",
+                    path,
+                    Some(crate::domain::asset::Provenance::imported()),
+                )
+            }
+        })
+        .transpose()?;
+    let midi_asset_id = midi_path
+        .as_deref()
+        .map(|path| {
+            assets::register(
+                data_root,
+                crate::domain::asset::AssetKind::Midi,
+                "Recording MIDI",
+                path,
+                Some(crate::domain::asset::Provenance::recorded_root()),
+            )
+        })
+        .transpose()?;
+    recordings::save_asset_ids(directory, raw_asset_id, processed_asset_id, midi_asset_id)
+        .map_err(|error| format!("Recording Asset IDs could not be saved: {error}"))
+}
+
 #[tauri::command]
 fn stop_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.stop_recording()
+    let before = state.audio.refresh_status()?;
+    let mut status = state.audio.stop_recording()?;
+    let directory = status
+        .recording
+        .directory
+        .clone()
+        .or(before.recording.directory);
+    if let Some(directory) = directory
+        && let Err(error) = register_recording_outputs(&state.data_root, &PathBuf::from(directory))
+    {
+        status.message = format!(
+            "Recording stopped and files were preserved, but canonical Asset IDs could not be saved: {error}"
+        );
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -805,7 +991,7 @@ fn set_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioS
     }
     let audio = state.audio.set_master_gain_db(gain_db)?;
     let mut session = state.session.lock().map_err(lock_error)?.clone();
-    session.master_db = gain_db.clamp(-90.0, 0.0);
+    session.settings.master_db = gain_db.clamp(-90.0, 0.0);
     session.updated_at_ms = now_ms();
     SessionStore::new(&state.data_root)
         .save(&session)
@@ -855,15 +1041,15 @@ fn effective_audio_preference_message(
 }
 
 fn apply_effective_audio_settings(
-    session: &mut ScratchSession,
+    session: &mut CreativeSession,
     requested_driver: &str,
     effective_driver: Option<&str>,
     effective_sample_rate: Option<u32>,
     effective_buffer_size: Option<u32>,
 ) {
-    session.audio_driver = Some(effective_driver.unwrap_or(requested_driver).to_owned());
-    session.audio_sample_rate = effective_sample_rate;
-    session.audio_buffer_size = effective_buffer_size;
+    session.settings.audio_driver = Some(effective_driver.unwrap_or(requested_driver).to_owned());
+    session.settings.audio_sample_rate = effective_sample_rate;
+    session.settings.audio_buffer_size = effective_buffer_size;
 }
 
 #[tauri::command]
@@ -943,7 +1129,7 @@ fn close_midi_input(state: State<'_, AppState>) -> Result<AudioStatus, String> {
 
 #[tauri::command]
 fn configure_sample_pads(
-    pads: Vec<SamplePad>,
+    pads: Vec<DomainSamplePad>,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
     if state.safe_mode {
@@ -952,15 +1138,25 @@ fn configure_sample_pads(
     if pads.len() > 128 {
         return Err("A sample instrument cannot contain more than 128 pads.".into());
     }
+    let mut native_pads = Vec::with_capacity(pads.len());
     for pad in &pads {
-        if pad.asset_path.trim().is_empty() || pad.end_ms <= pad.start_ms {
-            return Err(format!(
-                "Sample pad '{}' has an invalid source or slice.",
-                pad.name
-            ));
+        if pad.end_ms <= pad.start_ms {
+            return Err(format!("Sample pad '{}' has an invalid slice.", pad.name));
         }
+        let content_location = assets::resolve_content_location(&state.data_root, &pad.asset_id)
+            .ok_or_else(|| format!("Sample pad '{}' references an unresolved asset.", pad.name))?;
+        native_pads.push(SamplePad {
+            id: pad.id.clone(),
+            name: pad.name.clone(),
+            asset_path: content_location,
+            start_ms: pad.start_ms,
+            end_ms: pad.end_ms,
+            midi_key: pad.midi_key,
+            gain_db: pad.gain_db,
+            loop_enabled: pad.loop_enabled,
+        });
     }
-    state.audio.configure_sample_pads(&pads)
+    state.audio.configure_sample_pads(&native_pads)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1119,7 +1315,7 @@ pub fn run() {
             let mut session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
             let migration_notice = loaded.migration;
-            session.emergency_muted = true;
+            session.settings.emergency_muted = true;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
                     "Safe Mode is active; native audio, MIDI, and external plugins remain isolated.",
@@ -1128,11 +1324,11 @@ pub fn run() {
                 AudioSupervisor::start(app.handle())
             };
             if !safe_mode
-                && let Some(driver) = session.audio_driver.clone()
+                && let Some(driver) = session.settings.audio_driver.clone()
                     && let Ok(status) = audio.set_audio_driver(
                         &driver,
-                        session.audio_sample_rate,
-                        session.audio_buffer_size,
+                        session.settings.audio_sample_rate,
+                        session.settings.audio_buffer_size,
                     ) {
                         apply_effective_audio_settings(
                             &mut session,
@@ -1160,6 +1356,8 @@ pub fn run() {
             save_scratch_session,
             restore_recovery_generation,
             export_scratch_session,
+            save_rack_definition,
+            load_rack_definition,
             import_scratch_session,
             scan_vst3_folder,
             start_analysis_job,
@@ -1189,6 +1387,8 @@ pub fn run() {
             load_plugin,
             clear_plugin,
             preview_sample,
+            register_audio_asset,
+            resolve_asset_content_location,
             stop_preview,
             stop_preview_for_key,
             probe_audio_devices,
@@ -1222,7 +1422,7 @@ mod tests {
         apply_effective_audio_settings, effective_audio_preference_message, parse_midi_probe,
         safe_mode_from_args,
     };
-    use crate::model::ScratchSession;
+    use crate::domain::session::CreativeSession;
 
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
@@ -1250,7 +1450,7 @@ mod tests {
 
     #[test]
     fn persists_effective_audio_settings_instead_of_rejected_preferences() {
-        let mut session = ScratchSession::new(1);
+        let mut session = CreativeSession::new(1);
 
         apply_effective_audio_settings(
             &mut session,
@@ -1261,11 +1461,11 @@ mod tests {
         );
 
         assert_eq!(
-            session.audio_driver.as_deref(),
+            session.settings.audio_driver.as_deref(),
             Some("Windows Audio (Exclusive Mode)")
         );
-        assert_eq!(session.audio_sample_rate, Some(48_000));
-        assert_eq!(session.audio_buffer_size, Some(480));
+        assert_eq!(session.settings.audio_sample_rate, Some(48_000));
+        assert_eq!(session.settings.audio_buffer_size, Some(480));
     }
 
     #[test]
