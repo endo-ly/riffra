@@ -30,6 +30,7 @@ import {
   TransportBar,
   MissingDependencies,
 } from '@/components';
+import styles from './App.module.css';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const {
@@ -139,7 +140,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   } = useApp(api);
   if (!boot || !session)
     return (
-      <div className="boot-screen">
+      <div className={styles.bootScreen}>
         <span className="logo-mark">R</span>
         <strong>Riffra</strong>
         <small>Recovering your creative memory…</small>
@@ -164,7 +165,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       />
 
       {!boot.nativeAvailable && (
-        <div className="runtime-banner">
+        <div className={styles.runtimeBanner}>
           <strong>BROWSER PREVIEW</strong>
           <span>
             Native audio, VST3, MIDI, recording and Windows persistence are unavailable here. Open
@@ -175,7 +176,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       )}
 
       {backgroundJob && (
-        <div className="runtime-banner">
+        <div className={styles.runtimeBanner}>
           <strong>
             {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
           </strong>
@@ -393,12 +394,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       />
 
       {focusMode && (
-        <button className="exit-focus" onClick={() => setFocusMode(false)}>
+        <button className={styles.exitFocus} onClick={() => setFocusMode(false)}>
           Exit Focus <kbd>Esc</kbd>
         </button>
       )}
       {isMuted && (
-        <div className="mute-banner">
+        <div className={styles.muteBanner}>
           <Icon name="stop" />
           EMERGENCY MUTE ENGAGED —{' '}
           {audio.feedbackSuspected
@@ -407,8 +408,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         </div>
       )}
       {commandOpen && (
-        <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}>
-          <section className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
+        <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
+          <section
+            className={styles.commandPalette}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
             <label>
               <Icon name="command" />
               <input autoFocus placeholder="Search actions, assets, settings…" />
