@@ -1,0 +1,47 @@
+.inspectorIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.inspectorIdentity h3 {
+  margin: 4px 0 2px;
+  font-size: 11px;
+}
+.inspectorIdentity small {
+  color: var(--muted);
+  font-size: 8px;
+}
+.inspectorArt {
+  width: 45px;
+  height: 45px;
+  display: grid;
+  place-content: center;
+  color: #93e7e6;
+  font-size: 12px;
+  font-weight: 700;
+  background: radial-gradient(circle at 45% 40%, #32525a, #151c22 70%);
+  border: 1px solid #34434b;
+  border-radius: 7px;
+}
+.pathCopy {
+  display: block;
+  margin-top: 8px;
+  padding: 7px;
+  overflow-wrap: anywhere;
+  color: var(--faint);
+  font-family: 'DM Mono', monospace;
+  font-size: 7px;
+  background: #0b0e12;
+  border-radius: 4px;
+}
+.focusButton {
+  margin: auto 12px 12px;
+  height: 31px;
+  color: var(--muted);
+  font-size: 9px;
+  background: #151a20;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}

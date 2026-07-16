@@ -1,5 +1,6 @@
 import type { AudioStatus, BootstrapState, Session } from '@/lib/domain';
 import { Icon } from './ui';
+import styles from './InspectorPanel.module.css';
 
 interface InspectorPanelProps {
   session: Session;
@@ -27,8 +28,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
         <span>INSPECTOR</span>
         <button onClick={() => setFocusMode(true)}>×</button>
       </div>
-      <div className="inspector-identity">
-        <span className="inspector-art">
+      <div className={styles.inspectorIdentity}>
+        <span className={styles.inspectorArt}>
           {selectedPluginName?.slice(0, 2).toUpperCase() ?? 'SS'}
         </span>
         <div>
@@ -112,9 +113,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
         <p className="inspector-copy">
           世代付き自動保存が有効です。現在の作業はプロジェクトへ昇格しなくても保持されます。
         </p>
-        <small className="path-copy">{boot.dataRoot}</small>
+        <small className={styles.pathCopy}>{boot.dataRoot}</small>
       </section>
-      <button className="focus-button" onClick={() => setFocusMode(!focusMode)}>
+      <button className={styles.focusButton} onClick={() => setFocusMode(!focusMode)}>
         {focusMode ? 'Exit Focus Mode' : 'Focus Mode'}
       </button>
     </aside>

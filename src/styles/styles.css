@@ -1552,33 +1552,6 @@ p {
   box-shadow: 0 0 22px var(--cyan);
 }
 
-.inspector-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.inspector-art {
-  width: 45px;
-  height: 45px;
-  display: grid;
-  place-content: center;
-  color: #93e7e6;
-  font-size: 12px;
-  font-weight: 700;
-  background: radial-gradient(circle at 45% 40%, #32525a, #151c22 70%);
-  border: 1px solid #34434b;
-  border-radius: 7px;
-}
-.inspector-identity h3 {
-  margin: 4px 0 2px;
-  font-size: 11px;
-}
-.inspector-identity small {
-  color: var(--muted);
-  font-size: 8px;
-}
 .inspector-panel section {
   padding: 0 12px 12px;
   border-bottom: 1px solid var(--border);
@@ -1618,26 +1591,6 @@ dd {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.55;
-}
-.path-copy {
-  display: block;
-  margin-top: 8px;
-  padding: 7px;
-  overflow-wrap: anywhere;
-  color: var(--faint);
-  font-family: 'DM Mono', monospace;
-  font-size: 7px;
-  background: #0b0e12;
-  border-radius: 4px;
-}
-.focus-button {
-  margin: auto 12px 12px;
-  height: 31px;
-  color: var(--muted);
-  font-size: 9px;
-  background: #151a20;
-  border: 1px solid var(--border);
-  border-radius: 5px;
 }
 
 .transport {
