@@ -1,4 +1,6 @@
-export type Workspace = 'home' | 'play' | 'arrange' | 'sample' | 'analyze' | 'separate';
+export type Workspace = 'home' | 'play' | 'design' | 'arrange';
+export type DesignTool = 'sample' | 'analyze' | 'separate';
+export type AssetId = string;
 
 export interface RackDevice {
   id: string;
@@ -31,24 +33,24 @@ export interface SessionSnapshot {
   macros: RackMacro[];
 }
 
-export interface TimelineClip {
+export interface AudioClip {
   id: string;
-  assetPath: string;
   name: string;
   trackId: string;
-  startMs: number;
+  assetId: AssetId;
+  positionMs: number;
   durationMs: number;
-  sourceInMs: number;
-  sourceOutMs: number;
-  loopEnabled: boolean;
+  sourceStartMs: number;
+  sourceEndMs: number;
   gainDb: number;
+  pan: number;
   fadeInMs: number;
   fadeOutMs: number;
-  pan: number;
+  loopEnabled: boolean;
   muted: boolean;
 }
 
-export interface TimelineTrack {
+export interface Track {
   id: string;
   name: string;
   gainDb: number;
@@ -78,7 +80,7 @@ export interface MidiClip {
 export interface SamplePad {
   id: string;
   name: string;
-  assetPath: string;
+  assetId: AssetId;
   startMs: number;
   endMs: number;
   midiKey: number;
@@ -100,30 +102,73 @@ export interface AiChangeSet {
   applied: boolean;
 }
 
-export interface Session {
+export interface DesignContextDto {
+  activeTool: DesignTool;
+  targetAssetId: AssetId | null;
+}
+
+export interface AssetSummaryDto {
+  id: AssetId;
+  kind: 'audio' | 'midi' | 'sample' | 'rackDefinition' | 'generationDefinition' | string;
+  name: string;
+  contentLocation: string | null;
+  createdAtMs: number | null;
+  updatedAtMs: number | null;
+  provenance: ProvenanceDto | null;
+}
+
+export interface ProvenanceDto {
+  sourceAssetIds: AssetId[];
+  operation:
+    'recorded' | 'processed' | 'sampled' | 'separated' | 'rendered' | 'generated' | 'imported';
+  parameters: Record<string, unknown>;
+}
+
+export interface Arrangement {
+  tracks: Track[];
+  audioClips: AudioClip[];
+  midiClips: MidiClip[];
+}
+
+export interface SampleInstrumentState {
+  pads: SamplePad[];
+}
+
+export interface PlayState {
+  sampleInstrument: SampleInstrumentState;
+}
+
+export interface SessionSettings {
+  masterDb: number;
+  loopEnabled: boolean;
+  countInBeats: number;
+  emergencyMuted: boolean;
+  audioDriver: string | null;
+  audioSampleRate: number | null;
+  audioBufferSize: number | null;
+  note: string;
+  aiPermission: 'Explain' | 'Suggest' | 'Apply';
+  aiContext: string[];
+  aiHistory: AiChangeSet[];
+}
+
+export interface RackInstance {
+  devices: RackDevice[];
+  macros: RackMacro[];
+}
+
+export interface CreativeSession {
   formatVersion: number;
   sessionId: string;
   updatedAtMs: number;
   projectName: string | null;
   workspace: Workspace;
-  audioDriver: string | null;
-  audioSampleRate: number | null;
-  audioBufferSize: number | null;
-  masterDb: number;
-  loopEnabled: boolean;
-  countInBeats: number;
-  emergencyMuted: boolean;
-  rack: RackDevice[];
+  designContext: DesignContextDto;
+  playState: PlayState;
+  arrangement: Arrangement;
+  rack: RackInstance;
   snapshots: SessionSnapshot[];
-  macros: RackMacro[];
-  timeline: TimelineClip[];
-  tracks: TimelineTrack[];
-  midiClips: MidiClip[];
-  samplePads: SamplePad[];
-  note: string;
-  aiPermission: 'Explain' | 'Suggest' | 'Apply';
-  aiContext: string[];
-  aiHistory: AiChangeSet[];
+  settings: SessionSettings;
 }
 
 export interface PluginEntry {
@@ -161,7 +206,7 @@ export interface BackgroundJobStatus {
 }
 
 export interface BootstrapState {
-  session: Session;
+  session: CreativeSession;
   recoveredFromGeneration: boolean;
   safeMode: boolean;
   nativeAvailable: boolean;
@@ -190,6 +235,7 @@ export interface MissingDependency {
   id: string;
   name: string;
   path: string;
+  assetId?: AssetId | null;
   usedBy: string[];
 }
 
@@ -219,6 +265,9 @@ export interface RecordingAsset {
   processedFile: string | null;
   rawPath: string | null;
   processedPath: string | null;
+  rawAssetId?: AssetId | null;
+  processedAssetId?: AssetId | null;
+  midiAssetId?: AssetId | null;
   midiFile: string | null;
   midiPath: string | null;
   sampleRate: number | null;
@@ -228,7 +277,29 @@ export interface RecordingAsset {
   dropoutStartSample?: number | null;
   dropoutEndSample?: number | null;
   recoveryStatus?: 'clean' | 'partial' | string;
+  capture?: RecordingCaptureDto | null;
   provenance: RecordingProvenance | null;
+}
+
+export interface RecordingCaptureDto {
+  captureId: string;
+  sessionId: string;
+  status: 'recording' | 'completing' | 'completed' | 'recoverable' | 'failed' | string;
+  startedAtMs: number;
+  completedAtMs?: number | null;
+  sampleRate?: number | null;
+  inputDevice?: string | null;
+  rackSnapshot: RackDevice[];
+  rawAudioAssetId?: AssetId | null;
+  processedAudioAssetId?: AssetId | null;
+  midiAssetId?: AssetId | null;
+  dropoutInformation: {
+    samplesWritten: number;
+    droppedBlocks: number;
+    missingSamples: number;
+    dropoutStartSample?: number | null;
+    dropoutEndSample?: number | null;
+  };
 }
 
 export interface RecordingProvenance {
@@ -413,61 +484,68 @@ export interface MidiExportResult {
   message: string;
 }
 
-export const defaultSession = (): Session => ({
-  formatVersion: 1,
+export const defaultSession = (): CreativeSession => ({
+  formatVersion: 2,
   sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),
   projectName: null,
   workspace: 'home',
-  audioDriver: null,
-  audioSampleRate: null,
-  audioBufferSize: null,
-  masterDb: -18,
-  loopEnabled: false,
-  countInBeats: 0,
-  emergencyMuted: true,
-  rack: [
-    {
-      id: 'input',
-      name: 'Input 1',
-      kind: 'input',
-      bypassed: false,
-      gainDb: 0,
-      parameterValues: [],
-      stateData: null,
-    },
-    {
-      id: 'safety',
-      name: 'Safety Limiter',
-      kind: 'utility',
-      bypassed: false,
-      gainDb: 0,
-      parameterValues: [],
-      stateData: null,
-    },
-    {
-      id: 'output',
-      name: 'Main Out',
-      kind: 'output',
-      bypassed: false,
-      gainDb: -18,
-      parameterValues: [],
-      stateData: null,
-    },
-  ],
+  designContext: { activeTool: 'sample', targetAssetId: null },
+  playState: { sampleInstrument: { pads: [] } },
+  arrangement: {
+    tracks: [{ id: 'main', name: 'Main', gainDb: 0, pan: 0, muted: false, solo: false }],
+    audioClips: [],
+    midiClips: [],
+  },
+  rack: {
+    devices: [
+      {
+        id: 'input',
+        name: 'Input 1',
+        kind: 'input',
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        stateData: null,
+      },
+      {
+        id: 'safety',
+        name: 'Safety Limiter',
+        kind: 'utility',
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        stateData: null,
+      },
+      {
+        id: 'output',
+        name: 'Main Out',
+        kind: 'output',
+        bypassed: false,
+        gainDb: -18,
+        parameterValues: [],
+        stateData: null,
+      },
+    ],
+    macros: ['Brightness', 'Gain', 'Space', 'Width'].map((name, index) => ({
+      id: `macro:${index}`,
+      name,
+      value: 0.5,
+      parameterIndex: null,
+    })),
+  },
   snapshots: [],
-  macros: ['Brightness', 'Gain', 'Space', 'Width'].map((name, index) => ({
-    id: `macro:${index}`,
-    name,
-    value: 0.5,
-    parameterIndex: null,
-  })),
-  timeline: [],
-  tracks: [{ id: 'main', name: 'Main', gainDb: 0, pan: 0, muted: false, solo: false }],
-  midiClips: [],
-  samplePads: [],
-  note: '',
-  aiPermission: 'Suggest',
-  aiContext: ['analysis', 'selectedClip'],
-  aiHistory: [],
+  settings: {
+    masterDb: -18,
+    loopEnabled: false,
+    countInBeats: 0,
+    emergencyMuted: true,
+    audioDriver: null,
+    audioSampleRate: null,
+    audioBufferSize: null,
+    note: '',
+    aiPermission: 'Suggest',
+    aiContext: ['analysis', 'selectedClip'],
+    aiHistory: [],
+  },
 });

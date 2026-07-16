@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { RenderOptions, RenderResult, Session } from '@/lib/domain';
+import type { CreativeSession, RenderOptions, RenderResult } from '@/lib/domain';
 
 export function TimelineRenderControls({
   session,
@@ -12,7 +12,7 @@ export function TimelineRenderControls({
   onStop,
   previewing,
 }: {
-  session: Session;
+  session: CreativeSession;
   result: RenderResult | null;
   stems: RenderResult[];
   message: string;
@@ -34,7 +34,7 @@ export function TimelineRenderControls({
   });
   const submit = () => onRender(options());
   const submitStems = () => onRenderStems(options());
-  const hasAudibleClips = session.timeline.some((clip) => !clip.muted);
+  const hasAudibleClips = session.arrangement.audioClips.some((clip) => !clip.muted);
   return (
     <section className="section-card timeline-render">
       <header>
@@ -48,7 +48,7 @@ export function TimelineRenderControls({
           </button>
           <button
             className="text-button"
-            disabled={!hasAudibleClips || session.tracks.length < 1}
+            disabled={!hasAudibleClips || session.arrangement.tracks.length < 1}
             onClick={submitStems}
           >
             Render stems
@@ -69,7 +69,7 @@ export function TimelineRenderControls({
           <span>Target</span>
           <select value={trackId} onChange={(event) => setTrackId(event.target.value)}>
             <option value="master">Master mix</option>
-            {session.tracks.map((track) => (
+            {session.arrangement.tracks.map((track) => (
               <option value={track.id} key={track.id}>
                 {track.name}
               </option>
@@ -125,7 +125,7 @@ export function TimelineRenderControls({
           {stems.map((stem) => (
             <div className="stem-result" key={stem.id}>
               <span>
-                {session.tracks.find((track) => track.id === stem.trackId)?.name ??
+                {session.arrangement.tracks.find((track) => track.id === stem.trackId)?.name ??
                   stem.trackId ??
                   'Track'}
               </span>

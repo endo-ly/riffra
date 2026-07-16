@@ -3,6 +3,7 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  AssetId,
   BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
@@ -17,7 +18,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  Session,
+  CreativeSession,
   SeparationResult,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
@@ -42,7 +43,7 @@ export async function bootstrap(): Promise<BootstrapState> {
   }
 }
 
-export async function saveSession(session: Session): Promise<string | null> {
+export async function saveSession(session: CreativeSession): Promise<string | null> {
   try {
     await invoke('save_scratch_session', { session });
     return null;
@@ -54,9 +55,9 @@ export async function saveSession(session: Session): Promise<string | null> {
   }
 }
 
-export async function restoreRecoveryGeneration(fileName: string): Promise<Session | null> {
+export async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
   try {
-    return await invoke<Session>('restore_recovery_generation', { fileName });
+    return await invoke<CreativeSession>('restore_recovery_generation', { fileName });
   } catch {
     return null;
   }
@@ -70,9 +71,9 @@ export async function exportSession(): Promise<ProjectExport | null> {
   }
 }
 
-export async function importSession(path: string): Promise<Session | null> {
+export async function importSession(path: string): Promise<CreativeSession | null> {
   try {
-    return await invoke<Session>('import_scratch_session', { path });
+    return await invoke<CreativeSession>('import_scratch_session', { path });
   } catch {
     return null;
   }
@@ -501,12 +502,31 @@ export async function getMissingDependencies(): Promise<MissingDependency[]> {
   }
 }
 
-export async function relinkMissingDependency(oldPath: string, newPath: string): Promise<Session> {
-  return await invoke<Session>('relink_missing_dependency', { oldPath, newPath });
+export async function relinkMissingDependency(
+  assetId: AssetId,
+  newPath: string,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('relink_missing_dependency', { assetId, newPath });
 }
 
-export async function disableMissingPlugin(deviceId: string): Promise<Session> {
-  return await invoke<Session>('disable_missing_plugin', { deviceId });
+export async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
+}
+
+export async function registerAudioAsset(path: string, name: string): Promise<AssetId | null> {
+  try {
+    return await invoke<AssetId>('register_audio_asset', { path, name });
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveAssetContentLocation(assetId: AssetId): Promise<string | null> {
+  try {
+    return await invoke<string | null>('resolve_asset_content_location', { assetId });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -561,9 +581,11 @@ export function createNativeApi(): NativeApi {
     openMidiInput,
     closeMidiInput,
     configureSamplePads,
+    resolveAssetContentLocation,
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
+    registerAudioAsset,
     renameRecording,
     deleteRecording,
     archiveRecording,

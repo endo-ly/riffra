@@ -5,13 +5,13 @@ import type {
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
+  CreativeSession,
   MissingDependency,
   MidiProbe,
   PluginEntry,
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  Session,
   ScanReport,
   SeparationResult,
 } from '@/lib/domain';
@@ -69,6 +69,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
+    registerAudioAsset,
+    resolveAssetContentLocation,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({
@@ -185,6 +187,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     captureSnapshot,
     recallSnapshot,
     switchWorkspace,
+    switchDesignTool,
     renameSession,
     exportSession,
     importSession,
@@ -315,7 +318,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
                 current.rack,
                 values,
                 nextAudio.plugin?.stateData ??
-                  current.rack.find((device) => device.kind === 'plugin')?.stateData ??
+                  current.rack.devices.find((device) => device.kind === 'plugin')?.stateData ??
                   null,
               ),
             }
@@ -389,7 +392,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         (result) => {
           if (!result || typeof result !== 'object') return;
           setAnalysis(result as AudioAnalysis);
-          setSession((current) => (current ? { ...current, workspace: 'analyze' } : current));
+          setSession((current) =>
+            current
+              ? {
+                  ...current,
+                  workspace: 'design',
+                  designContext: { ...current.designContext, activeTool: 'analyze' },
+                }
+              : current,
+          );
         },
         () => setAnalysis(null),
       );
@@ -478,36 +489,41 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     async (path: string, name: string) => {
       if (!session) return;
       const metrics = await analyzeAudio(path);
+      const assetId = await registerAudioAsset(path, name);
+      if (!assetId) return;
       const durationMs = metrics?.durationMs ?? 1_000;
       const startMs = Math.max(
         0,
-        ...session.timeline.map((clip) => clip.startMs + clip.durationMs),
+        ...session.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
       );
       setSession({
         ...session,
-        timeline: [
-          ...session.timeline,
-          {
-            id: `clip:separation:${Date.now()}`,
-            assetPath: path,
-            name,
-            trackId: session.tracks[0]?.id ?? 'main',
-            startMs,
-            durationMs,
-            sourceInMs: 0,
-            sourceOutMs: 0,
-            loopEnabled: false,
-            gainDb: 0,
-            fadeInMs: 0,
-            fadeOutMs: 0,
-            pan: 0,
-            muted: false,
-          },
-        ],
+        arrangement: {
+          ...session.arrangement,
+          audioClips: [
+            ...session.arrangement.audioClips,
+            {
+              id: `clip:separation:${Date.now()}`,
+              assetId,
+              name,
+              trackId: session.arrangement.tracks[0]?.id ?? 'main',
+              positionMs: startMs,
+              durationMs,
+              sourceStartMs: 0,
+              sourceEndMs: 0,
+              loopEnabled: false,
+              gainDb: 0,
+              fadeInMs: 0,
+              fadeOutMs: 0,
+              pan: 0,
+              muted: false,
+            },
+          ],
+        },
         workspace: 'arrange',
       });
     },
-    [session],
+    [analyzeAudio, registerAudioAsset, session],
   );
 
   const runTimelineRender = useCallback(
@@ -556,10 +572,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const previewTimelineRender = useCallback(async () => {
     if (!renderResult) return;
-    setAudio(await previewSample(renderResult.path, 0, 0, session?.loopEnabled ?? false));
+    setAudio(await previewSample(renderResult.path, 0, 0, session?.settings.loopEnabled ?? false));
     setRenderPreviewing(true);
     setTransportPlaying(true);
-  }, [renderResult, session?.loopEnabled]);
+  }, [renderResult, session?.settings.loopEnabled]);
 
   const stopTimelinePreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -580,7 +596,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       if (!result) return;
       setRenderResult(result);
     }
-    setAudio(await previewSample(result.path, 0, 0, session.loopEnabled));
+    setAudio(await previewSample(result.path, 0, 0, session.settings.loopEnabled));
     setTransportPlaying(true);
   }, [renderResult, session]);
 
@@ -590,18 +606,23 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setRenderPreviewing(false);
   }, []);
 
-  const previewSamplePad = useCallback(async (pad: Session['samplePads'][number]) => {
-    const nextAudio = await previewSample(
-      pad.assetPath,
-      pad.startMs,
-      pad.endMs,
-      pad.loopEnabled,
-      Math.pow(10, (pad.gainDb ?? 0) / 20),
-      pad.midiKey,
-    );
-    setAudio(nextAudio);
-    setPreviewPadId(pad.id);
-  }, []);
+  const previewSamplePad = useCallback(
+    async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
+      const path = await resolveAssetContentLocation(pad.assetId);
+      if (!path) return;
+      const nextAudio = await previewSample(
+        path,
+        pad.startMs,
+        pad.endMs,
+        pad.loopEnabled,
+        Math.pow(10, (pad.gainDb ?? 0) / 20),
+        pad.midiKey,
+      );
+      setAudio(nextAudio);
+      setPreviewPadId(pad.id);
+    },
+    [previewSample, resolveAssetContentLocation],
+  );
 
   const stopPreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -609,7 +630,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, []);
 
   const relinkMissing = useCallback(async (item: MissingDependency, newPath: string) => {
-    const next = await relinkMissingDependency(item.path, newPath);
+    if (!item.assetId) return;
+    const next = await relinkMissingDependency(item.assetId, newPath);
     setSession(next);
     setMissingDependencies(await getMissingDependencies());
   }, []);
@@ -627,48 +649,68 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, []);
 
   const placeRecording = useCallback(
-    (recording: RecordingAsset) => {
+    async (recording: RecordingAsset) => {
       if (!session) return;
-      const clip = createTimelineClip(session, recording);
+      const path = recording.processedPath ?? recording.rawPath;
+      if (!path) return;
+      const assetId = await registerAudioAsset(path, recording.name);
+      if (!assetId) return;
+      const clip = createTimelineClip(session, recording, assetId);
       if (!clip) return;
       setSession({
         ...session,
-        timeline: [...session.timeline, clip],
+        arrangement: {
+          ...session.arrangement,
+          audioClips: [...session.arrangement.audioClips, clip],
+        },
         workspace: 'arrange',
       });
     },
-    [session],
+    [registerAudioAsset, session],
   );
 
   const createSamplePad = useCallback(
-    (recording: RecordingAsset) => {
+    async (recording: RecordingAsset) => {
       if (!session || recording.error) return;
-      const assetPath = recording.processedPath ?? recording.rawPath;
-      if (!assetPath || session.samplePads.some((pad) => pad.assetPath === assetPath)) return;
-      const index = session.samplePads.length;
+      const sourcePath = recording.processedPath ?? recording.rawPath;
+      if (!sourcePath) return;
+      const assetId = await registerAudioAsset(sourcePath, recording.name);
+      if (
+        !assetId ||
+        session.playState.sampleInstrument.pads.some((pad) => pad.assetId === assetId)
+      )
+        return;
+      const index = session.playState.sampleInstrument.pads.length;
       const endMs =
         recording.sampleRate && recording.samplesWritten
           ? Math.max(1, Math.round((recording.samplesWritten / recording.sampleRate) * 1000))
           : 1_000;
       setSession({
         ...session,
-        samplePads: [
-          ...session.samplePads,
-          {
-            id: `pad:${recording.id}`,
-            name: recording.name,
-            assetPath,
-            startMs: 0,
-            endMs,
-            midiKey: 36 + index,
-            gainDb: 0,
-            loopEnabled: false,
+        playState: {
+          ...session.playState,
+          sampleInstrument: {
+            ...session.playState.sampleInstrument,
+            pads: [
+              ...session.playState.sampleInstrument.pads,
+              {
+                id: `pad:${recording.id}`,
+                name: recording.name,
+                assetId,
+                startMs: 0,
+                endMs,
+                midiKey: 36 + index,
+                gainDb: 0,
+                loopEnabled: false,
+              },
+            ],
           },
-        ],
-        workspace: 'sample',
+        },
+        workspace: 'design',
+        designContext: { ...session.designContext, activeTool: 'sample' },
       });
     },
-    [session],
+    [registerAudioAsset, session],
   );
 
   useEffect(() => {
@@ -676,14 +718,14 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setBoot(state);
       setSession(state.session);
       void getMissingDependencies().then(setMissingDependencies);
-      if (!state.safeMode) void setMasterGainDb(state.session.masterDb).then(setAudio);
+      if (!state.safeMode) void setMasterGainDb(state.session.settings.masterDb).then(setAudio);
       void runBackgroundJob(
         () => startScanJob(state.vst3Root),
         (value) => {
           const report = value as ScanReport;
           setPlugins(report.plugins);
           setMissingPluginPaths(
-            state.session.rack
+            state.session.rack.devices
               .filter((device) => device.kind === 'plugin' && device.path)
               .filter(
                 (device) =>
@@ -698,7 +740,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
               : `${report.plugins.length}件を検出`,
           );
-          const persisted = state.session.rack.find(
+          const persisted = state.session.rack.devices.find(
             (device) => device.kind === 'plugin' && device.path,
           );
           const restored =
@@ -731,8 +773,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   useEffect(() => {
     if (!session || !boot || boot.safeMode) return;
-    void configureSamplePads(session.samplePads).then(setAudio);
-  }, [audio.state, boot, session?.samplePads]);
+    void configureSamplePads(session.playState.sampleInstrument.pads).then(setAudio);
+  }, [audio.state, boot, session?.playState.sampleInstrument.pads]);
 
   useEffect(() => {
     const keyboardKeys = ['z', 's', 'x', 'd', 'c', 'v', 'g', 'b', 'h', 'n', 'j', 'm'];
@@ -740,7 +782,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
-      const pad = index >= 0 ? session?.samplePads[index] : undefined;
+      const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
       if (pad) {
         event.preventDefault();
         void previewSamplePad(pad);
@@ -750,7 +792,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
-      const pad = index >= 0 ? session?.samplePads[index] : undefined;
+      const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
       if (pad?.loopEnabled) {
         event.preventDefault();
         void stopSamplePreviewKey(pad.midiKey).then(setAudio);
@@ -762,7 +804,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [previewSamplePad, session?.samplePads]);
+  }, [previewSamplePad, session?.playState.sampleInstrument.pads]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -792,7 +834,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         void toggleMute();
         return;
       }
-      if (!typing && event.key >= '1' && event.key <= '6')
+      if (!typing && event.key >= '1' && event.key <= '4')
         switchWorkspace(workspaces[Number(event.key) - 1].id);
       if (event.key === 'Escape') setCommandOpen(false);
     };
@@ -800,7 +842,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     return () => window.removeEventListener('keydown', onKey);
   }, [redo, switchWorkspace, toggleMute, undo]);
 
-  const persistedPlugin = session?.rack.find((device) => device.kind === 'plugin') ?? null;
+  const persistedPlugin = session?.rack.devices.find((device) => device.kind === 'plugin') ?? null;
   const selectedPlugin = useMemo(() => {
     if (persistedPlugin?.path) {
       return plugins.find((plugin) => plugin.path === persistedPlugin.path) ?? null;
@@ -943,6 +985,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     placeRecording,
     createSamplePad,
     switchWorkspace,
+    switchDesignTool,
     renameSession,
     exportSession,
     importSession,

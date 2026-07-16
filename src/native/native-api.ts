@@ -4,6 +4,7 @@ import type {
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
+  AssetId,
   LibraryAsset,
   MissingDependency,
   MidiEvent,
@@ -15,7 +16,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  Session,
+  CreativeSession,
   SeparationResult,
 } from '@/lib/domain';
 
@@ -32,10 +33,10 @@ import type {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
-  saveSession(session: Session): Promise<string | null>;
-  restoreRecoveryGeneration(fileName: string): Promise<Session | null>;
+  saveSession(session: CreativeSession): Promise<string | null>;
+  restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;
-  importSession(path: string): Promise<Session | null>;
+  importSession(path: string): Promise<CreativeSession | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
   startAnalysisJob(path: string): Promise<BackgroundJobStatus>;
@@ -101,8 +102,10 @@ export interface NativeApi {
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
   configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;
+  resolveAssetContentLocation(assetId: AssetId): Promise<string | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
-  relinkMissingDependency(oldPath: string, newPath: string): Promise<Session>;
-  disableMissingPlugin(deviceId: string): Promise<Session>;
+  relinkMissingDependency(assetId: AssetId, newPath: string): Promise<CreativeSession>;
+  disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
+  registerAudioAsset(path: string, name: string): Promise<AssetId | null>;
 }

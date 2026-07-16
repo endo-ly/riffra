@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, BootstrapState, Session, Workspace } from '@/lib/domain';
+import type {
+  AudioStatus,
+  BootstrapState,
+  CreativeSession,
+  DesignTool,
+  Workspace,
+} from '@/lib/domain';
 import { shouldRestoreIndividualParameters } from '@/lib/plugin-session';
 import type { NativeApi } from '@/native/native-api';
 
@@ -18,13 +24,13 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     restoreRecoveryGeneration,
   } = api;
   const { setBoot, setAudio, setMissingPluginPaths } = options;
-  const [session, setSession] = useState<Session | null>(null);
-  const [undoStack, setUndoStack] = useState<Session[]>([]);
-  const [redoStack, setRedoStack] = useState<Session[]>([]);
+  const [session, setSession] = useState<CreativeSession | null>(null);
+  const [undoStack, setUndoStack] = useState<CreativeSession[]>([]);
+  const [redoStack, setRedoStack] = useState<CreativeSession[]>([]);
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState('Autosave remains the primary session copy.');
   const saveTimer = useRef<number | undefined>(undefined);
-  const previousSession = useRef<Session | null>(null);
+  const previousSession = useRef<CreativeSession | null>(null);
   const historySkip = useRef(false);
 
   const undo = useCallback(() => {
@@ -56,9 +62,9 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
         description: '',
         tag: null,
         parentId: null,
-        masterDb: session.masterDb,
-        rack: session.rack.map((device) => ({ ...device })),
-        macros: session.macros.map((macro) => ({ ...macro })),
+        masterDb: session.settings.masterDb,
+        rack: session.rack.devices.map((device) => ({ ...device })),
+        macros: session.rack.macros.map((macro) => ({ ...macro })),
       };
       setSession({
         ...session,
@@ -75,9 +81,11 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       if (!snapshot) return;
       setSession({
         ...session,
-        masterDb: snapshot.masterDb,
-        rack: snapshot.rack.map((device) => ({ ...device })),
-        macros: snapshot.macros.map((macro) => ({ ...macro })),
+        settings: { ...session.settings, masterDb: snapshot.masterDb },
+        rack: {
+          devices: snapshot.rack.map((device) => ({ ...device })),
+          macros: snapshot.macros.map((macro) => ({ ...macro })),
+        },
       });
       const plugin = snapshot.rack.find((device) => device.kind === 'plugin');
       if (plugin) {
@@ -123,6 +131,18 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
 
   const switchWorkspace = useCallback((workspace: Workspace) => {
     setSession((current) => (current ? { ...current, workspace } : current));
+  }, []);
+
+  const switchDesignTool = useCallback((activeTool: DesignTool) => {
+    setSession((current) =>
+      current
+        ? {
+            ...current,
+            workspace: 'design',
+            designContext: { ...current.designContext, activeTool },
+          }
+        : current,
+    );
   }, []);
 
   const renameSession = useCallback(() => {
@@ -207,6 +227,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     captureSnapshot,
     recallSnapshot,
     switchWorkspace,
+    switchDesignTool,
     renameSession,
     exportSession,
     importSession,

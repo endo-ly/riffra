@@ -1,4 +1,4 @@
-import type { AudioStatus, PluginEntry, Session } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
 import { Icon, Meter } from '../shared/ui';
 
 export function WorkspacePlay({
@@ -13,11 +13,11 @@ export function WorkspacePlay({
   onCaptureSnapshot,
   onRecallSnapshot,
 }: {
-  session: Session;
+  session: CreativeSession;
   audio: AudioStatus;
   plugins: PluginEntry[];
   missingPluginPaths: string[];
-  setSession: (value: Session) => void;
+  setSession: (value: CreativeSession) => void;
   onTogglePluginBypass: (bypassed: boolean) => void;
   onSetPluginParameter: (index: number, value: number) => void;
   onClearPlugin: () => void;
@@ -25,7 +25,7 @@ export function WorkspacePlay({
   onRecallSnapshot: (slot: 'A' | 'B') => void;
 }) {
   const missingPaths = new Set(missingPluginPaths);
-  const persistedPlugins = session.rack
+  const persistedPlugins = session.rack.devices
     .filter((device) => device.kind === 'plugin')
     .map(
       (device) =>
@@ -42,28 +42,35 @@ export function WorkspacePlay({
         }) as PluginEntry,
     );
   const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
-  const loadedBypassed = session.rack.find((device) => device.kind === 'plugin')?.bypassed ?? false;
+  const loadedBypassed =
+    session.rack.devices.find((device) => device.kind === 'plugin')?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A');
   const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:B');
   const setMacro = (macroId: string, value: number) => {
     const safeValue = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-    const macro = session.macros.find((item) => item.id === macroId);
+    const macro = session.rack.macros.find((item) => item.id === macroId);
     setSession({
       ...session,
-      macros: session.macros.map((item) =>
-        item.id === macroId ? { ...item, value: safeValue } : item,
-      ),
+      rack: {
+        ...session.rack,
+        macros: session.rack.macros.map((item) =>
+          item.id === macroId ? { ...item, value: safeValue } : item,
+        ),
+      },
     });
     if (macro?.parameterIndex != null) onSetPluginParameter(macro.parameterIndex, safeValue);
   };
   const mapMacro = (macroId: string, value: string) =>
     setSession({
       ...session,
-      macros: session.macros.map((item) =>
-        item.id === macroId
-          ? { ...item, parameterIndex: value === '' ? null : Number(value) }
-          : item,
-      ),
+      rack: {
+        ...session.rack,
+        macros: session.rack.macros.map((item) =>
+          item.id === macroId
+            ? { ...item, parameterIndex: value === '' ? null : Number(value) }
+            : item,
+        ),
+      },
     });
   return (
     <div className="workspace-scroll play-view">
@@ -181,11 +188,11 @@ export function WorkspacePlay({
             <h2>Performance controls</h2>
           </div>
           <small>
-            {session.macros.filter((macro) => macro.parameterIndex != null).length} mapped
+            {session.rack.macros.filter((macro) => macro.parameterIndex != null).length} mapped
           </small>
         </header>
         <div className="macro-grid">
-          {session.macros.map((macro) => (
+          {session.rack.macros.map((macro) => (
             <label className="macro" key={macro.id}>
               <span
                 className="knob"
@@ -222,8 +229,10 @@ export function WorkspacePlay({
       <label className="session-note">
         <span>Session note</span>
         <textarea
-          value={session.note}
-          onChange={(event) => setSession({ ...session, note: event.target.value })}
+          value={session.settings.note}
+          onChange={(event) =>
+            setSession({ ...session, settings: { ...session.settings, note: event.target.value } })
+          }
           placeholder="意図、比較対象、使用場面を記録…"
         />
       </label>

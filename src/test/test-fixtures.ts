@@ -1,5 +1,11 @@
 import { defaultSession } from '@/lib/domain';
-import type { AudioStatus, PluginEntry, PluginStatus, RackDevice, Session } from '@/lib/domain';
+import type {
+  AudioStatus,
+  CreativeSession,
+  PluginEntry,
+  PluginStatus,
+  RackDevice,
+} from '@/lib/domain';
 
 /**
  * Shared test builders for M0+ tests. They return valid, minimal objects so
@@ -7,7 +13,7 @@ import type { AudioStatus, PluginEntry, PluginStatus, RackDevice, Session } from
  * `defaultSession` so the canonical session shape lives in one place.
  */
 
-export function makeSession(overrides: Partial<Session> = {}): Session {
+export function makeSession(overrides: Partial<CreativeSession> = {}): CreativeSession {
   return { ...defaultSession(), ...overrides };
 }
 

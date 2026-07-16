@@ -77,7 +77,7 @@ describe('App driven by FakeNativeApi', () => {
     const user = userEvent.setup();
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
 
-    for (const label of ['Play', 'Arrange', 'Sample', 'Analyze', 'Separate']) {
+    for (const label of ['Play', 'Arrange', 'Design']) {
       await user.click(within(workspaceNav).getByRole('button', { name: new RegExp(label) }));
       expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
     }
@@ -85,16 +85,16 @@ describe('App driven by FakeNativeApi', () => {
 
   it('cancels a render without promoting a result and allows a clean retry', async () => {
     const session = defaultSession();
-    session.timeline = [
+    session.arrangement.audioClips = [
       {
         id: 'clip:render',
-        assetPath: 'fake://source.wav',
+        assetId: 'asset:source',
         name: 'Render source',
         trackId: 'main',
-        startMs: 0,
+        positionMs: 0,
         durationMs: 1_000,
-        sourceInMs: 0,
-        sourceOutMs: 0,
+        sourceStartMs: 0,
+        sourceEndMs: 0,
         loopEnabled: false,
         gainDb: 0,
         fadeInMs: 0,
@@ -238,7 +238,7 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => {
       expect(
-        fake.savedSessions.some((session) => session.note.includes('remember this tone')),
+        fake.savedSessions.some((session) => session.settings.note.includes('remember this tone')),
       ).toBe(true);
     });
   });
@@ -255,7 +255,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.recordings.length).toBeGreaterThan(0));
 
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
-    await user.click(within(workspaceNav).getByRole('button', { name: /Sample/ }));
+    await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
 
     await user.click(screen.getByRole('button', { name: /Map to Pad/ }));
     const previewCallsBefore = fake.calls.filter((call) => call === 'previewSample').length;
@@ -304,25 +304,25 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('loadPlugin'));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const loaded = saved.rack.find((device) => device.kind === 'plugin');
+      const loaded = saved.rack.devices.find((device) => device.kind === 'plugin');
       expect(loaded).toBeDefined();
       expect(loaded?.path).toBe(plugins[0].path);
       expect(loaded?.name).toBe(plugins[0].name);
       expect(loaded?.bypassed).toBe(false);
       expect(loaded?.gainDb).toBe(0);
-      expect(saved.rack.filter((device) => device.kind === 'plugin')).toHaveLength(1);
-      expect(saved.rack.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
+      expect(saved.rack.devices.filter((device) => device.kind === 'plugin')).toHaveLength(1);
+      expect(saved.rack.devices.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
     });
 
     // Loading a second plugin replaces the first and never stacks in the rack.
     await user.click(screen.getByRole('button', { name: /Other Synth/ }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const rackPlugins = saved.rack.filter((device) => device.kind === 'plugin');
+      const rackPlugins = saved.rack.devices.filter((device) => device.kind === 'plugin');
       expect(rackPlugins).toHaveLength(1);
       expect(rackPlugins[0].path).toBe(plugins[1].path);
       expect(rackPlugins[0].name).toBe(plugins[1].name);
-      expect(saved.rack.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
+      expect(saved.rack.devices.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
     });
   });
 
@@ -337,7 +337,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.audio.state).toBe('faulted'));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.some((device) => device.kind === 'plugin')).toBe(false);
+      expect(saved.rack.devices.some((device) => device.kind === 'plugin')).toBe(false);
     });
   });
 
@@ -356,13 +356,13 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(screen.getByRole('button', { name: /Bypass/ }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.find((device) => device.kind === 'plugin')?.bypassed).toBe(true);
+      expect(saved.rack.devices.find((device) => device.kind === 'plugin')?.bypassed).toBe(true);
     });
 
     await user.click(screen.getByRole('button', { name: /Enable/ }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.find((device) => device.kind === 'plugin')?.bypassed).toBe(false);
+      expect(saved.rack.devices.find((device) => device.kind === 'plugin')?.bypassed).toBe(false);
     });
   });
 
@@ -377,27 +377,30 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.audioDriver).toBe('Fake Driver');
-      expect(saved.audioSampleRate).toBe(96_000);
+      expect(saved.settings.audioDriver).toBe('Fake Driver');
+      expect(saved.settings.audioSampleRate).toBe(96_000);
     });
   });
 
   it('restores plugin parameters into the rack through the injected api', async () => {
     const bootSession = {
       ...defaultSession(),
-      rack: [
+      rack: {
         ...defaultSession().rack,
-        {
-          id: 'plugin:example',
-          name: 'Example Synth',
-          kind: 'plugin' as const,
-          path: examplePlugin.path,
-          bypassed: false,
-          gainDb: 0,
-          parameterValues: [0.3, 0.7],
-          stateData: null,
-        },
-      ],
+        devices: [
+          ...defaultSession().rack.devices,
+          {
+            id: 'plugin:example',
+            name: 'Example Synth',
+            kind: 'plugin' as const,
+            path: examplePlugin.path,
+            bypassed: false,
+            gainDb: 0,
+            parameterValues: [0.3, 0.7],
+            stateData: null,
+          },
+        ],
+      },
     };
     const fake = new FakeNativeApi({
       plugins: [examplePlugin],
@@ -412,7 +415,7 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const loaded = saved.rack.find((device) => device.kind === 'plugin');
+      const loaded = saved.rack.devices.find((device) => device.kind === 'plugin');
       expect(loaded).toBeDefined();
       expect(loaded?.parameterValues).toEqual([0.3, 0.7]);
     });

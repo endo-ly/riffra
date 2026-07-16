@@ -1,4 +1,4 @@
-import type { Session } from '@/lib/domain';
+import type { CreativeSession } from '@/lib/domain';
 
 export function SamplePreviewControls({
   session,
@@ -6,12 +6,12 @@ export function SamplePreviewControls({
   onPreview,
   onStop,
 }: {
-  session: Session;
+  session: CreativeSession;
   playingId: string | null;
-  onPreview: (pad: Session['samplePads'][number]) => void;
+  onPreview: (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => void;
   onStop: () => void;
 }) {
-  if (!session.samplePads.length) return null;
+  if (!session.playState.sampleInstrument.pads.length) return null;
   return (
     <section className="section-card sample-preview">
       <header>
@@ -23,7 +23,7 @@ export function SamplePreviewControls({
           Stop
         </button>
       </header>
-      {session.samplePads.map((pad) => (
+      {session.playState.sampleInstrument.pads.map((pad) => (
         <div className="sample-preview-row" key={pad.id}>
           <div>
             <strong>{pad.name}</strong>

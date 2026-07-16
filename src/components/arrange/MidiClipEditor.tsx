@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { MidiClip, MidiNote, RecordingAsset, Session } from '@/lib/domain';
+import type { CreativeSession, MidiClip, MidiNote, RecordingAsset } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { notesFromMidiEvents } from '@/lib/midi';
 
@@ -9,8 +9,8 @@ export function MidiClipEditor({
   recordings,
   api,
 }: {
-  session: Session;
-  setSession: (value: Session) => void;
+  session: CreativeSession;
+  setSession: (value: CreativeSession) => void;
   recordings: RecordingAsset[];
   api: NativeApi;
 }) {
@@ -28,8 +28,8 @@ export function MidiClipEditor({
     }
     const startMs = Math.max(
       0,
-      ...session.timeline.map((clip) => clip.startMs + clip.durationMs),
-      ...session.midiClips.map((clip) => clip.startMs + clip.durationMs),
+      ...session.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
+      ...session.arrangement.midiClips.map((clip) => clip.startMs + clip.durationMs),
     );
     const durationMs = Math.max(1, ...notes.map((note) => note.startMs + note.durationMs));
     const clip: MidiClip = {
@@ -42,7 +42,10 @@ export function MidiClipEditor({
     };
     setSession({
       ...session,
-      midiClips: [...session.midiClips.filter((item) => item.id !== clip.id), clip],
+      arrangement: {
+        ...session.arrangement,
+        midiClips: [...session.arrangement.midiClips.filter((item) => item.id !== clip.id), clip],
+      },
       workspace: 'arrange',
     });
     setMessage(`${notes.length} notes imported from ${recording.name}.`);
@@ -56,40 +59,52 @@ export function MidiClipEditor({
     const safeValue = Number.isFinite(value) ? Math.round(value) : 0;
     setSession({
       ...session,
-      midiClips: session.midiClips.map((clip) =>
-        clip.id !== clipId
-          ? clip
-          : {
-              ...clip,
-              notes: clip.notes.map((note) =>
-                note.id !== noteId
-                  ? note
-                  : {
-                      ...note,
-                      [field]:
-                        field === 'note' || field === 'velocity' || field === 'channel'
-                          ? Math.max(
-                              field === 'channel' ? 1 : 0,
-                              Math.min(field === 'channel' ? 16 : 127, safeValue),
-                            )
-                          : Math.max(field === 'durationMs' ? 1 : 0, safeValue),
-                    },
-              ),
-            },
-      ),
+      arrangement: {
+        ...session.arrangement,
+        midiClips: session.arrangement.midiClips.map((clip) =>
+          clip.id !== clipId
+            ? clip
+            : {
+                ...clip,
+                notes: clip.notes.map((note) =>
+                  note.id !== noteId
+                    ? note
+                    : {
+                        ...note,
+                        [field]:
+                          field === 'note' || field === 'velocity' || field === 'channel'
+                            ? Math.max(
+                                field === 'channel' ? 1 : 0,
+                                Math.min(field === 'channel' ? 16 : 127, safeValue),
+                              )
+                            : Math.max(field === 'durationMs' ? 1 : 0, safeValue),
+                      },
+                ),
+              },
+        ),
+      },
     });
   };
   const removeNote = (clipId: string, noteId: string) =>
     setSession({
       ...session,
-      midiClips: session.midiClips.map((clip) =>
-        clip.id !== clipId
-          ? clip
-          : { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) },
-      ),
+      arrangement: {
+        ...session.arrangement,
+        midiClips: session.arrangement.midiClips.map((clip) =>
+          clip.id !== clipId
+            ? clip
+            : { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) },
+        ),
+      },
     });
   const removeClip = (clipId: string) =>
-    setSession({ ...session, midiClips: session.midiClips.filter((clip) => clip.id !== clipId) });
+    setSession({
+      ...session,
+      arrangement: {
+        ...session.arrangement,
+        midiClips: session.arrangement.midiClips.filter((clip) => clip.id !== clipId),
+      },
+    });
   const exportSessionMidi = async () => {
     const result = await api.exportMidi();
     setExportMessage(
@@ -108,7 +123,9 @@ export function MidiClipEditor({
         <div>
           <button
             className="text-button"
-            disabled={!session.midiClips.some((clip) => !clip.muted && clip.notes.length)}
+            disabled={
+              !session.arrangement.midiClips.some((clip) => !clip.muted && clip.notes.length)
+            }
             onClick={() => void exportSessionMidi()}
           >
             Export .mid
@@ -136,7 +153,7 @@ export function MidiClipEditor({
           </small>
         )}
       </div>
-      {session.midiClips.map((clip) => (
+      {session.arrangement.midiClips.map((clip) => (
         <article className={`midi-clip-card ${clip.muted ? 'muted' : ''}`} key={clip.id}>
           <header>
             <div>

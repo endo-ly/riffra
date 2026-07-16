@@ -174,9 +174,10 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
             {recordings.visibleRecordings.slice(0, 12).map((recording) => (
               <div
                 className={clsx(
+                  'recording-row',
                   styles.recordingRow,
                   inbox.selectedId === recording.id && styles.selected,
-                  inbox.duplicateIds.has(recording.id) && styles.duplicate,
+                  inbox.duplicateIds.has(recording.id) && ['duplicate', styles.duplicate],
                 )}
                 key={recording.id}
               >

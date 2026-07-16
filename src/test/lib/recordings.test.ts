@@ -44,14 +44,15 @@ describe('recording availability', () => {
     const session = defaultSession();
     const recording = completedRecording();
     const before = structuredClone(recording);
-    const clip = createTimelineClip(session, recording);
+    const assetId = 'asset:take-1';
+    const clip = createTimelineClip(session, recording, assetId);
 
     expect(clip).toMatchObject({
-      assetPath: recording.processedPath,
-      startMs: 0,
+      assetId,
+      positionMs: 0,
       durationMs: 2_000,
-      sourceInMs: 0,
-      sourceOutMs: 0,
+      sourceStartMs: 0,
+      sourceEndMs: 0,
     });
     expect(recording).toEqual(before);
   });
@@ -59,31 +60,29 @@ describe('recording availability', () => {
   it('refuses duplicate or incomplete timeline sources', () => {
     const recording = completedRecording();
     const session = defaultSession();
-    const clip = createTimelineClip(session, recording);
+    const clip = createTimelineClip(session, recording, 'asset:take-1');
     expect(clip).not.toBeNull();
-    expect(createTimelineClip({ ...session, timeline: [clip!] }, recording)).toBeNull();
-    expect(createTimelineClip(session, { ...recording, state: 'recoverable' })).toBeNull();
+    expect(
+      createTimelineClip(
+        {
+          ...session,
+          arrangement: { ...session.arrangement, audioClips: [clip!] },
+        },
+        recording,
+        'asset:take-1',
+      ),
+    ).toBeNull();
+    expect(
+      createTimelineClip(session, { ...recording, state: 'recoverable' }, 'asset:take-1'),
+    ).toBeNull();
   });
 
-  it('updates timeline and sample-pad paths after an Inbox take is moved', () => {
+  it('keeps asset references stable after an Inbox take is moved', () => {
     const recording = completedRecording();
-    const clip = createTimelineClip(defaultSession(), recording)!;
-    const unrelatedPath = 'C:\\data\\take-10\\processed.wav';
+    const clip = createTimelineClip(defaultSession(), recording, 'asset:take-1')!;
     const session = {
       ...defaultSession(),
-      timeline: [clip, { ...clip, id: 'unrelated', assetPath: unrelatedPath }],
-      samplePads: [
-        {
-          id: 'pad-1',
-          name: recording.name,
-          assetPath: recording.rawPath!,
-          startMs: 0,
-          endMs: 0,
-          midiKey: 36,
-          gainDb: 0,
-          loopEnabled: false,
-        },
-      ],
+      arrangement: { ...defaultSession().arrangement, audioClips: [clip] },
     };
 
     const relocated = relocateRecordingReferences(
@@ -92,14 +91,7 @@ describe('recording availability', () => {
       'recording:C:\\data\\archive\\renamed-take',
     );
 
-    expect(relocated.timeline[0]).toMatchObject({
-      assetPath: 'C:\\data\\archive\\renamed-take\\processed.wav',
-      name: 'renamed-take',
-    });
-    expect(relocated.samplePads[0]).toMatchObject({
-      assetPath: 'C:\\data\\archive\\renamed-take\\raw.wav',
-      name: 'renamed-take',
-    });
-    expect(relocated.timeline[1].assetPath).toBe(unrelatedPath);
+    expect(relocated.arrangement.audioClips[0].assetId).toBe('asset:take-1');
+    expect(relocated.arrangement.audioClips[0].name).toBe(recording.name);
   });
 });

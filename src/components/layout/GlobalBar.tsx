@@ -1,11 +1,11 @@
-import type { AudioStatus, Session, Workspace } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, Workspace } from '@/lib/domain';
 import clsx from 'clsx';
 import { workspaces } from '@/constants';
 import { Icon } from '../shared/ui';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
-  session: Session;
+  session: CreativeSession;
   audio: AudioStatus;
   isMuted: boolean;
   undoStack: unknown[];

@@ -8,27 +8,30 @@ import {
 } from '@/lib/rack';
 
 function pluginRack(bypassed = false) {
-  return [
-    {
-      id: 'input:1',
-      name: 'In',
-      kind: 'input' as const,
-      bypassed: false,
-      gainDb: 0,
-      parameterValues: [],
-      stateData: null,
-    },
-    makeRackPlugin({ parameterValues: [0.5], stateData: 'blob', bypassed }),
-    {
-      id: 'output:1',
-      name: 'Out',
-      kind: 'output' as const,
-      bypassed: false,
-      gainDb: 0,
-      parameterValues: [],
-      stateData: null,
-    },
-  ];
+  return {
+    devices: [
+      {
+        id: 'input:1',
+        name: 'In',
+        kind: 'input' as const,
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        stateData: null,
+      },
+      makeRackPlugin({ parameterValues: [0.5], stateData: 'blob', bypassed }),
+      {
+        id: 'output:1',
+        name: 'Out',
+        kind: 'output' as const,
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        stateData: null,
+      },
+    ],
+    macros: [],
+  };
 }
 
 describe('rackWithPluginLoaded', () => {
@@ -43,21 +46,21 @@ describe('rackWithPluginLoaded', () => {
       bypassed: true,
       stateData: null,
     });
-    const plugin = next.find((d) => d.kind === 'plugin');
-    expect(next.filter((d) => d.kind === 'plugin')).toHaveLength(1);
-    expect(next.filter((d) => d.kind !== 'plugin')).toHaveLength(2);
+    const plugin = next.devices.find((d) => d.kind === 'plugin');
+    expect(next.devices.filter((d) => d.kind === 'plugin')).toHaveLength(1);
+    expect(next.devices.filter((d) => d.kind !== 'plugin')).toHaveLength(2);
     expect(plugin?.parameterValues).toEqual([0.25]);
     expect(plugin?.stateData).toBe('runtime-blob');
     expect(plugin?.bypassed).toBe(true);
   });
 
   it('falls back to caller values when the runtime reports nothing', () => {
-    const next = rackWithPluginLoaded([], makePluginEntry(), null, {
+    const next = rackWithPluginLoaded({ devices: [], macros: [] }, makePluginEntry(), null, {
       parameterValues: [0.1, 0.2],
       bypassed: false,
       stateData: 'fallback',
     });
-    const plugin = next.find((d) => d.kind === 'plugin');
+    const plugin = next.devices.find((d) => d.kind === 'plugin');
     expect(plugin?.parameterValues).toEqual([0.1, 0.2]);
     expect(plugin?.stateData).toBe('fallback');
   });
@@ -66,25 +69,25 @@ describe('rackWithPluginLoaded', () => {
 describe('rackWithoutPlugin', () => {
   it('removes only the plugin device', () => {
     const next = rackWithoutPlugin(pluginRack());
-    expect(next.find((d) => d.kind === 'plugin')).toBeUndefined();
-    expect(next).toHaveLength(2);
+    expect(next.devices.find((d) => d.kind === 'plugin')).toBeUndefined();
+    expect(next.devices).toHaveLength(2);
   });
 });
 
 describe('rackWithPluginBypassed', () => {
   it('toggles bypass on the plugin device only', () => {
     const next = rackWithPluginBypassed(pluginRack(false), true);
-    expect(next.find((d) => d.kind === 'plugin')?.bypassed).toBe(true);
-    expect(next.find((d) => d.kind === 'input')?.bypassed).toBe(false);
+    expect(next.devices.find((d) => d.kind === 'plugin')?.bypassed).toBe(true);
+    expect(next.devices.find((d) => d.kind === 'input')?.bypassed).toBe(false);
   });
 });
 
 describe('rackWithPluginParameter', () => {
   it('updates values and state on the plugin device only', () => {
     const next = rackWithPluginParameter(pluginRack(), [0, 1, 0], 'new-blob');
-    const plugin = next.find((d) => d.kind === 'plugin');
+    const plugin = next.devices.find((d) => d.kind === 'plugin');
     expect(plugin?.parameterValues).toEqual([0, 1, 0]);
     expect(plugin?.stateData).toBe('new-blob');
-    expect(next.find((d) => d.kind === 'input')?.parameterValues).toEqual([]);
+    expect(next.devices.find((d) => d.kind === 'input')?.parameterValues).toEqual([]);
   });
 });

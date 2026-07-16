@@ -4,9 +4,7 @@ export const workspaces: { id: Workspace; label: string; key: string }[] = [
   { id: 'home', label: 'Home', key: '1' },
   { id: 'play', label: 'Play', key: '2' },
   { id: 'arrange', label: 'Arrange', key: '3' },
-  { id: 'sample', label: 'Sample', key: '4' },
-  { id: 'analyze', label: 'Analyze', key: '5' },
-  { id: 'separate', label: 'Separate', key: '6' },
+  { id: 'design', label: 'Design', key: '4' },
 ];
 
 export const librarySections = [

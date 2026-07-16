@@ -147,7 +147,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       </div>
     );
 
-  const isMuted = isOutputMuted(session.emergencyMuted, audio);
+  const isMuted = isOutputMuted(session.settings.emergencyMuted, audio);
   return (
     <main className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''}`}>
       <GlobalBar
@@ -300,7 +300,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           </div>
         )}
-        {session.workspace === 'sample' && (
+        {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
           <>
             <WorkspaceSample
               session={session}
@@ -328,7 +328,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           </>
         )}
-        {session.workspace === 'analyze' && (
+        {session.workspace === 'design' && session.designContext.activeTool === 'analyze' && (
           <>
             <WorkspaceAnalyze analysis={analysis} />
             <ReferenceSuggestion
@@ -349,7 +349,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           </>
         )}
-        {session.workspace === 'separate' && (
+        {session.workspace === 'design' && session.designContext.activeTool === 'separate' && (
           <WorkspaceSeparate
             recordings={usableRecordings}
             results={separations}
@@ -362,9 +362,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onAddToTimeline={(path, name) => void addSeparationToTimeline(path, name)}
           />
         )}
-        {!(['home', 'play', 'arrange', 'sample', 'analyze', 'separate'] as Workspace[]).includes(
-          session.workspace,
-        ) && <EmptyWorkspace workspace={session.workspace} />}
+        {!(['home', 'play', 'design', 'arrange'] as Workspace[]).includes(session.workspace) && (
+          <EmptyWorkspace workspace={session.workspace} />
+        )}
       </section>
 
       <InspectorPanel

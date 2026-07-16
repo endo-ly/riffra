@@ -92,6 +92,9 @@ describe('CaptureSettings', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Visual count-in' }), '4');
 
-    expect(setSession).toHaveBeenCalledWith({ ...session, countInBeats: 4 });
+    expect(setSession).toHaveBeenCalledWith({
+      ...session,
+      settings: { ...session.settings, countInBeats: 4 },
+    });
   });
 });

@@ -2,6 +2,7 @@ import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
+  AssetId,
   BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
@@ -17,7 +18,7 @@ import type {
   RenderResult,
   SamplePad,
   ScanReport,
-  Session,
+  CreativeSession,
   SeparationResult,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
@@ -92,7 +93,7 @@ export interface FakeNativeApiOptions {
  */
 export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
-  readonly savedSessions: Session[] = [];
+  readonly savedSessions: CreativeSession[] = [];
   audio: AudioStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
@@ -134,13 +135,13 @@ export class FakeNativeApi implements NativeApi {
     return this.bootstrapState;
   };
 
-  saveSession = async (session: Session): Promise<string | null> => {
+  saveSession = async (session: CreativeSession): Promise<string | null> => {
     this.calls.push('saveSession');
     this.savedSessions.push(session);
     return null;
   };
 
-  restoreRecoveryGeneration = async (fileName: string): Promise<Session | null> => {
+  restoreRecoveryGeneration = async (fileName: string): Promise<CreativeSession | null> => {
     this.calls.push('restoreRecoveryGeneration');
     return { ...this.bootstrapState.session, projectName: `Restored ${fileName}` };
   };
@@ -155,7 +156,7 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  importSession = async (path: string): Promise<Session | null> => {
+  importSession = async (path: string): Promise<CreativeSession | null> => {
     this.calls.push('importSession');
     return { ...this.bootstrapState.session, projectName: `Imported ${path}` };
   };
@@ -716,40 +717,63 @@ export class FakeNativeApi implements NativeApi {
     return this.missing.slice();
   };
 
-  relinkMissingDependency = async (oldPath: string, newPath: string): Promise<Session> => {
+  relinkMissingDependency = async (
+    assetId: AssetId,
+    _newPath: string,
+  ): Promise<CreativeSession> => {
     this.calls.push('relinkMissingDependency');
     const session = this.bootstrapState.session;
-    const next: Session = {
+    const replacement = `asset:fake-relinked-${++this.renderCounter}`;
+    const next: CreativeSession = {
       ...session,
-      timeline: session.timeline.map((clip) =>
-        clip.assetPath === oldPath ? { ...clip, assetPath: newPath } : clip,
-      ),
-      samplePads: session.samplePads.map((pad) =>
-        pad.assetPath === oldPath ? { ...pad, assetPath: newPath } : pad,
-      ),
-      rack: session.rack.map((device) =>
-        device.path === oldPath ? { ...device, path: newPath, disabledPlaceholder: false } : device,
-      ),
+      arrangement: {
+        ...session.arrangement,
+        audioClips: session.arrangement.audioClips.map((clip) =>
+          clip.assetId === assetId ? { ...clip, assetId: replacement } : clip,
+        ),
+      },
+      playState: {
+        ...session.playState,
+        sampleInstrument: {
+          ...session.playState.sampleInstrument,
+          pads: session.playState.sampleInstrument.pads.map((pad) =>
+            pad.assetId === assetId ? { ...pad, assetId: replacement } : pad,
+          ),
+        },
+      },
     };
     this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.missing = this.missing.filter((item) => item.path !== oldPath);
+    this.missing = this.missing.filter((item) => item.assetId !== assetId);
     return next;
   };
 
-  disableMissingPlugin = async (deviceId: string): Promise<Session> => {
+  disableMissingPlugin = async (deviceId: string): Promise<CreativeSession> => {
     this.calls.push('disableMissingPlugin');
     const session = this.bootstrapState.session;
-    const next: Session = {
+    const next: CreativeSession = {
       ...session,
-      rack: session.rack.map((device) =>
-        device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
-      ),
+      rack: {
+        ...session.rack,
+        devices: session.rack.devices.map((device) =>
+          device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
+        ),
+      },
     };
     this.bootstrapState = { ...this.bootstrapState, session: next };
     // A disabled placeholder is acknowledged, so it leaves the missing list
     // (mirrors `collect_missing` skipping disabled-placeholder plugins).
     this.missing = this.missing.filter((item) => item.id !== deviceId);
     return next;
+  };
+
+  registerAudioAsset = async (_path: string, _name: string): Promise<AssetId | null> => {
+    this.calls.push('registerAudioAsset');
+    return `asset:fake-${++this.renderCounter}`;
+  };
+
+  resolveAssetContentLocation = async (_assetId: AssetId): Promise<string | null> => {
+    this.calls.push('resolveAssetContentLocation');
+    return 'C:\\fake\\asset.wav';
   };
 
   private completeFakeJob(kind: BackgroundJobStatus['kind'], result: unknown): BackgroundJobStatus {

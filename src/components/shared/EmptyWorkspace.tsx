@@ -10,20 +10,10 @@ export function EmptyWorkspace({ workspace }: { workspace: Workspace }) {
       body: 'Recording、Audio、MIDIを非破壊で配置し、同期位置を保ったまま編集します。',
       action: 'Inboxを開く',
     },
-    sample: {
-      title: '音から楽器を作る',
-      body: 'Audioを切り出し、PadまたはKeyboardへ割り当て、再利用可能なInstrumentとして保存します。',
-      action: 'Audioを選択',
-    },
-    analyze: {
-      title: '測定して、理解する',
-      body: 'Waveform、Loudness、Spectrum、PhaseをReferenceと音量を揃えて比較します。',
-      action: '素材をAnalyze',
-    },
-    separate: {
-      title: 'StemをBackgroundで分離',
-      body: 'Originalと結果を同期試聴し、Artifactの可能性を確認してからTimelineやLibraryへ送ります。',
-      action: 'Jobを作成',
+    design: {
+      title: '素材を設計する',
+      body: 'Sample、Analyze、SeparateをひとつのDesign workspaceから切り替えます。',
+      action: 'Design toolを選択',
     },
   };
   const item = copy[workspace];

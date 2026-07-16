@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AiChangeSet, AudioAnalysis, RecordingAsset, Session } from '@/lib/domain';
+import type { AiChangeSet, AudioAnalysis, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 import { ReferenceCompare } from './ReferenceCompare';
 
@@ -23,8 +23,8 @@ export function ReferenceSuggestion({
   recordings: RecordingAsset[];
   references: Record<string, AudioAnalysis>;
   referenceId: string | null;
-  session: Session;
-  setSession: (value: Session) => void;
+  session: CreativeSession;
+  setSession: (value: CreativeSession) => void;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;
@@ -36,14 +36,16 @@ export function ReferenceSuggestion({
 }) {
   const reference = recordings.find((recording) => recording.id === referenceId) ?? null;
   const referenceAnalysis = reference ? references[reference.id] : null;
-  const contextAllowsAnalysis = session.aiContext.includes('analysis');
-  const contextAllowsSelectedClip = session.aiContext.includes('selectedClip');
+  const contextAllowsAnalysis = session.settings.aiContext.includes('analysis');
+  const contextAllowsSelectedClip = session.settings.aiContext.includes('selectedClip');
   const comparison =
     contextAllowsAnalysis && contextAllowsSelectedClip && analysis && referenceAnalysis
       ? compareAnalyses(analysis, referenceAnalysis)
       : null;
   const targetClip = analysis
-    ? session.timeline.find((clip) => clip.assetPath === analysis.path)
+    ? (session.arrangement.audioClips.find(
+        (clip) => clip.assetId === session.designContext.targetAssetId,
+      ) ?? session.arrangement.audioClips[0])
     : null;
   const [selected, setSelected] = useState(true);
   const [previewing, setPreviewing] = useState(false);
@@ -75,37 +77,46 @@ export function ReferenceSuggestion({
       !targetClip ||
       proposedGain == null ||
       !selected ||
-      session.aiPermission !== 'Apply'
+      session.settings.aiPermission !== 'Apply'
     )
       return;
     const changeSet: AiChangeSet = {
       id: `ai:${Date.now()}`,
       createdAtMs: Date.now(),
-      permission: session.aiPermission,
+      permission: session.settings.aiPermission,
       target: targetClip.id,
       currentGainDb: targetClip.gainDb,
       proposedGainDb: proposedGain,
       reason: 'Match the selected reference RMS without changing the source WAV.',
       expectedEffect: 'A closer perceived level while clip position and source remain unchanged.',
       risk: 'Low · reversible',
-      context: [...session.aiContext],
+      context: [...session.settings.aiContext],
       applied: true,
     };
     setSession({
       ...session,
-      timeline: session.timeline.map((clip) =>
-        clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip,
-      ),
-      aiHistory: [...session.aiHistory, changeSet].slice(-128),
+      arrangement: {
+        ...session.arrangement,
+        audioClips: session.arrangement.audioClips.map((clip) =>
+          clip.id === targetClip.id ? { ...clip, gainDb: proposedGain } : clip,
+        ),
+      },
+      settings: {
+        ...session.settings,
+        aiHistory: [...session.settings.aiHistory, changeSet].slice(-128),
+      },
     });
     setApplied(true);
   };
   const toggleContext = (id: string) =>
     setSession({
       ...session,
-      aiContext: session.aiContext.includes(id)
-        ? session.aiContext.filter((item) => item !== id)
-        : [...session.aiContext, id],
+      settings: {
+        ...session.settings,
+        aiContext: session.settings.aiContext.includes(id)
+          ? session.settings.aiContext.filter((item) => item !== id)
+          : [...session.settings.aiContext, id],
+      },
     });
   return (
     <>
@@ -118,11 +129,14 @@ export function ReferenceSuggestion({
           <label className="ai-permission">
             <span>Permission</span>
             <select
-              value={session.aiPermission}
+              value={session.settings.aiPermission}
               onChange={(event) =>
                 setSession({
                   ...session,
-                  aiPermission: event.target.value as Session['aiPermission'],
+                  settings: {
+                    ...session.settings,
+                    aiPermission: event.target.value as CreativeSession['settings']['aiPermission'],
+                  },
                 })
               }
             >
@@ -141,7 +155,7 @@ export function ReferenceSuggestion({
             <label key={item.id}>
               <input
                 type="checkbox"
-                checked={session.aiContext.includes(item.id)}
+                checked={session.settings.aiContext.includes(item.id)}
                 onChange={() => toggleContext(item.id)}
               />
               <span>{item.label}</span>
@@ -175,7 +189,9 @@ export function ReferenceSuggestion({
         <section className="section-card suggestion-card">
           <header>
             <div>
-              <span className="eyebrow">AI CHANGESET · {session.aiPermission.toUpperCase()}</span>
+              <span className="eyebrow">
+                AI CHANGESET · {session.settings.aiPermission.toUpperCase()}
+              </span>
               <h2>
                 {targetClip
                   ? `Loudness match for ${targetClip.name}`
@@ -225,7 +241,7 @@ export function ReferenceSuggestion({
                 </button>
                 <button
                   className="text-button"
-                  disabled={!selected || applied || session.aiPermission !== 'Apply'}
+                  disabled={!selected || applied || session.settings.aiPermission !== 'Apply'}
                   onClick={applySuggestion}
                 >
                   Apply selected
@@ -241,10 +257,10 @@ export function ReferenceSuggestion({
                   Reject
                 </button>
               </div>
-              {session.aiPermission !== 'Apply' && (
+              {session.settings.aiPermission !== 'Apply' && (
                 <small className="changeset-preview">
-                  Applying is locked in {session.aiPermission} mode. Select Apply only after
-                  reviewing this ChangeSet.
+                  Applying is locked in {session.settings.aiPermission} mode. Select Apply only
+                  after reviewing this ChangeSet.
                 </small>
               )}
               {previewing && (
@@ -262,16 +278,16 @@ export function ReferenceSuggestion({
           )}
         </section>
       )}
-      {session.aiHistory.length > 0 && (
+      {session.settings.aiHistory.length > 0 && (
         <section className="section-card ai-history-card">
           <header>
             <div>
               <span className="eyebrow">AI HISTORY</span>
               <h2>Applied ChangeSets</h2>
             </div>
-            <small>{session.aiHistory.length} persisted</small>
+            <small>{session.settings.aiHistory.length} persisted</small>
           </header>
-          {session.aiHistory
+          {session.settings.aiHistory
             .slice(-8)
             .reverse()
             .map((item) => (

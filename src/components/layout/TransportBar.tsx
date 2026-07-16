@@ -1,4 +1,4 @@
-import type { AudioStatus, Session } from '@/lib/domain';
+import type { AudioStatus, CreativeSession } from '@/lib/domain';
 import clsx from 'clsx';
 import { DEFAULT_TEMPO_BPM } from '@/constants';
 import type { NativeApi } from '@/native/native-api';
@@ -6,8 +6,8 @@ import { Icon, Meter } from '../shared/ui';
 import styles from './TransportBar.module.css';
 
 interface TransportBarProps {
-  session: Session;
-  setSession: (session: Session) => void;
+  session: CreativeSession;
+  setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
   setAudio: (audio: AudioStatus) => void;
   transportPlaying: boolean;
@@ -43,9 +43,14 @@ export function TransportBar(props: TransportBarProps) {
     <footer className="transport">
       <div className={styles.transportLeft}>
         <button
-          className={session.loopEnabled ? 'active' : ''}
+          className={session.settings.loopEnabled ? 'active' : ''}
           aria-label="Toggle loop"
-          onClick={() => setSession({ ...session, loopEnabled: !session.loopEnabled })}
+          onClick={() =>
+            setSession({
+              ...session,
+              settings: { ...session.settings, loopEnabled: !session.settings.loopEnabled },
+            })
+          }
         >
           <Icon name="loop" />
         </button>
@@ -97,17 +102,17 @@ export function TransportBar(props: TransportBarProps) {
       </div>
       <div className={styles.master}>
         <span>MASTER</span>
-        <strong>{session.masterDb.toFixed(1)} dB</strong>
+        <strong>{session.settings.masterDb.toFixed(1)} dB</strong>
         <input
           aria-label="Master volume"
           type="range"
           min="-60"
           max="0"
           step="0.5"
-          value={session.masterDb}
+          value={session.settings.masterDb}
           onChange={(event) => {
             const gainDb = Number(event.target.value);
-            setSession({ ...session, masterDb: gainDb });
+            setSession({ ...session, settings: { ...session.settings, masterDb: gainDb } });
             void api.setMasterGainDb(gainDb).then(setAudio);
           }}
         />

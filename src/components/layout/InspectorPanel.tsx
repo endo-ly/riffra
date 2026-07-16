@@ -1,9 +1,9 @@
-import type { AudioStatus, BootstrapState, Session } from '@/lib/domain';
+import type { AudioStatus, BootstrapState, CreativeSession } from '@/lib/domain';
 import { Icon } from '../shared/ui';
 import styles from './InspectorPanel.module.css';
 
 interface InspectorPanelProps {
-  session: Session;
+  session: CreativeSession;
   audio: AudioStatus;
   boot: BootstrapState;
   focusMode: boolean;

@@ -1,4 +1,4 @@
-import type { RecordingAsset, Session } from '@/lib/domain';
+import type { CreativeSession, RecordingAsset } from '@/lib/domain';
 
 export function WorkspaceSample({
   session,
@@ -6,12 +6,15 @@ export function WorkspaceSample({
   onCreateSamplePad,
   onPreviewPad,
 }: {
-  session: Session;
+  session: CreativeSession;
   recordings: RecordingAsset[];
   onCreateSamplePad: (recording: RecordingAsset) => void;
-  onPreviewPad: (pad: Session['samplePads'][number]) => void;
+  onPreviewPad: (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => void;
 }) {
-  const pads = Array.from({ length: 16 }, (_, index) => session.samplePads[index] ?? null);
+  const pads = Array.from(
+    { length: 16 },
+    (_, index) => session.playState.sampleInstrument.pads[index] ?? null,
+  );
   return (
     <div className="workspace-scroll sample-view">
       <section className="play-header">
@@ -25,7 +28,7 @@ export function WorkspaceSample({
         <header>
           <div>
             <span className="eyebrow">PADS</span>
-            <h2>{session.samplePads.length} mapped</h2>
+            <h2>{session.playState.sampleInstrument.pads.length} mapped</h2>
           </div>
           <small>Playback engine follows this mapping gate</small>
         </header>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, RecordingAsset, Session } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { reconcileAudioSettings } from '@/lib/audio-settings';
 import {
   audioCommandSucceeded,
@@ -14,8 +14,8 @@ import type { NativeApi } from '@/native/native-api';
 interface UseAudioOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  session: Session | null;
-  setSession: Dispatch<SetStateAction<Session | null>>;
+  session: CreativeSession | null;
+  setSession: Dispatch<SetStateAction<CreativeSession | null>>;
   setRecordings: (recordings: RecordingAsset[]) => void;
 }
 
@@ -52,9 +52,12 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
         current
           ? {
               ...current,
-              audioDriver: effective.driver,
-              audioSampleRate: effective.sampleRate,
-              audioBufferSize: effective.bufferSize,
+              settings: {
+                ...current.settings,
+                audioDriver: effective.driver,
+                audioSampleRate: effective.sampleRate,
+                audioBufferSize: effective.bufferSize,
+              },
             }
           : current,
       );
@@ -72,12 +75,19 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
 
   const toggleMute = useCallback(async () => {
     if (!session) return;
-    const muted = !isOutputMuted(session.emergencyMuted, audio);
+    const muted = !isOutputMuted(session.settings.emergencyMuted, audio);
     const nextAudio = await setEmergencyMute(muted);
     setAudio(nextAudio);
     setSession({
       ...session,
-      emergencyMuted: resolveEmergencyMuteAfterCommand(session.emergencyMuted, nextAudio, muted),
+      settings: {
+        ...session.settings,
+        emergencyMuted: resolveEmergencyMuteAfterCommand(
+          session.settings.emergencyMuted,
+          nextAudio,
+          muted,
+        ),
+      },
     });
   }, [audio, session]);
 
@@ -100,7 +110,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
       commandPending: recordingCommandLock.current,
       countdown: recordCountdown,
       recordingActive: audio.recording.active,
-      countInBeats: session?.countInBeats ?? 0,
+      countInBeats: session?.settings.countInBeats ?? 0,
     });
     switch (decision.kind) {
       case 'ignore':
@@ -126,7 +136,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
         await startRecordingNow();
         return;
     }
-  }, [audio.recording.active, recordCountdown, session?.countInBeats, startRecordingNow]);
+  }, [audio.recording.active, recordCountdown, session?.settings.countInBeats, startRecordingNow]);
 
   useEffect(() => {
     if (recordCountdown === null) return;

@@ -1,4 +1,4 @@
-import type { RecordingAsset, Session } from '@/lib/domain';
+import type { CreativeSession, RecordingAsset } from '@/lib/domain';
 
 export function WorkspaceArrange({
   session,
@@ -6,53 +6,64 @@ export function WorkspaceArrange({
   recordings,
   onPlaceRecording,
 }: {
-  session: Session;
-  setSession: (value: Session) => void;
+  session: CreativeSession;
+  setSession: (value: CreativeSession) => void;
   recordings: RecordingAsset[];
   onPlaceRecording: (recording: RecordingAsset) => void;
 }) {
   const timelineEnd = Math.max(
     10_000,
-    ...session.timeline.map((clip) => clip.startMs + clip.durationMs),
+    ...session.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
   );
   const toggleTrack = (id: string, field: 'muted' | 'solo') =>
     setSession({
       ...session,
-      tracks: session.tracks.map((track) =>
-        track.id === id ? { ...track, [field]: !track[field] } : track,
-      ),
+      arrangement: {
+        ...session.arrangement,
+        tracks: session.arrangement.tracks.map((track) =>
+          track.id === id ? { ...track, [field]: !track[field] } : track,
+        ),
+      },
     });
   const updateTrack = (id: string, field: 'gainDb' | 'pan', value: number) =>
     setSession({
       ...session,
-      tracks: session.tracks.map((track) =>
-        track.id !== id
-          ? track
-          : {
-              ...track,
-              [field]:
-                field === 'gainDb'
-                  ? Math.max(-90, Math.min(24, value))
-                  : Math.max(-1, Math.min(1, value)),
-            },
-      ),
+      arrangement: {
+        ...session.arrangement,
+        tracks: session.arrangement.tracks.map((track) =>
+          track.id !== id
+            ? track
+            : {
+                ...track,
+                [field]:
+                  field === 'gainDb'
+                    ? Math.max(-90, Math.min(24, value))
+                    : Math.max(-1, Math.min(1, value)),
+              },
+        ),
+      },
     });
   const addTrack = () => {
-    const name = window.prompt('Track name', `Track ${session.tracks.length + 1}`)?.trim();
+    const name = window
+      .prompt('Track name', `Track ${session.arrangement.tracks.length + 1}`)
+      ?.trim();
     if (!name) return;
     setSession({
       ...session,
-      tracks: [
-        ...session.tracks,
-        {
-          id: `track:${Date.now()}`,
-          name: name.slice(0, 80),
-          gainDb: 0,
-          pan: 0,
-          muted: false,
-          solo: false,
-        },
-      ],
+      arrangement: {
+        ...session.arrangement,
+        tracks: [
+          ...session.arrangement.tracks,
+          {
+            id: `track:${Date.now()}`,
+            name: name.slice(0, 80),
+            gainDb: 0,
+            pan: 0,
+            muted: false,
+            solo: false,
+          },
+        ],
+      },
     });
   };
   return (
@@ -63,7 +74,7 @@ export function WorkspaceArrange({
           <h1>Arrange ideas without moving sources</h1>
         </div>
         <span className="status-tag">
-          {session.timeline.length} CLIPS · {session.tracks.length} TRACKS
+          {session.arrangement.audioClips.length} CLIPS · {session.arrangement.tracks.length} TRACKS
         </span>
       </section>
       <section className="section-card track-mixer">
@@ -77,7 +88,7 @@ export function WorkspaceArrange({
           </button>
         </header>
         <div className="track-mixer-grid">
-          {session.tracks.map((track) => (
+          {session.arrangement.tracks.map((track) => (
             <div className={`track-mixer-row ${track.muted ? 'muted' : ''}`} key={track.id}>
               <strong>{track.name}</strong>
               <label>
@@ -118,17 +129,17 @@ export function WorkspaceArrange({
           <span>{(timelineEnd / 1000).toFixed(1)} s</span>
         </div>
         <div className="timeline-lane">
-          {session.timeline.length === 0 && (
+          {session.arrangement.audioClips.length === 0 && (
             <small>InboxのRecordingを右側からTimelineへ配置できます。</small>
           )}
-          {session.timeline.map((clip) => {
-            const track = session.tracks.find((item) => item.id === clip.trackId);
+          {session.arrangement.audioClips.map((clip) => {
+            const track = session.arrangement.tracks.find((item) => item.id === clip.trackId);
             return (
               <article
                 className={`timeline-clip ${clip.muted || track?.muted ? 'muted' : ''}`}
                 key={clip.id}
                 style={{
-                  left: `${(clip.startMs / timelineEnd) * 100}%`,
+                  left: `${(clip.positionMs / timelineEnd) * 100}%`,
                   width: `${Math.max(8, (clip.durationMs / timelineEnd) * 100)}%`,
                 }}
               >

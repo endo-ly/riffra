@@ -1,11 +1,11 @@
-import type { Session } from '@/lib/domain';
+import type { CreativeSession } from '@/lib/domain';
 
 export function CaptureSettings({
   session,
   setSession,
 }: {
-  session: Session;
-  setSession: (value: Session) => void;
+  session: CreativeSession;
+  setSession: (value: CreativeSession) => void;
 }) {
   return (
     <section className="section-card capture-settings">
@@ -19,8 +19,13 @@ export function CaptureSettings({
       <label>
         <span>Visual count-in</span>
         <select
-          value={session.countInBeats}
-          onChange={(event) => setSession({ ...session, countInBeats: Number(event.target.value) })}
+          value={session.settings.countInBeats}
+          onChange={(event) =>
+            setSession({
+              ...session,
+              settings: { ...session.settings, countInBeats: Number(event.target.value) },
+            })
+          }
         >
           {[0, 1, 2, 3, 4, 8].map((beats) => (
             <option value={beats} key={beats}>
