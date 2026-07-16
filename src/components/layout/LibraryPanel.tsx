@@ -1,7 +1,10 @@
+import clsx from 'clsx';
 import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
 import { Icon } from '../shared/ui';
+import styles from './LibraryPanel.module.css';
+import { InboxOperations } from './InboxOperations';
 
 interface LibraryPanelProps {
   library: {
@@ -43,7 +46,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           <Icon name="plus" />
         </button>
       </div>
-      <label className="panel-search">
+      <label className={styles.panelSearch}>
         <Icon name="search" />
         <input
           aria-label="Library search"
@@ -65,14 +68,14 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           </button>
         ))}
       </nav>
-      <div className="library-content">
+      <div className={styles.libraryContent}>
         <span className="eyebrow">{library.section.toUpperCase()}</span>
         {library.searchQuery && (
-          <section className="library-search-results">
+          <section className={styles.librarySearchResults}>
             <span className="eyebrow">CROSS-ASSET SEARCH · {library.results.length}</span>
             {library.results.slice(0, 8).map((asset) => (
               <button
-                className="library-search-row"
+                className={styles.librarySearchRow}
                 key={asset.id}
                 onClick={() => void library.onSelectAsset(asset)}
               >
@@ -87,10 +90,10 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               </button>
             ))}
             {library.results.length === 0 && (
-              <small className="library-search-empty">No indexed asset matches yet.</small>
+              <small className={styles.librarySearchEmpty}>No indexed asset matches yet.</small>
             )}
             {library.selectedAsset && (
-              <div className="library-asset-detail">
+              <div className={styles.libraryAssetDetail}>
                 <header>
                   <div>
                     <span className="eyebrow">ASSET MEMORY</span>
@@ -115,7 +118,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   <div>
                     <span className="eyebrow">RELATED</span>
                     {library.relatedAssets.slice(0, 4).map((asset) => (
-                      <small className="related-asset" key={asset.id}>
+                      <small className={styles.relatedAsset} key={asset.id}>
                         {asset.kind} · {asset.name}
                       </small>
                     ))}
@@ -127,10 +130,10 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
         )}
         {library.section === 'Plugins' ? (
           <>
-            <small className="scan-message">{rack.visiblePlugins.length}件を表示</small>
+            <small className={styles.scanMessage}>{rack.visiblePlugins.length}件を表示</small>
             {rack.visiblePlugins.slice(0, 12).map((plugin) => (
               <button
-                className="plugin-row"
+                className={styles.pluginRow}
                 key={plugin.id}
                 onClick={() => void rack.onLoadPlugin(plugin)}
                 title={`Load ${plugin.name}`}
@@ -140,11 +143,11 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   <strong>{plugin.name}</strong>
                   <small>{plugin.vendor ?? 'VST3'}</small>
                 </div>
-                <i className={`stability ${plugin.scanState}`} />
+                <i className={clsx(styles.stability, styles[plugin.scanState])} />
               </button>
             ))}
             {rack.visiblePlugins.length === 0 && (
-              <div className="library-empty">
+              <div className={styles.libraryEmpty}>
                 <span>一致するVST3がありません</span>
                 <small>検索語を変えるか、VST3フォルダを確認してください。</small>
               </div>
@@ -160,43 +163,29 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               Find duplicates
             </button>
             {inbox.error ? (
-              <small className="inbox-message error" role="alert">
+              <small className={clsx(styles.inboxMessage, styles.error)} role="alert">
                 {inbox.error}
               </small>
             ) : inbox.message ? (
-              <small className="inbox-message" role="status">
+              <small className={styles.inboxMessage} role="status">
                 {inbox.message}
               </small>
             ) : null}
             {recordings.visibleRecordings.slice(0, 12).map((recording) => (
               <div
-                className={[
-                  'recording-row',
-                  inbox.selectedId === recording.id ? 'selected' : '',
-                  inbox.duplicateIds.has(recording.id) ? 'duplicate' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
+                className={clsx(
+                  styles.recordingRow,
+                  inbox.selectedId === recording.id && styles.selected,
+                  inbox.duplicateIds.has(recording.id) && styles.duplicate,
+                )}
                 key={recording.id}
               >
                 <button
-                  className="recording-select"
+                  className={styles.recordingSelect}
                   aria-label={`Select ${recording.name}`}
                   disabled={Boolean(recording.error)}
                   onClick={() => inbox.setSelectedId(recording.id)}
                   title={recording.error ?? recording.path}
-                  style={{
-                    flex: 1,
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    textAlign: 'left',
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'inherit',
-                    cursor: recording.error ? 'not-allowed' : 'pointer',
-                  }}
                 >
                   <span>{recording.state === 'completed' ? '✓' : '!'}</span>
                   <div>
@@ -211,13 +200,20 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                     </small>
                   </div>
                   <i
-                    className={`stability ${recording.state === 'completed' && !recording.error ? 'validated' : 'quarantined'}`}
+                    className={clsx(
+                      styles.stability,
+                      styles[
+                        recording.state === 'completed' && !recording.error
+                          ? 'validated'
+                          : 'quarantined'
+                      ],
+                    )}
                   />
                 </button>
               </div>
             ))}
             {recordings.visibleRecordings.length === 0 && (
-              <div className="library-empty">
+              <div className={styles.libraryEmpty}>
                 <span>まだ録音がありません</span>
                 <small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small>
               </div>
@@ -255,73 +251,19 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
             )}
           </>
         ) : (
-          <div className="library-empty">
+          <div className={styles.libraryEmpty}>
             <span>まだ資産がありません</span>
             <small>良い結果を保存すると、ここから再利用できます。</small>
           </div>
         )}
       </div>
-      <button className="inbox-button" onClick={() => library.setSection('Recordings')}>
-        <span className="inbox-icon">↓</span>
+      <button className={styles.inboxButton} onClick={() => library.setSection('Recordings')}>
+        <span className={styles.inboxIcon}>↓</span>
         <div>
           <strong>Inbox</strong>
           <small>{recordings.count} items</small>
         </div>
       </button>
     </aside>
-  );
-}
-
-interface InboxOperationsProps {
-  recording: RecordingAsset;
-  onPreview: () => void;
-  onAnalyze: () => void;
-  onRename: () => void;
-  onTag: () => void;
-  onPromote: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
-}
-
-function InboxOperations({
-  recording,
-  onPreview,
-  onAnalyze,
-  onRename,
-  onTag,
-  onPromote,
-  onArchive,
-  onDelete,
-}: InboxOperationsProps) {
-  return (
-    <div className="inbox-operations" aria-label={`Inbox operations for ${recording.name}`}>
-      <header>
-        <strong>{recording.name}</strong>
-        <small>{recording.state}</small>
-      </header>
-      <div className="inbox-actions">
-        <button className="text-button" aria-label="Preview" onClick={onPreview}>
-          Preview
-        </button>
-        <button className="text-button" aria-label="Analyze" onClick={onAnalyze}>
-          Analyze
-        </button>
-        <button className="text-button" aria-label="Rename" onClick={onRename}>
-          Rename
-        </button>
-        <button className="text-button" aria-label="Tag" onClick={onTag}>
-          Tag
-        </button>
-        <button className="text-button" aria-label="Promote" onClick={onPromote}>
-          Promote
-        </button>
-        <button className="text-button" aria-label="Archive" onClick={onArchive}>
-          Archive
-        </button>
-        <button className="text-button danger" aria-label="Delete" onClick={onDelete}>
-          Delete
-        </button>
-      </div>
-    </div>
   );
 }
