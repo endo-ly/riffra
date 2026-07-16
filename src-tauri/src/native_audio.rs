@@ -523,7 +523,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         "faulted" => AudioState::Faulted,
         _ => AudioState::Offline,
     };
-    let fallback_message = match state.clone() {
+    let fallback_message = match state {
         AudioState::Ready => "Native audio is ready through the safety chain.".into(),
         AudioState::Muted => "Native audio is connected and emergency-muted.".into(),
         AudioState::Starting => "Native audio is starting safely.".into(),

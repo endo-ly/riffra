@@ -106,6 +106,8 @@ export class FakeNativeApi implements NativeApi {
   pluginParameters: PluginParameter[];
   recordingSamples: number;
   missing: MissingDependency[];
+  /** Saved RackDefinition assets; populated by `saveRackDefinition`. */
+  rackDefinitions: { assetId: AssetId; name: string; path: string; instance: RackInstance }[];
   private duplicateContent: Record<string, string>;
   private recordingCounter = 0;
   private renderCounter = 0;
@@ -122,6 +124,7 @@ export class FakeNativeApi implements NativeApi {
     this.recordingSamples = options.recordingSamples ?? 22_050;
     this.missing = options.missingDependencies ?? [];
     this.duplicateContent = options.duplicateContent ?? {};
+    this.rackDefinitions = [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
   }
 
@@ -970,14 +973,48 @@ export class FakeNativeApi implements NativeApi {
     return 'C:\\fake\\asset.wav';
   };
 
-  saveRackDefinition = async (_name: string, _path: string): Promise<AssetId | null> => {
+  saveRackDefinition = async (name: string, path: string): Promise<AssetId | null> => {
     this.calls.push('saveRackDefinition');
-    return `asset:fake-rack-${++this.renderCounter}`;
+    const assetId = `asset:fake-rack-${++this.renderCounter}`;
+    this.rackDefinitions.push({
+      assetId,
+      name,
+      path,
+      instance: this.bootstrapState.session.rack,
+    });
+    return assetId;
   };
 
-  loadRackDefinition = async (_path: string): Promise<RackInstance | null> => {
-    this.calls.push('loadRackDefinition');
-    return this.bootstrapState.session.rack;
+  listRackDefinitions = async (): Promise<LibraryAsset[]> => {
+    this.calls.push('listRackDefinitions');
+    return this.rackDefinitions.map((entry) => ({
+      id: entry.assetId,
+      name: entry.name,
+      kind: 'rackDefinition',
+      path: entry.path,
+      tag: 'rack',
+      note: null,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      stability: 'saved',
+    }));
+  };
+
+  loadRackDefinitionAsset = async (
+    assetId: AssetId,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus } | null> => {
+    this.calls.push('loadRackDefinitionAsset');
+    const entry = this.rackDefinitions.find((item) => item.assetId === assetId);
+    if (!entry) return null;
+    const session = this.bootstrapState.session;
+    const next: CreativeSession = {
+      ...session,
+      updatedAtMs: Date.now(),
+      rack: { devices: entry.instance.devices.map((device) => ({ ...device })), macros: [] },
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return { session: next, audio: this.audio };
   };
 
   private completeFakeJob(kind: BackgroundJobStatus['kind'], result: unknown): BackgroundJobStatus {

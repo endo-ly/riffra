@@ -18,7 +18,6 @@ import type {
   SamplePad,
   ScanReport,
   CreativeSession,
-  RackInstance,
   SeparationResult,
 } from '@/lib/domain';
 
@@ -125,7 +124,20 @@ export interface NativeApi {
   removeAudioClip(clipId: string): Promise<CreativeSession | null>;
 
   saveRackDefinition(name: string, path: string): Promise<AssetId | null>;
-  loadRackDefinition(path: string): Promise<RackInstance | null>;
+  /**
+   * Lists every canonical `RackDefinition` Asset so the Library Racks section
+   * can present and load them via `loadRackDefinitionAsset`.
+   */
+  listRackDefinitions(): Promise<LibraryAsset[]>;
+  /**
+   * Loads a canonical `RackDefinition` Asset, applies it to the Audio Runtime,
+   * updates the persisted CreativeSession, and returns both. Returns null when
+   * the asset is missing, unsupported by the current runtime, or the runtime
+   * rejects the change.
+   */
+  loadRackDefinitionAsset(
+    assetId: AssetId,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus } | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
   relinkMissingDependency(assetId: AssetId, newPath: string): Promise<CreativeSession>;

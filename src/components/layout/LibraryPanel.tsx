@@ -16,10 +16,12 @@ interface LibraryPanelProps {
     searchQuery: string;
     selectedAsset: LibraryAsset | null;
     relatedAssets: LibraryAsset[];
+    rackDefinitions: LibraryAsset[];
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
     onEditAsset: () => void;
     onOpenInDesign: (asset: LibraryAsset) => void;
+    onLoadRackDefinition: (assetId: string) => void;
   };
   rack: {
     plugins: PluginEntry[];
@@ -162,6 +164,35 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               </div>
             )}
           </>
+        ) : library.section === 'Racks' ? (
+          <>
+            <small className={styles.scanMessage}>
+              {library.rackDefinitions.length}件のRackDefinition
+            </small>
+            {library.rackDefinitions.map((rack) => (
+              <button
+                className={styles.pluginRow}
+                key={rack.id}
+                onClick={() => library.onLoadRackDefinition(rack.id)}
+                title={`Load ${rack.name}`}
+              >
+                <span>R</span>
+                <div>
+                  <strong>{rack.name}</strong>
+                  <small>{rack.kind}</small>
+                </div>
+                <i className={clsx(styles.stability, styles.validated)} />
+              </button>
+            ))}
+            {library.rackDefinitions.length === 0 && (
+              <div className={styles.libraryEmpty}>
+                <span>保存済みRackがありません</span>
+                <small>
+                  Playワークスペースの Save Rack から Canonical Asset として保存できます。
+                </small>
+              </div>
+            )}
+          </>
         ) : library.section === 'Recordings' ? (
           <>
             <button
@@ -206,7 +237,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                           recording.missingSamples
                             ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
                             : ''
-                        }${recording.midiPath ? ' · MIDI' : ''}`}
+                        }${recording.midiAssetId ? ' · MIDI' : ''}`}
                     </small>
                   </div>
                   <i

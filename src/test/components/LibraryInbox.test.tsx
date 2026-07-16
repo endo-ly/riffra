@@ -72,10 +72,12 @@ const libraryStub = {
   searchQuery: '',
   selectedAsset: null,
   relatedAssets: [] as LibraryAsset[],
+  rackDefinitions: [] as LibraryAsset[],
   onSelectAsset: vi.fn(),
   onPreviewAsset: vi.fn(),
   onEditAsset: vi.fn(),
   onOpenInDesign: vi.fn(),
+  onLoadRackDefinition: vi.fn(),
 };
 
 const rackStub = {

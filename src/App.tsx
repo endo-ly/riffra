@@ -124,6 +124,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     createSamplePad,
     saveCurrentRack,
     loadSavedRack,
+    rackDefinitions,
     previewSamplePad,
     stopPreview,
     connectMidiInput,
@@ -211,10 +212,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           searchQuery: query,
           selectedAsset: selectedLibraryAsset,
           relatedAssets,
+          rackDefinitions,
           onSelectAsset: selectLibraryAsset,
           onPreviewAsset: previewSelectedLibraryAsset,
           onEditAsset: editSelectedLibraryAsset,
           onOpenInDesign: openLibraryAssetAnalysis,
+          onLoadRackDefinition: (assetId) => void loadSavedRack(assetId),
         }}
         rack={{
           plugins,
@@ -273,7 +276,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)}
             onClearPlugin={() => void clearPluginFromRack()}
             onSaveRack={() => void saveCurrentRack()}
-            onLoadRack={() => void loadSavedRack()}
+            onLoadRack={() => setLibrarySection('Racks')}
             onCaptureSnapshot={captureSnapshot}
             onRecallSnapshot={(slot) => void recallSnapshot(slot)}
           />

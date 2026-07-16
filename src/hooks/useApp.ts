@@ -7,8 +7,8 @@ import type {
   BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
-  MissingDependency,
   LibraryAsset,
+  MissingDependency,
   MidiProbe,
   PluginEntry,
   RecordingAsset,
@@ -70,7 +70,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     resolveAssetContentLocation,
     addAudioClipToArrangement,
     saveRackDefinition,
-    loadRackDefinition,
+    listRackDefinitions,
+    loadRackDefinitionAsset,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({
@@ -441,15 +442,23 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const name = window.prompt('Rack definition name', 'Rack Definition');
     if (!name?.trim()) return;
     await saveRackDefinition(name.trim(), path.trim());
-  }, [saveRackDefinition, session]);
+    setRackDefinitions(await listRackDefinitions());
+  }, [listRackDefinitions, saveRackDefinition, session]);
 
-  const loadSavedRack = useCallback(async () => {
-    const path = window.prompt('Rack definition path to load', 'rack-definition.json');
-    if (!path?.trim()) return;
-    const rack = await loadRackDefinition(path.trim());
-    if (!rack) return;
-    setSession((current) => (current ? { ...current, rack } : current));
-  }, [loadRackDefinition]);
+  const loadSavedRack = useCallback(
+    async (assetId: AssetId) => {
+      const result = await loadRackDefinitionAsset(assetId);
+      if (!result) return;
+      setSession(result.session);
+      setAudio(result.audio);
+    },
+    [loadRackDefinitionAsset, setAudio, setSession],
+  );
+
+  const [rackDefinitions, setRackDefinitions] = useState<LibraryAsset[]>([]);
+  useEffect(() => {
+    void listRackDefinitions().then(setRackDefinitions);
+  }, [listRackDefinitions, saveRackDefinition]);
 
   const selectReference = useCallback(
     async (recording: RecordingAsset) => {
@@ -1023,6 +1032,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     createSamplePad,
     saveCurrentRack,
     loadSavedRack,
+    rackDefinitions,
     switchWorkspace,
     switchDesignTool,
     renameSession,

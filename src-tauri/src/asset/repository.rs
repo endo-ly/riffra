@@ -479,6 +479,37 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String
     location.filter(|value| !value.is_empty())
 }
 
+/// Lists every canonical [`Asset`] of the supplied kind, newest first.
+///
+/// Used to back Library views (such as saved `RackDefinition` assets) directly
+/// from the canonical Asset store, instead of duplicating their metadata into
+/// the Library index.
+pub fn list_by_kind(data_root: &Path, kind: AssetKind) -> Result<Vec<Asset>, String> {
+    let connection = open(data_root)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id FROM assets
+             WHERE asset_kind = ?1
+             ORDER BY COALESCE(updated_at_ms, 0) DESC",
+        )
+        .map_err(|error| format!("Asset list query could not be prepared: {error}"))?;
+    let ids: Vec<String> = statement
+        .query_map(params![kind_to_db(kind)], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Asset list query failed: {error}"))?
+        .filter_map(Result::ok)
+        .collect();
+    drop(statement);
+    let mut assets = Vec::new();
+    for id in ids {
+        if let Ok(asset_id) = AssetId::from_normalized(id)
+            && let Some(asset) = load(data_root, &asset_id)
+        {
+            assets.push(asset);
+        }
+    }
+    Ok(assets)
+}
+
 /// Verifies that every canonical AssetId referenced by a session has a
 /// corresponding canonical Asset record.
 ///
@@ -833,6 +864,59 @@ mod tests {
         let mut session = CreativeSession::new(1_000);
         session.design_context.target_asset_id = Some(asset_id);
         assert!(validate_session_references(&root, &session).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_by_kind_returns_only_assets_of_the_requested_kind_newest_first() {
+        let root = root("list-by-kind");
+        let wav = root.join("take.wav");
+        let rack_a = root.join("rack-a.json");
+        let rack_b = root.join("rack-b.json");
+        write_wav(&wav);
+        std::fs::write(&rack_a, b"{\"devices\":[]}").unwrap();
+        // Sleep very briefly so the second RackDefinition is registered with a
+        // distinct (>=) timestamp, ensuring the newest-first ordering is real.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(&rack_b, b"{\"devices\":[]}").unwrap();
+
+        let _audio = register(
+            &root,
+            AssetKind::Audio,
+            "take",
+            &wav.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let first_rack = register(
+            &root,
+            AssetKind::RackDefinition,
+            "rack-a",
+            &rack_a.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let second_rack = register(
+            &root,
+            AssetKind::RackDefinition,
+            "rack-b",
+            &rack_b.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+
+        let mut listed = list_by_kind(&root, AssetKind::RackDefinition).unwrap();
+        assert_eq!(listed.len(), 2);
+        // Newest first: second_rack was registered after first_rack.
+        assert_eq!(listed.remove(0).id, second_rack);
+        assert_eq!(listed.remove(0).id, first_rack);
+        // Audio asset is excluded when filtering by RackDefinition.
+        assert!(
+            list_by_kind(&root, AssetKind::RackDefinition)
+                .unwrap()
+                .iter()
+                .all(|asset| asset.kind == AssetKind::RackDefinition)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

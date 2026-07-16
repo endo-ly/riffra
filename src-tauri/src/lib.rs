@@ -19,8 +19,8 @@ mod storage;
 
 use crate::session::{AudioClipPatch, CreativeSession, SamplePad as DomainSamplePad};
 use model::{
-    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
-    SamplePad,
+    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, MidiProbe,
+    RecoveryCandidate, SamplePad,
 };
 use native_audio::AudioSupervisor;
 use serde::{Deserialize, Serialize};
@@ -135,21 +135,192 @@ fn save_rack_definition(
         .map_err(|error| format!("Rack definition could not be encoded: {error}"))?;
     std::fs::write(&path, payload)
         .map_err(|error| format!("Rack definition could not be saved: {error}"))?;
-    asset::register_rack_definition(
+    let asset_id = asset::register_rack_definition(
         &state.data_root,
         &definition,
         &name,
         &path.to_string_lossy(),
-    )
+    )?;
+    // Mirror the canonical RackDefinition asset into the Library index so the
+    // Racks section can list and load it without duplicating metadata.
+    library::sync_rack_definition(&state.data_root, &asset_id, &name, &path)?;
+    Ok(asset_id)
 }
 
 #[tauri::command]
-fn load_rack_definition(path: String) -> Result<crate::rack::RackInstance, String> {
-    let payload = std::fs::read(&path)
-        .map_err(|error| format!("Rack definition could not be read: {error}"))?;
+fn list_rack_definitions(state: State<'_, AppState>) -> Result<Vec<library::LibraryAsset>, String> {
+    let assets = asset::list_by_kind(&state.data_root, crate::asset::AssetKind::RackDefinition)?;
+    Ok(assets
+        .into_iter()
+        .map(|asset| library::LibraryAsset {
+            id: asset.id.as_str().to_owned(),
+            name: asset.name,
+            kind: "rackDefinition".into(),
+            path: Some(asset.content_location),
+            tag: asset.tag,
+            note: asset.note,
+            created_at_ms: Some(asset.created_at_ms),
+            updated_at_ms: Some(asset.updated_at_ms),
+            stability: "saved".into(),
+        })
+        .collect())
+}
+
+/// Returns true when an audio command's returned status represents a usable
+/// engine, mirroring the React `audioCommandSucceeded` safety gate. A faulted
+/// or offline engine must not be treated as a successful rack apply.
+fn audio_command_succeeded(status: &AudioStatus) -> bool {
+    status.state != AudioState::Faulted && status.state != AudioState::Offline
+}
+
+/// Pushes a single plugin device's state into the Audio Runtime, assuming any
+/// previous plugin has just been cleared. Returns the final status on success.
+fn apply_plugin_device_to_runtime(
+    audio: &AudioSupervisor,
+    device: &crate::rack::RackDevice,
+) -> Result<AudioStatus, String> {
+    let plugin_path = device
+        .path
+        .as_deref()
+        .ok_or_else(|| "Rack definition references a plugin device without a path.".to_string())?;
+    let path = PathBuf::from(plugin_path);
+    if !path.exists() || path.extension().and_then(|value| value.to_str()) != Some("vst3") {
+        return Err(format!(
+            "Rack definition references a missing or invalid plugin bundle: {plugin_path}"
+        ));
+    }
+    let mut status = audio.load_plugin(&path)?;
+    if !audio_command_succeeded(&status) {
+        return Err(format!(
+            "Runtime rejected plugin '{}'; the rack was not applied.",
+            device.name
+        ));
+    }
+    if let Some(state_data) = device.state_data.as_deref()
+        && !state_data.is_empty()
+    {
+        status = audio.set_plugin_state(state_data)?;
+        if !audio_command_succeeded(&status) {
+            return Err(format!(
+                "Runtime rejected saved state for '{}'; the rack was not applied.",
+                device.name
+            ));
+        }
+    }
+    for (index, value) in device.parameter_values.iter().enumerate() {
+        let index = u32::try_from(index).map_err(|_| {
+            "Rack definition exposes more parameters than the runtime can address.".to_string()
+        })?;
+        status = audio.set_plugin_parameter(index, *value)?;
+        if !audio_command_succeeded(&status) {
+            return Err(format!(
+                "Runtime rejected parameter {index} for '{}'; the rack was not applied.",
+                device.name
+            ));
+        }
+    }
+    if device.bypassed {
+        status = audio.set_plugin_bypassed(true)?;
+        if !audio_command_succeeded(&status) {
+            return Err(format!(
+                "Runtime could not engage bypass for '{}'; the rack was not applied.",
+                device.name
+            ));
+        }
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+fn load_rack_definition_asset(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    if state.safe_mode {
+        return Err(
+            "Safe Mode blocks rack application; restart normally to apply a saved rack.".into(),
+        );
+    }
+    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    let asset = asset::load(&state.data_root, &asset_id)
+        .ok_or_else(|| format!("RackDefinition asset is not registered: {asset_id}"))?;
+    if asset.kind != crate::asset::AssetKind::RackDefinition {
+        return Err(format!("Asset {asset_id} is not a RackDefinition."));
+    }
+    let payload = std::fs::read(&asset.content_location)
+        .map_err(|error| format!("RackDefinition payload could not be read: {error}"))?;
     let definition: crate::rack::RackDefinition = serde_json::from_slice(&payload)
-        .map_err(|error| format!("Rack definition is invalid: {error}"))?;
-    Ok(crate::rack::RackInstance::from_definition(&definition))
+        .map_err(|error| format!("RackDefinition payload is invalid: {error}"))?;
+    definition.runtime_supported().map_err(|error| {
+        // Surface unsupported definitions as an explicit failure rather than a
+        // partial apply, per the canonical-load contract.
+        format!("unsupported rack definition: {error}")
+    })?;
+
+    // Capture the previous runtime + session rack so we can attempt recovery if
+    // persistence fails after a successful runtime apply.
+    let previous_session = state.session.lock().map_err(lock_error)?.clone();
+    let previous_plugin_device = previous_session
+        .rack
+        .devices
+        .iter()
+        .find(|device| device.kind == crate::rack::DeviceKind::Plugin)
+        .cloned();
+
+    // Apply the new definition to the runtime first. If this fails, the
+    // session is not touched.
+    let cleared = state.audio.clear_plugin()?;
+    if !audio_command_succeeded(&cleared) {
+        return Err(format!(
+            "Runtime could not clear the existing plugin before applying the rack: {}",
+            cleared.message
+        ));
+    }
+    let final_status = if let Some(device) = definition
+        .devices
+        .iter()
+        .find(|device| device.kind == crate::rack::DeviceKind::Plugin)
+    {
+        apply_plugin_device_to_runtime(&state.audio, device)?
+    } else {
+        cleared
+    };
+
+    // Runtime accepted the new rack. Now update the session and persist.
+    let mut session = previous_session.clone();
+    session.rack = crate::rack::RackInstance::from_definition(&definition);
+    session.updated_at_ms = now_ms();
+    let save_result = SessionStore::new(&state.data_root).save(&session);
+    if let Err(error) = save_result {
+        // Try to restore the previous runtime state so we don't leave the
+        // runtime and persisted session out of sync. If recovery also fails,
+        // surface the inconsistency rather than reporting success.
+        let _ = state.audio.clear_plugin();
+        if let Some(previous) = previous_plugin_device
+            && let Some(path) = previous.path.as_deref()
+        {
+            let _ = state.audio.load_plugin(std::path::Path::new(path));
+            if let Some(state_data) = previous.state_data.as_deref() {
+                let _ = state.audio.set_plugin_state(state_data);
+            }
+            for (index, value) in previous.parameter_values.iter().enumerate() {
+                if let Ok(index) = u32::try_from(index) {
+                    let _ = state.audio.set_plugin_parameter(index, *value);
+                }
+            }
+            if previous.bypassed {
+                let _ = state.audio.set_plugin_bypassed(true);
+            }
+        }
+        return Err(format!(
+            "Rack was applied to the runtime but the session could not be saved; \
+             runtime recovery was attempted. Persistence error: {error}"
+        ));
+    }
+    queue_session_index(&state.data_root, &session);
+    *state.session.lock().map_err(lock_error)? = session.clone();
+    Ok((session, final_status))
 }
 
 #[tauri::command]
@@ -1037,6 +1208,10 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
         );
         capture.sample_rate = status.sample_rate;
         capture.rack_snapshot = session.rack.devices.clone();
+        capture.workspace = Some(format!("{:?}", session.workspace).to_lowercase());
+        capture.master_db = Some(session.settings.master_db);
+        capture.count_in_beats = Some(session.settings.count_in_beats);
+        capture.source = Some("raw DI + processed safety path".into());
         capture
     });
     if let Some(capture) = capture
@@ -1045,30 +1220,6 @@ fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
         status.message = format!(
             "Recording started, but capture metadata could not be saved: {error}. Audio files remain active."
         );
-    }
-    let provenance = state
-        .session
-        .lock()
-        .ok()
-        .map(|session| recording::RecordingProvenance {
-            recorded_at_ms: now_ms(),
-            session_id: session.session_id.clone(),
-            workspace: format!("{:?}", session.workspace).to_lowercase(),
-            master_db: session.settings.master_db,
-            count_in_beats: session.settings.count_in_beats,
-            rack: session.rack.devices.clone(),
-            source: "raw DI + processed safety path".into(),
-        });
-    if let Some(provenance) = provenance {
-        if let Err(error) = recording::save_provenance(&directory, &provenance) {
-            status.message = format!(
-                "Recording started, but provenance could not be saved: {error}. Audio files remain active."
-            );
-        }
-    } else {
-        status.message =
-            "Recording started, but session provenance was unavailable; audio files remain active."
-                .into();
     }
     Ok(status)
 }
@@ -1548,7 +1699,8 @@ pub fn run() {
             restore_recovery_generation,
             export_scratch_session,
             save_rack_definition,
-            load_rack_definition,
+            list_rack_definitions,
+            load_rack_definition_asset,
             add_audio_clip_to_arrangement,
             update_audio_clip,
             move_audio_clip_to_track,

@@ -223,6 +223,33 @@ pub fn sync_plugins(data_root: &Path, plugins: &[PluginEntry]) -> Result<(), Str
     Ok(())
 }
 
+/// Mirrors a canonical RackDefinition Asset into the Library index so the
+/// Racks section can list it. The canonical Asset remains the source of truth;
+/// this Library row only carries the display metadata and points back to the
+/// Asset id.
+pub fn sync_rack_definition(
+    data_root: &Path,
+    asset_id: &AssetId,
+    name: &str,
+    payload_path: &Path,
+) -> Result<(), String> {
+    let connection = open(data_root)?;
+    upsert(
+        &connection,
+        &LibraryAsset {
+            id: asset_id.as_str().to_owned(),
+            name: name.to_owned(),
+            kind: "rackDefinition".into(),
+            path: Some(payload_path.to_string_lossy().into_owned()),
+            tag: Some("rack".into()),
+            note: None,
+            created_at_ms: Some(now_ms()),
+            updated_at_ms: Some(now_ms()),
+            stability: "saved".into(),
+        },
+    )
+}
+
 pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Result<(), String> {
     let connection = open(data_root)?;
     let indexed_at = now_ms();
@@ -242,17 +269,35 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                     .clone()
                     .or_else(|| recording.raw_path.clone()),
                 tag: recording
-                    .provenance
+                    .capture
                     .as_ref()
-                    .map(|value| value.workspace.clone()),
+                    .and_then(|value| value.workspace.clone())
+                    .or_else(|| {
+                        recording
+                            .provenance
+                            .as_ref()
+                            .map(|value| value.workspace.clone())
+                    }),
                 note: recording
-                    .provenance
+                    .capture
                     .as_ref()
-                    .map(|value| value.source.clone()),
+                    .and_then(|value| value.source.clone())
+                    .or_else(|| {
+                        recording
+                            .provenance
+                            .as_ref()
+                            .map(|value| value.source.clone())
+                    }),
                 created_at_ms: recording
-                    .provenance
+                    .capture
                     .as_ref()
-                    .map(|value| value.recorded_at_ms),
+                    .map(|value| value.started_at_ms)
+                    .or_else(|| {
+                        recording
+                            .provenance
+                            .as_ref()
+                            .map(|value| value.recorded_at_ms)
+                    }),
                 updated_at_ms: Some(indexed_at),
                 stability: recording.state.clone(),
             },

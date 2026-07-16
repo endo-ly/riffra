@@ -15,7 +15,6 @@ import type {
   ProjectExport,
   RecordingAsset,
   RecoveryCandidate,
-  RackInstance,
   RenderOptions,
   RenderResult,
   SamplePad,
@@ -607,9 +606,22 @@ export async function saveRackDefinition(name: string, path: string): Promise<As
   }
 }
 
-export async function loadRackDefinition(path: string): Promise<RackInstance | null> {
+export async function listRackDefinitions(): Promise<LibraryAsset[]> {
   try {
-    return await invoke<RackInstance>('load_rack_definition', { path });
+    return await invoke<LibraryAsset[]>('list_rack_definitions');
+  } catch {
+    return [];
+  }
+}
+
+export async function loadRackDefinitionAsset(
+  assetId: AssetId,
+): Promise<{ session: CreativeSession; audio: AudioStatus } | null> {
+  try {
+    const result = await invoke<[CreativeSession, AudioStatus]>('load_rack_definition_asset', {
+      assetId,
+    });
+    return { session: result[0], audio: result[1] };
   } catch {
     return null;
   }
@@ -687,7 +699,8 @@ export function createNativeApi(): NativeApi {
     splitAudioClip,
     removeAudioClip,
     saveRackDefinition,
-    loadRackDefinition,
+    listRackDefinitions,
+    loadRackDefinitionAsset,
     renameRecording,
     deleteRecording,
     archiveRecording,

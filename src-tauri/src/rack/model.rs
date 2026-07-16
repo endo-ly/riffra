@@ -83,6 +83,32 @@ impl RackDefinition {
         }
     }
 
+    /// Verifies that the current Audio Runtime can actually apply this
+    /// definition.
+    ///
+    /// The runtime exposes a single plugin slot (`load_plugin`,
+    /// `clear_plugin`, `set_plugin_*`). It does not implement multi-plugin rack
+    /// application, so a definition that carries more than one plugin device
+    /// must be rejected up front instead of being partially applied and
+    /// reported as successful.
+    ///
+    /// # Errors
+    /// Returns a string beginning with `unsupported rack definition` when the
+    /// definition exceeds what the runtime can apply.
+    pub fn runtime_supported(&self) -> Result<(), String> {
+        let plugin_count = self
+            .devices
+            .iter()
+            .filter(|device| device.kind == DeviceKind::Plugin && !device.disabled_placeholder)
+            .count();
+        if plugin_count > 1 {
+            return Err(format!(
+                "unsupported rack definition: the runtime supports a single plugin device but this definition carries {plugin_count}"
+            ));
+        }
+        Ok(())
+    }
+
     /// Saves this definition as a brand-new [`Asset`] (kind
     /// `RackDefinition`), minting a fresh id. Each call produces a distinct id;
     /// a definition is never overwritten in place.
@@ -167,5 +193,70 @@ mod tests {
         let second = rebuilt.save_as_new_asset("Clean", "C:\\racks\\clean-2.json", 2_000);
         assert_ne!(first.id, second.id);
         assert_eq!(first.kind, AssetKind::RackDefinition);
+    }
+
+    fn plugin_device(id: &str, path: Option<&str>) -> RackDevice {
+        RackDevice {
+            id: id.into(),
+            name: id.into(),
+            kind: DeviceKind::Plugin,
+            path: path.map(|value| value.into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        }
+    }
+
+    #[test]
+    fn runtime_supported_accepts_a_single_plugin_device() {
+        let definition = RackDefinition {
+            devices: vec![
+                RackDevice {
+                    id: "input".into(),
+                    name: "Input".into(),
+                    kind: DeviceKind::Input,
+                    path: None,
+                    bypassed: false,
+                    gain_db: 0.0,
+                    parameter_values: Vec::new(),
+                    state_data: None,
+                    disabled_placeholder: false,
+                },
+                plugin_device("plugin:1", Some("C:\\VST3\\reverb.vst3")),
+            ],
+            macros: Vec::new(),
+        };
+        assert!(definition.runtime_supported().is_ok());
+    }
+
+    #[test]
+    fn runtime_supported_rejects_multiple_active_plugin_devices() {
+        let definition = RackDefinition {
+            devices: vec![
+                plugin_device("plugin:1", Some("C:\\VST3\\a.vst3")),
+                plugin_device("plugin:2", Some("C:\\VST3\\b.vst3")),
+            ],
+            macros: Vec::new(),
+        };
+        let error = definition.runtime_supported().unwrap_err();
+        assert!(
+            error.contains("unsupported rack definition"),
+            "expected unsupported-rack message, got: {error}"
+        );
+        assert!(error.contains("2"));
+    }
+
+    #[test]
+    fn runtime_supported_ignores_disabled_plugin_placeholders() {
+        let mut placeholder = plugin_device("plugin:1", Some("C:\\VST3\\missing.vst3"));
+        placeholder.disabled_placeholder = true;
+        let active = plugin_device("plugin:2", Some("C:\\VST3\\real.vst3"));
+        let definition = RackDefinition {
+            devices: vec![placeholder, active],
+            macros: Vec::new(),
+        };
+        assert!(definition.runtime_supported().is_ok());
     }
 }
