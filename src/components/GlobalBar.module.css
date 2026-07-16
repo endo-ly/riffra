@@ -1,0 +1,80 @@
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-right: 2px;
+}
+.brand strong {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #f0f4f8;
+}
+.sessionTitle {
+  height: 36px;
+  min-width: 145px;
+  max-width: 210px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: 18px 12px;
+  align-items: center;
+  column-gap: 7px;
+  padding: 4px 8px;
+  text-align: left;
+  color: #dbe1e8;
+  background: transparent;
+  border-radius: 7px;
+}
+.sessionTitle:hover {
+  background: var(--surface);
+}
+.sessionTitle > :not(svg) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sessionTitle small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 9px;
+}
+.sessionTitle svg {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  width: 13px;
+  transform: rotate(90deg);
+  color: var(--faint);
+}
+.historyControls {
+  display: flex;
+  gap: 2px;
+}
+.historyControls button {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+}
+.emergencyButton {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  color: #b5bdc7;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: #161a1f;
+  border: 1px solid #3b3034;
+  border-radius: 5px;
+}
+.emergencyButton svg {
+  width: 12px;
+  color: var(--red);
+}
+.emergencyButton.active {
+  color: #fff;
+  background: #9c2833;
+  border-color: #ff7580;
+}

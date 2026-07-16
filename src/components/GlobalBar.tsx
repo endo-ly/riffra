@@ -1,6 +1,8 @@
 import type { AudioStatus, Session, Workspace } from '@/lib/domain';
+import clsx from 'clsx';
 import { workspaces } from '@/constants';
 import { Icon } from './ui';
+import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
   session: Session;
@@ -32,17 +34,21 @@ export function GlobalBar(props: GlobalBarProps) {
   } = props;
   return (
     <header className="global-bar">
-      <div className="brand">
+      <div className={styles.brand}>
         <span className="logo-mark">R</span>
         <strong>RIFFRA</strong>
       </div>
-      <button className="session-title" onClick={onRenameSession} title="Rename Scratch Session">
+      <button
+        className={styles.sessionTitle}
+        onClick={onRenameSession}
+        title="Rename Scratch Session"
+      >
         <span className="save-light" />
         {session.projectName ?? 'Untitled Scratch'}
         <small>Auto-saved</small>
         <Icon name="chevron" />
       </button>
-      <div className="history-controls">
+      <div className={styles.historyControls}>
         <button
           aria-label="Undo"
           title="Undo (Ctrl+Z)"
@@ -82,7 +88,7 @@ export function GlobalBar(props: GlobalBarProps) {
         <small>{audio.roundTripMs ? `${audio.roundTripMs} ms` : 'Audio'}</small>
       </button>
       <button
-        className={`emergency-button ${isMuted ? 'active' : ''}`}
+        className={clsx(styles.emergencyButton, isMuted && styles.active)}
         onClick={() => void onToggleMute()}
       >
         <Icon name="stop" />
