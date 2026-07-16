@@ -1,7 +1,9 @@
 import type { AudioStatus, Session } from '@/lib/domain';
+import clsx from 'clsx';
 import { DEFAULT_TEMPO_BPM } from '@/constants';
 import type { NativeApi } from '@/native/native-api';
 import { Icon, Meter } from './ui';
+import styles from './TransportBar.module.css';
 
 interface TransportBarProps {
   session: Session;
@@ -35,9 +37,11 @@ export function TransportBar(props: TransportBarProps) {
     audioPreferenceMessage,
     api,
   } = props;
+  const statusDotState =
+    audio.recording.active || recordCountdown !== null ? 'recording' : audio.state;
   return (
     <footer className="transport">
-      <div className="transport-left">
+      <div className={styles.transportLeft}>
         <button
           className={session.loopEnabled ? 'active' : ''}
           aria-label="Toggle loop"
@@ -47,7 +51,7 @@ export function TransportBar(props: TransportBarProps) {
         </button>
         <button aria-label="Previous position">◀</button>
         <button
-          className="play-button"
+          className={styles.playButton}
           aria-label={transportPlaying ? 'Stop playback' : 'Play'}
           onClick={() => void (transportPlaying ? onStop() : onPlay())}
         >
@@ -58,7 +62,7 @@ export function TransportBar(props: TransportBarProps) {
         </button>
         <button
           disabled={recordingCommandPending}
-          className={`record-button ${audio.recording.active ? 'active' : ''}`}
+          className={clsx(styles.recordButton, audio.recording.active && styles.active)}
           onClick={() => void onToggleRecording()}
           aria-label={
             recordingCommandPending
@@ -71,11 +75,11 @@ export function TransportBar(props: TransportBarProps) {
           <Icon name="record" />
         </button>
       </div>
-      <div className="position">
+      <div className={styles.position}>
         <strong>001 · 01 · 000</strong>
         <small>00:00:00.000</small>
       </div>
-      <div className="tempo">
+      <div className={styles.tempo}>
         <button>
           <strong>{DEFAULT_TEMPO_BPM.toFixed(2)}</strong>
           <small>BPM</small>
@@ -85,13 +89,13 @@ export function TransportBar(props: TransportBarProps) {
           <small>TIME</small>
         </button>
       </div>
-      <div className="transport-meter">
+      <div className={styles.transportMeter}>
         <span>IN</span>
         <Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} />
         <span>OUT</span>
         <Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} />
       </div>
-      <div className="master">
+      <div className={styles.master}>
         <span>MASTER</span>
         <strong>{session.masterDb.toFixed(1)} dB</strong>
         <input
@@ -109,9 +113,7 @@ export function TransportBar(props: TransportBarProps) {
         />
       </div>
       <div className="status-line">
-        <span
-          className={`status-dot ${audio.recording.active || recordCountdown !== null ? 'recording' : audio.state}`}
-        />
+        <span className={clsx(styles.statusDot, styles[statusDotState])} />
         {recordCountdown !== null
           ? `Count-in · ${recordCountdown} beats`
           : audio.recording.active
