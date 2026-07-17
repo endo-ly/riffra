@@ -113,7 +113,7 @@ describe('App driven by FakeNativeApi', () => {
       result: null,
     };
     const completed: RenderResult = {
-      id: 'render:retry',
+      assetId: 'asset:render-retry',
       path: 'fake://retry.wav',
       sampleRate: 48_000,
       frames: 48_000,
@@ -258,11 +258,11 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
 
     await user.click(screen.getByRole('button', { name: /Map to Pad/ }));
-    const previewCallsBefore = fake.calls.filter((call) => call === 'previewSample').length;
+    const previewCallsBefore = fake.calls.filter((call) => call === 'previewAsset').length;
 
     await user.click(screen.getByRole('button', { name: /Preview Fake Take 1/ }));
     await waitFor(() => {
-      expect(fake.calls.filter((call) => call === 'previewSample').length).toBeGreaterThan(
+      expect(fake.calls.filter((call) => call === 'previewAsset').length).toBeGreaterThan(
         previewCallsBefore,
       );
     });

@@ -3,6 +3,7 @@ import type {
   AudioDeviceProbe,
   AudioStatus,
   AssetId,
+  AssetPreviewOptions,
   AudioClip,
   AudioClipPatch,
   BackgroundJobStatus,
@@ -23,6 +24,8 @@ import type {
   CreativeSession,
   SeparationResult,
   RackInstance,
+  DesignTool,
+  Workspace,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import type { NativeApi } from './native-api';
@@ -382,7 +385,7 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  readMidiEvents = async (_path: string): Promise<MidiEvent[]> => {
+  readMidiEvents = async (_assetId: AssetId): Promise<MidiEvent[]> => {
     this.calls.push('readMidiEvents');
     return [
       { timeMs: 0, status: 0x90, channel: 1, note: 60, velocity: 100 },
@@ -419,7 +422,7 @@ export class FakeNativeApi implements NativeApi {
   renderTimeline = async (options: RenderOptions): Promise<RenderResult | null> => {
     this.calls.push('renderTimeline');
     return {
-      id: `render:${++this.renderCounter}`,
+      assetId: `asset:fake-render-${++this.renderCounter}`,
       path: 'fake://render.wav',
       sampleRate: 48_000,
       frames: 48_000,
@@ -653,15 +656,8 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  previewSample = async (
-    _path: string,
-    _startMs: number,
-    _endMs: number,
-    _looped = false,
-    _gain = 1,
-    _voiceKey?: number,
-  ): Promise<AudioStatus> => {
-    this.calls.push('previewSample');
+  previewAsset = async (_assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
+    this.calls.push('previewAsset');
     this.audio = { ...this.audio, state: 'ready', message: 'Preview voice is playing.' };
     return this.audio;
   };
@@ -1247,9 +1243,36 @@ export class FakeNativeApi implements NativeApi {
     });
   };
 
-  resolveAssetContentLocation = async (_assetId: AssetId): Promise<string | null> => {
-    this.calls.push('resolveAssetContentLocation');
-    return 'C:\\fake\\asset.wav';
+  openAssetInDesign = async (
+    assetId: AssetId,
+    tool: DesignTool,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('openAssetInDesign');
+    const next: CreativeSession = {
+      ...this.bootstrapState.session,
+      updatedAtMs: Date.now(),
+      workspace: 'design',
+      designContext: {
+        ...this.bootstrapState.session.designContext,
+        activeTool: tool,
+        targetAssetId: assetId,
+      },
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return next;
+  };
+
+  switchWorkspace = async (workspace: Workspace): Promise<CreativeSession | null> => {
+    this.calls.push('switchWorkspace');
+    const next: CreativeSession = {
+      ...this.bootstrapState.session,
+      updatedAtMs: Date.now(),
+      workspace,
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return next;
   };
 
   saveRackDefinition = async (name: string, path: string): Promise<AssetId | null> => {

@@ -61,7 +61,7 @@ describe('useInbox', () => {
 
     expect(api.calls).toEqual(
       expect.arrayContaining([
-        'previewSample',
+        'previewAsset',
         'renameRecording',
         'deleteRecording',
         'archiveRecording',
@@ -111,7 +111,7 @@ describe('useInbox', () => {
       processedPath: null,
     };
     const api = new FakeNativeApi({ recordings: [processed, raw] });
-    const preview = vi.spyOn(api, 'previewSample');
+    const preview = vi.spyOn(api, 'previewAsset');
     const { result } = renderHook(() => useInbox(api, [processed, raw], { reload: vi.fn() }));
 
     await act(async () => {
@@ -119,8 +119,8 @@ describe('useInbox', () => {
       await result.current.preview(raw);
     });
 
-    expect(preview).toHaveBeenNthCalledWith(1, 'C:\\fake\\asset.wav', 0, 0);
-    expect(preview).toHaveBeenNthCalledWith(2, 'C:\\fake\\asset.wav', 0, 0);
+    expect(preview).toHaveBeenNthCalledWith(1, 'asset:processed-processed', {});
+    expect(preview).toHaveBeenNthCalledWith(2, 'asset:raw-raw', {});
     expect(result.current.message).toBe('Preview started: raw.');
   });
 
@@ -134,7 +134,7 @@ describe('useInbox', () => {
     });
     expect(result.current.message).toBe('No duplicate recordings found.');
 
-    vi.spyOn(api, 'previewSample').mockResolvedValue(
+    vi.spyOn(api, 'previewAsset').mockResolvedValue(
       fakeAudioStatus({ state: 'faulted', message: 'Audio device disconnected.' }),
     );
     let failure: unknown;

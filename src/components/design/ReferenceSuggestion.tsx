@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { AiChangeSet, AudioAnalysis, CreativeSession, RecordingAsset } from '@/lib/domain';
+import type {
+  AiChangeSet,
+  AudioAnalysis,
+  CreativeSession,
+  RecordingAsset,
+  SessionOpRunner,
+} from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
@@ -12,6 +18,7 @@ export function ReferenceSuggestion({
   session,
   setSession,
   api,
+  runSessionOp,
   onSelect,
   onPreview,
   onStop,
@@ -28,6 +35,7 @@ export function ReferenceSuggestion({
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
+  runSessionOp: SessionOpRunner;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;
@@ -86,7 +94,10 @@ export function ReferenceSuggestion({
     // Commit the gain change through the Rust Arrangement Domain so the
     // canonical clamp and validation rules run there. React no longer mutates
     // audioClips directly for this edit.
-    const updated = await api.updateAudioClip(targetClip.id, { gainDb: proposedGain });
+    const updated = await runSessionOp(
+      () => api.updateAudioClip(targetClip.id, { gainDb: proposedGain }),
+      'Apply suggestion',
+    );
     if (!updated) return;
     const changeSet: AiChangeSet = {
       id: `ai:${Date.now()}`,

@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type {
-  AudioStatus,
-  BootstrapState,
-  CreativeSession,
-  DesignTool,
-  Workspace,
-} from '@/lib/domain';
+import type { AudioStatus, BootstrapState, CreativeSession } from '@/lib/domain';
 import { shouldRestoreIndividualParameters } from '@/lib/plugin-session';
 import type { NativeApi } from '@/native/native-api';
 
@@ -131,24 +125,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     return () => window.clearTimeout(saveTimer.current);
   }, [session]);
 
-  const switchWorkspace = useCallback((workspace: Workspace) => {
-    const current = sessionRef.current;
-    if (!current) return;
-    // Read from the ref (not the setSession updater argument) so a pending edit
-    // is not clobbered, then let the autosave effect persist the change.
-    setSession({ ...current, workspace });
-  }, []);
-
-  const switchDesignTool = useCallback((activeTool: DesignTool) => {
-    const current = sessionRef.current;
-    if (!current) return;
-    setSession({
-      ...current,
-      workspace: 'design',
-      designContext: { ...current.designContext, activeTool },
-    });
-  }, []);
-
   const renameSession = useCallback(() => {
     if (!session) return;
     const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
@@ -230,8 +206,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     redo,
     captureSnapshot,
     recallSnapshot,
-    switchWorkspace,
-    switchDesignTool,
     renameSession,
     exportSession,
     importSession,

@@ -119,9 +119,7 @@ export function useInbox(
       try {
         const assetId = recording.processedAssetId ?? recording.rawAssetId;
         if (!assetId) throw new Error('Recording has no canonical audio Asset ID.');
-        const path = await api.resolveAssetContentLocation(assetId);
-        if (!path) throw new Error('Recording has no previewable audio file.');
-        const status = await api.previewSample(path, 0, 0);
+        const status = await api.previewAsset(assetId, {});
         if (!audioCommandSucceeded(status)) {
           throw new Error(status.message || 'The audio engine could not start the preview.');
         }

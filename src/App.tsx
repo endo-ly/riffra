@@ -142,6 +142,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     playTransport,
     stopTransport,
     toggleRecording,
+    runSessionOp,
     api: nativeApi,
   } = useApp(api);
   if (!boot || !session)
@@ -291,7 +292,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               recordings={usableRecordings}
               onPlaceRecording={placeRecording}
             />
-            <TimelineClipInspector session={session} setSession={setSession} api={nativeApi} />
+            <TimelineClipInspector
+              session={session}
+              setSession={setSession}
+              api={nativeApi}
+              runSessionOp={runSessionOp}
+            />
             <MidiClipEditor
               session={session}
               setSession={setSession}
@@ -354,6 +360,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               session={session}
               setSession={setSession}
               api={nativeApi}
+              runSessionOp={runSessionOp}
               onSelect={(recording) => void selectReference(recording)}
               onPreview={(recording) => void previewReference(recording)}
               onStop={() => void stopReferencePreview()}
@@ -440,7 +447,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               <button
                 key={item.id}
                 onClick={() => {
-                  switchWorkspace(item.id);
+                  void switchWorkspace(item.id);
                   setCommandOpen(false);
                 }}
               >

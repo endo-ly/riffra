@@ -5,6 +5,7 @@ import type {
   BackgroundJobStatus,
   BootstrapState,
   AssetId,
+  AssetPreviewOptions,
   AudioClipPatch,
   LibraryAsset,
   MissingDependency,
@@ -18,7 +19,9 @@ import type {
   SamplePad,
   ScanReport,
   CreativeSession,
+  DesignTool,
   SeparationResult,
+  Workspace,
 } from '@/lib/domain';
 
 /**
@@ -63,7 +66,7 @@ export interface NativeApi {
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
-  readMidiEvents(path: string): Promise<MidiEvent[]>;
+  readMidiEvents(assetId: AssetId): Promise<MidiEvent[]>;
   probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
 
@@ -103,14 +106,13 @@ export interface NativeApi {
   restoreCurrentRack(): Promise<AudioStatus>;
   loadPlugin(path: string): Promise<AudioStatus>;
   clearPlugin(): Promise<AudioStatus>;
-  previewSample(
-    path: string,
-    startMs: number,
-    endMs: number,
-    looped?: boolean,
-    gain?: number,
-    voiceKey?: number,
-  ): Promise<AudioStatus>;
+  /**
+   * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
+   * content-location resolution, file-existence checks, and the Audio Runtime
+   * call, so React never resolves an AssetId to a path for preview. Pass an
+   * options object so the contract stays readable as the preview tuning grows.
+   */
+  previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
   stopSamplePreview(): Promise<AudioStatus>;
   stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
@@ -134,9 +136,9 @@ export interface NativeApi {
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
-   * configuration, and persistence all happen in Rust. React applies the
-   * returned session and audio status directly instead of building the pad or
-   * relying on a follow-up runtime sync effect.
+   * configuration, and persistence all happen in Rust. The caller applies the
+   * returned session and audio status directly and does not build the pad or
+   * sync the runtime itself.
    */
   createSamplePad(
     assetId: AssetId,
@@ -153,13 +155,24 @@ export interface NativeApi {
     },
   ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   removeSamplePad(padId: string): Promise<{ session: CreativeSession; audio: AudioStatus }>;
-  resolveAssetContentLocation(assetId: AssetId): Promise<string | null>;
   addAudioClipToArrangement(
     assetId: AssetId,
     name: string,
     durationMs: number,
     trackId?: string,
   ): Promise<CreativeSession | null>;
+
+  /**
+   * Opens a canonical Asset in the Design workspace with the given tool. One
+   * user intent updates workspace, active tool, and target asset together in
+   * Rust instead of React assembling the DesignContext itself.
+   */
+  openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<CreativeSession | null>;
+  /**
+   * Switches the active workspace through the Rust Session Operation so the
+   * canonical session stays the source of truth.
+   */
+  switchWorkspace(workspace: Workspace): Promise<CreativeSession | null>;
 
   /**
    * Commits a partial update to an existing audio clip through the Rust

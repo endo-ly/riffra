@@ -1,24 +1,36 @@
-//! Session Application Operations that coordinate more than one subsystem.
+//! Session Application Operations: production workflows that change the
+//! canonical [`CreativeSession`] and keep it consistent with the Audio Runtime
+//! and the Asset registry.
 //!
-//! The SamplePad workflow is the Block 1 member of this layer: creating a pad
-//! touches the canonical [`CreativeSession`] (play state + design context), the
-//! Asset registry (existence check), and the Audio Runtime (pad configuration).
-//! Because success requires the runtime and the persisted session to agree, the
-//! operation applies the new pad set to the runtime, persists the session, and
-//! restores the previous pad set if persistence fails.
+//! Two families live here:
+//!
+//! - Sample-pad operations ([`create_sample_pad`], [`update_sample_pad`],
+//!   [`remove_sample_pad`]) touch play state, design context, the Asset
+//!   registry (existence check), and the Audio Runtime (pad configuration).
+//!   Because the runtime and the persisted session must agree, each operation
+//!   applies the new pad set to the runtime, persists the session, and restores
+//!   the previous pad set when persistence fails.
+//!
+//! - Pure-session operations ([`commit_session`], [`apply_arrangement_edit`],
+//!   [`save_session`], [`import_session`], [`restore_generation`],
+//!   [`open_asset_in_design`], [`switch_workspace`]) mutate the session and
+//!   persist it without touching the Audio Runtime, so they reuse
+//!   [`commit_session`] as the single validate-and-persist boundary and need no
+//!   rollback compensation.
 //!
 //! This layer takes concrete dependencies rather than `tauri::State`, so the
 //! orchestration is testable directly. There is no generic transaction
-//! framework: the compensation is a single re-application of the previous pad
-//! set, matching the runtime's "reconfigure the whole pad set" capability.
+//! framework: the only compensation is re-applying the previous pad set, which
+//! matches the runtime's "reconfigure the whole pad set" capability.
 
 use std::path::Path;
 use std::sync::Mutex;
 
 use crate::asset::{self, AssetId};
+use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
-use crate::session::{CreativeSession, DesignTool, SamplePad, Workspace};
+use crate::session::{Arrangement, CreativeSession, DesignTool, SamplePad, Workspace};
 use crate::storage::{SessionStore, now_ms};
 
 /// Concrete dependencies a Session Application Operation needs.
@@ -73,9 +85,10 @@ pub fn resolve_native_pads(
 /// validation, runtime configuration, session update, and persistence. The
 /// design context is aimed at the new pad's asset.
 ///
-/// Runtime configuration happens inside the operation so a normal pad change no
-/// longer depends on a follow-up React `useEffect`. If persistence fails after
-/// the runtime accepted the new pad set, the previous pad set is re-applied.
+/// Runtime configuration happens inside the operation; the caller applies the
+/// returned session and audio status and does not sync the runtime separately.
+/// If persistence fails after the runtime accepted the new pad set, the
+/// previous pad set is re-applied.
 pub fn create_sample_pad(
     context: &SessionContext<'_>,
     asset_id: AssetId,
@@ -315,4 +328,162 @@ pub fn remove_sample_pad(
         .pads
         .retain(|pad| pad.id != pad_id);
     commit_pad_set(context, previous_session, session)
+}
+
+// Session commit, Arrangement, and Design/Workspace operations.
+//
+// These mutate the canonical CreativeSession and persist it without touching
+// the Audio Runtime. They share [`commit_session`] as the single
+// validate-and-persist boundary so the save path lives in one place.
+
+/// Commits a mutated session through the canonical pipeline: validate +
+/// normalize, persist to the SessionStore, refresh the Library index, and swap
+/// the in-memory session. This is the "save" boundary for Session Application
+/// Operations that do not also change the Audio Runtime.
+pub fn commit_session(
+    context: &SessionContext<'_>,
+    mut session: CreativeSession,
+) -> Result<CreativeSession, String> {
+    session = session.validate_and_normalize()?;
+    session.updated_at_ms = now_ms();
+    SessionStore::new(context.data_root)
+        .save(&session)
+        .map_err(|error| format!("Session could not be saved: {error}"))?;
+    crate::queue_session_index(context.data_root, &session);
+    let committed = session.clone();
+    *context.session.lock().map_err(lock_error)? = session;
+    Ok(committed)
+}
+
+/// Saves a caller-supplied session (the canonical save intent). The session is
+/// validated and normalized before persistence.
+pub fn save_session(
+    context: &SessionContext<'_>,
+    session: CreativeSession,
+) -> Result<CreativeSession, String> {
+    commit_session(context, session)
+}
+
+/// Imports a project manifest and commits the resulting session.
+pub fn import_session(
+    context: &SessionContext<'_>,
+    path: &Path,
+) -> Result<CreativeSession, String> {
+    let session = crate::projects::import(context.data_root, path)?;
+    commit_session(context, session)
+}
+
+/// Restores a saved recovery generation as the active session. The generation
+/// file is already canonical, so it is swapped into memory without re-saving.
+pub fn restore_generation(
+    context: &SessionContext<'_>,
+    file_name: &str,
+) -> Result<CreativeSession, String> {
+    let session = SessionStore::new(context.data_root)
+        .restore_generation(file_name)
+        .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
+    crate::queue_session_index(context.data_root, &session);
+    let restored = session.clone();
+    *context.session.lock().map_err(lock_error)? = session;
+    Ok(restored)
+}
+
+/// Applies a Domain-level mutation to the current session's [`Arrangement`],
+/// then commits the whole session. Every Arrangement editing command funnels
+/// through here so the validate/persist boundary stays in one place.
+pub fn apply_arrangement_edit(
+    context: &SessionContext<'_>,
+    edit: impl FnOnce(&mut Arrangement) -> Result<(), DomainError>,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    edit(&mut session.arrangement).map_err(|error| error.to_string())?;
+    commit_session(context, session)
+}
+
+/// Adds an audio clip referencing a canonical Asset to the arrangement, then
+/// commits the session and switches to the Arrange workspace.
+pub fn add_audio_clip(
+    context: &SessionContext<'_>,
+    asset_id: AssetId,
+    name: String,
+    duration_ms: u64,
+    track_id: Option<String>,
+) -> Result<CreativeSession, String> {
+    if name.trim().is_empty() {
+        return Err("Audio clip name must not be empty.".into());
+    }
+    if duration_ms == 0 {
+        return Err("Audio clip duration must be greater than zero.".into());
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track_id = track_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            session
+                .arrangement
+                .tracks
+                .first()
+                .map(|track| track.id.clone())
+        })
+        .ok_or_else(|| "Arrangement has no track for the new audio clip.".to_string())?;
+    let position_ms = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
+        .max()
+        .unwrap_or(0);
+    let clip = crate::session::AudioClip {
+        id: format!("clip:{}:{}", asset_id.as_str(), now_ms()),
+        name,
+        track_id,
+        asset_id,
+        position_ms,
+        duration_ms,
+        source_start_ms: 0,
+        source_end_ms: 0,
+        gain_db: 0.0,
+        fade_in_ms: 0,
+        fade_out_ms: 0,
+        pan: 0.0,
+        loop_enabled: false,
+        muted: false,
+    };
+    session
+        .arrangement
+        .add_audio_clip(clip, |id| asset::load(context.data_root, id).is_some())
+        .map_err(|error| error.to_string())?;
+    session.workspace = Workspace::Arrange;
+    commit_session(context, session)
+}
+
+/// Opens a canonical Asset in the Design workspace with the given tool. One
+/// user intent updates workspace, active tool, and target asset together
+/// instead of three separate setters. The Asset must be registered.
+pub fn open_asset_in_design(
+    context: &SessionContext<'_>,
+    asset_id: AssetId,
+    tool: DesignTool,
+) -> Result<CreativeSession, String> {
+    if asset::load(context.data_root, &asset_id).is_none() {
+        return Err(format!(
+            "Design target is not a registered asset: {asset_id}"
+        ));
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.workspace = Workspace::Design;
+    session.design_context.active_tool = tool;
+    session.design_context.target_asset_id = Some(asset_id);
+    commit_session(context, session)
+}
+
+/// Switches the active workspace. This is a pure workspace change (no design
+/// tool or target), persisted through the canonical commit.
+pub fn switch_workspace(
+    context: &SessionContext<'_>,
+    workspace: Workspace,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.workspace = workspace;
+    commit_session(context, session)
 }

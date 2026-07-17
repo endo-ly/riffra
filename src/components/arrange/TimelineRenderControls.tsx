@@ -123,7 +123,7 @@ export function TimelineRenderControls({
         <div className="stem-results">
           <strong>{stems.length} track stems ready</strong>
           {stems.map((stem) => (
-            <div className="stem-result" key={stem.id}>
+            <div className="stem-result" key={stem.assetId}>
               <span>
                 {session.arrangement.tracks.find((track) => track.id === stem.trackId)?.name ??
                   stem.trackId ??

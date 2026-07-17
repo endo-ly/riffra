@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { AudioClip, AudioClipPatch, CreativeSession } from '@/lib/domain';
+import type { AudioClip, AudioClipPatch, CreativeSession, SessionOpRunner } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 
 type NumericField =
@@ -59,10 +59,12 @@ export function TimelineClipInspector({
   session,
   setSession,
   api,
+  runSessionOp,
 }: {
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
+  runSessionOp: SessionOpRunner;
 }) {
   if (!session.arrangement.audioClips.length) return null;
   return (
@@ -81,6 +83,7 @@ export function TimelineClipInspector({
           session={session}
           setSession={setSession}
           api={api}
+          runSessionOp={runSessionOp}
         />
       ))}
     </section>
@@ -94,11 +97,13 @@ function ClipEditRow({
   session,
   setSession,
   api,
+  runSessionOp,
 }: {
   clip: AudioClip;
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
+  runSessionOp: SessionOpRunner;
 }) {
   const [drafts, setDrafts] = useState<DraftMap>({});
 
@@ -121,10 +126,13 @@ function ClipEditRow({
       });
       if (!Number.isFinite(parsed)) return;
       if (parsed === clip[field]) return;
-      const next = await api.updateAudioClip(clip.id, { [field]: parsed } as AudioClipPatch);
+      const next = await runSessionOp(
+        () => api.updateAudioClip(clip.id, { [field]: parsed } as AudioClipPatch),
+        'Edit clip',
+      );
       if (next) setSession(next);
     },
-    [api, clip, drafts, setSession],
+    [api, clip, drafts, runSessionOp, setSession],
   );
 
   const commitAllDrafts = useCallback(async (): Promise<void> => {
@@ -144,51 +152,60 @@ function ClipEditRow({
       return;
     }
     setDrafts({});
-    const next = await api.updateAudioClip(clip.id, patch);
+    const next = await runSessionOp(() => api.updateAudioClip(clip.id, patch), 'Edit clip');
     if (next) setSession(next);
-  }, [api, clip, drafts, setSession]);
+  }, [api, clip, drafts, runSessionOp, setSession]);
 
   const changeTrack = useCallback(
     async (trackId: string) => {
       await commitAllDrafts();
-      const next = await api.moveAudioClipToTrack(clip.id, trackId);
+      const next = await runSessionOp(
+        () => api.moveAudioClipToTrack(clip.id, trackId),
+        'Move clip',
+      );
       if (next) setSession(next);
     },
-    [api, clip.id, commitAllDrafts, setSession],
+    [api, clip.id, commitAllDrafts, runSessionOp, setSession],
   );
 
   const toggleMute = useCallback(async () => {
     await commitAllDrafts();
-    const next = await api.setAudioClipMuted(clip.id, !clip.muted);
+    const next = await runSessionOp(
+      () => api.setAudioClipMuted(clip.id, !clip.muted),
+      'Toggle mute',
+    );
     if (next) setSession(next);
-  }, [api, clip.id, clip.muted, commitAllDrafts, setSession]);
+  }, [api, clip.id, clip.muted, commitAllDrafts, runSessionOp, setSession]);
 
   const toggleLoop = useCallback(async () => {
     await commitAllDrafts();
-    const next = await api.setAudioClipLoop(clip.id, !clip.loopEnabled);
+    const next = await runSessionOp(
+      () => api.setAudioClipLoop(clip.id, !clip.loopEnabled),
+      'Toggle loop',
+    );
     if (next) setSession(next);
-  }, [api, clip.id, clip.loopEnabled, commitAllDrafts, setSession]);
+  }, [api, clip.id, clip.loopEnabled, commitAllDrafts, runSessionOp, setSession]);
 
   const duplicate = useCallback(async () => {
     await commitAllDrafts();
-    const next = await api.duplicateAudioClip(clip.id);
+    const next = await runSessionOp(() => api.duplicateAudioClip(clip.id), 'Duplicate clip');
     if (next) setSession(next);
-  }, [api, clip.id, commitAllDrafts, setSession]);
+  }, [api, clip.id, commitAllDrafts, runSessionOp, setSession]);
 
   const split = useCallback(async () => {
     await commitAllDrafts();
     // Split at the center of the clip's current production state. The offset is
     // computed on the Rust side from the persisted clip duration, so a draft
     // duration edit committed just above is always reflected.
-    const next = await api.splitAudioClip(clip.id);
+    const next = await runSessionOp(() => api.splitAudioClip(clip.id), 'Split clip');
     if (next) setSession(next);
-  }, [api, clip.id, commitAllDrafts, setSession]);
+  }, [api, clip.id, commitAllDrafts, runSessionOp, setSession]);
 
   const remove = useCallback(async () => {
     await commitAllDrafts();
-    const next = await api.removeAudioClip(clip.id);
+    const next = await runSessionOp(() => api.removeAudioClip(clip.id), 'Remove clip');
     if (next) setSession(next);
-  }, [api, clip.id, commitAllDrafts, setSession]);
+  }, [api, clip.id, commitAllDrafts, runSessionOp, setSession]);
 
   return (
     <div className={`timeline-edit-row timeline-edit-row-expanded ${clip.muted ? 'muted' : ''}`}>

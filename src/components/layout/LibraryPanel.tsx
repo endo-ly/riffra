@@ -105,7 +105,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   <div>
                     <button
                       className="text-button"
-                      disabled={!library.selectedAsset.path?.toLowerCase().endsWith('.wav')}
+                      disabled={library.selectedAsset.kind !== 'audio'}
                       onClick={() => void library.onPreviewAsset()}
                     >
                       Preview

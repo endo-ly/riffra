@@ -7,6 +7,7 @@ import type {
   BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
+  DesignTool,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -16,6 +17,7 @@ import type {
   RenderResult,
   ScanReport,
   SeparationResult,
+  Workspace,
 } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { defaultNativeApi } from '@/native/native';
@@ -51,7 +53,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     createSamplePad: createSamplePadApi,
     updateSamplePad: updateSamplePadApi,
     removeSamplePad: removeSamplePadApi,
-    previewSample,
+    previewAsset: previewAssetApi,
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
@@ -59,8 +61,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
-    resolveAssetContentLocation,
     addAudioClipToArrangement,
+    openAssetInDesign: openAssetInDesignApi,
+    switchWorkspace: switchWorkspaceApi,
     saveRackDefinition,
     listRackDefinitions,
     loadRackDefinitionAsset,
@@ -181,8 +184,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     redo,
     captureSnapshot,
     recallSnapshot,
-    switchWorkspace,
-    switchDesignTool,
     renameSession,
     exportSession,
     importSession,
@@ -203,6 +204,41 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const current = latestSession.current;
     if (current) await saveSession({ ...current, updatedAtMs: Date.now() });
   }, [saveSession]);
+  // runSessionOp is the single boundary for any operation that mutates the
+  // canonical session through Rust: it flushes pending React edits first so the
+  // Rust operation reads the true latest session, surfaces a failure through the
+  // status line instead of silently no-oping, and returns the result for the
+  // caller to apply (most callers pass it to setSession).
+  const runSessionOp = useCallback(
+    async <T>(op: () => Promise<T | null>, label: string): Promise<T | null> => {
+      await flushSession();
+      const result = await op();
+      if (result == null) {
+        setAutosaveError(`${label} could not be applied.`);
+        return null;
+      }
+      setAutosaveError(null);
+      return result;
+    },
+    [flushSession, setAutosaveError],
+  );
+  const switchWorkspace = useCallback(
+    async (workspace: Workspace) => {
+      const next = await runSessionOp(() => switchWorkspaceApi(workspace), 'Workspace switch');
+      if (next) setSession(next);
+    },
+    [runSessionOp, setSession, switchWorkspaceApi],
+  );
+  const openAssetInDesign = useCallback(
+    async (assetId: AssetId, tool: DesignTool): Promise<void> => {
+      const next = await runSessionOp(
+        () => openAssetInDesignApi(assetId, tool),
+        'Open asset in Design',
+      );
+      if (next) setSession(next);
+    },
+    [openAssetInDesignApi, runSessionOp, setSession],
+  );
   const clearRelocatedMissingDependencies = useCallback(
     (recording: RecordingAsset) => {
       const previousDirectory = recording.path.replace(/[\\/]+$/, '').toLocaleLowerCase();
@@ -362,24 +398,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         (result) => {
           if (!result || typeof result !== 'object') return;
           setAnalysis(result as AudioAnalysis);
-          setSession((current) =>
-            current
-              ? {
-                  ...current,
-                  workspace: 'design',
-                  designContext: {
-                    ...current.designContext,
-                    activeTool: 'analyze',
-                    targetAssetId: assetId,
-                  },
-                }
-              : current,
-          );
+          void openAssetInDesign(assetId, 'analyze');
         },
         () => setAnalysis(null),
       );
     },
-    [runBackgroundJob, startAnalysisJob],
+    [openAssetInDesign, runBackgroundJob, startAnalysisJob],
   );
 
   const openLibraryAssetAnalysis = useCallback(
@@ -388,21 +412,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       const result = await analyzeAsset(asset.id);
       if (!result) return;
       setAnalysis(result);
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              workspace: 'design',
-              designContext: {
-                ...current.designContext,
-                activeTool: 'analyze',
-                targetAssetId: asset.id,
-              },
-            }
-          : current,
-      );
+      await openAssetInDesign(asset.id, 'analyze');
     },
-    [analyzeAsset],
+    [analyzeAsset, openAssetInDesign],
   );
 
   const saveCurrentRack = useCallback(async () => {
@@ -449,14 +461,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       if (recording.error) return;
       const assetId = recording.processedAssetId ?? recording.rawAssetId;
       if (!assetId) return;
-      const path = await resolveAssetContentLocation(assetId);
-      if (!path) return;
       await stopSamplePreview();
-      setAudio(await previewSample(path, 0, 0, referenceLoopPreview));
+      setAudio(await previewAssetApi(assetId, { looped: referenceLoopPreview }));
       setReferencePreviewingId(recording.id);
       setReferenceSyncPreviewing(false);
     },
-    [referenceLoopPreview, resolveAssetContentLocation, stopSamplePreview],
+    [previewAssetApi, referenceLoopPreview, stopSamplePreview],
   );
 
   const previewReferencePair = useCallback(async () => {
@@ -466,21 +476,17 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     if (!reference) return;
     const referenceAssetId = reference.processedAssetId ?? reference.rawAssetId;
     if (!referenceAssetId) return;
-    const targetPath = await resolveAssetContentLocation(targetAssetId);
-    const referencePath = await resolveAssetContentLocation(referenceAssetId);
-    if (!targetPath || !referencePath) return;
     await stopSamplePreview();
-    await previewSample(targetPath, 0, 0, referenceLoopPreview);
-    setAudio(await previewSample(referencePath, 0, 0, referenceLoopPreview));
+    await previewAssetApi(targetAssetId, { looped: referenceLoopPreview });
+    setAudio(await previewAssetApi(referenceAssetId, { looped: referenceLoopPreview }));
     setReferencePreviewingId(null);
     setReferenceSyncPreviewing(true);
   }, [
     analysis,
-    previewSample,
+    previewAssetApi,
     recordings,
     referenceId,
     referenceLoopPreview,
-    resolveAssetContentLocation,
     session,
     stopSamplePreview,
   ]);
@@ -496,19 +502,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       if (recording.error) return;
       const assetId = recording.processedAssetId ?? recording.rawAssetId;
       if (!assetId) return;
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              workspace: 'design',
-              designContext: {
-                ...current.designContext,
-                activeTool: 'separate',
-                targetAssetId: assetId,
-              },
-            }
-          : current,
-      );
+      await openAssetInDesign(assetId, 'separate');
       setSeparationBusy(recording.id);
       setSeparationMessage('Writing Left / Right WAV assets…');
       await runBackgroundJob(
@@ -522,17 +516,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       );
       setSeparationBusy(null);
     },
-    [runBackgroundJob, startSeparationJob],
+    [openAssetInDesign, runBackgroundJob, startSeparationJob],
   );
 
   const previewSeparation = useCallback(
     async (assetId: AssetId) => {
-      const path = await resolveAssetContentLocation(assetId);
-      if (!path) return;
-      setAudio(await previewSample(path, 0, 0));
+      setAudio(await previewAssetApi(assetId, {}));
       setSeparationPreviewingAssetId(assetId);
     },
-    [previewSample, resolveAssetContentLocation],
+    [previewAssetApi],
   );
 
   const stopSeparationPreview = useCallback(async () => {
@@ -543,10 +535,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const addSeparationToTimeline = useCallback(
     async (assetId: AssetId, name: string, durationMs: number) => {
       if (!session) return;
-      const next = await addAudioClipToArrangement(assetId, name, durationMs);
+      const next = await runSessionOp(
+        () => addAudioClipToArrangement(assetId, name, durationMs),
+        'Add clip to timeline',
+      );
       if (next) setSession(next);
     },
-    [addAudioClipToArrangement, session],
+    [addAudioClipToArrangement, runSessionOp, session, setSession],
   );
 
   const runTimelineRender = useCallback(
@@ -595,10 +590,14 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const previewTimelineRender = useCallback(async () => {
     if (!renderResult) return;
-    setAudio(await previewSample(renderResult.path, 0, 0, session?.settings.loopEnabled ?? false));
+    setAudio(
+      await previewAssetApi(renderResult.assetId, {
+        looped: session?.settings.loopEnabled ?? false,
+      }),
+    );
     setRenderPreviewing(true);
     setTransportPlaying(true);
-  }, [renderResult, session?.settings.loopEnabled]);
+  }, [previewAssetApi, renderResult, session?.settings.loopEnabled]);
 
   const stopTimelinePreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -619,9 +618,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       if (!result) return;
       setRenderResult(result);
     }
-    setAudio(await previewSample(result.path, 0, 0, session.settings.loopEnabled));
+    setAudio(await previewAssetApi(result.assetId, { looped: session.settings.loopEnabled }));
     setTransportPlaying(true);
-  }, [renderResult, session]);
+  }, [previewAssetApi, renderResult, renderTimeline, session]);
 
   const stopTransport = useCallback(async () => {
     setAudio(await stopSamplePreview());
@@ -631,20 +630,17 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const previewSamplePad = useCallback(
     async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
-      const path = await resolveAssetContentLocation(pad.assetId);
-      if (!path) return;
-      const nextAudio = await previewSample(
-        path,
-        pad.startMs,
-        pad.endMs,
-        pad.loopEnabled,
-        Math.pow(10, (pad.gainDb ?? 0) / 20),
-        pad.midiKey,
-      );
+      const nextAudio = await previewAssetApi(pad.assetId, {
+        startMs: pad.startMs,
+        endMs: pad.endMs,
+        looped: pad.loopEnabled,
+        gain: Math.pow(10, (pad.gainDb ?? 0) / 20),
+        voiceKey: pad.midiKey,
+      });
       setAudio(nextAudio);
       setPreviewPadId(pad.id);
     },
-    [previewSample, resolveAssetContentLocation],
+    [previewAssetApi],
   );
 
   const stopPreview = useCallback(async () => {
@@ -680,10 +676,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         1,
         Math.round((recording.samplesWritten / (recording.sampleRate ?? 1)) * 1_000),
       );
-      const next = await addAudioClipToArrangement(assetId, recording.name, durationMs);
+      const next = await runSessionOp(
+        () => addAudioClipToArrangement(assetId, recording.name, durationMs),
+        'Place recording',
+      );
       if (next) setSession(next);
     },
-    [addAudioClipToArrangement, session],
+    [addAudioClipToArrangement, runSessionOp, session, setSession],
   );
 
   const createSamplePad = useCallback(
@@ -845,7 +844,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         return;
       }
       if (!typing && event.key >= '1' && event.key <= '4')
-        switchWorkspace(workspaces[Number(event.key) - 1].id);
+        void switchWorkspace(workspaces[Number(event.key) - 1].id);
       if (event.key === 'Escape') setCommandOpen(false);
     };
     window.addEventListener('keydown', onKey);
@@ -985,6 +984,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     previewSeparation,
     stopSeparationPreview,
     addSeparationToTimeline,
+    runSessionOp,
     runTimelineRender,
     runTimelineStemRender,
     previewTimelineRender,
@@ -1001,7 +1001,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     loadSavedRack,
     rackDefinitions,
     switchWorkspace,
-    switchDesignTool,
     renameSession,
     exportSession,
     importSession,

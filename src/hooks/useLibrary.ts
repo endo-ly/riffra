@@ -8,7 +8,7 @@ interface UseLibraryOptions {
 }
 
 export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLibraryOptions) {
-  const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewSample } = api;
+  const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
   const [librarySection, setLibrarySection] = useState('Plugins');
   const [libraryQuery, setLibraryQuery] = useState('');
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
@@ -37,11 +37,15 @@ export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLib
   }, [selectedLibraryAsset]);
 
   const previewSelectedLibraryAsset = useCallback(async () => {
-    const path = selectedLibraryAsset?.path;
-    if (!path || !path.toLowerCase().endsWith('.wav')) return;
-    setAudio(await previewSample(path, 0, 0));
+    const asset = selectedLibraryAsset;
+    // The library mixes Canonical Assets (id `asset:…`, kind `audio`) with
+    // Read Model entries (recordings/plugins). Only a Canonical Audio Asset has
+    // an AssetId `previewAsset` can resolve; recordings are previewed from the
+    // Inbox, which carries their Canonical Asset ids directly.
+    if (!asset || asset.kind !== 'audio') return;
+    setAudio(await previewAsset(asset.id, {}));
     setPreviewPadId(null);
-  }, [selectedLibraryAsset]);
+  }, [previewAsset, selectedLibraryAsset]);
 
   useEffect(() => {
     let active = true;

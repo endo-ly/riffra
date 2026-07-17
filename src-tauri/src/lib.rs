@@ -17,7 +17,7 @@ mod separation;
 mod session;
 mod storage;
 
-use crate::session::{AudioClipPatch, CreativeSession, SamplePad as DomainSamplePad};
+use crate::session::{CreativeSession, SamplePad as DomainSamplePad};
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, MidiProbe,
     RecoveryCandidate,
@@ -71,38 +71,6 @@ pub(crate) fn queue_session_index(data_root: &std::path::Path, session: &Creativ
     tauri::async_runtime::spawn_blocking(move || {
         let _ = library::sync_session(&data_root, &session);
     });
-}
-
-#[tauri::command]
-fn save_scratch_session(
-    session: CreativeSession,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut session = session.validate_and_normalize()?;
-    session.updated_at_ms = now_ms();
-    SessionStore::new(&state.data_root)
-        .save(&session)
-        .map_err(|error| {
-            format!(
-                "Scratch Session could not be saved; the in-memory session is unchanged: {error}"
-            )
-        })?;
-    queue_session_index(&state.data_root, &session);
-    *state.session.lock().map_err(lock_error)? = session;
-    Ok(())
-}
-
-#[tauri::command]
-fn restore_recovery_generation(
-    file_name: String,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    let session = SessionStore::new(&state.data_root)
-        .restore_generation(&file_name)
-        .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
-    queue_session_index(&state.data_root, &session);
-    *state.session.lock().map_err(lock_error)? = session.clone();
-    Ok(session)
 }
 
 #[tauri::command]
@@ -361,220 +329,6 @@ fn load_rack_definition_asset(
     queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session.clone();
     Ok((session, final_status))
-}
-
-#[tauri::command]
-fn add_audio_clip_to_arrangement(
-    asset_id: String,
-    name: String,
-    duration_ms: u64,
-    track_id: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    if name.trim().is_empty() {
-        return Err("Audio clip name must not be empty.".into());
-    }
-    if duration_ms == 0 {
-        return Err("Audio clip duration must be greater than zero.".into());
-    }
-    let mut session = state.session.lock().map_err(lock_error)?.clone();
-    let track_id = track_id
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            session
-                .arrangement
-                .tracks
-                .first()
-                .map(|track| track.id.clone())
-        })
-        .ok_or_else(|| "Arrangement has no track for the new audio clip.".to_string())?;
-    let position_ms = session
-        .arrangement
-        .audio_clips
-        .iter()
-        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
-        .max()
-        .unwrap_or(0);
-    let clip = crate::session::AudioClip {
-        id: format!("clip:{}:{}", asset_id.as_str(), now_ms()),
-        name,
-        track_id,
-        asset_id,
-        position_ms,
-        duration_ms,
-        source_start_ms: 0,
-        source_end_ms: 0,
-        gain_db: 0.0,
-        fade_in_ms: 0,
-        fade_out_ms: 0,
-        pan: 0.0,
-        loop_enabled: false,
-        muted: false,
-    };
-    session
-        .arrangement
-        .add_audio_clip(clip, |id| asset::load(&state.data_root, id).is_some())
-        .map_err(|error| error.to_string())?;
-    session.workspace = crate::session::Workspace::Arrange;
-    session.updated_at_ms = now_ms();
-    SessionStore::new(&state.data_root)
-        .save(&session)
-        .map_err(|error| format!("Arrangement clip could not be saved: {error}"))?;
-    queue_session_index(&state.data_root, &session);
-    *state.session.lock().map_err(lock_error)? = session.clone();
-    Ok(session)
-}
-
-/// Applies a Domain-level mutation to the current session's [`Arrangement`],
-/// re-validates the whole session, persists the result, and returns the
-/// updated session. Used by every Arrangement editing command so the
-/// save/commit boundary stays in one place.
-fn apply_arrangement_edit(
-    state: &State<'_, AppState>,
-    edit: impl FnOnce(&mut crate::session::Arrangement) -> Result<(), crate::errors::DomainError>,
-) -> Result<CreativeSession, String> {
-    let mut session = state.session.lock().map_err(lock_error)?.clone();
-    edit(&mut session.arrangement).map_err(|error| error.to_string())?;
-    session = session.validate_and_normalize()?;
-    session.updated_at_ms = now_ms();
-    SessionStore::new(&state.data_root)
-        .save(&session)
-        .map_err(|error| format!("Arrangement edit could not be saved: {error}"))?;
-    queue_session_index(&state.data_root, &session);
-    *state.session.lock().map_err(lock_error)? = session.clone();
-    Ok(session)
-}
-
-#[tauri::command]
-fn update_audio_clip(
-    clip_id: String,
-    patch: AudioClipPatch,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    apply_arrangement_edit(&state, |arrangement| {
-        arrangement.update_audio_clip(&clip_id, patch)
-    })
-}
-
-#[tauri::command]
-fn move_audio_clip_to_track(
-    clip_id: String,
-    track_id: String,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    if track_id.trim().is_empty() {
-        return Err("Target track id must not be empty.".into());
-    }
-    apply_arrangement_edit(&state, |arrangement| {
-        if !arrangement.has_track(&track_id) {
-            return Err(crate::errors::DomainError::UnknownTrack(track_id.clone()));
-        }
-        arrangement.update_audio_clip(
-            &clip_id,
-            AudioClipPatch {
-                track_id: Some(track_id),
-                ..Default::default()
-            },
-        )
-    })
-}
-
-#[tauri::command]
-fn set_audio_clip_muted(
-    clip_id: String,
-    muted: bool,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    apply_arrangement_edit(&state, |arrangement| {
-        arrangement.update_audio_clip(
-            &clip_id,
-            AudioClipPatch {
-                muted: Some(muted),
-                ..Default::default()
-            },
-        )
-    })
-}
-
-#[tauri::command]
-fn set_audio_clip_loop(
-    clip_id: String,
-    loop_enabled: bool,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    apply_arrangement_edit(&state, |arrangement| {
-        arrangement.update_audio_clip(
-            &clip_id,
-            AudioClipPatch {
-                loop_enabled: Some(loop_enabled),
-                ..Default::default()
-            },
-        )
-    })
-}
-
-#[tauri::command]
-fn duplicate_audio_clip(
-    clip_id: String,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    let new_id = format!("{clip_id}:copy:{}", now_ms());
-    apply_arrangement_edit(&state, |arrangement| {
-        arrangement.duplicate_audio_clip(&clip_id, new_id)
-    })
-}
-
-#[tauri::command]
-fn split_audio_clip(
-    clip_id: String,
-    at_offset_ms: Option<u64>,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    let new_id = format!("{clip_id}:split:{}", now_ms());
-    apply_arrangement_edit(&state, |arrangement| {
-        let offset = match at_offset_ms {
-            Some(value) => value,
-            None => {
-                let Some(clip) = arrangement
-                    .audio_clips
-                    .iter()
-                    .find(|clip| clip.id == clip_id)
-                else {
-                    return Err(crate::errors::DomainError::InvalidClip(format!(
-                        "Audio clip '{clip_id}' not found."
-                    )));
-                };
-                clip.duration_ms / 2
-            }
-        };
-        arrangement.split_audio_clip(&clip_id, offset, new_id)
-    })
-}
-
-#[tauri::command]
-fn remove_audio_clip(
-    clip_id: String,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    apply_arrangement_edit(&state, |arrangement| {
-        arrangement.remove_audio_clip(&clip_id)
-    })
-}
-
-#[tauri::command]
-fn import_scratch_session(
-    path: String,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    let session = projects::import(&state.data_root, &PathBuf::from(path))?;
-    SessionStore::new(&state.data_root)
-        .save(&session)
-        .map_err(|error| format!("Imported project could not be persisted: {error}"))?;
-    queue_session_index(&state.data_root, &session);
-    *state.session.lock().map_err(lock_error)? = session.clone();
-    Ok(session)
 }
 
 #[tauri::command]
@@ -951,11 +705,6 @@ async fn analyze_asset(
         .map_err(|error| format!("Audio analysis task failed: {error}"))?
 }
 
-#[tauri::command]
-fn read_midi_events(path: String) -> Result<Vec<recording::MidiEvent>, String> {
-    recording::read_midi_events(&PathBuf::from(path))
-}
-
 fn rename_recording_impl(
     data_root: &std::path::Path,
     id: &str,
@@ -1165,46 +914,6 @@ fn load_plugin(path: String, state: State<'_, AppState>) -> Result<AudioStatus, 
 #[tauri::command]
 fn clear_plugin(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     state.audio.clear_plugin()
-}
-
-#[tauri::command]
-fn preview_sample(
-    path: String,
-    start_ms: u64,
-    end_ms: Option<u64>,
-    looped: Option<bool>,
-    gain: Option<f32>,
-    voice_key: Option<i32>,
-    state: State<'_, AppState>,
-) -> Result<AudioStatus, String> {
-    if state.safe_mode {
-        return Err(
-            "Safe Mode blocks live sample preview; offline analysis and export remain available."
-                .into(),
-        );
-    }
-    let path = PathBuf::from(path);
-    if !path.is_file() {
-        return Err("Sample preview source does not exist.".into());
-    }
-    state.audio.preview_sample(
-        &path,
-        start_ms,
-        end_ms,
-        looped.unwrap_or(false),
-        gain.unwrap_or(1.0),
-        voice_key,
-    )
-}
-
-#[tauri::command]
-fn resolve_asset_content_location(
-    asset_id: String,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let asset_id = crate::asset::AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    Ok(asset::resolve_content_location(&state.data_root, &asset_id))
 }
 
 #[tauri::command]
@@ -1701,8 +1410,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
-            save_scratch_session,
-            restore_recovery_generation,
             export_scratch_session,
             save_rack_definition,
             list_rack_definitions,
@@ -1712,18 +1419,24 @@ pub fn run() {
             rack::commands::set_rack_plugin_bypassed,
             rack::commands::set_rack_plugin_parameter,
             rack::commands::restore_current_rack,
+            session::commands::save_scratch_session,
+            session::commands::restore_recovery_generation,
+            session::commands::import_scratch_session,
             session::commands::create_sample_pad,
             session::commands::update_sample_pad,
             session::commands::remove_sample_pad,
-            add_audio_clip_to_arrangement,
-            update_audio_clip,
-            move_audio_clip_to_track,
-            set_audio_clip_muted,
-            set_audio_clip_loop,
-            duplicate_audio_clip,
-            split_audio_clip,
-            remove_audio_clip,
-            import_scratch_session,
+            session::commands::add_audio_clip_to_arrangement,
+            session::commands::update_audio_clip,
+            session::commands::move_audio_clip_to_track,
+            session::commands::set_audio_clip_muted,
+            session::commands::set_audio_clip_loop,
+            session::commands::duplicate_audio_clip,
+            session::commands::split_audio_clip,
+            session::commands::remove_audio_clip,
+            session::commands::open_asset_in_design,
+            session::commands::switch_workspace,
+            asset::commands::preview_asset,
+            asset::commands::read_midi_events,
             scan_vst3_folder,
             start_analysis_job,
             start_separation_job,
@@ -1737,7 +1450,6 @@ pub fn run() {
             update_library_asset,
             related_library_assets,
             analyze_asset,
-            read_midi_events,
             rename_recording,
             delete_recording,
             archive_recording,
@@ -1750,8 +1462,6 @@ pub fn run() {
             export_midi,
             load_plugin,
             clear_plugin,
-            preview_sample,
-            resolve_asset_content_location,
             stop_preview,
             stop_preview_for_key,
             probe_audio_devices,

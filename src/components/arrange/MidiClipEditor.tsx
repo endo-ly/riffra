@@ -20,9 +20,7 @@ export function MidiClipEditor({
   const [exportMessage, setExportMessage] = useState('');
   const importRecording = async (recording: RecordingAsset) => {
     if (!recording.midiAssetId) return;
-    const midiPath = await api.resolveAssetContentLocation(recording.midiAssetId);
-    if (!midiPath) return;
-    const events = await api.readMidiEvents(midiPath);
+    const events = await api.readMidiEvents(recording.midiAssetId);
     const notes = notesFromMidiEvents(events);
     if (!notes.length) {
       setMessage('No note-on/note-off pairs were found in that MIDI sidecar.');

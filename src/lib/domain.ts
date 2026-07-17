@@ -461,7 +461,7 @@ export interface LibraryAsset {
 }
 
 export interface RenderResult {
-  id: string;
+  assetId: AssetId;
   path: string;
   sampleRate: number;
   frames: number;
@@ -474,6 +474,26 @@ export interface RenderResult {
   state: string;
   message: string;
 }
+
+/**
+ * Preview tuning for `previewAsset(assetId, options)`. Every field is optional
+ * so a caller can omit the slice/gain tuning it does not care about; Rust owns
+ * the content-location resolution and validation.
+ */
+export interface AssetPreviewOptions {
+  startMs?: number;
+  endMs?: number | null;
+  looped?: boolean;
+  gain?: number;
+  voiceKey?: number | null;
+}
+
+/**
+ * Runs a Rust session-mutating operation: flushes pending React edits first,
+ * surfaces a failure through the status line, and returns the result for the
+ * caller to apply. Centralizes the flush + error contract for every session op.
+ */
+export type SessionOpRunner = <T>(op: () => Promise<T | null>, label: string) => Promise<T | null>;
 
 export interface RenderOptions {
   rangeStartMs: number;

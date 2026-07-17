@@ -29,7 +29,7 @@ pub struct RenderOptions {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
-    pub id: String,
+    pub asset_id: String,
     pub path: String,
     pub sample_rate: u32,
     pub frames: u64,
@@ -336,7 +336,7 @@ pub fn render_timeline_with_options_cancel(
         ]),
     )?;
     let result = RenderResult {
-        id: rendered_asset_id.to_string(),
+        asset_id: rendered_asset_id.to_string(),
         path: path.to_string_lossy().into_owned(),
         sample_rate,
         frames: output_frames,

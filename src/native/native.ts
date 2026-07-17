@@ -4,6 +4,7 @@ import type {
   AudioDeviceProbe,
   AudioStatus,
   AssetId,
+  AssetPreviewOptions,
   AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
@@ -20,7 +21,9 @@ import type {
   SamplePad,
   ScanReport,
   CreativeSession,
+  DesignTool,
   SeparationResult,
+  Workspace,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import type { NativeApi } from './native-api';
@@ -212,9 +215,9 @@ export async function probeMidiDevices(): Promise<MidiProbe> {
   }
 }
 
-export async function readMidiEvents(path: string): Promise<MidiEvent[]> {
+export async function readMidiEvents(assetId: AssetId): Promise<MidiEvent[]> {
   try {
-    return await invoke<MidiEvent[]>('read_midi_events', { path });
+    return await invoke<MidiEvent[]>('read_midi_events', { assetId });
   } catch {
     return [];
   }
@@ -358,25 +361,23 @@ export async function clearPlugin(): Promise<AudioStatus> {
   }
 }
 
-export async function previewSample(
-  path: string,
-  startMs: number,
-  endMs: number,
-  looped = false,
-  gain = 1,
-  voiceKey?: number,
+export async function previewAsset(
+  assetId: AssetId,
+  options: AssetPreviewOptions,
 ): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('preview_sample', {
-      path,
-      startMs,
-      endMs,
-      looped,
-      gain,
-      voiceKey: voiceKey ?? null,
+    return await invoke<AudioStatus>('preview_asset', {
+      assetId,
+      options: {
+        startMs: options.startMs ?? 0,
+        endMs: options.endMs ?? null,
+        looped: options.looped ?? false,
+        gain: options.gain ?? 1,
+        voiceKey: options.voiceKey ?? null,
+      },
     });
   } catch (error) {
-    return await audioCommandError('Preview sample', error);
+    return await audioCommandError('Preview asset', error);
   }
 }
 
@@ -712,9 +713,20 @@ export async function loadRackDefinitionAsset(
   }
 }
 
-export async function resolveAssetContentLocation(assetId: AssetId): Promise<string | null> {
+export async function openAssetInDesign(
+  assetId: AssetId,
+  tool: DesignTool,
+): Promise<CreativeSession | null> {
   try {
-    return await invoke<string | null>('resolve_asset_content_location', { assetId });
+    return await invoke<CreativeSession>('open_asset_in_design', { assetId, tool });
+  } catch {
+    return null;
+  }
+}
+
+export async function switchWorkspace(workspace: Workspace): Promise<CreativeSession | null> {
+  try {
+    return await invoke<CreativeSession>('switch_workspace', { workspace });
   } catch {
     return null;
   }
@@ -760,7 +772,7 @@ export function createNativeApi(): NativeApi {
     restoreCurrentRack,
     loadPlugin,
     clearPlugin,
-    previewSample,
+    previewAsset,
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
@@ -779,11 +791,12 @@ export function createNativeApi(): NativeApi {
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
-    resolveAssetContentLocation,
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
     addAudioClipToArrangement,
+    openAssetInDesign,
+    switchWorkspace,
     updateAudioClip,
     moveAudioClipToTrack,
     setAudioClipMuted,
