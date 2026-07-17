@@ -11,6 +11,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub(crate) mod commands;
+
 const MAX_RENDER_MINUTES: u64 = 30;
 
 #[derive(Clone, Debug, Default, Deserialize)]

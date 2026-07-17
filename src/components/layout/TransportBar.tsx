@@ -46,10 +46,9 @@ export function TransportBar(props: TransportBarProps) {
           className={session.settings.loopEnabled ? 'active' : ''}
           aria-label="Toggle loop"
           onClick={() =>
-            setSession({
-              ...session,
-              settings: { ...session.settings, loopEnabled: !session.settings.loopEnabled },
-            })
+            void api
+              .updateSessionSettings({ loopEnabled: !session.settings.loopEnabled })
+              .then(setSession)
           }
         >
           <Icon name="loop" />
@@ -112,8 +111,12 @@ export function TransportBar(props: TransportBarProps) {
           value={session.settings.masterDb}
           onChange={(event) => {
             const gainDb = Number(event.target.value);
-            setSession({ ...session, settings: { ...session.settings, masterDb: gainDb } });
-            void api.setMasterGainDb(gainDb).then(setAudio);
+            void api.setMasterGainDb(gainDb).then((result) => {
+              // The Rust Session Operation owns the clamped master gain; trust
+              // the canonical session it returns instead of re-deriving it.
+              setSession(result.session);
+              setAudio(result.audio);
+            });
           }}
         />
       </div>

@@ -10,7 +10,6 @@ import type {
   BootstrapState,
   LibraryAsset,
   MissingDependency,
-  MidiEvent,
   MidiExportResult,
   MidiProbe,
   ProjectExport,
@@ -18,7 +17,6 @@ import type {
   RecoveryCandidate,
   RenderOptions,
   RenderResult,
-  SamplePad,
   ScanReport,
   CreativeSession,
   DesignTool,
@@ -30,7 +28,7 @@ import type { NativeApi } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
-export async function bootstrap(): Promise<BootstrapState> {
+async function bootstrap(): Promise<BootstrapState> {
   try {
     return await invoke<BootstrapState>('get_bootstrap_state');
   } catch {
@@ -46,19 +44,11 @@ export async function bootstrap(): Promise<BootstrapState> {
   }
 }
 
-export async function saveSession(session: CreativeSession): Promise<string | null> {
-  try {
-    await invoke('save_scratch_session', { session });
-    return null;
-  } catch (error) {
-    if (!('__TAURI_INTERNALS__' in window)) {
-      localStorage.setItem('riffra.preview.scratch', JSON.stringify(session));
-    }
-    return nativeErrorText(error);
-  }
+async function saveSession(session: CreativeSession): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('save_scratch_session', { session });
 }
 
-export async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
+async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('restore_recovery_generation', { fileName });
   } catch {
@@ -66,7 +56,7 @@ export async function restoreRecoveryGeneration(fileName: string): Promise<Creat
   }
 }
 
-export async function exportSession(): Promise<ProjectExport | null> {
+async function exportSession(): Promise<ProjectExport | null> {
   try {
     return await invoke<ProjectExport>('export_scratch_session');
   } catch {
@@ -74,7 +64,7 @@ export async function exportSession(): Promise<ProjectExport | null> {
   }
 }
 
-export async function importSession(path: string): Promise<CreativeSession | null> {
+async function importSession(path: string): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('import_scratch_session', { path });
   } catch {
@@ -82,7 +72,7 @@ export async function importSession(path: string): Promise<CreativeSession | nul
   }
 }
 
-export async function scanVst3Folder(path?: string): Promise<ScanReport> {
+async function scanVst3Folder(path?: string): Promise<ScanReport> {
   try {
     return await invoke<ScanReport>('scan_vst3_folder', { path: path ?? null });
   } catch {
@@ -101,35 +91,35 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
   }
 }
 
-export async function startAnalysisJob(assetId: AssetId): Promise<BackgroundJobStatus> {
+async function startAnalysisJob(assetId: AssetId): Promise<BackgroundJobStatus> {
   return await invoke<BackgroundJobStatus>('start_analysis_job', { assetId });
 }
 
-export async function startSeparationJob(assetId: AssetId): Promise<BackgroundJobStatus> {
+async function startSeparationJob(assetId: AssetId): Promise<BackgroundJobStatus> {
   return await invoke<BackgroundJobStatus>('start_separation_job', { assetId });
 }
 
-export async function startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus> {
+async function startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus> {
   return await invoke<BackgroundJobStatus>('start_render_job', { options });
 }
 
-export async function startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus> {
+async function startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus> {
   return await invoke<BackgroundJobStatus>('start_render_stems_job', { options });
 }
 
-export async function startScanJob(path?: string): Promise<BackgroundJobStatus> {
+async function startScanJob(path?: string): Promise<BackgroundJobStatus> {
   return await invoke<BackgroundJobStatus>('start_scan_job', { path: path ?? null });
 }
 
-export async function getBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
+async function getBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
   return await invoke<BackgroundJobStatus | null>('get_background_job', { id });
 }
 
-export async function cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
+async function cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null> {
   return await invoke<BackgroundJobStatus | null>('cancel_background_job', { id });
 }
 
-export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
+async function listRecordings(query?: string): Promise<RecordingAsset[]> {
   try {
     return await invoke<RecordingAsset[]>('list_recordings', { query: query ?? null });
   } catch {
@@ -137,23 +127,23 @@ export async function listRecordings(query?: string): Promise<RecordingAsset[]> 
   }
 }
 
-export async function renameRecording(id: string, name: string): Promise<string> {
+async function renameRecording(id: string, name: string): Promise<string> {
   return invoke<string>('rename_recording', { id, newName: name });
 }
 
-export async function deleteRecording(id: string): Promise<void> {
+async function deleteRecording(id: string): Promise<void> {
   await invoke('delete_recording', { id });
 }
 
-export async function archiveRecording(id: string): Promise<string> {
+async function archiveRecording(id: string): Promise<string> {
   return await invoke<string>('archive_recording', { id });
 }
 
-export async function promoteRecording(id: string): Promise<string> {
+async function promoteRecording(id: string): Promise<string> {
   return await invoke<string>('promote_recording', { id });
 }
 
-export async function tagRecording(
+async function tagRecording(
   id: string,
   tag: string | null,
   note: string | null,
@@ -161,11 +151,11 @@ export async function tagRecording(
   return await invoke<LibraryAsset>('tag_recording', { id, tag, note });
 }
 
-export async function detectDuplicateRecordings(): Promise<string[][]> {
+async function detectDuplicateRecordings(): Promise<string[][]> {
   return await invoke<string[][]>('detect_duplicate_recordings');
 }
 
-export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
+async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
   try {
     return await invoke<LibraryAsset[]>('search_library', { query });
@@ -174,7 +164,7 @@ export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   }
 }
 
-export async function updateLibraryAsset(
+async function updateLibraryAsset(
   id: string,
   tag: string | null,
   note: string | null,
@@ -186,7 +176,7 @@ export async function updateLibraryAsset(
   }
 }
 
-export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
+async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
   try {
     return await invoke<LibraryAsset[]>('related_library_assets', { id });
   } catch {
@@ -194,7 +184,7 @@ export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> 
   }
 }
 
-export async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null> {
+async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null> {
   try {
     return await invoke<AudioAnalysis>('analyze_asset', { assetId });
   } catch {
@@ -202,7 +192,7 @@ export async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | nu
   }
 }
 
-export async function probeMidiDevices(): Promise<MidiProbe> {
+async function probeMidiDevices(): Promise<MidiProbe> {
   try {
     return await invoke<MidiProbe>('probe_midi_devices');
   } catch {
@@ -215,15 +205,7 @@ export async function probeMidiDevices(): Promise<MidiProbe> {
   }
 }
 
-export async function readMidiEvents(assetId: AssetId): Promise<MidiEvent[]> {
-  try {
-    return await invoke<MidiEvent[]>('read_midi_events', { assetId });
-  } catch {
-    return [];
-  }
-}
-
-export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
+async function probeAudioDevices(): Promise<AudioDeviceProbe> {
   try {
     return await invoke<AudioDeviceProbe>('probe_audio_devices');
   } catch {
@@ -237,7 +219,7 @@ export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
   }
 }
 
-export async function listSeparations(): Promise<SeparationResult[]> {
+async function listSeparations(): Promise<SeparationResult[]> {
   try {
     return await invoke<SeparationResult[]>('list_separations');
   } catch {
@@ -245,7 +227,7 @@ export async function listSeparations(): Promise<SeparationResult[]> {
   }
 }
 
-export async function renderTimeline(options: RenderOptions): Promise<RenderResult | null> {
+async function renderTimeline(options: RenderOptions): Promise<RenderResult | null> {
   try {
     return await invoke<RenderResult>('render_timeline', { options });
   } catch {
@@ -253,7 +235,7 @@ export async function renderTimeline(options: RenderOptions): Promise<RenderResu
   }
 }
 
-export async function renderTimelineStems(options: RenderOptions): Promise<RenderResult[]> {
+async function renderTimelineStems(options: RenderOptions): Promise<RenderResult[]> {
   try {
     return await invoke<RenderResult[]>('render_timeline_stems', { options });
   } catch {
@@ -261,7 +243,7 @@ export async function renderTimelineStems(options: RenderOptions): Promise<Rende
   }
 }
 
-export async function exportMidi(): Promise<MidiExportResult | null> {
+async function exportMidi(): Promise<MidiExportResult | null> {
   try {
     return await invoke<MidiExportResult>('export_midi');
   } catch {
@@ -292,7 +274,7 @@ async function audioCommandError(
   };
 }
 
-export async function loadPluginIntoRack(
+async function loadPluginIntoRack(
   path: string,
   name: string,
   parameterValues: number[],
@@ -309,7 +291,7 @@ export async function loadPluginIntoRack(
   return { session: result[0], audio: result[1] };
 }
 
-export async function clearPluginFromRack(): Promise<{
+async function clearPluginFromRack(): Promise<{
   session: CreativeSession;
   audio: AudioStatus;
 }> {
@@ -317,7 +299,7 @@ export async function clearPluginFromRack(): Promise<{
   return { session: result[0], audio: result[1] };
 }
 
-export async function setRackPluginBypassed(
+async function setRackPluginBypassed(
   bypassed: boolean,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
   const result = await invoke<[CreativeSession, AudioStatus]>('set_rack_plugin_bypassed', {
@@ -326,7 +308,7 @@ export async function setRackPluginBypassed(
   return { session: result[0], audio: result[1] };
 }
 
-export async function setRackPluginParameter(
+async function setRackPluginParameter(
   index: number,
   value: number,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
@@ -337,7 +319,29 @@ export async function setRackPluginParameter(
   return { session: result[0], audio: result[1] };
 }
 
-export async function restoreCurrentRack(): Promise<AudioStatus> {
+async function setRackMacroValue(
+  macroId: string,
+  value: number,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_rack_macro_value', {
+    macroId,
+    value,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+async function mapRackMacro(
+  macroId: string,
+  parameterIndex: number | null,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('map_rack_macro', {
+    macroId,
+    parameterIndex,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+async function restoreCurrentRack(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('restore_current_rack');
   } catch (error) {
@@ -345,26 +349,21 @@ export async function restoreCurrentRack(): Promise<AudioStatus> {
   }
 }
 
-export async function loadPlugin(path: string): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('load_plugin', { path });
-  } catch (error) {
-    return await audioCommandError('Load plugin', error);
-  }
+async function recallSnapshot(
+  slot: 'A' | 'B',
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('recall_snapshot', { slot });
+  return { session: result[0], audio: result[1] };
 }
 
-export async function clearPlugin(): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('clear_plugin');
-  } catch (error) {
-    return await audioCommandError('Clear plugin', error);
-  }
+async function captureSnapshot(
+  slot: 'A' | 'B',
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('capture_snapshot', { slot });
+  return { session: result[0], audio: result[1] };
 }
 
-export async function previewAsset(
-  assetId: AssetId,
-  options: AssetPreviewOptions,
-): Promise<AudioStatus> {
+async function previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('preview_asset', {
       assetId,
@@ -381,7 +380,7 @@ export async function previewAsset(
   }
 }
 
-export async function stopSamplePreview(): Promise<AudioStatus> {
+async function stopSamplePreview(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('stop_preview');
   } catch (error) {
@@ -389,7 +388,7 @@ export async function stopSamplePreview(): Promise<AudioStatus> {
   }
 }
 
-export async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
+async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('stop_preview_for_key', { voiceKey });
   } catch (error) {
@@ -397,7 +396,7 @@ export async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatu
   }
 }
 
-export async function getAudioStatus(): Promise<AudioStatus> {
+async function getAudioStatus(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('get_audio_status');
   } catch {
@@ -436,19 +435,14 @@ export async function getAudioStatus(): Promise<AudioStatus> {
   }
 }
 
-export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_emergency_mute', { muted });
-  } catch (error) {
-    return await audioCommandError(
-      muted ? 'Engage emergency mute' : 'Release emergency mute',
-      error,
-      true,
-    );
-  }
+async function setEmergencyMute(
+  muted: boolean,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_emergency_mute', { muted });
+  return { session: result[0], audio: result[1] };
 }
 
-export async function startRecording(): Promise<AudioStatus> {
+async function startRecording(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('start_recording');
   } catch (error) {
@@ -456,7 +450,7 @@ export async function startRecording(): Promise<AudioStatus> {
   }
 }
 
-export async function stopRecording(): Promise<AudioStatus> {
+async function stopRecording(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('stop_recording');
   } catch (error) {
@@ -464,39 +458,16 @@ export async function stopRecording(): Promise<AudioStatus> {
   }
 }
 
-export async function setPluginBypassed(bypassed: boolean): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_plugin_bypassed', { bypassed });
-  } catch (error) {
-    return await audioCommandError('Change plugin bypass', error);
-  }
+async function setMasterGainDb(
+  gainDb: number,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_master_gain_db', {
+    gainDb,
+  });
+  return { session: result[0], audio: result[1] };
 }
 
-export async function setPluginParameter(index: number, value: number): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_plugin_parameter', { index, value });
-  } catch (error) {
-    return await audioCommandError('Set plugin parameter', error);
-  }
-}
-
-export async function setPluginState(stateData: string): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_plugin_state', { stateData });
-  } catch (error) {
-    return await audioCommandError('Set plugin state', error);
-  }
-}
-
-export async function setMasterGainDb(gainDb: number): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_master_gain_db', { gainDb });
-  } catch (error) {
-    return await audioCommandError('Set master gain', error);
-  }
-}
-
-export async function recoverAudioDevice(): Promise<AudioStatus> {
+async function recoverAudioDevice(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('recover_audio_device');
   } catch (error) {
@@ -504,19 +475,20 @@ export async function recoverAudioDevice(): Promise<AudioStatus> {
   }
 }
 
-export async function setAudioDriver(
+async function setAudioDriver(
   driver: string,
   sampleRate: number | null = null,
   bufferSize: number | null = null,
-): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('set_audio_driver', { driver, sampleRate, bufferSize });
-  } catch (error) {
-    return await audioCommandError('Set audio driver', error);
-  }
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_audio_driver', {
+    driver,
+    sampleRate,
+    bufferSize,
+  });
+  return { session: result[0], audio: result[1] };
 }
 
-export async function openMidiInput(name: string): Promise<AudioStatus> {
+async function openMidiInput(name: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('open_midi_input', { name });
   } catch (error) {
@@ -524,7 +496,7 @@ export async function openMidiInput(name: string): Promise<AudioStatus> {
   }
 }
 
-export async function closeMidiInput(): Promise<AudioStatus> {
+async function closeMidiInput(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('close_midi_input');
   } catch (error) {
@@ -532,28 +504,18 @@ export async function closeMidiInput(): Promise<AudioStatus> {
   }
 }
 
-export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('configure_sample_pads', { pads });
-  } catch (error) {
-    return await audioCommandError('Configure sample pads', error);
-  }
-}
-
-export async function createSamplePad(
+async function createSamplePad(
   assetId: AssetId,
   name: string,
-  durationMs: number,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
   const result = await invoke<[CreativeSession, AudioStatus]>('create_sample_pad', {
     assetId,
     name,
-    durationMs,
   });
   return { session: result[0], audio: result[1] };
 }
 
-export async function updateSamplePad(
+async function updateSamplePad(
   padId: string,
   patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
@@ -564,7 +526,7 @@ export async function updateSamplePad(
   return { session: result[0], audio: result[1] };
 }
 
-export async function removeSamplePad(
+async function removeSamplePad(
   padId: string,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
   const result = await invoke<[CreativeSession, AudioStatus]>('remove_sample_pad', {
@@ -573,7 +535,7 @@ export async function removeSamplePad(
   return { session: result[0], audio: result[1] };
 }
 
-export async function getMissingDependencies(): Promise<MissingDependency[]> {
+async function getMissingDependencies(): Promise<MissingDependency[]> {
   try {
     return await invoke<MissingDependency[]>('get_missing_dependencies');
   } catch {
@@ -581,18 +543,18 @@ export async function getMissingDependencies(): Promise<MissingDependency[]> {
   }
 }
 
-export async function relinkMissingDependency(
+async function relinkMissingDependency(
   assetId: AssetId,
   newPath: string,
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('relink_missing_dependency', { assetId, newPath });
 }
 
-export async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> {
+async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
 }
 
-export async function addAudioClipToArrangement(
+async function addAudioClipToArrangement(
   assetId: AssetId,
   name: string,
   durationMs: number,
@@ -610,7 +572,7 @@ export async function addAudioClipToArrangement(
   }
 }
 
-export async function updateAudioClip(
+async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
 ): Promise<CreativeSession | null> {
@@ -621,7 +583,7 @@ export async function updateAudioClip(
   }
 }
 
-export async function moveAudioClipToTrack(
+async function moveAudioClipToTrack(
   clipId: string,
   trackId: string,
 ): Promise<CreativeSession | null> {
@@ -632,10 +594,7 @@ export async function moveAudioClipToTrack(
   }
 }
 
-export async function setAudioClipMuted(
-  clipId: string,
-  muted: boolean,
-): Promise<CreativeSession | null> {
+async function setAudioClipMuted(clipId: string, muted: boolean): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('set_audio_clip_muted', { clipId, muted });
   } catch {
@@ -643,7 +602,7 @@ export async function setAudioClipMuted(
   }
 }
 
-export async function setAudioClipLoop(
+async function setAudioClipLoop(
   clipId: string,
   loopEnabled: boolean,
 ): Promise<CreativeSession | null> {
@@ -654,7 +613,7 @@ export async function setAudioClipLoop(
   }
 }
 
-export async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
+async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('duplicate_audio_clip', { clipId });
   } catch {
@@ -662,7 +621,7 @@ export async function duplicateAudioClip(clipId: string): Promise<CreativeSessio
   }
 }
 
-export async function splitAudioClip(
+async function splitAudioClip(
   clipId: string,
   atOffsetMs?: number,
 ): Promise<CreativeSession | null> {
@@ -676,7 +635,7 @@ export async function splitAudioClip(
   }
 }
 
-export async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
+async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('remove_audio_clip', { clipId });
   } catch {
@@ -684,7 +643,7 @@ export async function removeAudioClip(clipId: string): Promise<CreativeSession |
   }
 }
 
-export async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
+async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
   try {
     return await invoke<AssetId>('save_rack_definition', { name, path });
   } catch {
@@ -692,7 +651,7 @@ export async function saveRackDefinition(name: string, path: string): Promise<As
   }
 }
 
-export async function listRackDefinitions(): Promise<LibraryAsset[]> {
+async function listRackDefinitions(): Promise<LibraryAsset[]> {
   try {
     return await invoke<LibraryAsset[]>('list_rack_definitions');
   } catch {
@@ -700,7 +659,7 @@ export async function listRackDefinitions(): Promise<LibraryAsset[]> {
   }
 }
 
-export async function loadRackDefinitionAsset(
+async function loadRackDefinitionAsset(
   assetId: AssetId,
 ): Promise<{ session: CreativeSession; audio: AudioStatus } | null> {
   try {
@@ -713,7 +672,7 @@ export async function loadRackDefinitionAsset(
   }
 }
 
-export async function openAssetInDesign(
+async function openAssetInDesign(
   assetId: AssetId,
   tool: DesignTool,
 ): Promise<CreativeSession | null> {
@@ -724,12 +683,64 @@ export async function openAssetInDesign(
   }
 }
 
-export async function switchWorkspace(workspace: Workspace): Promise<CreativeSession | null> {
+async function switchWorkspace(workspace: Workspace): Promise<CreativeSession | null> {
   try {
     return await invoke<CreativeSession>('switch_workspace', { workspace });
   } catch {
     return null;
   }
+}
+
+async function updateSessionSettings(patch: {
+  projectName?: string | null;
+  loopEnabled?: boolean;
+  countInBeats?: number;
+  note?: string;
+  aiPermission?: string;
+  aiContext?: string[];
+}): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_session_settings', { patch });
+}
+
+async function addTrack(name: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_track', { name });
+}
+
+async function updateTrack(
+  trackId: string,
+  patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_track', { trackId, patch });
+}
+
+async function importMidiClip(assetId: AssetId, name: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('import_midi_clip', { assetId, name });
+}
+
+async function updateMidiNote(
+  clipId: string,
+  noteId: string,
+  patch: {
+    note?: number;
+    startMs?: number;
+    durationMs?: number;
+    velocity?: number;
+    channel?: number;
+  },
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
+}
+
+async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
+}
+
+async function removeMidiClip(clipId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_midi_clip', { clipId });
+}
+
+async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('apply_ai_suggestion', { clipId, proposedGainDb });
 }
 
 /**
@@ -738,7 +749,7 @@ export async function switchWorkspace(workspace: Workspace): Promise<CreativeSes
  * named functions directly; this wrapper exists so callers can depend on the
  * NativeApi seam and tests can substitute a FakeNativeApi.
  */
-export function createNativeApi(): NativeApi {
+function createNativeApi(): NativeApi {
   return {
     bootstrap,
     saveSession,
@@ -758,7 +769,6 @@ export function createNativeApi(): NativeApi {
     updateLibraryAsset,
     relatedLibraryAssets,
     analyzeAsset,
-    readMidiEvents,
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
@@ -769,9 +779,11 @@ export function createNativeApi(): NativeApi {
     clearPluginFromRack,
     setRackPluginBypassed,
     setRackPluginParameter,
+    setRackMacroValue,
+    mapRackMacro,
     restoreCurrentRack,
-    loadPlugin,
-    clearPlugin,
+    captureSnapshot,
+    recallSnapshot,
     previewAsset,
     stopSamplePreview,
     stopSamplePreviewKey,
@@ -779,15 +791,11 @@ export function createNativeApi(): NativeApi {
     setEmergencyMute,
     startRecording,
     stopRecording,
-    setPluginBypassed,
-    setPluginParameter,
-    setPluginState,
     setMasterGainDb,
     recoverAudioDevice,
     setAudioDriver,
     openMidiInput,
     closeMidiInput,
-    configureSamplePads,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
@@ -797,6 +805,14 @@ export function createNativeApi(): NativeApi {
     addAudioClipToArrangement,
     openAssetInDesign,
     switchWorkspace,
+    updateSessionSettings,
+    addTrack,
+    updateTrack,
+    importMidiClip,
+    updateMidiNote,
+    removeMidiNote,
+    removeMidiClip,
+    applyAiSuggestion,
     updateAudioClip,
     moveAudioClipToTrack,
     setAudioClipMuted,

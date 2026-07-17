@@ -1,11 +1,14 @@
 import type { CreativeSession } from '@/lib/domain';
+import type { NativeApi } from '@/native/native-api';
 
 export function CaptureSettings({
   session,
   setSession,
+  api,
 }: {
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
+  api: NativeApi;
 }) {
   return (
     <section className="section-card capture-settings">
@@ -21,10 +24,9 @@ export function CaptureSettings({
         <select
           value={session.settings.countInBeats}
           onChange={(event) =>
-            setSession({
-              ...session,
-              settings: { ...session.settings, countInBeats: Number(event.target.value) },
-            })
+            void api
+              .updateSessionSettings({ countInBeats: Number(event.target.value) })
+              .then(setSession)
           }
         >
           {[0, 1, 2, 3, 4, 8].map((beats) => (

@@ -2,6 +2,8 @@ use crate::session::CreativeSession;
 use serde::Serialize;
 use std::{fs, path::Path};
 
+pub(crate) mod commands;
+
 const TICKS_PER_QUARTER: u64 = 480;
 const TEMPO_BPM: u64 = 120;
 

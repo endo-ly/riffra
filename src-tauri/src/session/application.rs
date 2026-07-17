@@ -26,11 +26,14 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::asset::{self, AssetId};
+use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
-use crate::session::{Arrangement, CreativeSession, DesignTool, SamplePad, Workspace};
+use crate::session::{
+    AiChangeSet, Arrangement, CreativeSession, DesignTool, MidiClip, MidiNote, SamplePad, Track,
+    Workspace,
+};
 use crate::storage::{SessionStore, now_ms};
 
 /// Concrete dependencies a Session Application Operation needs.
@@ -93,19 +96,19 @@ pub fn create_sample_pad(
     context: &SessionContext<'_>,
     asset_id: AssetId,
     name: String,
-    duration_ms: u64,
 ) -> Result<(CreativeSession, AudioStatus), String> {
     if name.trim().is_empty() {
         return Err("Sample pad name must not be empty.".into());
     }
-    if duration_ms == 0 {
-        return Err("Sample pad duration must be greater than zero.".into());
+    let source_asset = asset::load(context.data_root, &asset_id)
+        .ok_or_else(|| format!("Sample pad references an unregistered asset: {asset_id}"))?;
+    if source_asset.kind != AssetKind::Audio {
+        return Err(format!("Asset {asset_id} is not an audio asset."));
     }
-    if asset::load(context.data_root, &asset_id).is_none() {
-        return Err(format!(
-            "Sample pad references an unregistered asset: {asset_id}"
-        ));
-    }
+    let duration_ms =
+        crate::analysis::analyze(std::path::Path::new(&source_asset.content_location))?
+            .duration_ms
+            .max(1);
 
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     if previous_session
@@ -485,5 +488,519 @@ pub fn switch_workspace(
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     session.workspace = workspace;
+    commit_session(context, session)
+}
+
+/// Bounded patch for the session metadata and settings that are edited by the
+/// current UI. Structural production state (rack, tracks, clips and pads) has
+/// dedicated operations and cannot be smuggled through this patch.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSettingsPatch {
+    pub project_name: Option<Option<String>>,
+    pub loop_enabled: Option<bool>,
+    pub count_in_beats: Option<u8>,
+    pub note: Option<String>,
+    pub ai_permission: Option<String>,
+    pub ai_context: Option<Vec<String>>,
+}
+
+pub fn update_session_settings(
+    context: &SessionContext<'_>,
+    patch: SessionSettingsPatch,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    if let Some(project_name) = patch.project_name {
+        session.project_name = project_name
+            .map(|value| value.trim().chars().take(160).collect::<String>())
+            .filter(|value| !value.is_empty());
+    }
+    if let Some(loop_enabled) = patch.loop_enabled {
+        session.settings.loop_enabled = loop_enabled;
+    }
+    if let Some(count_in_beats) = patch.count_in_beats {
+        session.settings.count_in_beats = count_in_beats.min(8);
+    }
+    if let Some(note) = patch.note {
+        session.settings.note = note.chars().take(16_384).collect();
+    }
+    if let Some(permission) = patch.ai_permission {
+        if !matches!(permission.as_str(), "Explain" | "Suggest" | "Apply") {
+            return Err(format!("Unsupported AI permission: {permission}"));
+        }
+        session.settings.ai_permission = permission;
+    }
+    if let Some(context_items) = patch.ai_context {
+        session.settings.ai_context = context_items;
+    }
+    commit_session(context, session)
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackPatch {
+    pub gain_db: Option<f64>,
+    pub pan: Option<f64>,
+    pub muted: Option<bool>,
+    pub solo: Option<bool>,
+}
+
+pub fn add_track(context: &SessionContext<'_>, name: String) -> Result<CreativeSession, String> {
+    let name = name.trim().chars().take(80).collect::<String>();
+    if name.is_empty() {
+        return Err("Track name must not be empty.".into());
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.arrangement.tracks.push(Track {
+        id: format!("track:{}", now_ms()),
+        name,
+        gain_db: 0.0,
+        pan: 0.0,
+        muted: false,
+        solo: false,
+    });
+    commit_session(context, session)
+}
+
+pub fn update_track(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    patch: TrackPatch,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if let Some(value) = patch.gain_db {
+        track.gain_db = if value.is_finite() {
+            value.clamp(-90.0, 24.0)
+        } else {
+            0.0
+        };
+    }
+    if let Some(value) = patch.pan {
+        track.pan = if value.is_finite() {
+            value.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+    if let Some(value) = patch.muted {
+        track.muted = value;
+    }
+    if let Some(value) = patch.solo {
+        track.solo = value;
+    }
+    commit_session(context, session)
+}
+
+fn midi_notes_from_events(events: Vec<crate::recording::MidiEvent>) -> Vec<MidiNote> {
+    use std::collections::HashMap;
+
+    let mut events = events;
+    events.sort_by(|left, right| left.time_ms.total_cmp(&right.time_ms));
+    let mut active: HashMap<(u8, u8), Vec<crate::recording::MidiEvent>> = HashMap::new();
+    let mut notes = Vec::new();
+    let mut finish = |start: crate::recording::MidiEvent, end_ms: f64| {
+        notes.push(MidiNote {
+            id: format!("midi-note:{}", notes.len()),
+            note: start.note,
+            start_ms: start.time_ms.max(0.0).round() as u64,
+            duration_ms: (end_ms - start.time_ms).round().max(1.0) as u64,
+            velocity: start.velocity.clamp(1, 127),
+            channel: start.channel.clamp(1, 16),
+        });
+    };
+    for event in &events {
+        let key = (event.channel, event.note);
+        let kind = event.status & 0xf0;
+        if kind == 0x90 && event.velocity > 0 {
+            active.entry(key).or_default().push(event.clone());
+        } else if matches!(kind, 0x80 | 0x90)
+            && let Some(stack) = active.get_mut(&key)
+        {
+            if let Some(start) = stack.pop() {
+                finish(start, event.time_ms);
+            }
+            if stack.is_empty() {
+                active.remove(&key);
+            }
+        }
+    }
+    let end_ms = events
+        .iter()
+        .map(|event| event.time_ms)
+        .fold(0.0_f64, f64::max)
+        + 100.0;
+    for stack in active.into_values() {
+        for start in stack {
+            finish(start, end_ms);
+        }
+    }
+    notes.sort_by_key(|note| (note.start_ms, note.note));
+    notes
+}
+
+pub fn import_midi_clip(
+    context: &SessionContext<'_>,
+    asset_id: AssetId,
+    name: String,
+) -> Result<CreativeSession, String> {
+    let asset = asset::load(context.data_root, &asset_id)
+        .ok_or_else(|| format!("MIDI Asset is not registered: {asset_id}"))?;
+    if asset.kind != AssetKind::Midi {
+        return Err(format!("Asset {asset_id} is not a MIDI Asset."));
+    }
+    let notes = midi_notes_from_events(crate::recording::read_midi_events(Path::new(
+        &asset.content_location,
+    ))?);
+    if notes.is_empty() {
+        return Err("No note-on/note-off pairs were found in that MIDI Asset.".into());
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let start_ms = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
+        .chain(
+            session
+                .arrangement
+                .midi_clips
+                .iter()
+                .map(|clip| clip.start_ms.saturating_add(clip.duration_ms)),
+        )
+        .max()
+        .unwrap_or(0);
+    let duration_ms = notes
+        .iter()
+        .map(|note| note.start_ms.saturating_add(note.duration_ms))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let clip = MidiClip {
+        id: format!("midi:{}", asset_id.as_str()),
+        name,
+        start_ms,
+        duration_ms,
+        notes,
+        muted: false,
+    };
+    session
+        .arrangement
+        .midi_clips
+        .retain(|item| item.id != clip.id);
+    session.arrangement.midi_clips.push(clip);
+    session.workspace = Workspace::Arrange;
+    commit_session(context, session)
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiNotePatch {
+    pub note: Option<u8>,
+    pub start_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub velocity: Option<u8>,
+    pub channel: Option<u8>,
+}
+
+pub fn update_midi_note(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_id: &str,
+    patch: MidiNotePatch,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
+    let note = clip
+        .notes
+        .iter_mut()
+        .find(|note| note.id == note_id)
+        .ok_or_else(|| format!("MIDI note is not registered: {note_id}"))?;
+    if let Some(value) = patch.note {
+        note.note = value.min(127);
+    }
+    if let Some(value) = patch.start_ms {
+        note.start_ms = value;
+    }
+    if let Some(value) = patch.duration_ms {
+        note.duration_ms = value.max(1);
+    }
+    if let Some(value) = patch.velocity {
+        note.velocity = value.clamp(1, 127);
+    }
+    if let Some(value) = patch.channel {
+        note.channel = value.clamp(1, 16);
+    }
+    clip.duration_ms = clip
+        .notes
+        .iter()
+        .map(|note| note.start_ms.saturating_add(note.duration_ms))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    commit_session(context, session)
+}
+
+pub fn remove_midi_note(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
+    let before = clip.notes.len();
+    clip.notes.retain(|note| note.id != note_id);
+    if clip.notes.len() == before {
+        return Err(format!("MIDI note is not registered: {note_id}"));
+    }
+    clip.duration_ms = clip
+        .notes
+        .iter()
+        .map(|note| note.start_ms.saturating_add(note.duration_ms))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    commit_session(context, session)
+}
+
+pub fn remove_midi_clip(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let before = session.arrangement.midi_clips.len();
+    session
+        .arrangement
+        .midi_clips
+        .retain(|clip| clip.id != clip_id);
+    if session.arrangement.midi_clips.len() == before {
+        return Err(format!("MIDI clip is not registered: {clip_id}"));
+    }
+    commit_session(context, session)
+}
+
+pub fn apply_ai_suggestion(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    proposed_gain_db: f64,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    if session.settings.ai_permission != "Apply" {
+        return Err("AI suggestion application requires Apply permission.".into());
+    }
+    let clip = session
+        .arrangement
+        .audio_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("Audio clip is not registered: {clip_id}"))?;
+    let current_gain_db = clip.gain_db;
+    clip.gain_db = if proposed_gain_db.is_finite() {
+        proposed_gain_db.clamp(-90.0, 24.0)
+    } else {
+        0.0
+    };
+    let applied_gain_db = clip.gain_db;
+    session.settings.ai_history.push(AiChangeSet {
+        id: format!("ai:{}", now_ms()),
+        created_at_ms: now_ms(),
+        permission: session.settings.ai_permission.clone(),
+        target: clip_id.to_owned(),
+        current_gain_db,
+        proposed_gain_db: applied_gain_db,
+        reason: "Match the selected reference RMS without changing the source WAV.".into(),
+        expected_effect:
+            "A closer perceived level while clip position and source remain unchanged.".into(),
+        risk: "Low · reversible".into(),
+        context: session.settings.ai_context.clone(),
+        applied: true,
+    });
+    if session.settings.ai_history.len() > 128 {
+        let excess = session.settings.ai_history.len() - 128;
+        session.settings.ai_history.drain(..excess);
+    }
+    commit_session(context, session)
+}
+
+// Audio + Session coupling operations.
+//
+// `set_master_gain_db` and `set_audio_driver` change an Audio Runtime setting
+// and a session preference at the same time. They share the same pattern:
+// validate the input, apply to the runtime, persist the new session preference
+// through the canonical commit, and report the runtime status. They are
+// Production Workflow because they coordinate the Audio Runtime, Persistence,
+// and canonical session settings in one user intent.
+
+/// Sets the master gain on the Audio Runtime and persists the clamped value in
+/// the session settings so a reload reproduces the same loudness.
+pub fn set_master_gain_db(
+    context: &SessionContext<'_>,
+    gain_db: f64,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    if !gain_db.is_finite() {
+        return Err("Master gain must be finite.".into());
+    }
+    let audio = context.audio.set_master_gain_db(gain_db)?;
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.settings.master_db = gain_db.clamp(-90.0, 0.0);
+    let committed = commit_session(context, session)?;
+    Ok((committed, audio))
+}
+
+/// Sets the audio driver (and optional sample-rate / buffer preferences) on
+/// the Audio Runtime and persists the effective settings. The runtime may
+/// reject the requested preferences and use its own; the effective values are
+/// stored so a reload reproduces the same device state.
+pub fn set_audio_driver(
+    context: &SessionContext<'_>,
+    driver: &str,
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    if context.safe_mode {
+        return Err(
+            "Safe Mode blocks audio-driver changes; restart Riffra without --safe-mode first."
+                .into(),
+        );
+    }
+    if driver.trim().is_empty() {
+        return Err("Audio driver name must not be empty.".into());
+    }
+    let driver = driver.trim().to_owned();
+    if let Some(rate) = sample_rate
+        && !(8_000..=192_000).contains(&rate)
+    {
+        return Err("Audio sample rate preference is outside 8-192 kHz.".into());
+    }
+    if let Some(buffer) = buffer_size
+        && !(16..=8192).contains(&buffer)
+    {
+        return Err("Audio buffer preference is outside 16-8192 samples.".into());
+    }
+    let mut audio = context
+        .audio
+        .set_audio_driver(&driver, sample_rate, buffer_size)?;
+    if let Some(message) = effective_audio_preference_message(
+        sample_rate,
+        buffer_size,
+        audio.sample_rate,
+        audio.buffer_size,
+    ) {
+        audio.message = message;
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    apply_effective_audio_settings(
+        &mut session,
+        &driver,
+        audio.driver.as_deref(),
+        audio.sample_rate,
+        audio.buffer_size,
+    );
+    let committed = commit_session(context, session)?;
+    Ok((committed, audio))
+}
+
+/// Toggles emergency mute on the Audio Runtime and records the intent in the
+/// session settings so a reload reproduces the mute state.
+pub fn set_emergency_mute(
+    context: &SessionContext<'_>,
+    muted: bool,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    let audio = context.audio.set_emergency_mute(muted)?;
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.settings.emergency_muted = muted;
+    let committed = commit_session(context, session)?;
+    Ok((committed, audio))
+}
+
+fn effective_audio_preference_message(
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+    effective_sample_rate: Option<u32>,
+    effective_buffer_size: Option<u32>,
+) -> Option<String> {
+    let mut unavailable_preferences = Vec::new();
+    if sample_rate.is_some() && sample_rate != effective_sample_rate {
+        unavailable_preferences.push(format!(
+            "sample rate {} Hz (device uses {} Hz)",
+            sample_rate.unwrap_or_default(),
+            effective_sample_rate.unwrap_or_default()
+        ));
+    }
+    if buffer_size.is_some() && buffer_size != effective_buffer_size {
+        unavailable_preferences.push(format!(
+            "buffer {} samples (device uses {} samples)",
+            buffer_size.unwrap_or_default(),
+            effective_buffer_size.unwrap_or_default()
+        ));
+    }
+    (!unavailable_preferences.is_empty()).then(|| {
+        format!(
+            "The selected driver did not accept the requested {}; its effective settings are shown.",
+            unavailable_preferences.join(" and ")
+        )
+    })
+}
+
+/// Folds the runtime's effective audio settings into the bootstrap session
+/// before the first save. Shared with `lib.rs` setup so the canonical session
+/// reflects what the runtime actually accepted instead of the requested prefs.
+pub(crate) fn apply_effective_audio_settings(
+    session: &mut CreativeSession,
+    requested_driver: &str,
+    effective_driver: Option<&str>,
+    effective_sample_rate: Option<u32>,
+    effective_buffer_size: Option<u32>,
+) {
+    session.settings.audio_driver = Some(effective_driver.unwrap_or(requested_driver).to_owned());
+    session.settings.audio_sample_rate = effective_sample_rate;
+    session.settings.audio_buffer_size = effective_buffer_size;
+}
+
+// Missing-dependency recovery operations.
+//
+// Relink and disable both mutate the canonical session (asset references or
+// the rack's disabled-placeholder flag) and persist through the canonical
+// commit. The Asset layer's `content_location` is rewritten when relinking so
+// the canonical row follows the user's new file.
+
+/// Rewrites every canonical Asset reference pointed to by `asset_id` to the
+/// user's new file and persists the updated session. The Asset's
+/// `content_location` is also updated so future operations resolve to the new
+/// path.
+pub fn relink_missing_dependency(
+    context: &SessionContext<'_>,
+    asset_id: AssetId,
+    new_path: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session = crate::missing::relink(context.data_root, &session, &asset_id, new_path)?;
+    commit_session(context, session)
+}
+
+/// Marks a missing plugin device as a disabled placeholder so it no longer
+/// surfaces as a missing dependency. The session is persisted through the
+/// canonical commit.
+pub fn disable_missing_plugin(
+    context: &SessionContext<'_>,
+    device_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session = crate::missing::mark_disabled_placeholder(&session, device_id);
     commit_session(context, session)
 }

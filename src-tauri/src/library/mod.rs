@@ -9,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) mod commands;
+
 const SEARCH_LIMIT: i64 = 200;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

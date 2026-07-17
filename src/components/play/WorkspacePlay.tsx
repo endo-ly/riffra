@@ -1,4 +1,5 @@
 import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
+import type { NativeApi } from '@/native/native-api';
 import { Icon, Meter } from '../shared/ui';
 
 export function WorkspacePlay({
@@ -7,6 +8,8 @@ export function WorkspacePlay({
   plugins,
   missingPluginPaths,
   setSession,
+  setAudio,
+  api,
   onTogglePluginBypass,
   onSetPluginParameter,
   onClearPlugin,
@@ -20,6 +23,8 @@ export function WorkspacePlay({
   plugins: PluginEntry[];
   missingPluginPaths: string[];
   setSession: (value: CreativeSession) => void;
+  setAudio: (value: AudioStatus) => void;
+  api: NativeApi;
   onTogglePluginBypass: (bypassed: boolean) => void;
   onSetPluginParameter: (index: number, value: number) => void;
   onClearPlugin: () => void;
@@ -50,32 +55,16 @@ export function WorkspacePlay({
     session.rack.devices.find((device) => device.kind === 'plugin')?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A');
   const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:B');
-  const setMacro = (macroId: string, value: number) => {
-    const safeValue = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-    const macro = session.rack.macros.find((item) => item.id === macroId);
-    setSession({
-      ...session,
-      rack: {
-        ...session.rack,
-        macros: session.rack.macros.map((item) =>
-          item.id === macroId ? { ...item, value: safeValue } : item,
-        ),
-      },
-    });
-    if (macro?.parameterIndex != null) onSetPluginParameter(macro.parameterIndex, safeValue);
+  const setMacro = async (macroId: string, value: number) => {
+    const result = await api.setRackMacroValue(macroId, value);
+    setSession(result.session);
+    setAudio(result.audio);
   };
-  const mapMacro = (macroId: string, value: string) =>
-    setSession({
-      ...session,
-      rack: {
-        ...session.rack,
-        macros: session.rack.macros.map((item) =>
-          item.id === macroId
-            ? { ...item, parameterIndex: value === '' ? null : Number(value) }
-            : item,
-        ),
-      },
-    });
+  const mapMacro = async (macroId: string, value: string) => {
+    const result = await api.mapRackMacro(macroId, value === '' ? null : Number(value));
+    setSession(result.session);
+    setAudio(result.audio);
+  };
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header">
@@ -228,13 +217,13 @@ export function WorkspacePlay({
                 max="1"
                 step="0.001"
                 value={macro.value}
-                onChange={(event) => setMacro(macro.id, Number(event.target.value))}
+                onChange={(event) => void setMacro(macro.id, Number(event.target.value))}
               />
               <small>{Math.round(macro.value * 100)}%</small>
               <select
                 aria-label={`${macro.name} target`}
                 value={macro.parameterIndex == null ? '' : macro.parameterIndex}
-                onChange={(event) => mapMacro(macro.id, event.target.value)}
+                onChange={(event) => void mapMacro(macro.id, event.target.value)}
               >
                 <option value="">Unmapped</option>
                 {audio.plugin?.parameters.map((parameter) => (
@@ -252,7 +241,7 @@ export function WorkspacePlay({
         <textarea
           value={session.settings.note}
           onChange={(event) =>
-            setSession({ ...session, settings: { ...session.settings, note: event.target.value } })
+            void api.updateSessionSettings({ note: event.target.value }).then(setSession)
           }
           placeholder="意図、比較対象、使用場面を記録…"
         />

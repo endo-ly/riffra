@@ -1,21 +1,10 @@
-import { defaultSession } from '@/lib/domain';
-import type {
-  AudioStatus,
-  CreativeSession,
-  PluginEntry,
-  PluginStatus,
-  RackDevice,
-} from '@/lib/domain';
+import type { AudioStatus } from '@/lib/domain';
 
 /**
  * Shared test builders for M0+ tests. They return valid, minimal objects so
  * individual tests only describe the fields they care about. Built on top of
  * `defaultSession` so the canonical session shape lives in one place.
  */
-
-export function makeSession(overrides: Partial<CreativeSession> = {}): CreativeSession {
-  return { ...defaultSession(), ...overrides };
-}
 
 export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {
@@ -50,50 +39,6 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     invalidSamples: 0,
     feedbackSuspected: false,
     message: '',
-    ...overrides,
-  };
-}
-
-export function makePluginEntry(overrides: Partial<PluginEntry> = {}): PluginEntry {
-  return {
-    id: 'p1',
-    name: 'Test Plugin',
-    vendor: null,
-    version: null,
-    format: 'VST3',
-    path: '/vst/test.vst3',
-    bundle: false,
-    modifiedAtMs: null,
-    scanState: 'validated',
-    ...overrides,
-  };
-}
-
-export function makePluginStatus(overrides: Partial<PluginStatus> = {}): PluginStatus {
-  return {
-    loaded: true,
-    bypassed: false,
-    path: '/vst/test.vst3',
-    name: 'Test Plugin',
-    sampleRate: 48000,
-    blockSize: 1024,
-    bypassedBlocks: 0,
-    parameters: [],
-    stateData: null,
-    ...overrides,
-  };
-}
-
-export function makeRackPlugin(overrides: Partial<RackDevice> = {}): RackDevice {
-  return {
-    id: 'plugin:p1',
-    name: 'Test Plugin',
-    kind: 'plugin',
-    path: '/vst/test.vst3',
-    bypassed: false,
-    gainDb: 0,
-    parameterValues: [],
-    stateData: null,
     ...overrides,
   };
 }

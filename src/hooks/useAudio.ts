@@ -2,11 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { reconcileAudioSettings } from '@/lib/audio-settings';
-import {
-  audioCommandSucceeded,
-  isOutputMuted,
-  resolveEmergencyMuteAfterCommand,
-} from '@/lib/audio-safety';
+import { audioCommandSucceeded, isOutputMuted } from '@/lib/audio-safety';
 import { decideRecordingToggle } from '@/lib/recording';
 import { COUNT_IN_BEAT_MS } from '@/constants';
 import type { NativeApi } from '@/native/native-api';
@@ -43,24 +39,19 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
 
   const selectAudioDriver = useCallback(
     async (driver: string, sampleRate: number, bufferSize: number) => {
-      const nextAudio = await setAudioDriver(driver, sampleRate, bufferSize);
+      const { session: nextSession, audio: nextAudio } = await setAudioDriver(
+        driver,
+        sampleRate,
+        bufferSize,
+      );
       setAudio(nextAudio);
       if (!audioCommandSucceeded(nextAudio)) return;
       const effective = reconcileAudioSettings({ driver, sampleRate, bufferSize }, nextAudio);
       setAudioPreferenceMessage(effective.message);
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              settings: {
-                ...current.settings,
-                audioDriver: effective.driver,
-                audioSampleRate: effective.sampleRate,
-                audioBufferSize: effective.bufferSize,
-              },
-            }
-          : current,
-      );
+      // The Rust Session Operation already persisted the canonical settings;
+      // we only feed the returned session into local state so React matches
+      // the canonical copy without re-deriving it.
+      setSession(nextSession);
     },
     [],
   );
@@ -76,19 +67,9 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   const toggleMute = useCallback(async () => {
     if (!session) return;
     const muted = !isOutputMuted(session.settings.emergencyMuted, audio);
-    const nextAudio = await setEmergencyMute(muted);
+    const { session: nextSession, audio: nextAudio } = await setEmergencyMute(muted);
     setAudio(nextAudio);
-    setSession({
-      ...session,
-      settings: {
-        ...session.settings,
-        emergencyMuted: resolveEmergencyMuteAfterCommand(
-          session.settings.emergencyMuted,
-          nextAudio,
-          muted,
-        ),
-      },
-    });
+    setSession(nextSession);
   }, [audio, session]);
 
   const startRecordingNow = useCallback(async () => {

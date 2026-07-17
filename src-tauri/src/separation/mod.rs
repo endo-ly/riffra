@@ -8,6 +8,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub(crate) mod commands;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeparationResult {

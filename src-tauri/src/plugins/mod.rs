@@ -7,6 +7,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) mod commands;
+
 const MAX_ENTRIES: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize)]

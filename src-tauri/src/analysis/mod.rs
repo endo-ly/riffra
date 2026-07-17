@@ -5,6 +5,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub(crate) mod commands;
+
 const WAVEFORM_BINS: usize = 128;
 
 #[derive(Clone, Debug, Serialize)]

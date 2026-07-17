@@ -12,6 +12,7 @@ use tauri::State;
 use crate::AppState;
 use crate::asset::AssetId;
 use crate::errors::DomainError;
+use crate::missing::MissingDependency;
 use crate::model::AudioStatus;
 use crate::session::application::{self, SessionContext};
 use crate::session::{AudioClipPatch, CreativeSession, DesignTool, Workspace};
@@ -29,9 +30,9 @@ fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
 pub fn save_scratch_session(
     session: CreativeSession,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    application::save_session(&context(&state), session)?;
-    Ok(())
+) -> Result<CreativeSession, String> {
+    application::save_session(&context(&state), session.clone())?;
+    Ok(session)
 }
 
 #[tauri::command]
@@ -55,12 +56,11 @@ pub fn import_scratch_session(
 pub fn create_sample_pad(
     asset_id: String,
     name: String,
-    duration_ms: u64,
     state: State<'_, AppState>,
 ) -> Result<(CreativeSession, AudioStatus), String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    application::create_sample_pad(&context(&state), asset_id, name, duration_ms)
+    application::create_sample_pad(&context(&state), asset_id, name)
 }
 
 #[tauri::command]
@@ -226,4 +226,130 @@ pub fn switch_workspace(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::switch_workspace(&context(&state), workspace)
+}
+
+#[tauri::command]
+pub fn update_session_settings(
+    patch: application::SessionSettingsPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_session_settings(&context(&state), patch)
+}
+
+#[tauri::command]
+pub fn add_track(name: String, state: State<'_, AppState>) -> Result<CreativeSession, String> {
+    application::add_track(&context(&state), name)
+}
+
+#[tauri::command]
+pub fn update_track(
+    track_id: String,
+    patch: application::TrackPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_track(&context(&state), &track_id, patch)
+}
+
+#[tauri::command]
+pub fn import_midi_clip(
+    asset_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let asset_id = AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    application::import_midi_clip(&context(&state), asset_id, name)
+}
+
+#[tauri::command]
+pub fn update_midi_note(
+    clip_id: String,
+    note_id: String,
+    patch: application::MidiNotePatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_midi_note(&context(&state), &clip_id, &note_id, patch)
+}
+
+#[tauri::command]
+pub fn remove_midi_note(
+    clip_id: String,
+    note_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_midi_note(&context(&state), &clip_id, &note_id)
+}
+
+#[tauri::command]
+pub fn remove_midi_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_midi_clip(&context(&state), &clip_id)
+}
+
+#[tauri::command]
+pub fn apply_ai_suggestion(
+    clip_id: String,
+    proposed_gain_db: f64,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_ai_suggestion(&context(&state), &clip_id, proposed_gain_db)
+}
+
+#[tauri::command]
+pub fn set_master_gain_db(
+    gain_db: f64,
+    state: State<'_, AppState>,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    application::set_master_gain_db(&context(&state), gain_db)
+}
+
+#[tauri::command]
+pub fn set_audio_driver(
+    driver: String,
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    application::set_audio_driver(&context(&state), &driver, sample_rate, buffer_size)
+}
+
+#[tauri::command]
+pub fn set_emergency_mute(
+    muted: bool,
+    state: State<'_, AppState>,
+) -> Result<(CreativeSession, AudioStatus), String> {
+    application::set_emergency_mute(&context(&state), muted)
+}
+
+#[tauri::command]
+pub fn relink_missing_dependency(
+    asset_id: String,
+    new_path: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let asset_id = AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    application::relink_missing_dependency(&context(&state), asset_id, &new_path)
+}
+
+#[tauri::command]
+pub fn disable_missing_plugin(
+    device_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::disable_missing_plugin(&context(&state), &device_id)
+}
+
+#[tauri::command]
+pub fn get_missing_dependencies(
+    state: State<'_, AppState>,
+) -> Result<Vec<MissingDependency>, String> {
+    let session = state.session.lock().map_err(lock_error)?.clone();
+    Ok(crate::missing::collect_missing(&state.data_root, &session))
+}
+
+fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
+    format!("An internal state lock was poisoned: {error}")
 }

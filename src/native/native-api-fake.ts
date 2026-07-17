@@ -10,7 +10,6 @@ import type {
   BootstrapState,
   LibraryAsset,
   MissingDependency,
-  MidiEvent,
   MidiExportResult,
   MidiProbe,
   PluginParameter,
@@ -19,7 +18,6 @@ import type {
   RecordingStatus,
   RenderOptions,
   RenderResult,
-  SamplePad,
   ScanReport,
   CreativeSession,
   SeparationResult,
@@ -77,7 +75,7 @@ export interface FakeNativeApiOptions {
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
   separations?: SeparationResult[];
-  /** When true, loadPlugin / setPluginState return a faulted status. */
+  /** When true, loadPluginIntoRack / recallSnapshot return a faulted status. */
   pluginLoadFaulted?: boolean;
   /** Parameters the loaded plugin reports, so individual-parameter restore can be exercised. */
   pluginParameters?: PluginParameter[];
@@ -87,6 +85,10 @@ export interface FakeNativeApiOptions {
   missingDependencies?: MissingDependency[];
   /** Deterministic audio-content keys used by duplicate detection tests. */
   duplicateContent?: Record<string, string>;
+  missingAssetIds?: AssetId[];
+  persistenceFailure?: boolean;
+  rollbackFailure?: boolean;
+  unsupportedRuntimeState?: boolean;
 }
 
 /**
@@ -112,6 +114,10 @@ export class FakeNativeApi implements NativeApi {
   /** Saved RackDefinition assets; populated by `saveRackDefinition`. */
   rackDefinitions: { assetId: AssetId; name: string; path: string; instance: RackInstance }[];
   private duplicateContent: Record<string, string>;
+  private missingAssetIds: Set<AssetId>;
+  private persistenceFailure: boolean;
+  private rollbackFailure: boolean;
+  private unsupportedRuntimeState: boolean;
   private recordingCounter = 0;
   private renderCounter = 0;
   private jobCounter = 0;
@@ -127,6 +133,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordingSamples = options.recordingSamples ?? 22_050;
     this.missing = options.missingDependencies ?? [];
     this.duplicateContent = options.duplicateContent ?? {};
+    this.missingAssetIds = new Set(options.missingAssetIds ?? []);
+    this.persistenceFailure = options.persistenceFailure ?? false;
+    this.rollbackFailure = options.rollbackFailure ?? false;
+    this.unsupportedRuntimeState = options.unsupportedRuntimeState ?? false;
     this.rackDefinitions = [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
   }
@@ -144,11 +154,12 @@ export class FakeNativeApi implements NativeApi {
     return this.bootstrapState;
   };
 
-  saveSession = async (session: CreativeSession): Promise<string | null> => {
+  saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
     this.calls.push('saveSession');
+    this.assertPersistence();
     this.bootstrapState = { ...this.bootstrapState, session };
     this.savedSessions.push(session);
-    return null;
+    return session;
   };
 
   restoreRecoveryGeneration = async (fileName: string): Promise<CreativeSession | null> => {
@@ -366,6 +377,7 @@ export class FakeNativeApi implements NativeApi {
 
   analyzeAsset = async (assetId: AssetId): Promise<AudioAnalysis | null> => {
     this.calls.push('analyzeAsset');
+    this.assertAsset(assetId);
     return {
       path: `fake://assets/${assetId}.wav`,
       sampleRate: 48_000,
@@ -383,14 +395,6 @@ export class FakeNativeApi implements NativeApi {
       spectrumPeakHz: 440,
       waveform: [0.1, 0.4, 0.2, 0.7],
     };
-  };
-
-  readMidiEvents = async (_assetId: AssetId): Promise<MidiEvent[]> => {
-    this.calls.push('readMidiEvents');
-    return [
-      { timeMs: 0, status: 0x90, channel: 1, note: 60, velocity: 100 },
-      { timeMs: 500, status: 0x80, channel: 1, note: 60, velocity: 0 },
-    ];
   };
 
   probeMidiDevices = async (): Promise<MidiProbe> => {
@@ -455,49 +459,29 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  loadPlugin = async (path: string): Promise<AudioStatus> => {
-    this.calls.push('loadPlugin');
-    if (this.pluginLoadFaulted) {
-      this.audio = {
-        ...this.audio,
-        state: 'faulted',
-        message: `Plugin ${path} could not be loaded; audio remains safe.`,
-      };
-      return this.audio;
-    }
-    this.audio = {
-      ...this.audio,
-      state: this.audio.state === 'offline' ? 'offline' : 'muted',
-      plugin: {
-        loaded: true,
-        bypassed: false,
-        path,
-        name: path.split('\\').pop() ?? path,
-        sampleRate: this.audio.sampleRate,
-        blockSize: this.audio.bufferSize,
-        bypassedBlocks: 0,
-        parameters: this.pluginParameters,
-        stateData: null,
-      },
-      message: `Plugin ${path} loaded; output stays muted until explicitly enabled.`,
-    };
-    return this.audio;
-  };
-
-  clearPlugin = async (): Promise<AudioStatus> => {
-    this.calls.push('clearPlugin');
-    this.audio = { ...this.audio, plugin: null, message: 'Plugin removed from the rack.' };
-    return this.audio;
-  };
-
   private commitSessionRack = (
     project: (session: CreativeSession) => CreativeSession,
   ): { session: CreativeSession; audio: AudioStatus } => {
+    this.assertPersistence();
     const next = project(this.bootstrapState.session);
     this.bootstrapState = { ...this.bootstrapState, session: next };
     this.savedSessions.push(next);
     return { session: next, audio: this.audio };
   };
+
+  private assertPersistence(): void {
+    if (!this.persistenceFailure) return;
+    if (this.rollbackFailure) {
+      throw new Error('Persistence failed and the local runtime rollback also failed.');
+    }
+    throw new Error('Persistence failed; the local runtime change was rolled back.');
+  }
+
+  private assertAsset(assetId: AssetId): void {
+    if (this.missingAssetIds.has(assetId)) {
+      throw new Error(`Asset is not registered: ${assetId}`);
+    }
+  }
 
   loadPluginIntoRack = async (
     path: string,
@@ -507,6 +491,9 @@ export class FakeNativeApi implements NativeApi {
     stateData: string | null,
   ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
     this.calls.push('loadPluginIntoRack');
+    if (this.unsupportedRuntimeState) {
+      throw new Error('Plugin loading is unsupported by the fake runtime.');
+    }
     const session = this.bootstrapState.session;
     if (this.pluginLoadFaulted) {
       // Runtime rejected the load; the session rack is left unchanged, matching
@@ -629,8 +616,54 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
+  setRackMacroValue = async (
+    macroId: string,
+    value: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('setRackMacroValue');
+    const macro = this.bootstrapState.session.rack.macros.find((item) => item.id === macroId);
+    if (!macro) throw new Error(`Rack macro is not registered: ${macroId}`);
+    const safeValue = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+    if (macro.parameterIndex != null) {
+      await this.setRackPluginParameter(macro.parameterIndex, safeValue);
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        macros: current.rack.macros.map((item) =>
+          item.id === macroId ? { ...item, value: safeValue } : item,
+        ),
+      },
+    }));
+  };
+
+  mapRackMacro = async (
+    macroId: string,
+    parameterIndex: number | null,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('mapRackMacro');
+    if (!this.bootstrapState.session.rack.macros.some((item) => item.id === macroId)) {
+      throw new Error(`Rack macro is not registered: ${macroId}`);
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        macros: current.rack.macros.map((item) =>
+          item.id === macroId ? { ...item, parameterIndex } : item,
+        ),
+      },
+    }));
+  };
+
   restoreCurrentRack = async (): Promise<AudioStatus> => {
     this.calls.push('restoreCurrentRack');
+    if (this.unsupportedRuntimeState) {
+      throw new Error('The current rack is unsupported by the fake runtime.');
+    }
     const device = this.bootstrapState.session.rack.devices.find(
       (item) => item.kind === 'plugin' && !item.disabledPlaceholder,
     );
@@ -656,8 +689,83 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  previewAsset = async (_assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
+  recallSnapshot = async (
+    slot: 'A' | 'B',
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('recallSnapshot');
+    const session = this.bootstrapState.session;
+    const snapshot = session.snapshots.find((item) => item.id === `snapshot:${slot}`);
+    if (!snapshot) {
+      throw new Error(`Snapshot slot ${slot} is not registered.`);
+    }
+    const plugin = snapshot.rack.find((device) => device.kind === 'plugin');
+    if (plugin?.path) {
+      if (this.pluginLoadFaulted) {
+        this.audio = {
+          ...this.audio,
+          state: 'faulted',
+          message: `Plugin ${plugin.path} could not be loaded; audio remains safe.`,
+        };
+        return { session, audio: this.audio };
+      }
+      this.audio = {
+        ...this.audio,
+        state: this.audio.state === 'offline' ? 'offline' : 'muted',
+        plugin: {
+          loaded: true,
+          bypassed: plugin.bypassed,
+          path: plugin.path,
+          name: plugin.name,
+          sampleRate: this.audio.sampleRate,
+          blockSize: this.audio.bufferSize,
+          bypassedBlocks: 0,
+          parameters: this.pluginParameters,
+          stateData: plugin.stateData,
+        },
+        message: `Snapshot ${slot} recalled; output stays muted until enabled.`,
+      };
+    } else {
+      this.audio = { ...this.audio, plugin: null, message: `Snapshot ${slot} recalled.` };
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      settings: { ...current.settings, masterDb: snapshot.masterDb },
+      rack: {
+        devices: snapshot.rack.map((device) => ({ ...device })),
+        macros: snapshot.macros.map((macro) => ({ ...macro })),
+      },
+    }));
+  };
+
+  captureSnapshot = async (
+    slot: 'A' | 'B',
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('captureSnapshot');
+    const id = `snapshot:${slot}`;
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      snapshots: [
+        ...current.snapshots.filter((item) => item.id !== id),
+        {
+          id,
+          name: slot,
+          createdAtMs: Date.now(),
+          description: '',
+          tag: null,
+          parentId: null,
+          masterDb: current.settings.masterDb,
+          rack: current.rack.devices.map((device) => ({ ...device })),
+          macros: current.rack.macros.map((macro) => ({ ...macro })),
+        },
+      ],
+    }));
+  };
+
+  previewAsset = async (assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
     this.calls.push('previewAsset');
+    this.assertAsset(assetId);
     this.audio = { ...this.audio, state: 'ready', message: 'Preview voice is playing.' };
     return this.audio;
   };
@@ -682,7 +790,9 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
+  setEmergencyMute = async (
+    muted: boolean,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
     this.calls.push('setEmergencyMute');
     if (muted) {
       this.audio = {
@@ -703,7 +813,11 @@ export class FakeNativeApi implements NativeApi {
         message: 'Emergency mute released; output is live.',
       };
     }
-    return this.audio;
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      settings: { ...current.settings, emergencyMuted: muted },
+    }));
   };
 
   startRecording = async (): Promise<AudioStatus> => {
@@ -780,53 +894,17 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setPluginBypassed = async (bypassed: boolean): Promise<AudioStatus> => {
-    this.calls.push('setPluginBypassed');
-    if (this.audio.plugin)
-      this.audio = { ...this.audio, plugin: { ...this.audio.plugin, bypassed } };
-    return this.audio;
-  };
-
-  setPluginParameter = async (index: number, value: number): Promise<AudioStatus> => {
-    this.calls.push('setPluginParameter');
-    if (this.audio.plugin) {
-      const parameters = this.audio.plugin.parameters.some((parameter) => parameter.index === index)
-        ? this.audio.plugin.parameters.map((parameter) =>
-            parameter.index === index ? { ...parameter, value } : parameter,
-          )
-        : [
-            ...this.audio.plugin.parameters,
-            {
-              index,
-              name: `Parameter ${index + 1}`,
-              value,
-              defaultValue: value,
-              automatable: true,
-            },
-          ];
-      this.audio = { ...this.audio, plugin: { ...this.audio.plugin, parameters } };
-    }
-    return this.audio;
-  };
-
-  setPluginState = async (stateData: string): Promise<AudioStatus> => {
-    this.calls.push('setPluginState');
-    if (this.pluginLoadFaulted) {
-      this.audio = {
-        ...this.audio,
-        state: 'faulted',
-        message: 'Plugin state could not be restored; audio remains safe.',
-      };
-    } else if (this.audio.plugin) {
-      this.audio = { ...this.audio, plugin: { ...this.audio.plugin, stateData } };
-    }
-    return this.audio;
-  };
-
-  setMasterGainDb = async (gainDb: number): Promise<AudioStatus> => {
+  setMasterGainDb = async (
+    gainDb: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
     this.calls.push('setMasterGainDb');
-    this.audio = { ...this.audio, message: `Master gain set to ${gainDb.toFixed(1)} dB.` };
-    return this.audio;
+    const clamped = Math.max(-90, Math.min(0, Number.isFinite(gainDb) ? gainDb : 0));
+    this.audio = { ...this.audio, message: `Master gain set to ${clamped.toFixed(1)} dB.` };
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      settings: { ...current.settings, masterDb: clamped },
+    }));
   };
 
   recoverAudioDevice = async (): Promise<AudioStatus> => {
@@ -844,7 +922,7 @@ export class FakeNativeApi implements NativeApi {
     driver: string,
     sampleRate?: number | null,
     bufferSize?: number | null,
-  ): Promise<AudioStatus> => {
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
     this.calls.push('setAudioDriver');
     this.audio = {
       ...this.audio,
@@ -854,7 +932,16 @@ export class FakeNativeApi implements NativeApi {
       bufferSize: bufferSize ?? this.audio.bufferSize,
       message: `Driver switched to ${driver}; output re-enters emergency mute for safety.`,
     };
-    return this.audio;
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      settings: {
+        ...current.settings,
+        audioDriver: driver,
+        audioSampleRate: sampleRate ?? null,
+        audioBufferSize: bufferSize ?? null,
+      },
+    }));
   };
 
   openMidiInput = async (name: string): Promise<AudioStatus> => {
@@ -869,22 +956,12 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  configureSamplePads = async (pads: SamplePad[]): Promise<AudioStatus> => {
-    this.calls.push('configureSamplePads');
-    this.audio = {
-      ...this.audio,
-      midiPadMappings: pads.length,
-      message: `${pads.length} sample pad mapping(s) applied.`,
-    };
-    return this.audio;
-  };
-
   createSamplePad = async (
     assetId: AssetId,
     name: string,
-    durationMs: number,
   ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
     this.calls.push('createSamplePad');
+    this.assertAsset(assetId);
     const session = this.bootstrapState.session;
     const pads = session.playState.sampleInstrument.pads;
     if (pads.some((pad) => pad.assetId === assetId)) {
@@ -898,7 +975,7 @@ export class FakeNativeApi implements NativeApi {
         name,
         assetId,
         startMs: 0,
-        endMs: durationMs,
+        endMs: 1_000,
         midiKey,
         gainDb: 0,
         loopEnabled: false,
@@ -1055,6 +1132,8 @@ export class FakeNativeApi implements NativeApi {
     trackId?: string,
   ): Promise<CreativeSession | null> => {
     this.calls.push('addAudioClipToArrangement');
+    this.assertAsset(assetId);
+    this.assertPersistence();
     const session = this.bootstrapState.session;
     const selectedTrack = trackId ?? session.arrangement.tracks[0]?.id ?? 'main';
     const positionMs = session.arrangement.audioClips.reduce(
@@ -1103,6 +1182,7 @@ export class FakeNativeApi implements NativeApi {
   private commitArrangementEdit(
     edit: (clips: AudioClip[]) => AudioClip[] | null,
   ): CreativeSession | null {
+    this.assertPersistence();
     const session = this.bootstrapState.session;
     const next = edit(session.arrangement.audioClips);
     if (!next) return null;
@@ -1248,6 +1328,8 @@ export class FakeNativeApi implements NativeApi {
     tool: DesignTool,
   ): Promise<CreativeSession | null> => {
     this.calls.push('openAssetInDesign');
+    this.assertAsset(assetId);
+    this.assertPersistence();
     const next: CreativeSession = {
       ...this.bootstrapState.session,
       updatedAtMs: Date.now(),
@@ -1265,6 +1347,7 @@ export class FakeNativeApi implements NativeApi {
 
   switchWorkspace = async (workspace: Workspace): Promise<CreativeSession | null> => {
     this.calls.push('switchWorkspace');
+    this.assertPersistence();
     const next: CreativeSession = {
       ...this.bootstrapState.session,
       updatedAtMs: Date.now(),
@@ -1273,6 +1356,239 @@ export class FakeNativeApi implements NativeApi {
     this.bootstrapState = { ...this.bootstrapState, session: next };
     this.savedSessions.push(next);
     return next;
+  };
+
+  private commitSession(project: (session: CreativeSession) => CreativeSession): CreativeSession {
+    this.assertPersistence();
+    const next = project(this.bootstrapState.session);
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return next;
+  }
+
+  updateSessionSettings = async (patch: {
+    projectName?: string | null;
+    loopEnabled?: boolean;
+    countInBeats?: number;
+    note?: string;
+    aiPermission?: string;
+    aiContext?: string[];
+  }): Promise<CreativeSession> => {
+    this.calls.push('updateSessionSettings');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      projectName: patch.projectName !== undefined ? patch.projectName : current.projectName,
+      settings: {
+        ...current.settings,
+        loopEnabled: patch.loopEnabled ?? current.settings.loopEnabled,
+        countInBeats: patch.countInBeats ?? current.settings.countInBeats,
+        note: patch.note ?? current.settings.note,
+        aiPermission:
+          patch.aiPermission === 'Explain' ||
+          patch.aiPermission === 'Suggest' ||
+          patch.aiPermission === 'Apply'
+            ? patch.aiPermission
+            : current.settings.aiPermission,
+        aiContext: patch.aiContext ?? current.settings.aiContext,
+      },
+    }));
+  };
+
+  addTrack = async (name: string): Promise<CreativeSession> => {
+    this.calls.push('addTrack');
+    if (!name.trim()) throw new Error('Track name must not be empty.');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        tracks: [
+          ...current.arrangement.tracks,
+          {
+            id: `track:${Date.now()}`,
+            name: name.trim().slice(0, 80),
+            gainDb: 0,
+            pan: 0,
+            muted: false,
+            solo: false,
+          },
+        ],
+      },
+    }));
+  };
+
+  updateTrack = async (
+    trackId: string,
+    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateTrack');
+    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
+      throw new Error(`Track is not registered: ${trackId}`);
+    }
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        tracks: current.arrangement.tracks.map((track) =>
+          track.id === trackId
+            ? {
+                ...track,
+                gainDb:
+                  patch.gainDb === undefined
+                    ? track.gainDb
+                    : Math.max(-90, Math.min(24, patch.gainDb)),
+                pan: patch.pan === undefined ? track.pan : Math.max(-1, Math.min(1, patch.pan)),
+                muted: patch.muted ?? track.muted,
+                solo: patch.solo ?? track.solo,
+              }
+            : track,
+        ),
+      },
+    }));
+  };
+
+  importMidiClip = async (assetId: AssetId, name: string): Promise<CreativeSession> => {
+    this.calls.push('importMidiClip');
+    this.assertAsset(assetId);
+    return this.commitSession((current) => {
+      const startMs = Math.max(
+        0,
+        ...current.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
+        ...current.arrangement.midiClips.map((clip) => clip.startMs + clip.durationMs),
+      );
+      const id = `midi:${assetId}`;
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        workspace: 'arrange',
+        arrangement: {
+          ...current.arrangement,
+          midiClips: [
+            ...current.arrangement.midiClips.filter((clip) => clip.id !== id),
+            {
+              id,
+              name,
+              startMs,
+              durationMs: 500,
+              muted: false,
+              notes: [
+                {
+                  id: `${id}:note:0`,
+                  note: 60,
+                  startMs: 0,
+                  durationMs: 500,
+                  velocity: 100,
+                  channel: 1,
+                },
+              ],
+            },
+          ],
+        },
+      };
+    });
+  };
+
+  updateMidiNote = async (
+    clipId: string,
+    noteId: string,
+    patch: {
+      note?: number;
+      startMs?: number;
+      durationMs?: number;
+      velocity?: number;
+      channel?: number;
+    },
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateMidiNote');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: clip.notes.map((note) =>
+                  note.id === noteId ? { ...note, ...patch } : note,
+                ),
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  removeMidiNote = async (clipId: string, noteId: string): Promise<CreativeSession> => {
+    this.calls.push('removeMidiNote');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  removeMidiClip = async (clipId: string): Promise<CreativeSession> => {
+    this.calls.push('removeMidiClip');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        midiClips: current.arrangement.midiClips.filter((clip) => clip.id !== clipId),
+      },
+    }));
+  };
+
+  applyAiSuggestion = async (clipId: string, proposedGainDb: number): Promise<CreativeSession> => {
+    this.calls.push('applyAiSuggestion');
+    const currentClip = this.bootstrapState.session.arrangement.audioClips.find(
+      (clip) => clip.id === clipId,
+    );
+    if (!currentClip) throw new Error(`Audio clip is not registered: ${clipId}`);
+    if (this.bootstrapState.session.settings.aiPermission !== 'Apply') {
+      throw new Error('AI permission must be Apply.');
+    }
+    const safeGain = Math.max(-90, Math.min(24, proposedGainDb));
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        audioClips: current.arrangement.audioClips.map((clip) =>
+          clip.id === clipId ? { ...clip, gainDb: safeGain } : clip,
+        ),
+      },
+      settings: {
+        ...current.settings,
+        aiHistory: [
+          ...current.settings.aiHistory,
+          {
+            id: `ai:${Date.now()}`,
+            createdAtMs: Date.now(),
+            permission: 'Apply' as const,
+            target: clipId,
+            currentGainDb: currentClip.gainDb,
+            proposedGainDb: safeGain,
+            reason: 'Match the selected reference RMS without changing the source WAV.',
+            expectedEffect:
+              'A closer perceived level while clip position and source remain unchanged.',
+            risk: 'Low · reversible',
+            context: [...current.settings.aiContext],
+            applied: true,
+          },
+        ].slice(-128),
+      },
+    }));
   };
 
   saveRackDefinition = async (name: string, path: string): Promise<AssetId | null> => {
@@ -1306,6 +1622,9 @@ export class FakeNativeApi implements NativeApi {
     assetId: AssetId,
   ): Promise<{ session: CreativeSession; audio: AudioStatus } | null> => {
     this.calls.push('loadRackDefinitionAsset');
+    if (this.unsupportedRuntimeState) {
+      throw new Error('Rack definitions are unsupported by the fake runtime.');
+    }
     const entry = this.rackDefinitions.find((item) => item.assetId === assetId);
     if (!entry) return null;
     const session = this.bootstrapState.session;
@@ -1346,9 +1665,4 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
     vst3Root: defaultVst3Root,
     ...overrides,
   };
-}
-
-/** createFakeNativeApi is a convenience constructor for tests. */
-export function createFakeNativeApi(options?: FakeNativeApiOptions): FakeNativeApi {
-  return new FakeNativeApi(options);
 }

@@ -1,7 +1,5 @@
 //! Thin Tauri command boundary for Asset Application Operations.
 
-use std::path::PathBuf;
-
 use tauri::State;
 
 use crate::AppState;
@@ -26,21 +24,4 @@ pub fn preview_asset(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     application::preview_asset(&context(&state), asset_id, options)
-}
-
-/// Reads a Canonical MIDI Asset's events. Resolving the AssetId to its content
-/// file is Rust-only, so React never handles a MIDI asset path.
-#[tauri::command]
-pub fn read_midi_events(
-    asset_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::recording::MidiEvent>, String> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    let asset = crate::asset::load(&state.data_root, &asset_id)
-        .ok_or_else(|| format!("MIDI asset is not registered: {asset_id}"))?;
-    if asset.kind != crate::asset::AssetKind::Midi {
-        return Err(format!("Asset {asset_id} is not a MIDI asset."));
-    }
-    crate::recording::read_midi_events(&PathBuf::from(asset.content_location))
 }

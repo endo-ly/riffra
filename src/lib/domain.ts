@@ -2,7 +2,7 @@ export type Workspace = 'home' | 'play' | 'design' | 'arrange';
 export type DesignTool = 'sample' | 'analyze' | 'separate';
 export type AssetId = string;
 
-export interface RackDevice {
+interface RackDevice {
   id: string;
   name: string;
   kind: 'input' | 'plugin' | 'utility' | 'output';
@@ -14,14 +14,14 @@ export interface RackDevice {
   disabledPlaceholder?: boolean;
 }
 
-export interface RackMacro {
+interface RackMacro {
   id: string;
   name: string;
   value: number;
   parameterIndex: number | null;
 }
 
-export interface SessionSnapshot {
+interface SessionSnapshot {
   id: string;
   name: string;
   createdAtMs: number;
@@ -70,7 +70,7 @@ export interface AudioClipPatch {
   muted?: boolean;
 }
 
-export interface Track {
+interface Track {
   id: string;
   name: string;
   gainDb: number;
@@ -88,7 +88,7 @@ export interface MidiNote {
   channel: number;
 }
 
-export interface MidiClip {
+interface MidiClip {
   id: string;
   name: string;
   startMs: number;
@@ -97,7 +97,7 @@ export interface MidiClip {
   muted: boolean;
 }
 
-export interface SamplePad {
+interface SamplePad {
   id: string;
   name: string;
   assetId: AssetId;
@@ -108,7 +108,7 @@ export interface SamplePad {
   loopEnabled: boolean;
 }
 
-export interface AiChangeSet {
+interface AiChangeSet {
   id: string;
   createdAtMs: number;
   permission: 'Explain' | 'Suggest' | 'Apply';
@@ -122,43 +122,26 @@ export interface AiChangeSet {
   applied: boolean;
 }
 
-export interface DesignContextDto {
+interface DesignContextDto {
   activeTool: DesignTool;
   targetAssetId: AssetId | null;
 }
 
-export interface AssetSummaryDto {
-  id: AssetId;
-  kind: 'audio' | 'midi' | 'sample' | 'rackDefinition' | 'generationDefinition' | string;
-  name: string;
-  contentLocation: string | null;
-  createdAtMs: number | null;
-  updatedAtMs: number | null;
-  provenance: ProvenanceDto | null;
-}
-
-export interface ProvenanceDto {
-  sourceAssetIds: AssetId[];
-  operation:
-    'recorded' | 'processed' | 'sampled' | 'separated' | 'rendered' | 'generated' | 'imported';
-  parameters: Record<string, unknown>;
-}
-
-export interface Arrangement {
+interface Arrangement {
   tracks: Track[];
   audioClips: AudioClip[];
   midiClips: MidiClip[];
 }
 
-export interface SampleInstrumentState {
+interface SampleInstrumentState {
   pads: SamplePad[];
 }
 
-export interface PlayState {
+interface PlayState {
   sampleInstrument: SampleInstrumentState;
 }
 
-export interface SessionSettings {
+interface SessionSettings {
   masterDb: number;
   loopEnabled: boolean;
   countInBeats: number;
@@ -203,7 +186,7 @@ export interface PluginEntry {
   scanState: 'discovered' | 'validated' | 'failed' | 'quarantined';
 }
 
-export interface ScanIssue {
+interface ScanIssue {
   path: string;
   message: string;
 }
@@ -292,7 +275,7 @@ export interface RecordingAsset {
   capture?: RecordingCaptureDto | null;
 }
 
-export interface RecordingCaptureDto {
+interface RecordingCaptureDto {
   captureId: string;
   sessionId: string;
   status: 'recording' | 'completing' | 'completed' | 'recoverable' | 'failed' | string;
@@ -359,7 +342,7 @@ export function compareAnalyses(
   };
 }
 
-export interface PluginStatus {
+interface PluginStatus {
   loaded: boolean;
   bypassed: boolean;
   path: string | null;
@@ -408,15 +391,7 @@ export interface MidiProbe {
   message: string;
 }
 
-export interface MidiEvent {
-  timeMs: number;
-  status: number;
-  channel: number;
-  note: number;
-  velocity: number;
-}
-
-export interface AudioDriverInfo {
+interface AudioDriverInfo {
   name: string;
   inputs: string[];
   outputs: string[];

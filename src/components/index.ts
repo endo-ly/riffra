@@ -1,4 +1,4 @@
-export { Icon, Meter } from './shared/ui';
+export { Icon } from './shared/ui';
 export { EmptyWorkspace } from './shared/EmptyWorkspace';
 
 export { GlobalBar } from './layout/GlobalBar';
@@ -21,7 +21,6 @@ export { SamplePadEditor } from './design/SamplePadEditor';
 export { SamplePreviewControls } from './design/SamplePreviewControls';
 export { WorkspaceAnalyze } from './design/WorkspaceAnalyze';
 export { ReferenceSuggestion } from './design/ReferenceSuggestion';
-export { ReferenceCompare } from './design/ReferenceCompare';
 export { WorkspaceSeparate } from './design/WorkspaceSeparate';
 
 export { WorkspaceArrange } from './arrange/WorkspaceArrange';

@@ -428,6 +428,29 @@ pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String
     location.filter(|value| !value.is_empty())
 }
 
+/// Resolves a string AssetId (any form accepted by [`AssetId::from_normalized`])
+/// to a validated on-disk audio file path. Shared by background jobs that need
+/// to hand a path to a worker without exposing Asset storage internals to the
+/// command layer. The Asset must exist, must be an audio Asset, and its
+/// content file must still be present.
+pub fn resolve_audio_path(data_root: &Path, value: &str) -> Result<PathBuf, String> {
+    let asset_id =
+        AssetId::from_normalized(value).map_err(|error| format!("Asset id is invalid: {error}"))?;
+    let asset = load(data_root, &asset_id)
+        .ok_or_else(|| format!("Audio asset is not registered: {asset_id}"))?;
+    if asset.kind != AssetKind::Audio {
+        return Err(format!("Asset {asset_id} is not an audio asset."));
+    }
+    let path = PathBuf::from(asset.content_location);
+    if !path.is_file() {
+        return Err(format!(
+            "Audio asset content does not exist: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
 /// Lists every canonical [`Asset`] of the supplied kind, newest first.
 ///
 /// Used to back Library views (such as saved `RackDefinition` assets) directly

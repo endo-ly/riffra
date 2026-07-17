@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -147,6 +148,26 @@ impl JobRegistry {
             update(&mut status, &record);
         }
     }
+}
+
+/// Shared by background-job features: marks the job failed (or cancelled, if
+/// the user asked to cancel before the result landed) and records the failure
+/// to the diagnostics log so it is not silently swallowed.
+pub fn fail(registry: &JobRegistry, data_root: &Path, id: &str, message: String) {
+    if registry.is_cancelled(id) {
+        registry.mark_cancelled(id);
+    } else {
+        let _ = crate::diagnostics::record(data_root, "job", &message);
+        registry.fail(id, message);
+    }
+}
+
+/// Shared by background-job features: encodes a strongly typed job result into
+/// the [`Value`] shape the registry stores, surfacing encoding failures
+/// through the same `fail` path as worker errors.
+pub fn serialize_result<T: Serialize>(result: &T) -> Result<Value, String> {
+    serde_json::to_value(result)
+        .map_err(|error| format!("Job result could not be encoded: {error}"))
 }
 
 #[cfg(test)]

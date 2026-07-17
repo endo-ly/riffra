@@ -44,7 +44,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     probeAudioDevices,
     listSeparations,
     renderTimeline,
-    saveSession,
     loadPluginIntoRack: loadPluginIntoRackApi,
     clearPluginFromRack: clearPluginFromRackApi,
     setRackPluginBypassed,
@@ -177,7 +176,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setAutosaveError,
     exportMessage,
     setExportMessage,
-    saveTimer,
     previousSession,
     historySkip,
     undo,
@@ -190,28 +188,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
-  // Keeps the latest session available to production operations without adding
-  // it to their dependency arrays. Rack/pad Application Operations read the
-  // canonical session from the Rust in-memory copy, which only advances when the
-  // session is persisted. UI-local edits (workspace, notes, macros) reach the
-  // backend through the debounced autosave, so a rack/pad operation triggered
-  // before that flush would return a session missing those edits and clobber
-  // them. flushSession forces the current session to the backend first so the
-  // operation reads and returns a truly canonical session.
-  const latestSession = useRef(session);
-  latestSession.current = session;
-  const flushSession = useCallback(async () => {
-    const current = latestSession.current;
-    if (current) await saveSession({ ...current, updatedAtMs: Date.now() });
-  }, [saveSession]);
-  // runSessionOp is the single boundary for any operation that mutates the
-  // canonical session through Rust: it flushes pending React edits first so the
-  // Rust operation reads the true latest session, surfaces a failure through the
-  // status line instead of silently no-oping, and returns the result for the
-  // caller to apply (most callers pass it to setSession).
+  // UI helper for applying a Rust Session Operation and surfacing a rejected
+  // intent. Production state is never assembled or flushed from React here.
   const runSessionOp = useCallback(
     async <T>(op: () => Promise<T | null>, label: string): Promise<T | null> => {
-      await flushSession();
       const result = await op();
       if (result == null) {
         setAutosaveError(`${label} could not be applied.`);
@@ -220,7 +200,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setAutosaveError(null);
       return result;
     },
-    [flushSession, setAutosaveError],
+    [setAutosaveError],
   );
   const switchWorkspace = useCallback(
     async (workspace: Workspace) => {
@@ -291,7 +271,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       bypassed = false,
       stateData: string | null = null,
     ) => {
-      await flushSession();
       const { session: nextSession, audio: nextAudio } = await loadPluginIntoRackApi(
         plugin.path,
         plugin.name,
@@ -302,34 +281,31 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setAudio(nextAudio);
       setSession(nextSession);
     },
-    [flushSession, loadPluginIntoRackApi],
+    [loadPluginIntoRackApi],
   );
 
   const clearPluginFromRack = useCallback(async () => {
-    await flushSession();
     const { session: nextSession, audio: nextAudio } = await clearPluginFromRackApi();
     setAudio(nextAudio);
     setSession(nextSession);
-  }, [flushSession, clearPluginFromRackApi]);
+  }, [clearPluginFromRackApi]);
 
   const togglePluginBypass = useCallback(
     async (bypassed: boolean) => {
-      await flushSession();
       const { session: nextSession, audio: nextAudio } = await setRackPluginBypassed(bypassed);
       setAudio(nextAudio);
       setSession(nextSession);
     },
-    [flushSession, setRackPluginBypassed],
+    [setRackPluginBypassed],
   );
 
   const setPluginParameterValue = useCallback(
     async (index: number, value: number) => {
-      await flushSession();
       const { session: nextSession, audio: nextAudio } = await setRackPluginParameter(index, value);
       setAudio(nextAudio);
       setSession(nextSession);
     },
-    [flushSession, setRackPluginParameter],
+    [setRackPluginParameter],
   );
 
   const runBackgroundJob = useCallback(
@@ -689,25 +665,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     async (recording: RecordingAsset) => {
       if (!session || recording.error) return;
       const assetId = recording.processedAssetId ?? recording.rawAssetId;
-      if (
-        !assetId ||
-        session.playState.sampleInstrument.pads.some((pad) => pad.assetId === assetId)
-      )
-        return;
-      const durationMs =
-        recording.sampleRate && recording.samplesWritten
-          ? Math.max(1, Math.round((recording.samplesWritten / recording.sampleRate) * 1000))
-          : 1_000;
-      await flushSession();
+      if (!assetId) return;
       const { session: nextSession, audio: nextAudio } = await createSamplePadApi(
         assetId,
         recording.name,
-        durationMs,
       );
       setSession(nextSession);
       setAudio(nextAudio);
     },
-    [flushSession, createSamplePadApi, session],
+    [createSamplePadApi, session],
   );
 
   const updateSamplePad = useCallback(
@@ -720,22 +686,20 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         loopEnabled?: boolean;
       },
     ) => {
-      await flushSession();
       const { session: nextSession, audio: nextAudio } = await updateSamplePadApi(padId, patch);
       setSession(nextSession);
       setAudio(nextAudio);
     },
-    [flushSession, updateSamplePadApi],
+    [updateSamplePadApi],
   );
 
   const removeSamplePad = useCallback(
     async (padId: string) => {
-      await flushSession();
       const { session: nextSession, audio: nextAudio } = await removeSamplePadApi(padId);
       setSession(nextSession);
       setAudio(nextAudio);
     },
-    [flushSession, removeSamplePadApi],
+    [removeSamplePadApi],
   );
 
   useEffect(() => {
@@ -743,7 +707,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setBoot(state);
       setSession(state.session);
       void getMissingDependencies().then(setMissingDependencies);
-      if (!state.safeMode) void setMasterGainDb(state.session.settings.masterDb).then(setAudio);
+      if (!state.safeMode)
+        void setMasterGainDb(state.session.settings.masterDb).then((result) => {
+          setAudio(result.audio);
+          // The Rust Session Operation persists the clamped master gain; trust
+          // the canonical session it returns instead of re-deriving it here.
+          setSession(result.session);
+        });
       void runBackgroundJob(
         () => startScanJob(state.vst3Root),
         (value) => {
@@ -827,15 +797,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         if (event.shiftKey) {
-          redo();
+          void redo();
         } else {
-          undo();
+          void undo();
         }
         return;
       }
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'y') {
         event.preventDefault();
-        redo();
+        void redo();
         return;
       }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'm') {
@@ -958,7 +928,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setUndoStack,
     redoStack,
     setRedoStack,
-    saveTimer,
     previousSession,
     historySkip,
     recordingCommandLock,

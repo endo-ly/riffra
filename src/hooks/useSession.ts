@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, BootstrapState, CreativeSession } from '@/lib/domain';
-import { shouldRestoreIndividualParameters } from '@/lib/plugin-session';
 import type { NativeApi } from '@/native/native-api';
 
 interface UseSessionOptions {
@@ -13,9 +12,12 @@ interface UseSessionOptions {
 export function useSession(api: NativeApi, options: UseSessionOptions) {
   const {
     saveSession,
+    updateSessionSettings,
+    captureSnapshot: captureSnapshotApi,
     exportSession: exportSessionApi,
     importSession: importSessionApi,
     restoreRecoveryGeneration,
+    recallSnapshot: recallSnapshotApi,
   } = api;
   const { setBoot, setAudio, setMissingPluginPaths } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
@@ -23,82 +25,60 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const [redoStack, setRedoStack] = useState<CreativeSession[]>([]);
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState('Autosave remains the primary session copy.');
-  const saveTimer = useRef<number | undefined>(undefined);
   const previousSession = useRef<CreativeSession | null>(null);
   const historySkip = useRef(false);
   const sessionRef = useRef<CreativeSession | null>(null);
   sessionRef.current = session;
 
-  const undo = useCallback(() => {
+  const undo = useCallback(async () => {
     if (!session || undoStack.length === 0) return;
     const previous = undoStack[undoStack.length - 1];
-    historySkip.current = true;
-    setUndoStack(undoStack.slice(0, -1));
-    setRedoStack([...redoStack, session].slice(-40));
-    setSession(previous);
-  }, [redoStack, session, undoStack]);
+    try {
+      const canonical = await saveSession(previous);
+      historySkip.current = true;
+      setUndoStack(undoStack.slice(0, -1));
+      setRedoStack([...redoStack, session].slice(-40));
+      setSession(canonical);
+      setAutosaveError(null);
+    } catch (error) {
+      setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [redoStack, saveSession, session, undoStack]);
 
-  const redo = useCallback(() => {
+  const redo = useCallback(async () => {
     if (!session || redoStack.length === 0) return;
     const next = redoStack[redoStack.length - 1];
-    historySkip.current = true;
-    setRedoStack(redoStack.slice(0, -1));
-    setUndoStack([...undoStack, session].slice(-40));
-    setSession(next);
-  }, [redoStack, session, undoStack]);
+    try {
+      const canonical = await saveSession(next);
+      historySkip.current = true;
+      setRedoStack(redoStack.slice(0, -1));
+      setUndoStack([...undoStack, session].slice(-40));
+      setSession(canonical);
+      setAutosaveError(null);
+    } catch (error) {
+      setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [redoStack, saveSession, session, undoStack]);
 
   const captureSnapshot = useCallback(
-    (slot: 'A' | 'B') => {
-      if (!session) return;
-      const id = `snapshot:${slot}`;
-      const snapshot = {
-        id,
-        name: slot,
-        createdAtMs: Date.now(),
-        description: '',
-        tag: null,
-        parentId: null,
-        masterDb: session.settings.masterDb,
-        rack: session.rack.devices.map((device) => ({ ...device })),
-        macros: session.rack.macros.map((macro) => ({ ...macro })),
-      };
-      setSession({
-        ...session,
-        snapshots: [...session.snapshots.filter((item) => item.id !== id), snapshot],
-      });
+    async (slot: 'A' | 'B') => {
+      const { session: nextSession, audio: nextAudio } = await captureSnapshotApi(slot);
+      setSession(nextSession);
+      setAudio(nextAudio);
     },
-    [session],
+    [captureSnapshotApi, setAudio],
   );
 
   const recallSnapshot = useCallback(
     async (slot: 'A' | 'B') => {
-      if (!session) return;
-      const snapshot = session.snapshots.find((item) => item.id === `snapshot:${slot}`);
-      if (!snapshot) return;
-      setSession({
-        ...session,
-        settings: { ...session.settings, masterDb: snapshot.masterDb },
-        rack: {
-          devices: snapshot.rack.map((device) => ({ ...device })),
-          macros: snapshot.macros.map((macro) => ({ ...macro })),
-        },
-      });
-      const plugin = snapshot.rack.find((device) => device.kind === 'plugin');
-      if (plugin) {
-        let nextAudio = plugin.stateData
-          ? await api.setPluginState(plugin.stateData)
-          : await api.setPluginBypassed(plugin.bypassed);
-        if (plugin.stateData) nextAudio = await api.setPluginBypassed(plugin.bypassed);
-        if (shouldRestoreIndividualParameters(plugin.stateData)) {
-          for (const [index, value] of plugin.parameterValues.entries()) {
-            if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
-            nextAudio = await api.setPluginParameter(index, value);
-          }
-        }
-        setAudio(nextAudio);
-      }
+      // Snapshot recall is a single Rust Application Operation: runtime plugin
+      // restore + session rack/macros/master commit happen together, so React
+      // never re-derives the rack or sequences low-level plugin calls itself.
+      const { session: nextSession, audio: nextAudio } = await recallSnapshotApi(slot);
+      setSession(nextSession);
+      setAudio(nextAudio);
     },
-    [session],
+    [recallSnapshotApi, setAudio, setSession],
   );
 
   useEffect(() => {
@@ -114,24 +94,13 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     previousSession.current = session;
   }, [session]);
 
-  useEffect(() => {
-    if (!session) return;
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      void saveSession({ ...session, updatedAtMs: Date.now() }).then((error) => {
-        setAutosaveError(error ? `Autosave failed: ${error}` : null);
-      });
-    }, 750);
-    return () => window.clearTimeout(saveTimer.current);
-  }, [session]);
-
-  const renameSession = useCallback(() => {
+  const renameSession = useCallback(async () => {
     if (!session) return;
     const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
     if (next == null) return;
     const name = next.trim().slice(0, 160);
-    setSession({ ...session, projectName: name || null });
-  }, [session]);
+    setSession(await updateSessionSettings({ projectName: name || null }));
+  }, [session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
     const result = await exportSessionApi();
@@ -199,7 +168,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     setAutosaveError,
     exportMessage,
     setExportMessage,
-    saveTimer,
     previousSession,
     historySkip,
     undo,

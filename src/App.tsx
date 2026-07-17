@@ -265,7 +265,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 void selectAudioDriver(driver, sampleRate, bufferSize)
               }
             />
-            <CaptureSettings session={session} setSession={setSession} />
+            <CaptureSettings session={session} setSession={setSession} api={nativeApi} />
           </div>
         )}
         {session.workspace === 'play' && (
@@ -275,6 +275,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             plugins={plugins}
             missingPluginPaths={missingPluginPaths}
             setSession={setSession}
+            setAudio={setAudio}
+            api={nativeApi}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
             onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)}
             onClearPlugin={() => void clearPluginFromRack()}
@@ -291,6 +293,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               setSession={setSession}
               recordings={usableRecordings}
               onPlaceRecording={placeRecording}
+              api={nativeApi}
             />
             <TimelineClipInspector
               session={session}
@@ -360,7 +363,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               session={session}
               setSession={setSession}
               api={nativeApi}
-              runSessionOp={runSessionOp}
               onSelect={(recording) => void selectReference(recording)}
               onPreview={(recording) => void previewReference(recording)}
               onStop={() => void stopReferencePreview()}

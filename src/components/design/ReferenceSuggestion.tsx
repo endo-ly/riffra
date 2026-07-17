@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react';
-import type {
-  AiChangeSet,
-  AudioAnalysis,
-  CreativeSession,
-  RecordingAsset,
-  SessionOpRunner,
-} from '@/lib/domain';
+import type { AudioAnalysis, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
@@ -18,7 +12,6 @@ export function ReferenceSuggestion({
   session,
   setSession,
   api,
-  runSessionOp,
   onSelect,
   onPreview,
   onStop,
@@ -35,7 +28,6 @@ export function ReferenceSuggestion({
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
-  runSessionOp: SessionOpRunner;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;
@@ -91,46 +83,15 @@ export function ReferenceSuggestion({
       session.settings.aiPermission !== 'Apply'
     )
       return;
-    // Commit the gain change through the Rust Arrangement Domain so the
-    // canonical clamp and validation rules run there. React no longer mutates
-    // audioClips directly for this edit.
-    const updated = await runSessionOp(
-      () => api.updateAudioClip(targetClip.id, { gainDb: proposedGain }),
-      'Apply suggestion',
-    );
-    if (!updated) return;
-    const changeSet: AiChangeSet = {
-      id: `ai:${Date.now()}`,
-      createdAtMs: Date.now(),
-      permission: session.settings.aiPermission,
-      target: targetClip.id,
-      currentGainDb: targetClip.gainDb,
-      proposedGainDb: proposedGain,
-      reason: 'Match the selected reference RMS without changing the source WAV.',
-      expectedEffect: 'A closer perceived level while clip position and source remain unchanged.',
-      risk: 'Low · reversible',
-      context: [...session.settings.aiContext],
-      applied: true,
-    };
-    setSession({
-      ...updated,
-      settings: {
-        ...updated.settings,
-        aiHistory: [...updated.settings.aiHistory, changeSet].slice(-128),
-      },
-    });
+    setSession(await api.applyAiSuggestion(targetClip.id, proposedGain));
     setApplied(true);
   };
-  const toggleContext = (id: string) =>
-    setSession({
-      ...session,
-      settings: {
-        ...session.settings,
-        aiContext: session.settings.aiContext.includes(id)
-          ? session.settings.aiContext.filter((item) => item !== id)
-          : [...session.settings.aiContext, id],
-      },
-    });
+  const toggleContext = (id: string) => {
+    const aiContext = session.settings.aiContext.includes(id)
+      ? session.settings.aiContext.filter((item) => item !== id)
+      : [...session.settings.aiContext, id];
+    void api.updateSessionSettings({ aiContext }).then(setSession);
+  };
   return (
     <>
       <section className="section-card ai-context-card">
@@ -144,13 +105,9 @@ export function ReferenceSuggestion({
             <select
               value={session.settings.aiPermission}
               onChange={(event) =>
-                setSession({
-                  ...session,
-                  settings: {
-                    ...session.settings,
-                    aiPermission: event.target.value as CreativeSession['settings']['aiPermission'],
-                  },
-                })
+                void api
+                  .updateSessionSettings({ aiPermission: event.target.value })
+                  .then(setSession)
               }
             >
               <option>Explain</option>

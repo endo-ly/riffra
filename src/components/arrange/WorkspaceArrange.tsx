@@ -1,70 +1,37 @@
 import type { CreativeSession, RecordingAsset } from '@/lib/domain';
+import type { NativeApi } from '@/native/native-api';
 
 export function WorkspaceArrange({
   session,
   setSession,
   recordings,
   onPlaceRecording,
+  api,
 }: {
   session: CreativeSession;
   setSession: (value: CreativeSession) => void;
   recordings: RecordingAsset[];
   onPlaceRecording: (recording: RecordingAsset) => void;
+  api: NativeApi;
 }) {
   const timelineEnd = Math.max(
     10_000,
     ...session.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
   );
-  const toggleTrack = (id: string, field: 'muted' | 'solo') =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        tracks: session.arrangement.tracks.map((track) =>
-          track.id === id ? { ...track, [field]: !track[field] } : track,
-        ),
-      },
-    });
-  const updateTrack = (id: string, field: 'gainDb' | 'pan', value: number) =>
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        tracks: session.arrangement.tracks.map((track) =>
-          track.id !== id
-            ? track
-            : {
-                ...track,
-                [field]:
-                  field === 'gainDb'
-                    ? Math.max(-90, Math.min(24, value))
-                    : Math.max(-1, Math.min(1, value)),
-              },
-        ),
-      },
-    });
-  const addTrack = () => {
+  const toggleTrack = async (id: string, field: 'muted' | 'solo') => {
+    const track = session.arrangement.tracks.find((item) => item.id === id);
+    if (!track) return;
+    setSession(await api.updateTrack(id, { [field]: !track[field] }));
+  };
+  const updateTrack = async (id: string, field: 'gainDb' | 'pan', value: number) => {
+    setSession(await api.updateTrack(id, { [field]: value }));
+  };
+  const addTrack = async () => {
     const name = window
       .prompt('Track name', `Track ${session.arrangement.tracks.length + 1}`)
       ?.trim();
     if (!name) return;
-    setSession({
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        tracks: [
-          ...session.arrangement.tracks,
-          {
-            id: `track:${Date.now()}`,
-            name: name.slice(0, 80),
-            gainDb: 0,
-            pan: 0,
-            muted: false,
-            solo: false,
-          },
-        ],
-      },
-    });
+    setSession(await api.addTrack(name));
   };
   return (
     <div className="arrange-view">
@@ -83,7 +50,7 @@ export function WorkspaceArrange({
             <span className="eyebrow">TRACK MIXER</span>
             <h2>Shared lanes and safe mix state</h2>
           </div>
-          <button className="text-button" onClick={addTrack}>
+          <button className="text-button" onClick={() => void addTrack()}>
             Add track
           </button>
         </header>
@@ -99,7 +66,9 @@ export function WorkspaceArrange({
                   max="24"
                   step="0.5"
                   value={track.gainDb}
-                  onChange={(event) => updateTrack(track.id, 'gainDb', Number(event.target.value))}
+                  onChange={(event) =>
+                    void updateTrack(track.id, 'gainDb', Number(event.target.value))
+                  }
                 />
               </label>
               <label>
@@ -110,13 +79,15 @@ export function WorkspaceArrange({
                   max="1"
                   step="0.05"
                   value={track.pan}
-                  onChange={(event) => updateTrack(track.id, 'pan', Number(event.target.value))}
+                  onChange={(event) =>
+                    void updateTrack(track.id, 'pan', Number(event.target.value))
+                  }
                 />
               </label>
-              <button className="text-button" onClick={() => toggleTrack(track.id, 'muted')}>
+              <button className="text-button" onClick={() => void toggleTrack(track.id, 'muted')}>
                 {track.muted ? 'Unmute' : 'Mute'}
               </button>
-              <button className="text-button" onClick={() => toggleTrack(track.id, 'solo')}>
+              <button className="text-button" onClick={() => void toggleTrack(track.id, 'solo')}>
                 {track.solo ? 'Unsolo' : 'Solo'}
               </button>
             </div>

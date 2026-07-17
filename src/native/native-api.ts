@@ -9,14 +9,12 @@ import type {
   AudioClipPatch,
   LibraryAsset,
   MissingDependency,
-  MidiEvent,
   MidiExportResult,
   MidiProbe,
   ProjectExport,
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  SamplePad,
   ScanReport,
   CreativeSession,
   DesignTool,
@@ -37,7 +35,7 @@ import type {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
-  saveSession(session: CreativeSession): Promise<string | null>;
+  saveSession(session: CreativeSession): Promise<CreativeSession>;
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;
   importSession(path: string): Promise<CreativeSession | null>;
@@ -66,7 +64,6 @@ export interface NativeApi {
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
-  readMidiEvents(assetId: AssetId): Promise<MidiEvent[]>;
   probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
 
@@ -99,13 +96,28 @@ export interface NativeApi {
     index: number,
     value: number,
   ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  setRackMacroValue(
+    macroId: string,
+    value: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  mapRackMacro(
+    macroId: string,
+    parameterIndex: number | null,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   /**
    * Synchronizes the current session rack into the Audio Runtime at startup.
    * The session is already canonical, so a normal restore does not rewrite it.
    */
   restoreCurrentRack(): Promise<AudioStatus>;
-  loadPlugin(path: string): Promise<AudioStatus>;
-  clearPlugin(): Promise<AudioStatus>;
+  /**
+   * Recalls an A/B session snapshot through one Rust Application Operation:
+   * clears the runtime plugin, applies the snapshot's plugin (state + params +
+   * bypass) to the runtime, then commits the snapshot's rack devices, macros,
+   * and master gain to the canonical session. React never re-derives the rack
+   * or sequences low-level runtime calls itself.
+   */
+  recallSnapshot(slot: 'A' | 'B'): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  captureSnapshot(slot: 'A' | 'B'): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   /**
    * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
    * content-location resolution, file-existence checks, and the Audio Runtime
@@ -117,22 +129,33 @@ export interface NativeApi {
   stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
-  setEmergencyMute(muted: boolean): Promise<AudioStatus>;
+  /**
+   * Engages or releases emergency mute and persists the intent into the
+   * canonical session settings so a reload reproduces the same mute state.
+   */
+  setEmergencyMute(muted: boolean): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   startRecording(): Promise<AudioStatus>;
   stopRecording(): Promise<AudioStatus>;
-  setPluginBypassed(bypassed: boolean): Promise<AudioStatus>;
-  setPluginParameter(index: number, value: number): Promise<AudioStatus>;
-  setPluginState(stateData: string): Promise<AudioStatus>;
-  setMasterGainDb(gainDb: number): Promise<AudioStatus>;
+  /**
+   * Sets the master gain on the Audio Runtime and persists the clamped value
+   * into the canonical session settings. One Rust Application Operation
+   * coordinates the runtime and persistence; React never re-derives settings.
+   */
+  setMasterGainDb(gainDb: number): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   recoverAudioDevice(): Promise<AudioStatus>;
+  /**
+   * Sets the audio driver (and optional sample-rate / buffer preferences) on
+   * the Audio Runtime and persists the effective settings. The runtime may
+   * reject the requested preferences; the effective values are stored so a
+   * reload reproduces the same device state.
+   */
   setAudioDriver(
     driver: string,
     sampleRate?: number | null,
     bufferSize?: number | null,
-  ): Promise<AudioStatus>;
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
-  configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
@@ -143,7 +166,6 @@ export interface NativeApi {
   createSamplePad(
     assetId: AssetId,
     name: string,
-    durationMs: number,
   ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   updateSamplePad(
     padId: string,
@@ -173,6 +195,34 @@ export interface NativeApi {
    * canonical session stays the source of truth.
    */
   switchWorkspace(workspace: Workspace): Promise<CreativeSession | null>;
+  updateSessionSettings(patch: {
+    projectName?: string | null;
+    loopEnabled?: boolean;
+    countInBeats?: number;
+    note?: string;
+    aiPermission?: string;
+    aiContext?: string[];
+  }): Promise<CreativeSession>;
+  addTrack(name: string): Promise<CreativeSession>;
+  updateTrack(
+    trackId: string,
+    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+  ): Promise<CreativeSession>;
+  importMidiClip(assetId: AssetId, name: string): Promise<CreativeSession>;
+  updateMidiNote(
+    clipId: string,
+    noteId: string,
+    patch: {
+      note?: number;
+      startMs?: number;
+      durationMs?: number;
+      velocity?: number;
+      channel?: number;
+    },
+  ): Promise<CreativeSession>;
+  removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
+  removeMidiClip(clipId: string): Promise<CreativeSession>;
+  applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
 
   /**
    * Commits a partial update to an existing audio clip through the Rust
@@ -204,6 +254,16 @@ export interface NativeApi {
   ): Promise<{ session: CreativeSession; audio: AudioStatus } | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
+  /**
+   * Rewrites every canonical Asset reference pointed to by `assetId` to the
+   * user's new file and persists the updated session through one Rust
+   * Application Operation. The Asset's content location is also updated so
+   * future operations resolve to the new path.
+   */
   relinkMissingDependency(assetId: AssetId, newPath: string): Promise<CreativeSession>;
+  /**
+   * Marks a missing plugin device as a disabled placeholder through one Rust
+   * Application Operation that mutates and persists the canonical session.
+   */
   disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
 }
