@@ -215,7 +215,6 @@ juce::var RecordingSession::status() const {
 
 bool RecordingSession::writeManifest(const juce::String& state, juce::String& error) const {
     auto* object = new juce::DynamicObject();
-    object->setProperty("formatVersion", 1);
     object->setProperty("state", state);
     object->setProperty("startedAt", startedAt.toISO8601(true));
     object->setProperty("updatedAt", juce::Time::getCurrentTime().toISO8601(true));

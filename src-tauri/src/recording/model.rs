@@ -67,8 +67,7 @@ pub struct RecordingCapture {
     pub sample_rate: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_device: Option<String>,
-    /// Session context captured at recording start. These replace the
-    /// duplicated fields formerly written to `provenance.json`.
+    /// Session context captured at recording start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
