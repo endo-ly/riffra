@@ -41,6 +41,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
     async (
       driver: string,
       inputDevice: string | null,
+      inputChannel: number,
       outputDevice: string | null,
       sampleRate: number,
       bufferSize: number,
@@ -48,6 +49,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
       const nextAudio = await setAudioDriver(
         driver,
         inputDevice,
+        inputChannel,
         outputDevice,
         sampleRate,
         bufferSize,

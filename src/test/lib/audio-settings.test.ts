@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { AudioStatus } from '@/lib/domain';
-import { includeEffectiveOption, reconcileAudioSettings } from '@/lib/audio-settings';
+import {
+  chooseInitialDriverRoute,
+  includeEffectiveOption,
+  reconcileAudioSettings,
+} from '@/lib/audio-settings';
 
 function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {
     state: 'muted',
     driver: 'Windows Audio',
     inputDevice: null,
+    inputChannel: null,
+    inputChannels: [],
     outputDevice: null,
+    outputChannels: [],
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 20,
@@ -74,5 +81,24 @@ describe('audio setting reconciliation', () => {
     expect(includeEffectiveOption(480, [64, 128, 256, 512, 1024])).toEqual([
       64, 128, 256, 480, 512, 1024,
     ]);
+  });
+
+  it('keeps the same hardware when switching to a paired ASIO device', () => {
+    expect(
+      chooseInitialDriverRoute(
+        {
+          name: 'ASIO',
+          accessMode: 'driverManaged',
+          devicePairing: 'sameDevice',
+          inputs: ['Ableton Move', 'Focusrite USB ASIO', 'GT-1'],
+          outputs: ['Ableton Move', 'Focusrite USB ASIO', 'GT-1'],
+        },
+        'Analogue 1 + 2 (Focusrite USB Audio)',
+        'Speakers (Focusrite USB Audio)',
+      ),
+    ).toEqual({
+      inputDevice: 'Focusrite USB ASIO',
+      outputDevice: 'Focusrite USB ASIO',
+    });
   });
 });

@@ -13,14 +13,16 @@ const probe: AudioDeviceProbe = {
     {
       name: 'Windows Audio',
       accessMode: 'shared',
+      devicePairing: 'independent',
       inputs: ['Mic'],
       outputs: ['Speakers'],
     },
     {
       name: 'ASIO',
       accessMode: 'driverManaged',
-      inputs: ['Input 1'],
-      outputs: ['Output 1'],
+      devicePairing: 'sameDevice',
+      inputs: ['Focusrite USB ASIO'],
+      outputs: ['Focusrite USB ASIO'],
     },
   ],
   midiInputs: [],
@@ -38,6 +40,8 @@ describe('AudioDriverPicker', () => {
         probe={probe}
         current="Windows Audio"
         inputDevice="Mic"
+        inputChannel={0}
+        inputChannels={[{ index: 0, name: 'Mic 1' }]}
         outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
@@ -67,6 +71,8 @@ describe('AudioDriverPicker', () => {
         probe={probe}
         current="Windows Audio"
         inputDevice="Mic"
+        inputChannel={0}
+        inputChannels={[{ index: 0, name: 'Mic 1' }]}
         outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
@@ -76,7 +82,7 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: '64 samples' }));
 
-    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 'Speakers', 48_000, 64);
+    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 0, 'Speakers', 48_000, 64);
   });
 
   it('switches drivers without replacing the effective format with a display default', async () => {
@@ -87,6 +93,8 @@ describe('AudioDriverPicker', () => {
         probe={probe}
         current="Windows Audio"
         inputDevice="Mic"
+        inputChannel={0}
+        inputChannels={[{ index: 0, name: 'Mic 1' }]}
         outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
@@ -96,7 +104,14 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: /ASIO/ }));
 
-    expect(onSelect).toHaveBeenCalledWith('ASIO', 'Input 1', 'Output 1', 48_000, 480);
+    expect(onSelect).toHaveBeenCalledWith(
+      'ASIO',
+      'Focusrite USB ASIO',
+      0,
+      'Focusrite USB ASIO',
+      48_000,
+      480,
+    );
   });
 
   it('shows whether the selected backend shares the Windows audio device', () => {
@@ -105,6 +120,8 @@ describe('AudioDriverPicker', () => {
         probe={probe}
         current="Windows Audio"
         inputDevice="Mic"
+        inputChannel={0}
+        inputChannels={[{ index: 0, name: 'Mic 1' }]}
         outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
@@ -113,6 +130,31 @@ describe('AudioDriverPicker', () => {
     );
 
     expect(screen.getByText('Shared with other Windows applications')).toBeVisible();
+  });
+
+  it('routes the selected physical input channel', async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AudioDriverPicker
+        probe={probe}
+        current="Windows Audio"
+        inputDevice="Mic"
+        inputChannel={0}
+        inputChannels={[
+          { index: 0, name: 'Analogue 1' },
+          { index: 1, name: 'Analogue 2' },
+        ]}
+        outputDevice="Speakers"
+        sampleRate={48_000}
+        bufferSize={480}
+        onSelect={onSelect}
+      />,
+    );
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Input channel' }), '1');
+
+    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 1, 'Speakers', 48_000, 480);
   });
 });
 

@@ -21,6 +21,8 @@ public:
     void setDeviceFaulted(bool faulted) noexcept;
     [[nodiscard]] bool isDeviceFaulted() const noexcept;
     void setMasterGainDb(float gainDb) noexcept;
+    void setInputChannel(int channel) noexcept;
+    [[nodiscard]] int getInputChannel() const noexcept;
     [[nodiscard]] float getMasterGainDb() const noexcept;
     [[nodiscard]] float getInputPeak() const noexcept;
     [[nodiscard]] float getOutputPeak() const noexcept;
@@ -55,6 +57,7 @@ public:
 
 private:
     static constexpr float kMinimumGainDb = -90.0f;
+    static void holdPeak(std::atomic<float>& peak, float value) noexcept;
     void writeRecording(
         const float* const* inputChannelData,
         int numInputChannels,
@@ -73,8 +76,9 @@ private:
     std::atomic<bool> deviceFaulted { false };
     std::atomic<float> targetGainLinear { juce::Decibels::decibelsToGain(-18.0f) };
     std::atomic<float> masterGainDb { -18.0f };
-    std::atomic<float> inputPeak { 0.0f };
-    std::atomic<float> outputPeak { 0.0f };
+    std::atomic<int> inputChannel { 0 };
+    mutable std::atomic<float> inputPeak { 0.0f };
+    mutable std::atomic<float> outputPeak { 0.0f };
     std::atomic<std::uint64_t> invalidSamples { 0 };
     std::atomic<bool> feedbackSuspected { false };
     std::atomic<double> activeSampleRate { 0.0 };

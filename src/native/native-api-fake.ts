@@ -49,7 +49,13 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     state: 'muted',
     driver: 'Fake Driver',
     inputDevice: 'Input 1',
+    inputChannel: 0,
+    inputChannels: [{ index: 0, name: 'Input 1' }],
     outputDevice: 'Output 1',
+    outputChannels: [
+      { index: 0, name: 'Output 1' },
+      { index: 1, name: 'Output 2' },
+    ],
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 8,
@@ -416,6 +422,7 @@ export class FakeNativeApi implements NativeApi {
         {
           name: 'Fake Driver',
           accessMode: 'driverManaged',
+          devicePairing: 'independent',
           inputs: ['Input 1'],
           outputs: ['Output 1'],
         },
@@ -525,6 +532,8 @@ export class FakeNativeApi implements NativeApi {
         sampleRate: this.audio.sampleRate,
         blockSize: this.audio.bufferSize,
         bypassedBlocks: 0,
+        contentionBlocks: 0,
+        transitionBlocks: 0,
         parameters: this.pluginParameters,
         stateData,
       },
@@ -690,6 +699,8 @@ export class FakeNativeApi implements NativeApi {
         sampleRate: this.audio.sampleRate,
         blockSize: this.audio.bufferSize,
         bypassedBlocks: 0,
+        contentionBlocks: 0,
+        transitionBlocks: 0,
         parameters: this.pluginParameters,
         stateData: device.stateData,
       },
@@ -728,6 +739,8 @@ export class FakeNativeApi implements NativeApi {
           sampleRate: this.audio.sampleRate,
           blockSize: this.audio.bufferSize,
           bypassedBlocks: 0,
+          contentionBlocks: 0,
+          transitionBlocks: 0,
           parameters: this.pluginParameters,
           stateData: plugin.stateData,
         },
@@ -930,6 +943,7 @@ export class FakeNativeApi implements NativeApi {
   setAudioDriver = async (
     driver: string,
     inputDevice?: string | null,
+    inputChannel = 0,
     outputDevice?: string | null,
     sampleRate?: number | null,
     bufferSize?: number | null,
@@ -940,7 +954,17 @@ export class FakeNativeApi implements NativeApi {
       state: 'muted',
       driver,
       inputDevice: inputDevice ?? null,
+      inputChannel,
+      inputChannels: inputDevice
+        ? [{ index: inputChannel, name: `Input ${inputChannel + 1}` }]
+        : [],
       outputDevice: outputDevice ?? null,
+      outputChannels: outputDevice
+        ? [
+            { index: 0, name: 'Output 1' },
+            { index: 1, name: 'Output 2' },
+          ]
+        : [],
       sampleRate: sampleRate ?? this.audio.sampleRate,
       bufferSize: bufferSize ?? this.audio.bufferSize,
       message: `Driver switched to ${driver}; output re-enters emergency mute for safety.`,

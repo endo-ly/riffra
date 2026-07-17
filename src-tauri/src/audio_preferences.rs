@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{AppHandle, State};
 
-const AUDIO_PREFERENCES_FORMAT: u32 = 1;
+const AUDIO_PREFERENCES_FORMAT: u32 = 2;
 const DEFAULT_SHARED_DRIVER: &str = "Windows Audio (Low Latency Mode)";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -23,6 +23,7 @@ pub struct AudioPreferences {
     pub format_version: u32,
     pub driver: String,
     pub input_device: Option<String>,
+    pub input_channel: u32,
     pub output_device: Option<String>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
@@ -34,6 +35,7 @@ impl Default for AudioPreferences {
             format_version: AUDIO_PREFERENCES_FORMAT,
             driver: DEFAULT_SHARED_DRIVER.into(),
             input_device: None,
+            input_channel: 0,
             output_device: None,
             sample_rate: None,
             buffer_size: None,
@@ -43,6 +45,12 @@ impl Default for AudioPreferences {
 
 impl AudioPreferences {
     pub fn validate_and_normalize(mut self) -> Result<Self, String> {
+        if self.format_version != AUDIO_PREFERENCES_FORMAT {
+            return Err(format!(
+                "Audio preferences format {} is unsupported; expected {}.",
+                self.format_version, AUDIO_PREFERENCES_FORMAT
+            ));
+        }
         self.driver = normalize_required_text(&self.driver, "Audio driver")?;
         self.input_device = normalize_optional_text(self.input_device, "Audio input device")?;
         self.output_device = normalize_optional_text(self.output_device, "Audio output device")?;
@@ -68,6 +76,7 @@ impl AudioPreferences {
                 .clone()
                 .ok_or_else(|| "Native audio did not report an active driver.".to_string())?,
             input_device: status.input_device.clone(),
+            input_channel: status.input_channel.unwrap_or(0),
             output_device: status.output_device.clone(),
             sample_rate: status.sample_rate,
             buffer_size: status.buffer_size,
@@ -117,6 +126,7 @@ impl AudioPreferencesStore {
 }
 
 pub struct AudioPreferencesContext<'a> {
+    pub app: &'a AppHandle,
     pub audio: &'a AudioSupervisor,
     pub data_root: &'a Path,
     pub preferences: &'a Mutex<AudioPreferences>,
@@ -125,8 +135,14 @@ pub struct AudioPreferencesContext<'a> {
 
 pub fn load_or_default(data_root: &Path) -> Result<AudioPreferences, String> {
     let store = AudioPreferencesStore::new(data_root);
-    if let Some(preferences) = store.load()? {
-        return Ok(preferences);
+    match store.load() {
+        Ok(Some(preferences)) => return Ok(preferences),
+        Ok(None) => {}
+        Err(_) => {
+            let preferences = AudioPreferences::default();
+            store.save(&preferences)?;
+            return Ok(preferences);
+        }
     }
     let preferences = AudioPreferences::default();
     store.save(&preferences)?;
@@ -137,6 +153,7 @@ fn apply_audio_preferences(
     context: &AudioPreferencesContext<'_>,
     driver: String,
     input_device: Option<String>,
+    input_channel: u32,
     output_device: Option<String>,
     sample_rate: Option<u32>,
     buffer_size: Option<u32>,
@@ -151,6 +168,7 @@ fn apply_audio_preferences(
         format_version: AUDIO_PREFERENCES_FORMAT,
         driver,
         input_device,
+        input_channel,
         output_device,
         sample_rate,
         buffer_size,
@@ -158,8 +176,10 @@ fn apply_audio_preferences(
     .validate_and_normalize()?;
     let previous = context.preferences.lock().map_err(lock_error)?.clone();
     let mut audio = context.audio.set_audio_driver(
+        context.app,
         &requested.driver,
         requested.input_device.as_deref(),
+        requested.input_channel,
         requested.output_device.as_deref(),
         requested.sample_rate,
         requested.buffer_size,
@@ -167,8 +187,10 @@ fn apply_audio_preferences(
     let effective = AudioPreferences::from_effective_status(&audio)?;
     if let Err(error) = AudioPreferencesStore::new(context.data_root).save(&effective) {
         let rollback = context.audio.set_audio_driver(
+            context.app,
             &previous.driver,
             previous.input_device.as_deref(),
+            previous.input_channel,
             previous.output_device.as_deref(),
             previous.sample_rate,
             previous.buffer_size,
@@ -200,9 +222,11 @@ fn apply_audio_preferences(
 }
 
 #[tauri::command]
-pub fn set_audio_driver(
+pub async fn set_audio_driver(
+    app: AppHandle,
     driver: String,
     input_device: Option<String>,
+    input_channel: u32,
     output_device: Option<String>,
     sample_rate: Option<u32>,
     buffer_size: Option<u32>,
@@ -210,6 +234,7 @@ pub fn set_audio_driver(
 ) -> Result<AudioStatus, String> {
     apply_audio_preferences(
         &AudioPreferencesContext {
+            app: &app,
             audio: &state.audio,
             data_root: &state.data_root,
             preferences: &state.audio_preferences,
@@ -217,6 +242,7 @@ pub fn set_audio_driver(
         },
         driver,
         input_device,
+        input_channel,
         output_device,
         sample_rate,
         buffer_size,
@@ -297,12 +323,34 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let existing = AudioPreferences {
             driver: "ASIO".into(),
+            input_channel: 1,
             sample_rate: Some(48_000),
             buffer_size: Some(128),
             ..AudioPreferences::default()
         };
         AudioPreferencesStore::new(&root).save(&existing).unwrap();
         assert_eq!(load_or_default(&root).unwrap(), existing);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn replaces_previous_preference_format_with_current_defaults() {
+        let root = root("old-format");
+        let _ = fs::remove_dir_all(&root);
+        let path = root.join("settings").join("audio.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            br#"{"formatVersion":1,"driver":"Windows Audio","inputDevice":null,"outputDevice":null,"sampleRate":48000,"bufferSize":480}"#,
+        )
+        .unwrap();
+
+        let preferences = load_or_default(&root).unwrap();
+        assert_eq!(preferences, AudioPreferences::default());
+        assert_eq!(
+            AudioPreferencesStore::new(&root).load().unwrap(),
+            Some(AudioPreferences::default())
+        );
         let _ = fs::remove_dir_all(root);
     }
 

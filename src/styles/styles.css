@@ -949,6 +949,23 @@ p {
   width: 64px;
   margin: 3px;
 }
+.live-meter-face {
+  align-content: center;
+  gap: 8px;
+}
+.live-meter-face > .meter {
+  width: 82px;
+  height: 10px;
+  margin: 0;
+  border: 1px solid #52616c;
+  background: #090d10;
+}
+.meter-label {
+  color: #9ba8b2;
+  font-family: 'DM Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
 .face-1 {
   filter: hue-rotate(55deg);
 }

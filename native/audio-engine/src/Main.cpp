@@ -38,6 +38,7 @@ struct AudioConfiguration {
     juce::String driver;
     juce::String inputDevice;
     juce::String outputDevice;
+    int inputChannel = 0;
     double sampleRate = 0.0;
     int bufferSize = 0;
 };
@@ -50,6 +51,10 @@ juce::String accessModeForDriver(const juce::String& driver) {
     if (driver == "Windows Audio (Exclusive Mode)")
         return "exclusive";
     return "driverManaged";
+}
+
+bool driverRequiresSameDevice(const juce::String& driver) {
+    return driver == "ASIO";
 }
 
 class MidiMonitor final : public juce::MidiInputCallback {
@@ -242,6 +247,9 @@ juce::var probeAudioDevices() {
         auto* driver = new juce::DynamicObject();
         driver->setProperty("name", type->getTypeName());
         driver->setProperty("accessMode", accessModeForDriver(type->getTypeName()));
+        driver->setProperty(
+            "devicePairing",
+            driverRequiresSameDevice(type->getTypeName()) ? "sameDevice" : "independent");
 
         juce::Array<juce::var> inputs;
         for (const auto& name : type->getDeviceNames(true))
@@ -278,7 +286,8 @@ juce::var currentStatus(
     const SafetyAudioCallback& callback,
     const PluginRack* rack = nullptr,
     const MidiMonitor* midi = nullptr,
-    const juce::String& message = {}) {
+    const juce::String& message = {},
+    const bool includePluginState = false) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state = callback.isDeviceFaulted() ? "faulted"
@@ -321,6 +330,43 @@ juce::var currentStatus(
         status->setProperty("driver", device->getTypeName());
         status->setProperty("inputDevice", setup.inputDeviceName);
         status->setProperty("outputDevice", setup.outputDeviceName);
+        status->setProperty("inputChannel", callback.getInputChannel());
+        juce::Array<juce::var> inputChannels;
+        const auto channelNames = device->getInputChannelNames();
+        const auto activeInputChannels = device->getActiveInputChannels();
+        for (int physicalIndex = 0, logicalIndex = 0;
+             physicalIndex < channelNames.size();
+             ++physicalIndex) {
+            if (!activeInputChannels[physicalIndex])
+                continue;
+            auto* channel = new juce::DynamicObject();
+            channel->setProperty("index", logicalIndex++);
+            channel->setProperty(
+                "name",
+                channelNames[physicalIndex].isNotEmpty()
+                    ? channelNames[physicalIndex]
+                    : "Input " + juce::String(physicalIndex + 1));
+            inputChannels.add(juce::var(channel));
+        }
+        status->setProperty("inputChannels", inputChannels);
+        juce::Array<juce::var> outputChannels;
+        const auto outputChannelNames = device->getOutputChannelNames();
+        const auto activeOutputChannels = device->getActiveOutputChannels();
+        for (int physicalIndex = 0, logicalIndex = 0;
+             physicalIndex < outputChannelNames.size();
+             ++physicalIndex) {
+            if (!activeOutputChannels[physicalIndex])
+                continue;
+            auto* channel = new juce::DynamicObject();
+            channel->setProperty("index", logicalIndex++);
+            channel->setProperty(
+                "name",
+                outputChannelNames[physicalIndex].isNotEmpty()
+                    ? outputChannelNames[physicalIndex]
+                    : "Output " + juce::String(physicalIndex + 1));
+            outputChannels.add(juce::var(channel));
+        }
+        status->setProperty("outputChannels", outputChannels);
         status->setProperty("sampleRate", device->getCurrentSampleRate());
         status->setProperty("bufferSize", device->getCurrentBufferSizeSamples());
         const auto latencySamples = device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
@@ -330,8 +376,20 @@ juce::var currentStatus(
         status->setProperty("roundTripMs", latencyMs);
     }
     if (rack != nullptr)
-        status->setProperty("plugin", rack->status());
+        status->setProperty("plugin", includePluginState ? rack->completeStatus() : rack->status());
     return juce::var(status);
+}
+
+juce::var currentMeters(const SafetyAudioCallback& callback) {
+    auto* meters = new juce::DynamicObject();
+    meters->setProperty("type", "audioMeters");
+    meters->setProperty("inputPeak", callback.getInputPeak());
+    meters->setProperty("outputPeak", callback.getOutputPeak());
+    meters->setProperty(
+        "invalidSamples",
+        static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
+    return juce::var(meters);
 }
 
 bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
@@ -390,6 +448,14 @@ juce::String initialiseConfiguredAudio(
         resolved.inputDevice = defaultDeviceName(true);
     if (resolved.outputDevice.isEmpty())
         resolved.outputDevice = defaultDeviceName(false);
+    if (driverRequiresSameDevice(resolved.driver)) {
+        if (resolved.inputDevice.isEmpty())
+            resolved.inputDevice = resolved.outputDevice;
+        if (resolved.outputDevice.isEmpty())
+            resolved.outputDevice = resolved.inputDevice;
+        if (resolved.inputDevice != resolved.outputDevice)
+            return "The selected ASIO input and output must use the same device.";
+    }
     if (resolved.outputDevice.isEmpty())
         return "The requested audio driver has no output device: " + resolved.driver;
 
@@ -397,10 +463,11 @@ juce::String initialiseConfiguredAudio(
     juce::AudioDeviceManager::AudioDeviceSetup preferredSetup;
     preferredSetup.inputDeviceName = resolved.inputDevice;
     preferredSetup.outputDeviceName = resolved.outputDevice;
+    preferredSetup.useDefaultInputChannels = true;
     preferredSetup.sampleRate = configuration.sampleRate;
     preferredSetup.bufferSize = configuration.bufferSize;
     auto error = manager.initialise(
-        2,
+        resolved.inputDevice.isNotEmpty() ? 2 : 0,
         2,
         xml.get(),
         false,
@@ -495,6 +562,17 @@ int serve(
         startupMessage = "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
     }
 
+    auto startupInputChannel = startupMessage.isEmpty()
+        ? startupConfiguration.inputChannel
+        : 0;
+    const auto startupInputChannels = manager.getCurrentAudioDevice() != nullptr
+        ? manager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
+        : 0;
+    if (startupInputChannel >= startupInputChannels) {
+        startupInputChannel = 0;
+        startupMessage = "The saved input channel was unavailable, so Input 1 was selected.";
+    }
+    callback.setInputChannel(startupInputChannel);
     manager.addAudioCallback(&callback);
     DeviceFaultWatcher deviceWatcher(manager, callback);
     manager.addChangeListener(&deviceWatcher);
@@ -766,6 +844,10 @@ int serve(
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
         }
+        if (type == "capturePluginState") {
+            writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, true));
+            continue;
+        }
         if (type == "recoverAudioDevice") {
             juce::String midiError;
             if (!midiMonitor.finishRecording(midiError)) {
@@ -793,40 +875,67 @@ int serve(
                 writeJson(makeError("audioDevice", "An audio driver name is required."));
                 continue;
             }
+            AudioConfiguration requested;
+            requested.driver = driver;
+            requested.inputDevice = command.getProperty("inputDevice", {}).toString();
+            requested.outputDevice = command.getProperty("outputDevice", {}).toString();
+            requested.inputChannel = static_cast<int>(command.getProperty("inputChannel", 0));
+            if (requested.inputChannel < 0) {
+                writeJson(makeError("audioDevice", "Input channel must be zero or greater."));
+                continue;
+            }
+            requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
+            requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
             juce::String midiError;
             if (!midiMonitor.finishRecording(midiError)) {
                 writeJson(makeError("recording", midiError));
                 continue;
             }
             const auto previousDriver = manager.getCurrentAudioDeviceType();
+            const auto previousInputChannel = callback.getInputChannel();
             juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
             manager.getAudioDeviceSetup(previousSetup);
             manager.removeAudioCallback(&callback);
             manager.closeAudioDevice();
             callback.setEmergencyMuted(true);
-            AudioConfiguration requested;
-            requested.driver = driver;
-            requested.inputDevice = command.getProperty("inputDevice", {}).toString();
-            requested.outputDevice = command.getProperty("outputDevice", {}).toString();
-            requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
-            requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
-            auto setupError = initialiseConfiguredAudio(manager, requested);
-            if (setupError.isNotEmpty()) {
+            const auto restorePreviousDevice = [&]() {
                 manager.closeAudioDevice();
                 AudioConfiguration previous;
                 previous.driver = previousDriver;
                 previous.inputDevice = previousSetup.inputDeviceName;
                 previous.outputDevice = previousSetup.outputDeviceName;
+                previous.inputChannel = previousInputChannel;
                 previous.sampleRate = previousSetup.sampleRate;
                 previous.bufferSize = previousSetup.bufferSize;
                 const auto restoreError = initialiseConfiguredAudio(manager, previous);
-                if (restoreError.isEmpty())
+                if (restoreError.isEmpty()) {
+                    callback.setInputChannel(previousInputChannel);
                     manager.addAudioCallback(&callback);
+                }
+                return restoreError;
+            };
+            auto setupError = initialiseConfiguredAudio(manager, requested);
+            if (setupError.isNotEmpty()) {
+                const auto restoreError = restorePreviousDevice();
                 writeJson(makeError("audioDevice", setupError + (restoreError.isEmpty()
                     ? ". The previous device was restored."
                     : ". The previous device could not be restored: " + restoreError)));
                 continue;
             }
+            auto* activeDevice = manager.getCurrentAudioDevice();
+            const auto activeInputs = activeDevice != nullptr
+                ? activeDevice->getActiveInputChannels().countNumberOfSetBits()
+                : 0;
+            if (requested.inputChannel >= activeInputs) {
+                const auto restoreError = restorePreviousDevice();
+                const auto message = juce::String("The selected physical input channel is unavailable.")
+                    + (restoreError.isEmpty()
+                        ? " The previous device was restored."
+                        : " The previous device could not be restored: " + restoreError);
+                writeJson(makeError("audioDevice", message));
+                continue;
+            }
+            callback.setInputChannel(requested.inputChannel);
             manager.addAudioCallback(&callback);
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
             continue;
@@ -857,6 +966,10 @@ int serve(
         }
         if (type == "status") {
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            continue;
+        }
+        if (type == "meterStatus") {
+            writeJson(currentMeters(callback));
             continue;
         }
         writeJson(makeError("protocol", "Unsupported command: " + type));
@@ -986,6 +1099,56 @@ juce::var runSafetySelfTest() {
     }
 
     {
+        SafetyAudioCallback callback;
+        callback.setEmergencyMuted(true);
+        std::array<float, blockSize> signal {};
+        std::array<float, blockSize> silence {};
+        std::array<float, blockSize> output {};
+        signal.fill(0.5f);
+        const std::array<const float*, 1> signalInput { signal.data() };
+        const std::array<const float*, 1> silentInput { silence.data() };
+        const std::array<float*, 1> outputs { output.data() };
+        const juce::AudioIODeviceCallbackContext context {};
+        callback.audioDeviceIOCallbackWithContext(
+            signalInput.data(), 1, outputs.data(), 1, blockSize, context);
+        callback.audioDeviceIOCallbackWithContext(
+            silentInput.data(), 1, outputs.data(), 1, blockSize, context);
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Input meter holds transients until status collection");
+        check->setProperty("passed", callback.getInputPeak() >= 0.5f);
+        checks.add(juce::var(check));
+    }
+
+    {
+        PluginRack rack;
+        std::array<float, blockSize> mono {};
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        mono.fill(0.25f);
+        const std::array<const float*, 1> inputs { mono.data() };
+        const std::array<float*, 2> outputs { left.data(), right.data() };
+        rack.process(inputs.data(), 1, outputs.data(), 2, blockSize);
+
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Mono input is duplicated to stereo output");
+        check->setProperty(
+            "passed",
+            left.front() == mono.front() && right.front() == mono.front()
+                && left.back() == mono.back() && right.back() == mono.back());
+        checks.add(juce::var(check));
+    }
+
+    {
+        PluginRack rack;
+        const auto status = rack.status();
+        auto* check = new juce::DynamicObject();
+        check->setProperty("name", "Runtime plugin status excludes persisted state");
+        check->setProperty("passed", !status.hasProperty("stateData"));
+        checks.add(juce::var(check));
+    }
+
+    {
         auto* check = new juce::DynamicObject();
         check->setProperty("name", "Device loss during playback faults the engine");
         check->setProperty("passed", deviceLossRequiresFault(false, true));
@@ -1069,6 +1232,7 @@ int runMain(const juce::StringArray& arguments) {
             if (argument != "--parent-pid"
                 && argument != "--audio-driver"
                 && argument != "--input-device"
+                && argument != "--input-channel"
                 && argument != "--output-device"
                 && argument != "--sample-rate"
                 && argument != "--buffer-size")
@@ -1089,6 +1253,12 @@ int runMain(const juce::StringArray& arguments) {
                 configuration.driver = value;
             } else if (argument == "--input-device") {
                 configuration.inputDevice = value;
+            } else if (argument == "--input-channel") {
+                configuration.inputChannel = value.getIntValue();
+                if (configuration.inputChannel < 0) {
+                    writeJson(makeError("arguments", "--input-channel must be zero or greater."));
+                    return 1;
+                }
             } else if (argument == "--output-device") {
                 configuration.outputDevice = value;
             } else if (argument == "--sample-rate") {

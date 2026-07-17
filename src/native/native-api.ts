@@ -147,6 +147,7 @@ export interface NativeApi {
   setAudioDriver(
     driver: string,
     inputDevice?: string | null,
+    inputChannel?: number,
     outputDevice?: string | null,
     sampleRate?: number | null,
     bufferSize?: number | null,

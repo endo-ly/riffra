@@ -33,6 +33,8 @@ export function WorkspacePlay({
   onCaptureSnapshot: (slot: 'A' | 'B') => void;
   onRecallSnapshot: (slot: 'A' | 'B') => void;
 }) {
+  const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
+  const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
   const persistedPlugins = session.rack.devices
     .filter((device) => device.kind === 'plugin')
@@ -86,12 +88,12 @@ export function WorkspacePlay({
       <section className="rack-flow">
         <article className="rack-device input-device">
           <span className="device-order">IN</span>
-          <div className="device-face">
-            <Meter value={45} />
-            <Meter value={40} />
+          <div className="device-face live-meter-face">
+            <span className="meter-label">INPUT LEVEL</span>
+            <Meter value={Math.round(audio.inputPeak * 100)} />
           </div>
-          <h3>Input 1</h3>
-          <small>Mono · −12.4 dB</small>
+          <h3>{inputChannel?.name ?? 'No input channel'}</h3>
+          <small>Mono · {inputDb.toFixed(1)} dBFS</small>
         </article>
         {(visiblePlugins.length
           ? visiblePlugins
@@ -128,11 +130,19 @@ export function WorkspacePlay({
         <article className="rack-device output-device">
           <span className="device-order">OUT</span>
           <div className="device-face">
-            <Meter value={58} />
-            <Meter value={51} />
+            <Meter value={Math.round(audio.outputPeak * 100)} />
+            <Meter value={Math.round(audio.outputPeak * 100)} />
           </div>
           <h3>Main Out</h3>
-          <small>Safety limited</small>
+          <small>
+            Safety limited
+            {audio.outputChannels.length > 0
+              ? ` · ${audio.outputChannels
+                  .slice(0, 2)
+                  .map((channel) => channel.name)
+                  .join(' + ')}`
+              : ''}
+          </small>
         </article>
       </section>
       <section className="section-card rack-library-actions">

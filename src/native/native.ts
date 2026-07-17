@@ -404,7 +404,10 @@ async function getAudioStatus(): Promise<AudioStatus> {
       state: 'offline',
       driver: null,
       inputDevice: null,
+      inputChannel: null,
+      inputChannels: [],
       outputDevice: null,
+      outputChannels: [],
       sampleRate: null,
       bufferSize: null,
       roundTripMs: null,
@@ -480,6 +483,7 @@ async function recoverAudioDevice(): Promise<AudioStatus> {
 async function setAudioDriver(
   driver: string,
   inputDevice: string | null = null,
+  inputChannel = 0,
   outputDevice: string | null = null,
   sampleRate: number | null = null,
   bufferSize: number | null = null,
@@ -487,6 +491,7 @@ async function setAudioDriver(
   return await invoke<AudioStatus>('set_audio_driver', {
     driver,
     inputDevice,
+    inputChannel,
     outputDevice,
     sampleRate,
     bufferSize,

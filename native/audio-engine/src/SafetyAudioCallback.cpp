@@ -47,12 +47,31 @@ float SafetyAudioCallback::getMasterGainDb() const noexcept {
     return masterGainDb.load(std::memory_order_acquire);
 }
 
+void SafetyAudioCallback::setInputChannel(const int channel) noexcept {
+    inputChannel.store(juce::jmax(0, channel), std::memory_order_release);
+}
+
+int SafetyAudioCallback::getInputChannel() const noexcept {
+    return inputChannel.load(std::memory_order_acquire);
+}
+
 float SafetyAudioCallback::getInputPeak() const noexcept {
-    return inputPeak.load(std::memory_order_acquire);
+    return inputPeak.exchange(0.0f, std::memory_order_acq_rel);
 }
 
 float SafetyAudioCallback::getOutputPeak() const noexcept {
-    return outputPeak.load(std::memory_order_acquire);
+    return outputPeak.exchange(0.0f, std::memory_order_acq_rel);
+}
+
+void SafetyAudioCallback::holdPeak(std::atomic<float>& peak, const float value) noexcept {
+    auto current = peak.load(std::memory_order_relaxed);
+    while (value > current
+        && !peak.compare_exchange_weak(
+            current,
+            value,
+            std::memory_order_release,
+            std::memory_order_relaxed)) {
+    }
 }
 
 std::uint64_t SafetyAudioCallback::getInvalidSampleCount() const noexcept {
@@ -352,26 +371,36 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const int numOutputChannels,
     const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
+    const auto* selectedInput = selectedChannel < numInputChannels
+        ? inputChannelData[selectedChannel]
+        : nullptr;
+    const std::array<const float*, 1> logicalInputs { selectedInput };
+    const auto numLogicalInputs = selectedInput != nullptr ? 1 : 0;
+    float rawInputPeak = 0.0f;
+    if (selectedInput != nullptr) {
+        const auto maxVal = std::abs(juce::FloatVectorOperations::findMaximum(
+            selectedInput, numSamples));
+        const auto minVal = std::abs(juce::FloatVectorOperations::findMinimum(
+            selectedInput, numSamples));
+        rawInputPeak = std::max({rawInputPeak, maxVal, minVal});
+    }
+
     if (emergencyMuted.load(std::memory_order_acquire)) {
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        inputPeak.store(0.0f, std::memory_order_release);
+        holdPeak(inputPeak, rawInputPeak);
         outputPeak.store(0.0f, std::memory_order_release);
-        writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+        writeRecording(
+            logicalInputs.data(),
+            numLogicalInputs,
+            outputChannelData,
+            numOutputChannels,
+            numSamples);
         return;
     }
 
-    float rawInputPeak = 0.0f;
-    for (int channel = 0; channel < numInputChannels; ++channel) {
-        if (inputChannelData[channel] == nullptr)
-            continue;
-        const auto maxVal = std::abs(juce::FloatVectorOperations::findMaximum(
-            inputChannelData[channel], numSamples));
-        const auto minVal = std::abs(juce::FloatVectorOperations::findMinimum(
-            inputChannelData[channel], numSamples));
-        rawInputPeak = std::max({rawInputPeak, maxVal, minVal});
-    }
     feedbackDetector.observe(rawInputPeak, numSamples);
     if (feedbackDetector.consumeSuspected()) {
         emergencyMuted.store(true, std::memory_order_release);
@@ -380,30 +409,34 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        inputPeak.store(0.0f, std::memory_order_release);
+        holdPeak(inputPeak, rawInputPeak);
         outputPeak.store(0.0f, std::memory_order_release);
-        writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+        writeRecording(
+            logicalInputs.data(),
+            numLogicalInputs,
+            outputChannelData,
+            numOutputChannels,
+            numSamples);
         return;
     }
 
     const auto target = targetGainLinear.load(std::memory_order_acquire);
-    float blockInputPeak = 0.0f;
     float blockOutputPeak = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
 
     if (pluginRack != nullptr) {
         pluginRack->process(
-            inputChannelData,
-            numInputChannels,
+            logicalInputs.data(),
+            numLogicalInputs,
             outputChannelData,
             numOutputChannels,
             numSamples);
     } else {
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr) {
-                const auto* input = channel < numInputChannels ? inputChannelData[channel] : nullptr;
-                if (input != nullptr)
-                    juce::FloatVectorOperations::copy(outputChannelData[channel], input, numSamples);
+                if (selectedInput != nullptr)
+                    juce::FloatVectorOperations::copy(
+                        outputChannelData[channel], selectedInput, numSamples);
                 else
                     juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
             }
@@ -430,7 +463,6 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
                 value = 0.0f;
                 ++blockInvalidSamples;
             }
-            blockInputPeak = std::max(blockInputPeak, std::abs(value));
             value *= currentGainLinear;
             value = juce::jlimit(-kLimiterCeiling, kLimiterCeiling, value);
             blockOutputPeak = std::max(blockOutputPeak, std::abs(value));
@@ -439,11 +471,16 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         }
     }
 
-    inputPeak.store(blockInputPeak, std::memory_order_release);
-    outputPeak.store(blockOutputPeak, std::memory_order_release);
+    holdPeak(inputPeak, rawInputPeak);
+    holdPeak(outputPeak, blockOutputPeak);
     if (blockInvalidSamples > 0)
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
-    writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+    writeRecording(
+        logicalInputs.data(),
+        numLogicalInputs,
+        outputChannelData,
+        numOutputChannels,
+        numSamples);
 }
 
 void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const device) {
@@ -455,7 +492,10 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
         : 0.0f;
     inputPeak.store(0.0f, std::memory_order_release);
     activeInputChannels.store(
-        device != nullptr ? device->getActiveInputChannels().countNumberOfSetBits() : 0,
+        device != nullptr
+                && getInputChannel() < device->getActiveInputChannels().countNumberOfSetBits()
+            ? 1
+            : 0,
         std::memory_order_release);
     activeOutputChannels.store(
         device != nullptr ? device->getActiveOutputChannels().countNumberOfSetBits() : 0,

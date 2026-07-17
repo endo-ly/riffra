@@ -812,6 +812,10 @@ mod tests {
                 "startedAtMs": 1_000,
                 "completedAtMs": 2_000,
                 "sampleRate": 44_100,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null,
                 "rawAudioAssetId": raw_id,
                 "processedAudioAssetId": processed_id,
                 "dropoutInformation": { "samplesWritten": 44_100, "droppedBlocks": 0 }
@@ -844,6 +848,10 @@ mod tests {
                 "status": "completed",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null,
                 "rawAudioAssetId": "asset:missing-raw",
                 "processedAudioAssetId": "asset:missing-processed",
                 "dropoutInformation": { "samplesWritten": 44100 }
@@ -900,6 +908,10 @@ mod tests {
                 "status": "completed",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null,
                 "rawAudioAssetId": raw_id,
                 "processedAudioAssetId": processed_id,
                 "dropoutInformation": { "samplesWritten": 0 }
@@ -932,7 +944,11 @@ mod tests {
                 "captureId": "capture:take-unsafe-path",
                 "sessionId": "scratch-1",
                 "status": "recoverable",
-                "startedAtMs": 1_000
+                "startedAtMs": 1_000,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null
             }
         }))
         .unwrap();
@@ -1002,6 +1018,10 @@ mod tests {
                 "status": "recoverable",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
+                "audioDriver": null,
+                "inputChannel": null,
+                "inputChannelName": null,
+                "bufferSize": null,
                 "dropoutInformation": {
                     "samplesWritten": 22050,
                     "droppedBlocks": 3,

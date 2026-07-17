@@ -147,6 +147,7 @@ struct NativeAudioDriver {
     name: String,
     #[serde(default)]
     access_mode: model::AudioAccessMode,
+    device_pairing: model::AudioDevicePairing,
     #[serde(default)]
     inputs: Vec<String>,
     #[serde(default)]
@@ -202,6 +203,7 @@ async fn probe_audio_devices(
             .map(|driver| AudioDriverInfo {
                 name: driver.name,
                 access_mode: driver.access_mode,
+                device_pairing: driver.device_pairing,
                 inputs: driver.inputs,
                 outputs: driver.outputs,
             })
@@ -261,8 +263,8 @@ fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
 // in lock-step with the runtime.
 
 #[tauri::command]
-fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.refresh_status()
+async fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.refresh_meters()
 }
 
 #[tauri::command]
@@ -472,7 +474,7 @@ mod tests {
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
         let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
         )
         .unwrap();
         assert_eq!(probe.drivers[0].name, "ASIO");

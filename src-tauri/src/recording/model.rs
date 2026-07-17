@@ -67,6 +67,10 @@ pub struct RecordingCapture {
     pub sample_rate: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_device: Option<String>,
+    pub audio_driver: Option<String>,
+    pub input_channel: Option<u32>,
+    pub input_channel_name: Option<String>,
+    pub buffer_size: Option<u32>,
     /// Session context captured at recording start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
@@ -103,6 +107,10 @@ impl RecordingCapture {
             completed_at_ms: None,
             sample_rate: None,
             input_device: None,
+            audio_driver: None,
+            input_channel: None,
+            input_channel_name: None,
+            buffer_size: None,
             workspace: None,
             master_db: None,
             count_in_beats: None,

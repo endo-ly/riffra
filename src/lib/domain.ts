@@ -280,6 +280,10 @@ interface RecordingCaptureDto {
   completedAtMs?: number | null;
   sampleRate?: number | null;
   inputDevice?: string | null;
+  audioDriver: string | null;
+  inputChannel: number | null;
+  inputChannelName: string | null;
+  bufferSize: number | null;
   workspace?: string | null;
   masterDb?: number | null;
   countInBeats?: number | null;
@@ -347,8 +351,15 @@ interface PluginStatus {
   sampleRate: number | null;
   blockSize: number | null;
   bypassedBlocks: number;
+  contentionBlocks: number;
+  transitionBlocks: number;
   parameters: PluginParameter[];
   stateData: string | null;
+}
+
+export interface AudioChannelInfo {
+  index: number;
+  name: string;
 }
 
 export interface PluginParameter {
@@ -363,7 +374,10 @@ export interface AudioStatus {
   state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted';
   driver: string | null;
   inputDevice: string | null;
+  inputChannel: number | null;
+  inputChannels: AudioChannelInfo[];
   outputDevice: string | null;
+  outputChannels: AudioChannelInfo[];
   sampleRate: number | null;
   bufferSize: number | null;
   roundTripMs: number | null;
@@ -391,10 +405,12 @@ export interface MidiProbe {
 }
 
 export type AudioAccessMode = 'shared' | 'exclusive' | 'driverManaged';
+export type AudioDevicePairing = 'independent' | 'sameDevice';
 
 export interface AudioDriverInfo {
   name: string;
   accessMode: AudioAccessMode;
+  devicePairing: AudioDevicePairing;
   inputs: string[];
   outputs: string[];
 }

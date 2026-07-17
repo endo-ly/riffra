@@ -49,6 +49,16 @@ fn audio_command_succeeded(status: &AudioStatus) -> bool {
     status.state != AudioState::Faulted && status.state != AudioState::Offline
 }
 
+fn capture_plugin_state(
+    audio: &AudioSupervisor,
+    status: AudioStatus,
+) -> Result<AudioStatus, String> {
+    if !status.plugin.as_ref().is_some_and(|plugin| plugin.loaded) {
+        return Ok(status);
+    }
+    audio.capture_plugin_state()
+}
+
 /// The single active (non-placeholder) plugin device in a rack, if any.
 fn active_plugin_device(session: &CreativeSession) -> Option<RackDevice> {
     session
@@ -145,7 +155,7 @@ fn apply_plugin_to_runtime(
     if bypassed {
         status = audio.set_plugin_bypassed(true)?;
     }
-    Ok(status)
+    capture_plugin_state(audio, status)
 }
 
 /// Restores the runtime to a previously captured plugin device, or clears it
@@ -326,6 +336,7 @@ pub fn set_rack_plugin_parameter(
     if !audio_command_succeeded(&status) {
         return Ok((previous_session, status));
     }
+    let status = capture_plugin_state(context.audio, status)?;
     let mut session = previous_session.clone();
     let captured = status.plugin.as_ref().map(|plugin| {
         plugin
@@ -432,6 +443,7 @@ pub fn set_rack_macro_value(
             status.message
         ));
     }
+    let status = capture_plugin_state(context.audio, status)?;
     if let Some(values) = status.plugin.as_ref().map(|plugin| {
         plugin
             .parameters

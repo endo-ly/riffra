@@ -2,11 +2,26 @@
 
 namespace riffra {
 
+namespace {
+
+class AtomicFlagReset final {
+public:
+    explicit AtomicFlagReset(std::atomic<bool>& target) noexcept : flag(target) {}
+    ~AtomicFlagReset() { flag.store(false, std::memory_order_release); }
+
+private:
+    std::atomic<bool>& flag;
+};
+
+}
+
 bool PluginRack::load(
     const juce::String& path,
     const double sampleRate,
     const int blockSize,
     juce::String& error) {
+    mutationInProgress.store(true, std::memory_order_release);
+    const AtomicFlagReset resetMutation(mutationInProgress);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
@@ -33,23 +48,37 @@ bool PluginRack::load(
         return false;
 
     candidate->prepareToPlay(sampleRate, blockSize);
-    pluginPath = path;
-    pluginName = descriptions[0]->name;
-    preparedSampleRate = sampleRate;
-    preparedBlockSize = blockSize;
+    updateParameterCache(*candidate);
+    {
+        const juce::ScopedLock statusGuard(statusLock);
+        pluginPath = path;
+        pluginName = descriptions[0]->name;
+    }
+    preparedSampleRate.store(sampleRate, std::memory_order_release);
+    preparedBlockSize.store(blockSize, std::memory_order_release);
     plugin = std::move(candidate);
     bypassed.store(false, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
+    contentionBlocks.store(0, std::memory_order_release);
+    transitionBlocks.store(0, std::memory_order_release);
+    loaded.store(true, std::memory_order_release);
     return true;
 }
 
 void PluginRack::clear() noexcept {
+    mutationInProgress.store(true, std::memory_order_release);
+    const AtomicFlagReset resetMutation(mutationInProgress);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin != nullptr)
         plugin->releaseResources();
     plugin.reset();
-    pluginPath.clear();
-    pluginName.clear();
+    {
+        const juce::ScopedLock statusGuard(statusLock);
+        pluginPath.clear();
+        pluginName.clear();
+        cachedParameters.clear();
+    }
+    loaded.store(false, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
 }
 
@@ -61,8 +90,8 @@ void PluginRack::release() noexcept {
 
 void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
-    preparedSampleRate = sampleRate;
-    preparedBlockSize = blockSize;
+    preparedSampleRate.store(sampleRate, std::memory_order_release);
+    preparedBlockSize.store(blockSize, std::memory_order_release);
     if (plugin != nullptr)
         plugin->prepareToPlay(sampleRate, blockSize);
 }
@@ -83,6 +112,7 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
         return false;
     }
     parameters[index]->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
+    updateParameterCache(*plugin);
     return true;
 }
 
@@ -99,6 +129,7 @@ bool PluginRack::setState(const juce::String& base64, juce::String& error) noexc
         return false;
     }
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    updateParameterCache(*plugin);
     return true;
 }
 
@@ -112,7 +143,8 @@ void PluginRack::process(
         auto* output = outputChannelData[channel];
         if (output == nullptr)
             continue;
-        const auto* input = channel < numInputChannels ? inputChannelData[channel] : nullptr;
+        const auto inputIndex = numInputChannels == 1 ? 0 : channel;
+        const auto* input = inputIndex < numInputChannels ? inputChannelData[inputIndex] : nullptr;
         if (input != nullptr)
             juce::FloatVectorOperations::copy(output, input, numSamples);
         else
@@ -120,8 +152,29 @@ void PluginRack::process(
     }
 
     const juce::SpinLock::ScopedTryLockType lock(pluginLock);
-    if (!lock.isLocked() || plugin == nullptr || bypassed.load(std::memory_order_acquire)
-        || numOutputChannels <= 0 || numSamples <= 0) {
+    if (!lock.isLocked()) {
+        if (loaded.load(std::memory_order_acquire)
+            || mutationInProgress.load(std::memory_order_acquire)) {
+            for (int channel = 0; channel < numOutputChannels; ++channel)
+                if (outputChannelData[channel] != nullptr)
+                    juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+            if (mutationInProgress.load(std::memory_order_acquire))
+                transitionBlocks.fetch_add(1, std::memory_order_relaxed);
+            else
+                contentionBlocks.fetch_add(1, std::memory_order_relaxed);
+        }
+        return;
+    }
+    if (mutationInProgress.load(std::memory_order_acquire)) {
+        for (int channel = 0; channel < numOutputChannels; ++channel)
+            if (outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+        transitionBlocks.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (plugin == nullptr || numOutputChannels <= 0 || numSamples <= 0)
+        return;
+    if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -131,41 +184,71 @@ void PluginRack::process(
     plugin->processBlock(buffer, midi);
 }
 
-juce::var PluginRack::status() const {
-    const juce::SpinLock::ScopedLockType lock(pluginLock);
+void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
+    std::vector<CachedParameter> next;
+    const auto& parameters = processor.getParameters();
+    next.reserve(static_cast<std::size_t>(parameters.size()));
+    for (int index = 0; index < parameters.size(); ++index) {
+        auto* parameter = parameters[index];
+        if (parameter == nullptr)
+            continue;
+        next.push_back(CachedParameter {
+            index,
+            parameter->getName(96),
+            parameter->getValue(),
+            parameter->getDefaultValue(),
+            parameter->isAutomatable(),
+        });
+    }
+    const juce::ScopedLock lock(statusLock);
+    cachedParameters = std::move(next);
+}
+
+juce::var PluginRack::cachedStatus() const {
+    const juce::ScopedLock lock(statusLock);
     auto* result = new juce::DynamicObject();
-    result->setProperty("loaded", plugin != nullptr);
+    result->setProperty("loaded", loaded.load(std::memory_order_acquire));
     result->setProperty("path", pluginPath);
     result->setProperty("name", pluginName);
     result->setProperty("bypassed", bypassed.load(std::memory_order_acquire));
-    result->setProperty("sampleRate", preparedSampleRate);
-    result->setProperty("blockSize", preparedBlockSize);
+    result->setProperty("sampleRate", preparedSampleRate.load(std::memory_order_acquire));
+    result->setProperty("blockSize", preparedBlockSize.load(std::memory_order_acquire));
     result->setProperty(
         "bypassedBlocks",
         static_cast<juce::int64>(bypassedBlocks.load(std::memory_order_acquire)));
+    result->setProperty(
+        "contentionBlocks",
+        static_cast<juce::int64>(contentionBlocks.load(std::memory_order_acquire)));
+    result->setProperty(
+        "transitionBlocks",
+        static_cast<juce::int64>(transitionBlocks.load(std::memory_order_acquire)));
     juce::Array<juce::var> parameters;
-    if (plugin != nullptr) {
-        const auto& pluginParameters = plugin->getParameters();
-        for (int index = 0; index < pluginParameters.size(); ++index) {
-            auto* parameter = pluginParameters[index];
-            if (parameter == nullptr)
-                continue;
-            auto* item = new juce::DynamicObject();
-            item->setProperty("index", index);
-            item->setProperty("name", parameter->getName(96));
-            item->setProperty("value", parameter->getValue());
-            item->setProperty("defaultValue", parameter->getDefaultValue());
-            item->setProperty("automatable", parameter->isAutomatable());
-            parameters.add(juce::var(item));
-        }
+    for (const auto& parameter : cachedParameters) {
+        auto* item = new juce::DynamicObject();
+        item->setProperty("index", parameter.index);
+        item->setProperty("name", parameter.name);
+        item->setProperty("value", parameter.value);
+        item->setProperty("defaultValue", parameter.defaultValue);
+        item->setProperty("automatable", parameter.automatable);
+        parameters.add(juce::var(item));
     }
     result->setProperty("parameters", parameters);
+    return juce::var(result);
+}
+
+juce::var PluginRack::status() const {
+    return cachedStatus();
+}
+
+juce::var PluginRack::completeStatus() const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    auto result = cachedStatus();
     if (plugin != nullptr) {
         juce::MemoryBlock state;
         plugin->getStateInformation(state);
-        result->setProperty("stateData", state.toBase64Encoding());
+        result.getDynamicObject()->setProperty("stateData", state.toBase64Encoding());
     }
-    return juce::var(result);
+    return result;
 }
 
 } // namespace riffra

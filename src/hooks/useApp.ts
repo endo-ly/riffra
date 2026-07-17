@@ -72,7 +72,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     state: 'starting',
     driver: null,
     inputDevice: null,
+    inputChannel: null,
+    inputChannels: [],
     outputDevice: null,
+    outputChannels: [],
     sampleRate: null,
     bufferSize: null,
     roundTripMs: null,
@@ -749,11 +752,20 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     void listSeparations().then(setSeparations);
     void probeMidiDevices().then(setMidi);
     void probeAudioDevices().then(setDeviceProbe);
-    const refreshAudio = () => void getAudioStatus().then(setAudio);
-    refreshAudio();
-    const audioPoll = window.setInterval(refreshAudio, 1000);
+    let cancelled = false;
+    let audioPoll: number | null = null;
+    const refreshAudio = async () => {
+      try {
+        const nextAudio = await getAudioStatus();
+        if (!cancelled) setAudio(nextAudio);
+      } finally {
+        if (!cancelled) audioPoll = window.setTimeout(refreshAudio, 200);
+      }
+    };
+    void refreshAudio();
     return () => {
-      window.clearInterval(audioPoll);
+      cancelled = true;
+      if (audioPoll !== null) window.clearTimeout(audioPoll);
     };
   }, []);
 

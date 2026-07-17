@@ -93,6 +93,17 @@ fn build_startup_capture(
         now_ms(),
     );
     capture.sample_rate = status.sample_rate;
+    capture.input_device = status.input_device.clone();
+    capture.audio_driver = status.driver.clone();
+    capture.input_channel = status.input_channel;
+    capture.input_channel_name = status.input_channel.and_then(|selected| {
+        status
+            .input_channels
+            .iter()
+            .find(|channel| channel.index == selected)
+            .map(|channel| channel.name.clone())
+    });
+    capture.buffer_size = status.buffer_size;
     capture.rack_snapshot = session.rack.devices.clone();
     capture.workspace = Some(format!("{:?}", session.workspace).to_lowercase());
     capture.master_db = Some(session.settings.master_db);

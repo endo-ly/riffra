@@ -61,8 +61,17 @@ pub struct PluginStatus {
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
     pub bypassed_blocks: u64,
+    pub contention_blocks: u64,
+    pub transition_blocks: u64,
     pub parameters: Vec<PluginParameter>,
     pub state_data: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioChannelInfo {
+    pub index: u32,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -71,7 +80,10 @@ pub struct AudioStatus {
     pub state: AudioState,
     pub driver: Option<String>,
     pub input_device: Option<String>,
+    pub input_channel: Option<u32>,
+    pub input_channels: Vec<AudioChannelInfo>,
     pub output_device: Option<String>,
+    pub output_channels: Vec<AudioChannelInfo>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub round_trip_ms: Option<f64>,
@@ -105,8 +117,17 @@ pub struct MidiProbe {
 pub struct AudioDriverInfo {
     pub name: String,
     pub access_mode: AudioAccessMode,
+    pub device_pairing: AudioDevicePairing,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AudioDevicePairing {
+    #[default]
+    Independent,
+    SameDevice,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]

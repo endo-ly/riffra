@@ -1,5 +1,7 @@
 use crate::audio_preferences::AudioPreferences;
-use crate::model::{AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus};
+use crate::model::{
+    AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -19,6 +21,7 @@ pub struct AudioSupervisor {
     status: Arc<Mutex<AudioStatus>>,
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
     next_request_id: AtomicU64,
+    sidecar_generation: Arc<AtomicU64>,
     child: Mutex<Option<CommandChild>>,
     restart_preferences: Mutex<AudioPreferences>,
 }
@@ -57,7 +60,10 @@ struct NativeStatus {
     state: String,
     driver: Option<String>,
     input_device: Option<String>,
+    input_channel: Option<u32>,
+    input_channels: Option<Vec<NativeAudioChannelInfo>>,
     output_device: Option<String>,
+    output_channels: Option<Vec<NativeAudioChannelInfo>>,
     sample_rate: Option<f64>,
     buffer_size: Option<u32>,
     round_trip_ms: Option<f64>,
@@ -75,6 +81,15 @@ struct NativeStatus {
     invalid_samples: Option<u64>,
     feedback_suspected: Option<bool>,
     message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMeters {
+    input_peak: Option<f64>,
+    output_peak: Option<f64>,
+    invalid_samples: Option<u64>,
+    feedback_suspected: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,8 +118,17 @@ struct NativePluginStatus {
     sample_rate: Option<f64>,
     block_size: Option<u32>,
     bypassed_blocks: Option<u64>,
+    contention_blocks: Option<u64>,
+    transition_blocks: Option<u64>,
     parameters: Option<Vec<NativePluginParameter>>,
     state_data: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeAudioChannelInfo {
+    index: u32,
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,7 +159,10 @@ impl AudioSupervisor {
                 state: AudioState::Offline,
                 driver: None,
                 input_device: None,
+                input_channel: None,
+                input_channels: Vec::new(),
                 output_device: None,
+                output_channels: Vec::new(),
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -156,6 +183,7 @@ impl AudioSupervisor {
             })),
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
             next_request_id: AtomicU64::new(1),
+            sidecar_generation: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(AudioPreferences::default()),
         }
@@ -166,7 +194,10 @@ impl AudioSupervisor {
             state: AudioState::Starting,
             driver: None,
             input_device: None,
+            input_channel: None,
+            input_channels: Vec::new(),
             output_device: None,
+            output_channels: Vec::new(),
             sample_rate: None,
             buffer_size: None,
             round_trip_ms: None,
@@ -191,10 +222,12 @@ impl AudioSupervisor {
             status,
             responses,
             next_request_id: AtomicU64::new(1),
+            sidecar_generation: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(preferences),
         };
-        match supervisor.spawn_sidecar(app) {
+        let generation = supervisor.next_sidecar_generation();
+        match supervisor.spawn_sidecar(app, generation) {
             Ok(child) => {
                 if let Ok(mut slot) = supervisor.child.lock() {
                     *slot = Some(child);
@@ -210,7 +243,15 @@ impl AudioSupervisor {
         supervisor
     }
 
-    fn spawn_sidecar<R: Runtime>(&self, app: &AppHandle<R>) -> Result<CommandChild, String> {
+    fn next_sidecar_generation(&self) -> u64 {
+        self.sidecar_generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn spawn_sidecar<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        generation: u64,
+    ) -> Result<CommandChild, String> {
         let parent_pid = std::process::id().to_string();
         let preferences = self
             .restart_preferences
@@ -227,6 +268,10 @@ impl AudioSupervisor {
         if let Some(input_device) = preferences.input_device {
             arguments.extend(["--input-device".to_string(), input_device]);
         }
+        arguments.extend([
+            "--input-channel".to_string(),
+            preferences.input_channel.to_string(),
+        ]);
         if let Some(output_device) = preferences.output_device {
             arguments.extend(["--output-device".to_string(), output_device]);
         }
@@ -244,8 +289,12 @@ impl AudioSupervisor {
 
         let event_status = Arc::clone(&self.status);
         let event_responses = Arc::clone(&self.responses);
+        let event_generation = Arc::clone(&self.sidecar_generation);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
+                if event_generation.load(Ordering::Acquire) != generation {
+                    break;
+                }
                 match event {
                     CommandEvent::Stdout(bytes) => {
                         if let Some(response) = handle_native_stdout(&event_status, &bytes)
@@ -287,11 +336,46 @@ impl AudioSupervisor {
         Ok(child)
     }
 
+    fn restart_sidecar<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        starting_message: &str,
+    ) -> Result<(), String> {
+        let generation = self.next_sidecar_generation();
+        let mut slot = self
+            .child
+            .lock()
+            .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
+        if let Some(child) = slot.take() {
+            let _ = child.kill();
+        }
+        drop(slot);
+        set_starting(&self.status, starting_message);
+        let child = self.spawn_sidecar(app, generation).map_err(|spawn_error| {
+            set_faulted(
+                &self.status,
+                format!(
+                    "Native audio sidecar could not restart: {spawn_error}. Saved data remains safe."
+                ),
+            );
+            format!("Native audio sidecar could not restart: {spawn_error}")
+        })?;
+        *self
+            .child
+            .lock()
+            .map_err(|error| format!("Audio child lock was poisoned: {error}"))? = Some(child);
+        Ok(())
+    }
+
     pub fn refresh_status(&self) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({"type": "status"}),
             "Native audio status refreshed.",
         )
+    }
+
+    pub fn refresh_meters(&self) -> Result<AudioStatus, String> {
+        self.send_command(serde_json::json!({"type": "meterStatus"}), "")
     }
 
     fn send_command(
@@ -317,9 +401,7 @@ impl AudioSupervisor {
         child
             .write(format!("{payload}\n").as_bytes())
             .map_err(|error| {
-                format!(
-                    "Audio recording command could not reach the isolated audio process: {error}"
-                )
+                format!("Audio command could not reach the isolated audio process: {error}")
             })?;
         let (response, wait_result) = response_ready
             .wait_timeout_while(response, Duration::from_secs(3), |current| {
@@ -336,7 +418,9 @@ impl AudioSupervisor {
             .status
             .lock()
             .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
-        status.message = message.into();
+        if !message.is_empty() {
+            status.message = message.into();
+        }
         Ok(status.clone())
     }
 
@@ -397,6 +481,10 @@ impl AudioSupervisor {
             serde_json::json!({"type": "setPluginState", "stateData": state_data}),
             "VST3 state restored through the isolated rack.",
         )
+    }
+
+    pub fn capture_plugin_state(&self) -> Result<AudioStatus, String> {
+        self.send_command(serde_json::json!({"type": "capturePluginState"}), "")
     }
 
     pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
@@ -483,29 +571,10 @@ impl AudioSupervisor {
         ) {
             Ok(status) => Ok(status),
             Err(error) if sidecar_restart_required(&error) => {
-                if let Ok(mut slot) = self.child.lock()
-                    && let Some(child) = slot.take()
-                {
-                    let _ = child.kill();
-                }
-                set_starting(
-                    &self.status,
+                self.restart_sidecar(
+                    app,
                     "Native audio sidecar is restarting in emergency-mute state.",
-                );
-                let child = self.spawn_sidecar(app).map_err(|spawn_error| {
-                    set_faulted(
-                        &self.status,
-                        format!(
-                            "Native audio sidecar recovery could not restart the isolated engine: {spawn_error}. Saved data remains safe."
-                        ),
-                    );
-                    format!(
-                        "Native audio sidecar recovery could not restart the isolated engine: {spawn_error}"
-                    )
-                })?;
-                *self.child.lock().map_err(|lock_error| {
-                    format!("Audio child lock was poisoned: {lock_error}")
-                })? = Some(child);
+                )?;
                 self.send_command(
                     command,
                     "Audio sidecar restarted and device recovery was requested; output remains muted until the device is ready.",
@@ -515,10 +584,12 @@ impl AudioSupervisor {
         }
     }
 
-    pub fn set_audio_driver(
+    pub fn set_audio_driver<R: Runtime>(
         &self,
+        app: &AppHandle<R>,
         driver: &str,
         input_device: Option<&str>,
+        input_channel: u32,
         output_device: Option<&str>,
         sample_rate: Option<u32>,
         buffer_size: Option<u32>,
@@ -527,6 +598,7 @@ impl AudioSupervisor {
         if let Some(input_device) = input_device {
             command["inputDevice"] = serde_json::json!(input_device);
         }
+        command["inputChannel"] = serde_json::json!(input_channel);
         if let Some(output_device) = output_device {
             command["outputDevice"] = serde_json::json!(output_device);
         }
@@ -536,10 +608,27 @@ impl AudioSupervisor {
         if let Some(buffer_size) = buffer_size {
             command["bufferSize"] = serde_json::json!(buffer_size);
         }
-        self.send_command(
+        match self.send_command(
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
-        )
+        ) {
+            Ok(status) => Ok(status),
+            Err(error) if sidecar_restart_required(&error) => {
+                self.restart_sidecar(
+                    app,
+                    "The audio driver switch stalled; the isolated engine is restarting with the previous device.",
+                )?;
+                let mut status = self.refresh_status()?;
+                status.message = format!(
+                    "The requested audio driver did not respond, so the previous device was restored: {error}"
+                );
+                if let Ok(mut current) = self.status.lock() {
+                    current.message = status.message.clone();
+                }
+                Ok(status)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> Result<(), String> {
@@ -599,7 +688,26 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         state,
         driver: native.driver,
         input_device: native.input_device,
+        input_channel: native.input_channel,
+        input_channels: native
+            .input_channels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|channel| AudioChannelInfo {
+                index: channel.index,
+                name: channel.name,
+            })
+            .collect(),
         output_device: native.output_device,
+        output_channels: native
+            .output_channels
+            .unwrap_or_default()
+            .into_iter()
+            .map(|channel| AudioChannelInfo {
+                index: channel.index,
+                name: channel.name,
+            })
+            .collect(),
         sample_rate: native.sample_rate.and_then(normalize_sample_rate),
         buffer_size: native.buffer_size,
         round_trip_ms: native.round_trip_ms,
@@ -633,6 +741,8 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
             sample_rate: plugin.sample_rate.and_then(normalize_sample_rate),
             block_size: plugin.block_size,
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
+            contention_blocks: plugin.contention_blocks.unwrap_or_default(),
+            transition_blocks: plugin.transition_blocks.unwrap_or_default(),
             parameters: plugin
                 .parameters
                 .unwrap_or_default()
@@ -673,6 +783,10 @@ enum ParsedNativeLine {
         request_id: Option<u64>,
         status: NativeStatus,
     },
+    Meters {
+        request_id: Option<u64>,
+        meters: NativeMeters,
+    },
     Error {
         request_id: Option<u64>,
         fault: bool,
@@ -703,6 +817,10 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
             let status = serde_json::from_value::<NativeStatus>(payload).ok()?;
             Some(ParsedNativeLine::Status { request_id, status })
         }
+        Some("audioMeters") => {
+            let meters = serde_json::from_value::<NativeMeters>(payload).ok()?;
+            Some(ParsedNativeLine::Meters { request_id, meters })
+        }
         Some("error") => {
             let scope = payload
                 .get("scope")
@@ -732,6 +850,18 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
         } => {
             if let Ok(mut current) = status.lock() {
                 *current = native_status_to_audio_status(native_status);
+            }
+            Some(NativeReply {
+                request_id,
+                result: Ok(()),
+            })
+        }
+        ParsedNativeLine::Meters { request_id, meters } => {
+            if let Ok(mut current) = status.lock() {
+                current.input_peak = meters.input_peak.unwrap_or_default().clamp(0.0, 1.0);
+                current.output_peak = meters.output_peak.unwrap_or_default().clamp(0.0, 1.0);
+                current.invalid_samples = meters.invalid_samples.unwrap_or_default();
+                current.feedback_suspected = meters.feedback_suspected.unwrap_or(false);
             }
             Some(NativeReply {
                 request_id,
@@ -804,7 +934,16 @@ mod tests {
             state: AudioState::Ready,
             driver: Some("Test".into()),
             input_device: Some("Input".into()),
+            input_channel: Some(0),
+            input_channels: vec![AudioChannelInfo {
+                index: 0,
+                name: "Input 1".into(),
+            }],
             output_device: Some("Output".into()),
+            output_channels: vec![AudioChannelInfo {
+                index: 0,
+                name: "Output 1".into(),
+            }],
             sample_rate: Some(44_100),
             buffer_size: Some(441),
             round_trip_ms: Some(20.0),
@@ -903,7 +1042,9 @@ mod tests {
                 assert_eq!(status.state, "ready");
                 assert_eq!(status.midi_input_active, Some(true));
             }
-            ParsedNativeLine::Error { .. } => panic!("expected a status line"),
+            ParsedNativeLine::Meters { .. } | ParsedNativeLine::Error { .. } => {
+                panic!("expected a status line")
+            }
         }
     }
 
@@ -924,7 +1065,10 @@ mod tests {
     #[test]
     fn identifies_lost_sidecar_transport_for_recovery() {
         assert!(sidecar_restart_required(
-            "Audio recording command could not reach the isolated audio process: pipe closed."
+            "Audio command could not reach the isolated audio process: pipe closed."
+        ));
+        assert!(sidecar_restart_required(
+            "Native audio did not acknowledge the command within 3 seconds."
         ));
         assert!(!sidecar_restart_required(
             "Native audio device error: device missing."
@@ -942,8 +1086,27 @@ mod tests {
                 assert_eq!(request_id, Some(9));
                 assert!(!fault);
             }
-            ParsedNativeLine::Status { .. } => panic!("expected an error line"),
+            ParsedNativeLine::Status { .. } | ParsedNativeLine::Meters { .. } => {
+                panic!("expected an error line")
+            }
         }
+    }
+
+    #[test]
+    fn meter_reply_updates_only_meter_fields() {
+        let status = test_status();
+        let reply = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"feedbackSuspected":true}"#,
+        )
+        .expect("meter reply");
+        let current = status.lock().unwrap();
+        assert_eq!(reply.request_id, Some(12));
+        assert_eq!(current.driver.as_deref(), Some("Test"));
+        assert_eq!(current.input_peak, 0.7);
+        assert_eq!(current.output_peak, 0.4);
+        assert_eq!(current.invalid_samples, 3);
+        assert!(current.feedback_suspected);
     }
 
     #[test]
@@ -984,22 +1147,35 @@ mod tests {
         let native: NativeStatus = serde_json::from_value(serde_json::json!({
             "state": "muted",
             "driver": "ASIO",
+            "inputChannel": 1,
+            "inputChannels": [
+                { "index": 0, "name": "Analogue 1" },
+                { "index": 1, "name": "Analogue 2" }
+            ],
+            "outputChannels": [
+                { "index": 0, "name": "Monitor 1" },
+                { "index": 1, "name": "Monitor 2" }
+            ],
             "sampleRate": 48000.0,
             "bufferSize": 256,
             "recording": { "active": true, "directory": "/tmp", "samplesWritten": 10 },
-            "plugin": { "loaded": true, "bypassed": false, "path": "v.st3", "name": "V", "parameters": [] }
+            "plugin": { "loaded": true, "bypassed": false, "path": "v.st3", "name": "V", "contentionBlocks": 3, "parameters": [] }
         }))
         .expect("native status");
         let status = native_status_to_audio_status(native);
         assert!(matches!(status.state, AudioState::Muted));
         assert_eq!(status.driver.as_deref(), Some("ASIO"));
         assert_eq!(status.sample_rate, Some(48_000));
+        assert_eq!(status.input_channel, Some(1));
+        assert_eq!(status.input_channels[1].name, "Analogue 2");
+        assert_eq!(status.output_channels.len(), 2);
         assert!(status.recording.active);
         assert_eq!(status.recording.samples_written, 10);
         assert_eq!(
             status.plugin.as_ref().unwrap().path.as_deref(),
             Some("v.st3")
         );
+        assert_eq!(status.plugin.as_ref().unwrap().contention_blocks, 3);
         assert!(status.message.contains("emergency-muted"));
         assert!(!status.feedback_suspected);
     }
