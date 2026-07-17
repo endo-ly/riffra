@@ -111,9 +111,12 @@ impl SessionStore {
                 session.format_version, CREATIVE_SESSION_FORMAT
             )));
         }
-        session
+        let session = session
             .validate_and_normalize()
-            .map_err(|error| corrupt_io_error(&error))
+            .map_err(|error| corrupt_io_error(&error))?;
+        crate::asset::validate_session_references(&self.data_root, &session)
+            .map_err(|error| corrupt_io_error(&error))?;
+        Ok(session)
     }
 
     fn newest_valid_generation(&self) -> io::Result<Option<CreativeSession>> {
@@ -136,7 +139,9 @@ impl SessionStore {
                 session.format_version, CREATIVE_SESSION_FORMAT
             )));
         }
-        session.validate_and_normalize().map_err(invalid_data)
+        let session = session.validate_and_normalize().map_err(invalid_data)?;
+        crate::asset::validate_session_references(&self.data_root, &session).map_err(invalid_data)?;
+        Ok(session)
     }
 
     pub fn save(&self, session: &CreativeSession) -> io::Result<()> {
@@ -376,7 +381,7 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetId, AssetKind};
+    use crate::asset::{mint_asset_id, AssetKind};
     use crate::rack::DeviceKind;
     use crate::session::AudioClip;
 
@@ -470,7 +475,7 @@ mod tests {
         session.arrangement.audio_clips.push(AudioClip {
             id: "clip:unknown".into(),
             track_id: "main".into(),
-            asset_id: AssetId::from_normalized("asset:unknown-0").unwrap(),
+            asset_id: mint_asset_id(),
             position_ms: 0,
             duration_ms: 100,
             source_start_ms: 0,
@@ -487,6 +492,86 @@ mod tests {
         let error = store.save(&session).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(!root.join("scratch/current.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_rejects_a_current_session_with_an_unknown_asset_reference() {
+        let root = test_root("load-unknown-asset");
+        let store = SessionStore::new(&root);
+        store.ensure_layout().unwrap();
+        let current = root.join("scratch/current.json");
+
+        let mut session = CreativeSession::new(now_ms());
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:unknown".into(),
+            track_id: "main".into(),
+            asset_id: mint_asset_id(),
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "unknown".into(),
+        });
+        let payload = serde_json::to_vec_pretty(&session).unwrap();
+        fs::write(&current, &payload).unwrap();
+        let original = fs::read(&current).unwrap();
+
+        // Load must reject the unknown reference rather than adopting an
+        // unrecoverable session, and must never overwrite the original file.
+        let error = store.load_or_create().unwrap_err();
+        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&current).unwrap(), original);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_falls_back_to_a_valid_generation_when_current_has_unknown_asset() {
+        let root = test_root("load-fallback-generation");
+        let store = SessionStore::new(&root);
+        store.ensure_layout().unwrap();
+
+        // A valid generation that references no external asset.
+        let mut generation = CreativeSession::new(now_ms());
+        generation.project_name = Some("Recoverable".into());
+        let generation_payload = serde_json::to_vec_pretty(&generation).unwrap();
+        fs::write(
+            root.join("scratch/generations")
+                .join(format!("{}-{}.json", now_ms(), std::process::id())),
+            &generation_payload,
+        )
+        .unwrap();
+
+        // Current session references an unknown asset and must be rejected.
+        let current = root.join("scratch/current.json");
+        let mut session = CreativeSession::new(now_ms());
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:unknown".into(),
+            track_id: "main".into(),
+            asset_id: mint_asset_id(),
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "unknown".into(),
+        });
+        fs::write(&current, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+
+        let loaded = store.load_or_create().unwrap();
+        assert!(loaded.recovered_from_generation);
+        assert_eq!(loaded.session.project_name.as_deref(), Some("Recoverable"));
         let _ = fs::remove_dir_all(root);
     }
 

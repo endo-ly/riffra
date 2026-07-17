@@ -177,7 +177,7 @@ mod tests {
     }
 
     fn session_with_missing_asset(data_root: &Path) -> (CreativeSession, AssetId) {
-        let asset_id = AssetId::from_normalized("asset:missing-0").unwrap();
+        let asset_id = asset::mint_asset_id();
         let mut session = CreativeSession::new(now_ms());
         session.arrangement.audio_clips.push(AudioClip {
             id: "clip:missing".into(),

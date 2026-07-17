@@ -16,8 +16,7 @@ use uuid::Uuid;
 
 /// Stable, globally-unique identifier for an `Asset`.
 ///
-/// The string form is `asset:<UUIDv7>`. Existing timestamp/counter ids remain
-/// valid through [`AssetId::from_normalized`] and are never rewritten.
+/// The only valid string form is `asset:<UUIDv7>`.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AssetId(String);
@@ -26,9 +25,10 @@ impl AssetId {
     /// Creates an id from a known value. Prefer [`AssetId::mint`] for new ids.
     ///
     /// # Errors
-    /// Returns [`DomainError`] when the value is empty or lacks the canonical
-    /// `asset:` prefix, which guards against accidental path strings or ids
-    /// minted by other schemes leaking into the domain.
+    /// Returns [`DomainError`] when the value is not exactly an `asset:` prefix
+    /// followed by a version-7 UUID. Any other form (including the legacy
+    /// `asset:<millis>-<counter>` scheme and arbitrary strings) is rejected so
+    /// that only the current UUIDv7 spec is ever valid in the domain.
     pub fn from_normalized(value: impl Into<String>) -> Result<Self, DomainError> {
         let value = value.into();
         if value.trim().is_empty() {
@@ -36,9 +36,18 @@ impl AssetId {
                 "Asset id must not be empty.".into(),
             ));
         }
-        if !value.starts_with("asset:") {
+        let Some(raw) = value.strip_prefix("asset:") else {
             return Err(DomainError::InvalidAssetId(format!(
                 "Asset id '{value}' is missing the canonical asset: prefix."
+            )));
+        };
+        let uuid = Uuid::parse_str(raw).map_err(|error| {
+            DomainError::InvalidAssetId(format!("Asset id '{value}' is not a valid UUID: {error}"))
+        })?;
+        if uuid.get_version_num() != 7 {
+            return Err(DomainError::InvalidAssetId(format!(
+                "Asset id '{value}' must be a UUIDv7, found version {}.",
+                uuid.get_version_num()
             )));
         }
         Ok(Self(value))
@@ -370,10 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn asset_id_rejects_unprefixed_or_empty_values() {
+    fn asset_id_accepts_only_uuidv7() {
         assert!(AssetId::from_normalized("").is_err());
         assert!(AssetId::from_normalized("C:\\path.wav").is_err());
-        assert!(AssetId::from_normalized("asset:1-0").is_ok());
+        assert!(AssetId::from_normalized("asset:1-0").is_err());
+        assert!(AssetId::from_normalized("asset:not-a-uuid").is_err());
+        // A valid UUID but not version 7 must be rejected.
+        assert!(AssetId::from_normalized("asset:01890aef-3d2c-4b4e-8f1a-2b3c4d5e6f70").is_err());
         assert!(AssetId::from_normalized(format!("asset:{}", Uuid::now_v7())).is_ok());
     }
 

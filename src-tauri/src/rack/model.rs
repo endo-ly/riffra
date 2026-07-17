@@ -109,6 +109,17 @@ impl RackDefinition {
         Ok(())
     }
 
+    /// Returns the single runtime-applicable plugin device, if any.
+    ///
+    /// Disabled placeholders are never returned, keeping the device the runtime
+    /// actually applies in lock-step with [`RackDefinition::runtime_supported`].
+    /// Returns `None` when the definition carries no active plugin device.
+    pub fn active_plugin_device(&self) -> Option<&RackDevice> {
+        self.devices
+            .iter()
+            .find(|device| device.kind == DeviceKind::Plugin && !device.disabled_placeholder)
+    }
+
     /// Saves this definition as a brand-new [`Asset`] (kind
     /// `RackDefinition`), minting a fresh id. Each call produces a distinct id;
     /// a definition is never overwritten in place.
@@ -258,5 +269,30 @@ mod tests {
             macros: Vec::new(),
         };
         assert!(definition.runtime_supported().is_ok());
+    }
+
+    #[test]
+    fn active_plugin_device_skips_disabled_placeholder_and_picks_the_real_plugin() {
+        let mut placeholder = plugin_device("plugin:1", Some("C:\\VST3\\missing.vst3"));
+        placeholder.disabled_placeholder = true;
+        let active = plugin_device("plugin:2", Some("C:\\VST3\\real.vst3"));
+        let definition = RackDefinition {
+            devices: vec![placeholder, active],
+            macros: Vec::new(),
+        };
+        let applied = definition.active_plugin_device().expect("a real plugin must be applicable");
+        assert_eq!(applied.id, "plugin:2");
+        assert!(!applied.disabled_placeholder);
+    }
+
+    #[test]
+    fn active_plugin_device_is_none_when_only_placeholders_exist() {
+        let mut placeholder = plugin_device("plugin:1", Some("C:\\VST3\\missing.vst3"));
+        placeholder.disabled_placeholder = true;
+        let definition = RackDefinition {
+            devices: vec![placeholder],
+            macros: Vec::new(),
+        };
+        assert!(definition.active_plugin_device().is_none());
     }
 }

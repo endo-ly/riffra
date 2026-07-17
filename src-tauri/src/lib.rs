@@ -25,7 +25,7 @@ use model::{
 use native_audio::AudioSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{path::PathBuf, sync::Mutex};
+use std::{path::Path, path::PathBuf, sync::Mutex};
 use storage::{SessionStore, now_ms};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
@@ -229,6 +229,48 @@ fn apply_plugin_device_to_runtime(
     Ok(status)
 }
 
+/// Restores the runtime to the plugin state captured before a rack apply.
+///
+/// Returns the resulting runtime status on success. Any runtime step that fails
+/// is surfaced as an error so a failed rollback is never silently swallowed
+/// (which would leave the runtime and persisted session out of sync while
+/// reporting only the persistence error).
+fn restore_previous_plugin(
+    audio: &AudioSupervisor,
+    previous: &crate::rack::RackDevice,
+) -> Result<AudioStatus, String> {
+    let cleared = audio.clear_plugin()?;
+    if !audio_command_succeeded(&cleared) {
+        return Err(
+            "Runtime could not clear the plugin while restoring the previous rack.".to_string(),
+        );
+    }
+    let Some(path) = previous.path.as_deref() else {
+        return Ok(cleared);
+    };
+    let mut status = audio.load_plugin(Path::new(path))?;
+    if !audio_command_succeeded(&status) {
+        return Err(format!(
+            "Runtime could not reload the previous plugin '{}' during rollback.",
+            previous.name
+        ));
+    }
+    if let Some(state_data) = previous.state_data.as_deref()
+        && !state_data.is_empty()
+    {
+        status = audio.set_plugin_state(state_data)?;
+    }
+    for (index, value) in previous.parameter_values.iter().enumerate() {
+        if let Ok(index) = u32::try_from(index) {
+            status = audio.set_plugin_parameter(index, *value)?;
+        }
+    }
+    if previous.bypassed {
+        status = audio.set_plugin_bypassed(true)?;
+    }
+    Ok(status)
+}
+
 #[tauri::command]
 fn load_rack_definition_asset(
     asset_id: String,
@@ -263,7 +305,9 @@ fn load_rack_definition_asset(
         .rack
         .devices
         .iter()
-        .find(|device| device.kind == crate::rack::DeviceKind::Plugin)
+        .find(|device| {
+            device.kind == crate::rack::DeviceKind::Plugin && !device.disabled_placeholder
+        })
         .cloned();
 
     // Apply the new definition to the runtime first. If this fails, the
@@ -275,11 +319,7 @@ fn load_rack_definition_asset(
             cleared.message
         ));
     }
-    let final_status = if let Some(device) = definition
-        .devices
-        .iter()
-        .find(|device| device.kind == crate::rack::DeviceKind::Plugin)
-    {
+    let final_status = if let Some(device) = definition.active_plugin_device() {
         apply_plugin_device_to_runtime(&state.audio, device)?
     } else {
         cleared
@@ -291,30 +331,32 @@ fn load_rack_definition_asset(
     session.updated_at_ms = now_ms();
     let save_result = SessionStore::new(&state.data_root).save(&session);
     if let Err(error) = save_result {
-        // Try to restore the previous runtime state so we don't leave the
-        // runtime and persisted session out of sync. If recovery also fails,
-        // surface the inconsistency rather than reporting success.
-        let _ = state.audio.clear_plugin();
-        if let Some(previous) = previous_plugin_device
-            && let Some(path) = previous.path.as_deref()
-        {
-            let _ = state.audio.load_plugin(std::path::Path::new(path));
-            if let Some(state_data) = previous.state_data.as_deref() {
-                let _ = state.audio.set_plugin_state(state_data);
-            }
-            for (index, value) in previous.parameter_values.iter().enumerate() {
-                if let Ok(index) = u32::try_from(index) {
-                    let _ = state.audio.set_plugin_parameter(index, *value);
+        // The new rack was applied to the runtime but the session could not be
+        // persisted. Attempt to roll the runtime back to the previous plugin so
+        // the runtime and persisted session do not diverge. A failed rollback is
+        // a distinct, more severe failure and must not be reported as success.
+        let rollback = match &previous_plugin_device {
+            Some(previous) => restore_previous_plugin(&state.audio, previous),
+            None => {
+                let cleared = state.audio.clear_plugin()?;
+                if !audio_command_succeeded(&cleared) {
+                    Err("Runtime could not clear the plugin during rollback.".to_string())
+                } else {
+                    Ok(cleared)
                 }
             }
-            if previous.bypassed {
-                let _ = state.audio.set_plugin_bypassed(true);
-            }
-        }
-        return Err(format!(
-            "Rack was applied to the runtime but the session could not be saved; \
-             runtime recovery was attempted. Persistence error: {error}"
-        ));
+        };
+        return match rollback {
+            Ok(_) => Err(format!(
+                "Rack was applied to the runtime but the session could not be saved; \
+                 the previous rack was restored. Persistence error: {error}"
+            )),
+            Err(rollback_error) => Err(format!(
+                "Rack was applied to the runtime but the session could not be saved, \
+                 and runtime rollback also failed ({rollback_error}). The runtime may \
+                 be out of sync with the persisted session. Persistence error: {error}"
+            )),
+        };
     }
     queue_session_index(&state.data_root, &session);
     *state.session.lock().map_err(lock_error)? = session.clone();

@@ -15,7 +15,7 @@
 //! [`AssetId`]. A failure at any step leaves already-written metadata and files
 //! intact.
 
-use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation, mint_asset_id};
+use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
 use crate::rack::RackDefinition;
 use crate::session::CreativeSession;
 use crate::storage::now_ms;
@@ -136,10 +136,7 @@ pub fn register(
     content_location: &str,
     provenance: Option<Provenance>,
 ) -> Result<AssetId, String> {
-    let mut asset = Asset::register(kind, name, content_location, provenance, now_ms());
-    while load(data_root, &asset.id).is_some() {
-        asset.id = mint_asset_id();
-    }
+    let asset = Asset::register(kind, name, content_location, provenance, now_ms());
     register_with_id(
         data_root,
         &asset.id,
@@ -601,7 +598,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::ProvenanceOperation;
+    use crate::asset::{mint_asset_id, ProvenanceOperation};
     use crate::session::{AudioClip, SamplePad};
 
     fn root(label: &str) -> PathBuf {
@@ -691,35 +688,15 @@ mod tests {
     #[test]
     fn resolve_returns_none_when_no_canonical_record_exists() {
         let root = root("none");
-        let orphan = AssetId::from_normalized("asset:orphan-0").unwrap();
+        let orphan = mint_asset_id();
         assert!(resolve_content_location(&root, &orphan).is_none());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn register_with_id_preserves_a_legacy_asset_id() {
-        let root = root("legacy-id");
-        let wav = root.join("legacy.wav");
-        write_wav(&wav);
-        let legacy_id = AssetId::from_normalized("asset:1700000000000-3").unwrap();
-        register_with_id(
-            &root,
-            &legacy_id,
-            AssetKind::Audio,
-            "legacy",
-            &wav.to_string_lossy(),
-            Some(Provenance::imported()),
-        )
-        .unwrap();
-
-        assert_eq!(load(&root, &legacy_id).unwrap().id, legacy_id);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn session_reference_validation_rejects_unknown_arrangement_asset() {
         let root = root("validate-clip");
-        let asset_id = AssetId::from_normalized("asset:unknown-0").unwrap();
+        let asset_id = mint_asset_id();
         let mut session = CreativeSession::new(1_000);
         session.arrangement.audio_clips.push(AudioClip {
             id: "clip:unknown".into(),
@@ -746,7 +723,7 @@ mod tests {
     #[test]
     fn session_reference_validation_rejects_unknown_sample_pad() {
         let root = root("validate-pad");
-        let asset_id = AssetId::from_normalized("asset:unknown-pad-0").unwrap();
+        let asset_id = mint_asset_id();
         let mut session = CreativeSession::new(1_000);
         session.play_state.sample_instrument.pads.push(SamplePad {
             id: "pad:unknown".into(),
@@ -767,7 +744,7 @@ mod tests {
     #[test]
     fn session_reference_validation_rejects_unknown_design_target() {
         let root = root("validate-design-target");
-        let asset_id = AssetId::from_normalized("asset:unknown-target-0").unwrap();
+        let asset_id = mint_asset_id();
         let mut session = CreativeSession::new(1_000);
         session.design_context.target_asset_id = Some(asset_id);
 
