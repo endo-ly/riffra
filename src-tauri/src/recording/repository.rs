@@ -1,6 +1,5 @@
 use crate::{
     asset::{self, AssetId},
-    rack::RackDevice,
     recording::{RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };
@@ -13,10 +12,9 @@ use std::{
 
 /// UI read model assembled from the capture manifest and canonical Assets.
 ///
-/// This type is never used as the persistent recording domain. In particular,
-/// the path fields are resolved/display-oriented data for Legacy Read and
-/// Recovery; completed captures use their Asset IDs as the authoritative
-/// identity.
+/// This type is never used as the persistent recording domain. The path fields
+/// are resolved/display-oriented data for Recovery; completed captures use
+/// their Asset IDs as the authoritative identity.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAsset {
@@ -36,7 +34,6 @@ pub struct RecordingAsset {
     pub midi_asset_id: Option<AssetId>,
     pub capture: Option<RecordingCapture>,
     pub midi_file: Option<String>,
-    pub midi_path: Option<String>,
     pub sample_rate: Option<u32>,
     pub samples_written: u64,
     pub dropped_blocks: u64,
@@ -44,24 +41,6 @@ pub struct RecordingAsset {
     pub dropout_start_sample: Option<u64>,
     pub dropout_end_sample: Option<u64>,
     pub recovery_status: String,
-    pub provenance: Option<RecordingProvenance>,
-}
-
-/// Legacy recording provenance read from `provenance.json`.
-///
-/// New code should use [`RecordingCapture`] for capture state. This type stays
-/// isolated at the read boundary so older Inbox manifests remain indexable.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecordingProvenance {
-    pub recorded_at_ms: u64,
-    pub session_id: String,
-    pub workspace: String,
-    pub master_db: f64,
-    #[serde(default)]
-    pub count_in_beats: u8,
-    pub rack: Vec<RackDevice>,
-    pub source: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,9 +76,6 @@ struct RecordingManifest {
     dropout_start_sample: Option<u64>,
     dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
-    raw_asset_id: Option<AssetId>,
-    processed_asset_id: Option<AssetId>,
-    midi_asset_id: Option<AssetId>,
     #[serde(default)]
     capture: Option<RecordingCapture>,
 }
@@ -126,36 +102,29 @@ fn current_state(manifest: &RecordingManifest) -> String {
         .capture
         .as_ref()
         .map(|capture| capture.status.as_str().to_owned())
-        .or_else(|| manifest.state.clone())
-        .unwrap_or_else(|| "recoverable".into())
+        .unwrap_or_else(|| "invalid".into())
 }
 
 fn current_sample_rate(manifest: &RecordingManifest) -> Option<u32> {
-    if let Some(capture) = manifest.capture.as_ref() {
-        return capture.sample_rate;
-    }
-    manifest.sample_rate.and_then(normalize_sample_rate)
+    manifest
+        .capture
+        .as_ref()
+        .and_then(|capture| capture.sample_rate)
 }
 
 fn current_dropout_information(
     manifest: &RecordingManifest,
 ) -> (u64, u64, u64, Option<u64>, Option<u64>) {
-    if let Some(capture) = manifest.capture.as_ref() {
-        let dropout = &capture.dropout_information;
-        return (
-            dropout.samples_written,
-            dropout.dropped_blocks,
-            dropout.missing_samples,
-            dropout.dropout_start_sample,
-            dropout.dropout_end_sample,
-        );
-    }
+    let Some(capture) = manifest.capture.as_ref() else {
+        return (0, 0, 0, None, None);
+    };
+    let dropout = &capture.dropout_information;
     (
-        manifest.samples_written.unwrap_or_default(),
-        manifest.dropped_blocks.unwrap_or_default(),
-        manifest.missing_samples.unwrap_or_default(),
-        manifest.dropout_start_sample,
-        manifest.dropout_end_sample,
+        dropout.samples_written,
+        dropout.dropped_blocks,
+        dropout.missing_samples,
+        dropout.dropout_start_sample,
+        dropout.dropout_end_sample,
     )
 }
 
@@ -437,28 +406,11 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         } else {
             declared_state
         };
-        let provenance = read_provenance(&path.join("provenance.json"));
-        let provenance_text = provenance
-            .as_ref()
-            .map(|item| {
-                format!(
-                    "{} {} {}",
-                    item.session_id,
-                    item.workspace,
-                    item.rack
-                        .iter()
-                        .map(|device| device.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                )
-            })
-            .unwrap_or_default();
         let search_text = format!(
-            "{} {} {} {}",
+            "{} {} {}",
             name,
             state,
             path.to_string_lossy(),
-            provenance_text
         )
         .to_lowercase();
         if !query.is_empty() && !search_text.contains(&query) {
@@ -487,15 +439,6 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .join("midi.json")
             .is_file()
             .then(|| "midi.json".to_string());
-        let midi_path = if canonical_capture {
-            midi_asset_id
-                .as_ref()
-                .and_then(|id| canonical_asset_location(data_root, id, "MIDI").ok())
-        } else {
-            midi_file
-                .as_ref()
-                .map(|file| path.join(file).to_string_lossy().into_owned())
-        };
         let (
             samples_written,
             dropped_blocks,
@@ -541,7 +484,6 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             midi_asset_id,
             capture: manifest.capture,
             midi_file,
-            midi_path,
             sample_rate,
             samples_written,
             dropped_blocks,
@@ -549,7 +491,6 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             dropout_start_sample,
             dropout_end_sample,
             recovery_status,
-            provenance,
         });
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -566,12 +507,6 @@ pub fn save_asset_ids(
 ) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
     let mut manifest = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
-    // The flat Asset ID fields are legacy manifest data. New writes record
-    // results only on RecordingCapture and remove the old copies once the
-    // canonical capture has been persisted.
-    manifest.raw_asset_id = None;
-    manifest.processed_asset_id = None;
-    manifest.midi_asset_id = None;
     let mut capture = manifest.capture.take().unwrap_or_else(|| {
         RecordingCapture::start(
             format!("capture:{}", directory.to_string_lossy()),
@@ -660,11 +595,6 @@ fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {
         }
     })?;
     serde_json::from_slice(&payload).map_err(|error| format!("manifest.json is invalid: {error}"))
-}
-
-fn read_provenance(path: &Path) -> Option<RecordingProvenance> {
-    let payload = fs::read(path).ok()?;
-    serde_json::from_slice(&payload).ok()
 }
 
 /// Resolve a take identifier to its directory inside the Inbox, refusing
@@ -853,13 +783,47 @@ mod tests {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-1");
         fs::create_dir_all(&take).unwrap();
-        fs::write(
-            take.join("manifest.json"),
-            br#"{"state":"completed","startedAt":"2026-07-12T00:00:00Z","updatedAt":"2026-07-12T00:00:01Z","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":44100,"droppedBlocks":0}"#,
+        let raw = take.join("raw.wav");
+        let processed = take.join("processed.wav");
+        fs::write(&raw, b"raw audio").unwrap();
+        fs::write(&processed, b"processed audio").unwrap();
+        let raw_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Raw recording",
+            &raw.to_string_lossy(),
+            Some(Provenance::recorded_root()),
         )
         .unwrap();
-        fs::write(take.join("raw.wav"), b"raw audio").unwrap();
-        fs::write(take.join("processed.wav"), b"processed audio").unwrap();
+        let processed_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Processed recording",
+            &processed.to_string_lossy(),
+            Some(Provenance::recorded_root()),
+        )
+        .unwrap();
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "completed",
+            "rawFile": "raw.wav",
+            "processedFile": "processed.wav",
+            "sampleRate": 44100.0,
+            "samplesWritten": 44100,
+            "droppedBlocks": 0,
+            "capture": {
+                "captureId": "capture:take-1",
+                "sessionId": "scratch-1",
+                "status": "completed",
+                "startedAtMs": 1_000,
+                "completedAtMs": 2_000,
+                "sampleRate": 44_100,
+                "rawAudioAssetId": raw_id,
+                "processedAudioAssetId": processed_id,
+                "dropoutInformation": { "samplesWritten": 44_100, "droppedBlocks": 0 }
+            }
+        }))
+        .unwrap();
+        fs::write(take.join("manifest.json"), manifest).unwrap();
 
         let results = list(&root, Some("take-1")).unwrap();
         assert_eq!(results.len(), 1);
@@ -875,11 +839,23 @@ mod tests {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-missing-audio");
         fs::create_dir_all(&take).unwrap();
-        fs::write(
-            take.join("manifest.json"),
-            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":44100}"#,
-        )
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "completed",
+            "rawFile": "raw.wav",
+            "processedFile": "processed.wav",
+            "capture": {
+                "captureId": "capture:take-missing-audio",
+                "sessionId": "scratch-1",
+                "status": "completed",
+                "startedAtMs": 1_000,
+                "sampleRate": 44_100,
+                "rawAudioAssetId": "asset:missing-raw",
+                "processedAudioAssetId": "asset:missing-processed",
+                "dropoutInformation": { "samplesWritten": 44100 }
+            }
+        }))
         .unwrap();
+        fs::write(take.join("manifest.json"), manifest).unwrap();
 
         let results = list(&root, Some("take-missing-audio")).unwrap();
         assert_eq!(results[0].state, "invalid");
@@ -887,7 +863,7 @@ mod tests {
             results[0]
                 .error
                 .as_deref()
-                .is_some_and(|error| error.contains("missing"))
+                .is_some_and(|error| error.contains("unknown"))
         );
         assert_eq!(results[0].raw_path, None);
         assert_eq!(results[0].processed_path, None);
@@ -899,13 +875,43 @@ mod tests {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-empty");
         fs::create_dir_all(&take).unwrap();
-        fs::write(
-            take.join("manifest.json"),
-            br#"{"state":"completed","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":0}"#,
+        let raw = take.join("raw.wav");
+        let processed = take.join("processed.wav");
+        fs::write(&raw, b"raw audio").unwrap();
+        fs::write(&processed, b"processed audio").unwrap();
+        let raw_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Raw recording",
+            &raw.to_string_lossy(),
+            Some(Provenance::recorded_root()),
         )
         .unwrap();
-        fs::write(take.join("raw.wav"), b"header only").unwrap();
-        fs::write(take.join("processed.wav"), b"header only").unwrap();
+        let processed_id = asset::register(
+            &root,
+            AssetKind::Audio,
+            "Processed recording",
+            &processed.to_string_lossy(),
+            Some(Provenance::recorded_root()),
+        )
+        .unwrap();
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "completed",
+            "rawFile": "raw.wav",
+            "processedFile": "processed.wav",
+            "capture": {
+                "captureId": "capture:take-empty",
+                "sessionId": "scratch-1",
+                "status": "completed",
+                "startedAtMs": 1_000,
+                "sampleRate": 44_100,
+                "rawAudioAssetId": raw_id,
+                "processedAudioAssetId": processed_id,
+                "dropoutInformation": { "samplesWritten": 0 }
+            }
+        }))
+        .unwrap();
+        fs::write(take.join("manifest.json"), manifest).unwrap();
 
         let results = list(&root, Some("take-empty")).unwrap();
         assert_eq!(results[0].state, "invalid");
@@ -923,11 +929,19 @@ mod tests {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-unsafe-path");
         fs::create_dir_all(&take).unwrap();
-        fs::write(
-            take.join("manifest.json"),
-            br#"{"state":"completed","rawFile":"../raw.wav","processedFile":"processed.wav","sampleRate":44100,"samplesWritten":44100}"#,
-        )
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "recoverable",
+            "rawFile": "../raw.wav",
+            "processedFile": "processed.wav",
+            "capture": {
+                "captureId": "capture:take-unsafe-path",
+                "sessionId": "scratch-1",
+                "status": "recoverable",
+                "startedAtMs": 1_000
+            }
+        }))
         .unwrap();
+        fs::write(take.join("manifest.json"), manifest).unwrap();
         fs::write(take.join("processed.wav"), b"processed audio").unwrap();
 
         let results = list(&root, Some("take-unsafe-path")).unwrap();
@@ -982,11 +996,28 @@ mod tests {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-partial");
         fs::create_dir_all(&take).unwrap();
-        fs::write(
-            take.join("manifest.json"),
-            br#"{"state":"recoverable","rawFile":"raw.wav","processedFile":"processed.wav","sampleRate":44100.0,"samplesWritten":22050,"droppedBlocks":3,"missingSamples":512,"dropoutStartSample":22050,"dropoutEndSample":22562,"recoveryStatus":"partial"}"#,
-        )
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "state": "recoverable",
+            "rawFile": "raw.wav",
+            "processedFile": "processed.wav",
+            "recoveryStatus": "partial",
+            "capture": {
+                "captureId": "capture:take-partial",
+                "sessionId": "scratch-1",
+                "status": "recoverable",
+                "startedAtMs": 1_000,
+                "sampleRate": 44_100,
+                "dropoutInformation": {
+                    "samplesWritten": 22050,
+                    "droppedBlocks": 3,
+                    "missingSamples": 512,
+                    "dropoutStartSample": 22050,
+                    "dropoutEndSample": 22562
+                }
+            }
+        }))
         .unwrap();
+        fs::write(take.join("manifest.json"), manifest).unwrap();
         fs::write(take.join("raw.wav"), b"partial raw").unwrap();
         fs::write(take.join("processed.wav"), b"partial processed").unwrap();
 
@@ -1116,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn indexes_recording_provenance_when_present() {
+    fn ignores_a_legacy_provenance_json_sidecar() {
         let root = temp_root();
         let take = root.join("recordings/inbox/take-provenance");
         fs::create_dir_all(&take).unwrap();
@@ -1126,14 +1157,10 @@ mod tests {
             br#"{"recordedAtMs":42,"sessionId":"scratch-42","workspace":"play","masterDb":-18.0,"countInBeats":0,"rack":[],"source":"raw DI"}"#,
         )
         .unwrap();
+        // A manifest with no canonical capture is not a current-format take, so
+        // it must not be indexed through provenance.json (which no longer exists).
         let results = list(&root, Some("scratch-42")).unwrap();
-        assert_eq!(
-            results[0]
-                .provenance
-                .as_ref()
-                .map(|item| item.session_id.as_str()),
-            Some("scratch-42")
-        );
+        assert!(results.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1146,12 +1173,6 @@ mod tests {
         fs::write(take.join("midi.json"), br#"{"version":1,"events":[]}"#).unwrap();
         let results = list(&root, Some("take-midi")).unwrap();
         assert_eq!(results[0].midi_file.as_deref(), Some("midi.json"));
-        assert!(
-            results[0]
-                .midi_path
-                .as_deref()
-                .is_some_and(|path| path.ends_with("midi.json"))
-        );
         let _ = fs::remove_dir_all(root);
     }
 

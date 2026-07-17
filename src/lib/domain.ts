@@ -282,7 +282,6 @@ export interface RecordingAsset {
   processedAssetId?: AssetId | null;
   midiAssetId?: AssetId | null;
   midiFile: string | null;
-  midiPath: string | null;
   sampleRate: number | null;
   samplesWritten: number;
   droppedBlocks: number;
@@ -291,7 +290,6 @@ export interface RecordingAsset {
   dropoutEndSample?: number | null;
   recoveryStatus?: 'clean' | 'partial' | string;
   capture?: RecordingCaptureDto | null;
-  provenance: RecordingProvenance | null;
 }
 
 export interface RecordingCaptureDto {
@@ -317,15 +315,6 @@ export interface RecordingCaptureDto {
     dropoutStartSample?: number | null;
     dropoutEndSample?: number | null;
   };
-}
-
-export interface RecordingProvenance {
-  recordedAtMs: number;
-  sessionId: string;
-  workspace: string;
-  masterDb: number;
-  rack: RackDevice[];
-  source: string;
 }
 
 export interface AudioAnalysis {

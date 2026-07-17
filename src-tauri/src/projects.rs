@@ -186,6 +186,12 @@ fn import_packaged_asset(
     if !packaged.is_file() {
         return Ok(());
     }
+    AssetId::from_normalized(asset.asset_id.as_str()).map_err(|_| {
+        format!(
+            "Project references a non-canonical AssetId {}; refusing to import legacy format.",
+            asset.asset_id
+        )
+    })?;
     if let Some(existing) = asset::load(data_root, &asset.asset_id) {
         if Path::new(&existing.content_location).is_file() {
             let existing_hash = hash_file(Path::new(&existing.content_location))?;

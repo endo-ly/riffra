@@ -49,15 +49,12 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
              CREATE TABLE IF NOT EXISTS assets (
                  id TEXT PRIMARY KEY,
                  name TEXT NOT NULL,
-                 kind TEXT NOT NULL,
-                 path TEXT,
-                 tag TEXT,
-                 note TEXT,
-                 created_at_ms INTEGER,
-                 updated_at_ms INTEGER,
-                 stability TEXT NOT NULL DEFAULT 'unknown',
-                 asset_kind TEXT,
-                 content_location TEXT,
+                  kind TEXT NOT NULL,
+                  tag TEXT,
+                  note TEXT,
+                  created_at_ms INTEGER,
+                  updated_at_ms INTEGER,
+                  content_location TEXT,
                  provenance_operation TEXT,
                  provenance_parameters TEXT,
                  favorite INTEGER NOT NULL DEFAULT 0
@@ -318,7 +315,6 @@ pub fn relocate_content_location(
         .execute(
             "UPDATE assets
              SET content_location = replace(content_location, ?1, ?2),
-                 path = replace(path, ?1, ?2),
                  updated_at_ms = ?3
              WHERE content_location = ?4 OR content_location LIKE ?5 OR content_location LIKE ?6",
             params![
@@ -358,18 +354,15 @@ fn upsert_asset_row(
     transaction
         .execute(
             "INSERT INTO assets (
-                 id, name, kind, path, tag, note,
-                 created_at_ms, updated_at_ms, stability,
-                 asset_kind, content_location, provenance_operation, provenance_parameters, favorite
+                 id, name, kind, tag, note,
+                 created_at_ms, updated_at_ms,
+                 content_location, provenance_operation, provenance_parameters, favorite
              )
-             VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?5, 'asset', ?3, ?4, ?6, ?7, 0)
+             VALUES (?1, ?2, ?3, NULL, NULL, ?5, ?5, ?4, ?6, ?7, 0)
              ON CONFLICT(id) DO UPDATE SET
                  name = excluded.name,
                  kind = excluded.kind,
-                 path = excluded.path,
                  updated_at_ms = excluded.updated_at_ms,
-                 stability = excluded.stability,
-                 asset_kind = excluded.asset_kind,
                  content_location = excluded.content_location,
                  provenance_operation = excluded.provenance_operation,
                  provenance_parameters = excluded.provenance_parameters",
@@ -434,7 +427,7 @@ pub fn list_by_kind(data_root: &Path, kind: AssetKind) -> Result<Vec<Asset>, Str
     let mut statement = connection
         .prepare(
             "SELECT id FROM assets
-             WHERE asset_kind = ?1
+             WHERE kind = ?1
              ORDER BY COALESCE(updated_at_ms, 0) DESC",
         )
         .map_err(|error| format!("Asset list query could not be prepared: {error}"))?;
@@ -500,10 +493,10 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
     let connection = open(data_root).ok()?;
     let row = connection
         .query_row(
-            "SELECT id, asset_kind, name, content_location,
-                    created_at_ms, updated_at_ms, tag, note, favorite,
-                    provenance_operation, provenance_parameters
-             FROM assets WHERE id = ?1 AND asset_kind IS NOT NULL",
+            "SELECT id, kind, name, content_location,
+                     created_at_ms, updated_at_ms, tag, note, favorite,
+                     provenance_operation, provenance_parameters
+              FROM assets WHERE id = ?1",
             params![id.as_str()],
             |row| {
                 Ok((

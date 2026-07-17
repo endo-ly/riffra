@@ -54,13 +54,10 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  id TEXT PRIMARY KEY,
                  name TEXT NOT NULL,
                  kind TEXT NOT NULL,
-                 path TEXT,
                  tag TEXT,
                  note TEXT,
                  created_at_ms INTEGER,
                  updated_at_ms INTEGER,
-                 stability TEXT NOT NULL DEFAULT 'unknown',
-                 asset_kind TEXT,
                  content_location TEXT,
                  provenance_operation TEXT,
                  provenance_parameters TEXT,
@@ -280,9 +277,6 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
         // canonical Raw/Processed/MIDI outputs are tracked separately as
         // Canonical Assets of kind Audio/Midi.
         let recording_id = recording_asset_id(&recording.id);
-        let recording_key = recording_id
-            .strip_prefix("recording:")
-            .unwrap_or(recording_id.as_str());
         upsert_library_entry_preserving_metadata(
             &connection,
             &LibraryAsset {
@@ -296,66 +290,19 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                 tag: recording
                     .capture
                     .as_ref()
-                    .and_then(|value| value.workspace.clone())
-                    .or_else(|| {
-                        recording
-                            .provenance
-                            .as_ref()
-                            .map(|value| value.workspace.clone())
-                    }),
+                    .and_then(|value| value.workspace.clone()),
                 note: recording
                     .capture
                     .as_ref()
-                    .and_then(|value| value.source.clone())
-                    .or_else(|| {
-                        recording
-                            .provenance
-                            .as_ref()
-                            .map(|value| value.source.clone())
-                    }),
+                    .and_then(|value| value.source.clone()),
                 created_at_ms: recording
                     .capture
                     .as_ref()
-                    .map(|value| value.started_at_ms)
-                    .or_else(|| {
-                        recording
-                            .provenance
-                            .as_ref()
-                            .map(|value| value.recorded_at_ms)
-                    }),
+                    .map(|value| value.started_at_ms),
                 updated_at_ms: Some(indexed_at),
                 stability: recording.state.clone(),
             },
         )?;
-        if let Some(midi_path) = recording.midi_path.as_ref() {
-            // The MIDI sidecar (note-on/off events) is Library Read Model
-            // metadata for the capture. A canonical MIDI Asset is only minted
-            // when the user explicitly exports one; this row is not that.
-            let midi_id = format!("midi:{recording_key}");
-            upsert_library_entry_preserving_metadata(
-                &connection,
-                &LibraryAsset {
-                    id: midi_id.clone(),
-                    name: format!("{} MIDI", recording.name),
-                    kind: "midi".into(),
-                    path: Some(midi_path.clone()),
-                    tag: Some("recorded".into()),
-                    note: Some("Note-on/off sidecar".into()),
-                    created_at_ms: recording
-                        .provenance
-                        .as_ref()
-                        .map(|value| value.recorded_at_ms),
-                    updated_at_ms: Some(indexed_at),
-                    stability: recording.state.clone(),
-                },
-            )?;
-            connection
-                .execute(
-                "INSERT OR IGNORE INTO library_relations (entry_id, related_entry_id, relation) VALUES (?1, ?2, 'derived-from')",
-                    params![midi_id, recording_id],
-                )
-                .map_err(|error| format!("Library MIDI recording relation could not be indexed: {error}"))?;
-        }
     }
     Ok(())
 }
@@ -367,15 +314,16 @@ pub fn search(data_root: &Path, query: &str) -> Result<Vec<LibraryAsset>, String
         return Ok(Vec::new());
     }
     let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
-    // Search across both stores: Canonical Assets (`assets`, identified by
-    // `asset_kind IS NOT NULL`) and non-canonical Library Read Model entries
-    // (`library_entries`). Tag/note/name are not duplicated between them, so
-    // the UNION does not produce stale copies.
+    // Search across both stores: Canonical Assets (`assets`) and non-canonical
+    // Library Read Model entries (`library_entries`). Tag/note/name are not
+    // duplicated between them, so the UNION does not produce stale copies.
     let mut statement = connection
         .prepare(
             "SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability FROM (
-                SELECT id, name, kind AS kind, path, tag, note, created_at_ms, updated_at_ms, stability
-                FROM assets WHERE asset_kind IS NOT NULL
+                SELECT id, name, kind AS kind, content_location AS path, tag, note,
+                       created_at_ms, updated_at_ms,
+                       CASE WHEN favorite = 0 THEN 'saved' ELSE 'favorite' END AS stability
+                FROM assets
                 UNION ALL
                 SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability
                 FROM library_entries
@@ -421,7 +369,7 @@ pub fn update_metadata(
         let connection = open(data_root)?;
         return connection
             .query_row(
-                "SELECT id, name, asset_kind AS kind, content_location AS path, tag, note,
+                "SELECT id, name, kind, content_location AS path, tag, note,
                         created_at_ms, updated_at_ms,
                         CASE WHEN favorite = 0 THEN 'saved' ELSE 'favorite' END AS stability
                  FROM assets WHERE id = ?1",
@@ -570,14 +518,14 @@ pub fn related(data_root: &Path, id: &str) -> Result<Vec<LibraryAsset>, String> 
     let mut statement = connection
         .prepare(
             "SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability FROM (
-                SELECT a.id, a.name, a.asset_kind AS kind, a.content_location AS path, a.tag, a.note,
+                SELECT a.id, a.name, a.kind, a.content_location AS path, a.tag, a.note,
                        a.created_at_ms, a.updated_at_ms,
                        CASE WHEN a.favorite = 0 THEN 'saved' ELSE 'favorite' END AS stability
                 FROM assets a
                 JOIN asset_relations r
                   ON (r.asset_id = a.id AND r.related_asset_id = ?1)
                   OR (r.related_asset_id = a.id AND r.asset_id = ?1)
-                WHERE a.id != ?1 AND a.asset_kind IS NOT NULL
+                WHERE a.id != ?1
                 UNION ALL
                 SELECT e.id, e.name, e.kind, e.path, e.tag, e.note,
                        e.created_at_ms, e.updated_at_ms, e.stability
@@ -678,7 +626,7 @@ mod tests {
         assert_eq!(entry_count, 0);
         let asset_count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM assets WHERE asset_kind IS NOT NULL",
+                "SELECT COUNT(*) FROM assets",
                 [],
                 |row| row.get(0),
             )

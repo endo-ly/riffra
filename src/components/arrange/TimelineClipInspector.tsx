@@ -177,9 +177,12 @@ function ClipEditRow({
 
   const split = useCallback(async () => {
     await commitAllDrafts();
-    const next = await api.splitAudioClip(clip.id, Math.floor(clip.durationMs / 2));
+    // Split at the center of the clip's current production state. The offset is
+    // computed on the Rust side from the persisted clip duration, so a draft
+    // duration edit committed just above is always reflected.
+    const next = await api.splitAudioClip(clip.id);
     if (next) setSession(next);
-  }, [api, clip.id, clip.durationMs, commitAllDrafts, setSession]);
+  }, [api, clip.id, commitAllDrafts, setSession]);
 
   const remove = useCallback(async () => {
     await commitAllDrafts();

@@ -297,7 +297,6 @@ export class FakeNativeApi implements NativeApi {
             path: nextPath,
             rawPath: replacePath(item.rawPath),
             processedPath: replacePath(item.processedPath),
-            midiPath: replacePath(item.midiPath),
           }
         : item,
     );
@@ -605,7 +604,6 @@ export class FakeNativeApi implements NativeApi {
         processedAssetId: `asset:${id}-processed`,
         midiAssetId: null,
         midiFile: null,
-        midiPath: null,
         sampleRate: 48_000,
         samplesWritten: samples,
         droppedBlocks: 0,
@@ -613,7 +611,6 @@ export class FakeNativeApi implements NativeApi {
         dropoutStartSample: null,
         dropoutEndSample: null,
         recoveryStatus: 'clean',
-        provenance: null,
       },
       ...this.recordings,
     ];

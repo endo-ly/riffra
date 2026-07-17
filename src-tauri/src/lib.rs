@@ -2006,7 +2006,6 @@ mod inbox_integration {
             recording.path.as_deref(),
             Some(expected_renamed_path.as_str())
         );
-        assert!(renamed_assets.iter().any(|asset| asset.kind == "midi"));
         assert!(library::search(&root, "take-a MIDI").unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }

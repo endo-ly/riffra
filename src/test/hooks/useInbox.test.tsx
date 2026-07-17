@@ -23,7 +23,6 @@ function recording(id: string, name: string): RecordingAsset {
     processedAssetId: `asset:${name}-processed`,
     midiAssetId: null,
     midiFile: null,
-    midiPath: null,
     sampleRate: 44_100,
     samplesWritten: 44_100,
     droppedBlocks: 0,
@@ -31,7 +30,6 @@ function recording(id: string, name: string): RecordingAsset {
     dropoutStartSample: null,
     dropoutEndSample: null,
     recoveryStatus: 'clean',
-    provenance: null,
   };
 }
 

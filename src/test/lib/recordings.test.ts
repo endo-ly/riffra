@@ -17,7 +17,6 @@ const completedRecording = (): RecordingAsset => ({
   rawAssetId: 'asset:take-1-raw',
   processedAssetId: 'asset:take-1-processed',
   midiFile: null,
-  midiPath: null,
   sampleRate: 48_000,
   samplesWritten: 96_000,
   droppedBlocks: 0,
@@ -25,7 +24,6 @@ const completedRecording = (): RecordingAsset => ({
   dropoutStartSample: null,
   dropoutEndSample: null,
   recoveryStatus: 'clean',
-  provenance: null,
 });
 
 describe('recording availability', () => {

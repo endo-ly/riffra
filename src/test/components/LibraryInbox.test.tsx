@@ -24,7 +24,6 @@ const recordingA: RecordingAsset = {
   rawPath: 'C:\\inbox\\take-a\\raw.wav',
   processedPath: 'C:\\inbox\\take-a\\processed.wav',
   midiFile: null,
-  midiPath: null,
   sampleRate: 44_100,
   samplesWritten: 44_100,
   droppedBlocks: 0,
@@ -32,7 +31,6 @@ const recordingA: RecordingAsset = {
   dropoutStartSample: null,
   dropoutEndSample: null,
   recoveryStatus: 'clean',
-  provenance: null,
 };
 
 const recordingB: RecordingAsset = {
