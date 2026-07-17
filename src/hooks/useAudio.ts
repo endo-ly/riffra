@@ -38,9 +38,17 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   }, []);
 
   const selectAudioDriver = useCallback(
-    async (driver: string, sampleRate: number, bufferSize: number) => {
-      const { session: nextSession, audio: nextAudio } = await setAudioDriver(
+    async (
+      driver: string,
+      inputDevice: string | null,
+      outputDevice: string | null,
+      sampleRate: number,
+      bufferSize: number,
+    ) => {
+      const nextAudio = await setAudioDriver(
         driver,
+        inputDevice,
+        outputDevice,
         sampleRate,
         bufferSize,
       );
@@ -48,10 +56,6 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
       if (!audioCommandSucceeded(nextAudio)) return;
       const effective = reconcileAudioSettings({ driver, sampleRate, bufferSize }, nextAudio);
       setAudioPreferenceMessage(effective.message);
-      // The Rust Session Operation already persisted the canonical settings;
-      // we only feed the returned session into local state so React matches
-      // the canonical copy without re-deriving it.
-      setSession(nextSession);
     },
     [],
   );

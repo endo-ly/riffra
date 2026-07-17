@@ -306,16 +306,6 @@ pub fn set_master_gain_db(
 }
 
 #[tauri::command]
-pub fn set_audio_driver(
-    driver: String,
-    sample_rate: Option<u32>,
-    buffer_size: Option<u32>,
-    state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
-    application::set_audio_driver(&context(&state), &driver, sample_rate, buffer_size)
-}
-
-#[tauri::command]
 pub fn set_emergency_mute(
     muted: bool,
     state: State<'_, AppState>,

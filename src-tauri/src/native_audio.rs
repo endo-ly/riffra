@@ -1,3 +1,4 @@
+use crate::audio_preferences::AudioPreferences;
 use crate::model::{AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,6 +20,7 @@ pub struct AudioSupervisor {
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
     next_request_id: AtomicU64,
     child: Mutex<Option<CommandChild>>,
+    restart_preferences: Mutex<AudioPreferences>,
 }
 
 #[derive(Default)]
@@ -54,6 +56,8 @@ pub struct NativeSamplePad {
 struct NativeStatus {
     state: String,
     driver: Option<String>,
+    input_device: Option<String>,
+    output_device: Option<String>,
     sample_rate: Option<f64>,
     buffer_size: Option<u32>,
     round_trip_ms: Option<f64>,
@@ -130,6 +134,8 @@ impl AudioSupervisor {
             status: Arc::new(Mutex::new(AudioStatus {
                 state: AudioState::Offline,
                 driver: None,
+                input_device: None,
+                output_device: None,
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -151,13 +157,16 @@ impl AudioSupervisor {
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
             next_request_id: AtomicU64::new(1),
             child: Mutex::new(None),
+            restart_preferences: Mutex::new(AudioPreferences::default()),
         }
     }
 
-    pub fn start<R: Runtime>(app: &AppHandle<R>) -> Self {
+    pub fn start<R: Runtime>(app: &AppHandle<R>, preferences: AudioPreferences) -> Self {
         let status = Arc::new(Mutex::new(AudioStatus {
             state: AudioState::Starting,
             driver: None,
+            input_device: None,
+            output_device: None,
             sample_rate: None,
             buffer_size: None,
             round_trip_ms: None,
@@ -183,6 +192,7 @@ impl AudioSupervisor {
             responses,
             next_request_id: AtomicU64::new(1),
             child: Mutex::new(None),
+            restart_preferences: Mutex::new(preferences),
         };
         match supervisor.spawn_sidecar(app) {
             Ok(child) => {
@@ -202,14 +212,34 @@ impl AudioSupervisor {
 
     fn spawn_sidecar<R: Runtime>(&self, app: &AppHandle<R>) -> Result<CommandChild, String> {
         let parent_pid = std::process::id().to_string();
+        let preferences = self
+            .restart_preferences
+            .lock()
+            .map_err(|error| format!("Audio preference lock was poisoned: {error}"))?
+            .clone();
+        let mut arguments = vec![
+            "--serve".to_string(),
+            "--parent-pid".to_string(),
+            parent_pid,
+            "--audio-driver".to_string(),
+            preferences.driver,
+        ];
+        if let Some(input_device) = preferences.input_device {
+            arguments.extend(["--input-device".to_string(), input_device]);
+        }
+        if let Some(output_device) = preferences.output_device {
+            arguments.extend(["--output-device".to_string(), output_device]);
+        }
+        if let Some(sample_rate) = preferences.sample_rate {
+            arguments.extend(["--sample-rate".to_string(), sample_rate.to_string()]);
+        }
+        if let Some(buffer_size) = preferences.buffer_size {
+            arguments.extend(["--buffer-size".to_string(), buffer_size.to_string()]);
+        }
         let (mut receiver, child) = app
             .shell()
             .sidecar("riffra-audio")
-            .and_then(|command| {
-                command
-                    .args(["--serve", "--parent-pid", &parent_pid])
-                    .spawn()
-            })
+            .and_then(|command| command.args(arguments).spawn())
             .map_err(|error| error.to_string())?;
 
         let event_status = Arc::clone(&self.status);
@@ -488,10 +518,18 @@ impl AudioSupervisor {
     pub fn set_audio_driver(
         &self,
         driver: &str,
+        input_device: Option<&str>,
+        output_device: Option<&str>,
         sample_rate: Option<u32>,
         buffer_size: Option<u32>,
     ) -> Result<AudioStatus, String> {
         let mut command = serde_json::json!({"type": "setAudioDriver", "driver": driver});
+        if let Some(input_device) = input_device {
+            command["inputDevice"] = serde_json::json!(input_device);
+        }
+        if let Some(output_device) = output_device {
+            command["outputDevice"] = serde_json::json!(output_device);
+        }
         if let Some(sample_rate) = sample_rate {
             command["sampleRate"] = serde_json::json!(sample_rate);
         }
@@ -502,6 +540,14 @@ impl AudioSupervisor {
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
         )
+    }
+
+    pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> Result<(), String> {
+        *self
+            .restart_preferences
+            .lock()
+            .map_err(|error| format!("Audio preference lock was poisoned: {error}"))? = preferences;
+        Ok(())
     }
 
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
@@ -552,6 +598,8 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
     AudioStatus {
         state,
         driver: native.driver,
+        input_device: native.input_device,
+        output_device: native.output_device,
         sample_rate: native.sample_rate.and_then(normalize_sample_rate),
         buffer_size: native.buffer_size,
         round_trip_ms: native.round_trip_ms,
@@ -755,6 +803,8 @@ mod tests {
         Arc::new(Mutex::new(AudioStatus {
             state: AudioState::Ready,
             driver: Some("Test".into()),
+            input_device: Some("Input".into()),
+            output_device: Some("Output".into()),
             sample_rate: Some(44_100),
             buffer_size: Some(441),
             round_trip_ms: Some(20.0),

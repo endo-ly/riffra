@@ -143,17 +143,14 @@ export interface NativeApi {
    */
   setMasterGainDb(gainDb: number): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   recoverAudioDevice(): Promise<AudioStatus>;
-  /**
-   * Sets the audio driver (and optional sample-rate / buffer preferences) on
-   * the Audio Runtime and persists the effective settings. The runtime may
-   * reject the requested preferences; the effective values are stored so a
-   * reload reproduces the same device state.
-   */
+  /** Sets and persists the application-wide audio-device preference. */
   setAudioDriver(
     driver: string,
+    inputDevice?: string | null,
+    outputDevice?: string | null,
     sampleRate?: number | null,
     bufferSize?: number | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  ): Promise<AudioStatus>;
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
   /**

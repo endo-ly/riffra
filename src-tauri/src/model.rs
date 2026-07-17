@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // Shared production types live in feature modules; nothing is re-exported here
 // because this module no longer aggregates the removed mirror types.
@@ -70,6 +70,8 @@ pub struct PluginStatus {
 pub struct AudioStatus {
     pub state: AudioState,
     pub driver: Option<String>,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub round_trip_ms: Option<f64>,
@@ -102,8 +104,18 @@ pub struct MidiProbe {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDriverInfo {
     pub name: String,
+    pub access_mode: AudioAccessMode,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AudioAccessMode {
+    Shared,
+    Exclusive,
+    #[default]
+    DriverManaged,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

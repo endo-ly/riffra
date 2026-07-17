@@ -503,6 +503,44 @@ p {
   background: #122d32;
   border-color: var(--teal);
 }
+.audio-access-note {
+  margin-bottom: 10px;
+  padding: 7px 9px;
+  color: #b9c5cf;
+  background: #10171d;
+  border: 1px solid #2a3740;
+  border-radius: 4px;
+  font-size: 9px;
+}
+.audio-access-note.shared {
+  color: #bcf5df;
+  border-color: #245943;
+}
+.audio-access-note.exclusive {
+  color: #ffd6a3;
+  border-color: #694922;
+}
+.audio-device-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.audio-device-selectors label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.audio-device-selectors select {
+  min-width: 0;
+  padding: 7px 8px;
+  color: #cbd3dc;
+  background: #0c1116;
+  border: 1px solid #27313a;
+  border-radius: 4px;
+  font-size: 9px;
+}
 .driver-choice {
   display: grid;
   gap: 5px;

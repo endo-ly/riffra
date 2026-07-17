@@ -259,10 +259,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             <AudioDriverPicker
               probe={deviceProbe}
               current={audio.driver}
+              inputDevice={audio.inputDevice}
+              outputDevice={audio.outputDevice}
               sampleRate={audio.sampleRate}
               bufferSize={audio.bufferSize}
-              onSelect={(driver, sampleRate, bufferSize) =>
-                void selectAudioDriver(driver, sampleRate, bufferSize)
+              onSelect={(driver, inputDevice, outputDevice, sampleRate, bufferSize) =>
+                void selectAudioDriver(driver, inputDevice, outputDevice, sampleRate, bufferSize)
               }
             />
             <CaptureSettings session={session} setSession={setSession} api={nativeApi} />

@@ -6,6 +6,8 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {
     state: 'muted',
     driver: 'Windows Audio',
+    inputDevice: null,
+    outputDevice: null,
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 20,

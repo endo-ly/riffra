@@ -23,6 +23,7 @@
 
 mod analysis;
 mod asset;
+mod audio_preferences;
 mod diagnostics;
 mod errors;
 mod jobs;
@@ -59,6 +60,7 @@ struct AppState {
     data_root: PathBuf,
     session: Mutex<CreativeSession>,
     audio: AudioSupervisor,
+    audio_preferences: Mutex<audio_preferences::AudioPreferences>,
     recovered_from_generation: bool,
     safe_mode: bool,
     jobs: jobs::JobRegistry,
@@ -144,6 +146,8 @@ struct NativeMidiProbe {
 struct NativeAudioDriver {
     name: String,
     #[serde(default)]
+    access_mode: model::AudioAccessMode,
+    #[serde(default)]
     inputs: Vec<String>,
     #[serde(default)]
     outputs: Vec<String>,
@@ -197,6 +201,7 @@ async fn probe_audio_devices(
             .into_iter()
             .map(|driver| AudioDriverInfo {
                 name: driver.name,
+                access_mode: driver.access_mode,
                 inputs: driver.inputs,
                 outputs: driver.outputs,
             })
@@ -335,34 +340,34 @@ pub fn run() {
             let mut session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
             session.settings.emergency_muted = true;
+            let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
                     "Safe Mode is active; native audio, MIDI, and external plugins remain isolated.",
                 )
             } else {
-                AudioSupervisor::start(app.handle())
+                AudioSupervisor::start(app.handle(), preferences.clone())
             };
-            if !safe_mode
-                && let Some(driver) = session.settings.audio_driver.clone()
-                    && let Ok(status) = audio.set_audio_driver(
-                        &driver,
-                        session.settings.audio_sample_rate,
-                        session.settings.audio_buffer_size,
-                    ) {
-                        session::application::apply_effective_audio_settings(
-                            &mut session,
-                            &driver,
-                            status.driver.as_deref(),
-                            status.sample_rate,
-                            status.buffer_size,
-                        );
+            let effective_preferences = if safe_mode {
+                preferences
+            } else {
+                match audio.refresh_status() {
+                    Ok(status) => {
+                        audio_preferences::AudioPreferences::from_effective_status(&status)?
                     }
+                    Err(_) => preferences,
+                }
+            };
+            audio_preferences::AudioPreferencesStore::new(&data_root)
+                .save(&effective_preferences)?;
+            audio.set_restart_preferences(effective_preferences.clone())?;
             SessionStore::new(&data_root).save(&session)?;
             let _ = library::sync_session(&data_root, &session);
             app.manage(AppState {
                 data_root,
                 session: Mutex::new(session),
                 audio,
+                audio_preferences: Mutex::new(effective_preferences),
                 recovered_from_generation,
                 safe_mode,
                 jobs: jobs::JobRegistry::default(),
@@ -421,7 +426,7 @@ pub fn run() {
             session::commands::remove_midi_clip,
             session::commands::apply_ai_suggestion,
             session::commands::set_master_gain_db,
-            session::commands::set_audio_driver,
+            audio_preferences::set_audio_driver,
             session::commands::set_emergency_mute,
             session::commands::relink_missing_dependency,
             session::commands::disable_missing_plugin,
@@ -463,8 +468,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{parse_midi_probe, safe_mode_from_args};
-    use crate::session::CreativeSession;
-    use crate::session::application::apply_effective_audio_settings;
 
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
@@ -488,26 +491,6 @@ mod tests {
         assert!(safe_mode_from_args(["riffra.exe", "--safe-mode"]));
         assert!(safe_mode_from_args(["--SAFE-MODE"]));
         assert!(!safe_mode_from_args(["riffra.exe", "--serve"]));
-    }
-
-    #[test]
-    fn persists_effective_audio_settings_instead_of_rejected_preferences() {
-        let mut session = CreativeSession::new(1);
-
-        apply_effective_audio_settings(
-            &mut session,
-            "Windows Audio",
-            Some("Windows Audio (Exclusive Mode)"),
-            Some(48_000),
-            Some(480),
-        );
-
-        assert_eq!(
-            session.settings.audio_driver.as_deref(),
-            Some("Windows Audio (Exclusive Mode)")
-        );
-        assert_eq!(session.settings.audio_sample_rate, Some(48_000));
-        assert_eq!(session.settings.audio_buffer_size, Some(480));
     }
 
     #[test]

@@ -48,6 +48,8 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
   return {
     state: 'muted',
     driver: 'Fake Driver',
+    inputDevice: 'Input 1',
+    outputDevice: 'Output 1',
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 8,
@@ -410,7 +412,14 @@ export class FakeNativeApi implements NativeApi {
   probeAudioDevices = async (): Promise<AudioDeviceProbe> => {
     this.calls.push('probeAudioDevices');
     return {
-      drivers: [{ name: 'Fake Driver', inputs: ['Input 1'], outputs: ['Output 1'] }],
+      drivers: [
+        {
+          name: 'Fake Driver',
+          accessMode: 'driverManaged',
+          inputs: ['Input 1'],
+          outputs: ['Output 1'],
+        },
+      ],
       midiInputs: [],
       midiOutputs: [],
       refreshedAtMs: 1,
@@ -920,28 +929,23 @@ export class FakeNativeApi implements NativeApi {
 
   setAudioDriver = async (
     driver: string,
+    inputDevice?: string | null,
+    outputDevice?: string | null,
     sampleRate?: number | null,
     bufferSize?: number | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  ): Promise<AudioStatus> => {
     this.calls.push('setAudioDriver');
     this.audio = {
       ...this.audio,
       state: 'muted',
       driver,
+      inputDevice: inputDevice ?? null,
+      outputDevice: outputDevice ?? null,
       sampleRate: sampleRate ?? this.audio.sampleRate,
       bufferSize: bufferSize ?? this.audio.bufferSize,
       message: `Driver switched to ${driver}; output re-enters emergency mute for safety.`,
     };
-    return this.commitSessionRack((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      settings: {
-        ...current.settings,
-        audioDriver: driver,
-        audioSampleRate: sampleRate ?? null,
-        audioBufferSize: bufferSize ?? null,
-      },
-    }));
+    return this.audio;
   };
 
   openMidiInput = async (name: string): Promise<AudioStatus> => {

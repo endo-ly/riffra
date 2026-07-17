@@ -146,9 +146,6 @@ interface SessionSettings {
   loopEnabled: boolean;
   countInBeats: number;
   emergencyMuted: boolean;
-  audioDriver: string | null;
-  audioSampleRate: number | null;
-  audioBufferSize: number | null;
   note: string;
   aiPermission: 'Explain' | 'Suggest' | 'Apply';
   aiContext: string[];
@@ -365,6 +362,8 @@ export interface PluginParameter {
 export interface AudioStatus {
   state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted';
   driver: string | null;
+  inputDevice: string | null;
+  outputDevice: string | null;
   sampleRate: number | null;
   bufferSize: number | null;
   roundTripMs: number | null;
@@ -391,8 +390,11 @@ export interface MidiProbe {
   message: string;
 }
 
-interface AudioDriverInfo {
+export type AudioAccessMode = 'shared' | 'exclusive' | 'driverManaged';
+
+export interface AudioDriverInfo {
   name: string;
+  accessMode: AudioAccessMode;
   inputs: string[];
   outputs: string[];
 }
@@ -542,9 +544,6 @@ export const defaultSession = (): CreativeSession => ({
     loopEnabled: false,
     countInBeats: 0,
     emergencyMuted: true,
-    audioDriver: null,
-    audioSampleRate: null,
-    audioBufferSize: null,
     note: '',
     aiPermission: 'Suggest',
     aiContext: ['analysis', 'selectedClip'],

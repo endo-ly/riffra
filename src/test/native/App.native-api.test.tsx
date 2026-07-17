@@ -366,20 +366,19 @@ describe('App driven by FakeNativeApi', () => {
     });
   });
 
-  it('applies an audio driver selection to the Scratch Session through the picker', async () => {
+  it('applies an audio driver selection without changing the Scratch Session', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
     await waitForAppShell();
+    const savesBeforeSelection = fake.savedSessions.length;
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
 
     await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
-    await waitFor(() => {
-      const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.settings.audioDriver).toBe('Fake Driver');
-      expect(saved.settings.audioSampleRate).toBe(96_000);
-    });
+    await waitFor(() => expect(fake.audio.sampleRate).toBe(96_000));
+    expect(fake.audio.driver).toBe('Fake Driver');
+    expect(fake.savedSessions).toHaveLength(savesBeforeSelection);
   });
 
   it('restores plugin parameters into the rack through the injected api', async () => {

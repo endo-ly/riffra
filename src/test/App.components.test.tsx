@@ -10,8 +10,18 @@ import { FakeNativeApi } from '@/native/native-api-fake';
 
 const probe: AudioDeviceProbe = {
   drivers: [
-    { name: 'Windows Audio', inputs: ['Mic'], outputs: ['Speakers'] },
-    { name: 'ASIO', inputs: ['Input 1'], outputs: ['Output 1'] },
+    {
+      name: 'Windows Audio',
+      accessMode: 'shared',
+      inputs: ['Mic'],
+      outputs: ['Speakers'],
+    },
+    {
+      name: 'ASIO',
+      accessMode: 'driverManaged',
+      inputs: ['Input 1'],
+      outputs: ['Output 1'],
+    },
   ],
   midiInputs: [],
   midiOutputs: [],
@@ -27,6 +37,8 @@ describe('AudioDriverPicker', () => {
       <AudioDriverPicker
         probe={probe}
         current="Windows Audio"
+        inputDevice="Mic"
+        outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
         onSelect={() => undefined}
@@ -54,6 +66,8 @@ describe('AudioDriverPicker', () => {
       <AudioDriverPicker
         probe={probe}
         current="Windows Audio"
+        inputDevice="Mic"
+        outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
         onSelect={onSelect}
@@ -62,7 +76,7 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: '64 samples' }));
 
-    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 48_000, 64);
+    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 'Speakers', 48_000, 64);
   });
 
   it('switches drivers without replacing the effective format with a display default', async () => {
@@ -72,6 +86,8 @@ describe('AudioDriverPicker', () => {
       <AudioDriverPicker
         probe={probe}
         current="Windows Audio"
+        inputDevice="Mic"
+        outputDevice="Speakers"
         sampleRate={48_000}
         bufferSize={480}
         onSelect={onSelect}
@@ -80,7 +96,23 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: /ASIO/ }));
 
-    expect(onSelect).toHaveBeenCalledWith('ASIO', 48_000, 480);
+    expect(onSelect).toHaveBeenCalledWith('ASIO', 'Input 1', 'Output 1', 48_000, 480);
+  });
+
+  it('shows whether the selected backend shares the Windows audio device', () => {
+    render(
+      <AudioDriverPicker
+        probe={probe}
+        current="Windows Audio"
+        inputDevice="Mic"
+        outputDevice="Speakers"
+        sampleRate={48_000}
+        bufferSize={480}
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Shared with other Windows applications')).toBeVisible();
   });
 });
 

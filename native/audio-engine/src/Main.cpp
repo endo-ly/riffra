@@ -34,6 +34,24 @@ using riffra::FeedbackDetector;
 
 thread_local juce::String currentRequestId;
 
+struct AudioConfiguration {
+    juce::String driver;
+    juce::String inputDevice;
+    juce::String outputDevice;
+    double sampleRate = 0.0;
+    int bufferSize = 0;
+};
+
+juce::String accessModeForDriver(const juce::String& driver) {
+    if (driver == "Windows Audio"
+        || driver == "Windows Audio (Low Latency Mode)"
+        || driver == "DirectSound")
+        return "shared";
+    if (driver == "Windows Audio (Exclusive Mode)")
+        return "exclusive";
+    return "driverManaged";
+}
+
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
     struct Pad {
@@ -223,6 +241,7 @@ juce::var probeAudioDevices() {
         type->scanForDevices();
         auto* driver = new juce::DynamicObject();
         driver->setProperty("name", type->getTypeName());
+        driver->setProperty("accessMode", accessModeForDriver(type->getTypeName()));
 
         juce::Array<juce::var> inputs;
         for (const auto& name : type->getDeviceNames(true))
@@ -254,7 +273,12 @@ juce::var probeAudioDevices() {
     return juce::var(result);
 }
 
-juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCallback& callback, const PluginRack* rack = nullptr, const MidiMonitor* midi = nullptr) {
+juce::var currentStatus(
+    juce::AudioDeviceManager& manager,
+    const SafetyAudioCallback& callback,
+    const PluginRack* rack = nullptr,
+    const MidiMonitor* midi = nullptr,
+    const juce::String& message = {}) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state = callback.isDeviceFaulted() ? "faulted"
@@ -279,6 +303,8 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
         status->setProperty("midiRecordedEvents", static_cast<juce::int64>(midi->getRecordedEventCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
+    if (message.isNotEmpty())
+        status->setProperty("message", message);
 
     juce::Array<juce::var> midiInputs;
     for (const auto& device : juce::MidiInput::getAvailableDevices())
@@ -290,9 +316,11 @@ juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCall
     status->setProperty("midiOutputs", midiOutputs);
 
     if (auto* device = manager.getCurrentAudioDevice()) {
+        juce::AudioDeviceManager::AudioDeviceSetup setup;
+        manager.getAudioDeviceSetup(setup);
         status->setProperty("driver", device->getTypeName());
-        status->setProperty("inputDevice", device->getName());
-        status->setProperty("outputDevice", device->getName());
+        status->setProperty("inputDevice", setup.inputDeviceName);
+        status->setProperty("outputDevice", setup.outputDeviceName);
         status->setProperty("sampleRate", device->getCurrentSampleRate());
         status->setProperty("bufferSize", device->getCurrentBufferSizeSamples());
         const auto latencySamples = device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
@@ -320,10 +348,78 @@ bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
 #endif
 }
 
-juce::String initialiseDefaultAudio(juce::AudioDeviceManager& manager) {
-    auto error = manager.initialiseWithDefaultDevices(2, 2);
-    if (error.isNotEmpty())
-        error = manager.initialiseWithDefaultDevices(0, 2);
+std::unique_ptr<juce::XmlElement> configuredAudioXml(const AudioConfiguration& configuration) {
+    if (configuration.driver.isEmpty())
+        return {};
+    auto xml = std::make_unique<juce::XmlElement>("DEVICESETUP");
+    xml->setAttribute("deviceType", configuration.driver);
+    if (configuration.inputDevice.isNotEmpty())
+        xml->setAttribute("audioInputDeviceName", configuration.inputDevice);
+    if (configuration.outputDevice.isNotEmpty())
+        xml->setAttribute("audioOutputDeviceName", configuration.outputDevice);
+    return xml;
+}
+
+juce::String initialiseConfiguredAudio(
+    juce::AudioDeviceManager& manager,
+    const AudioConfiguration& configuration) {
+    AudioConfiguration resolved = configuration;
+    if (resolved.driver.isEmpty())
+        resolved.driver = "Windows Audio (Low Latency Mode)";
+    const auto& deviceTypes = manager.getAvailableDeviceTypes();
+    auto* deviceType = [&]() -> juce::AudioIODeviceType* {
+        for (auto* candidate : deviceTypes)
+            if (candidate->getTypeName().equalsIgnoreCase(resolved.driver))
+                return candidate;
+        return nullptr;
+    }();
+    if (deviceType == nullptr)
+        return "The requested audio driver is unavailable: " + resolved.driver;
+
+    const auto defaultDeviceName = [deviceType](const bool isInput) {
+        const auto names = deviceType->getDeviceNames(isInput);
+        if (names.isEmpty())
+            return juce::String {};
+        const auto index = juce::jlimit(
+            0,
+            names.size() - 1,
+            deviceType->getDefaultDeviceIndex(isInput));
+        return names[index];
+    };
+    if (resolved.inputDevice.isEmpty())
+        resolved.inputDevice = defaultDeviceName(true);
+    if (resolved.outputDevice.isEmpty())
+        resolved.outputDevice = defaultDeviceName(false);
+    if (resolved.outputDevice.isEmpty())
+        return "The requested audio driver has no output device: " + resolved.driver;
+
+    auto xml = configuredAudioXml(resolved);
+    juce::AudioDeviceManager::AudioDeviceSetup preferredSetup;
+    preferredSetup.inputDeviceName = resolved.inputDevice;
+    preferredSetup.outputDeviceName = resolved.outputDevice;
+    preferredSetup.sampleRate = configuration.sampleRate;
+    preferredSetup.bufferSize = configuration.bufferSize;
+    auto error = manager.initialise(
+        2,
+        2,
+        xml.get(),
+        false,
+        {},
+        &preferredSetup);
+    if (error.isNotEmpty() && configuration.inputDevice.isEmpty()) {
+        resolved.inputDevice.clear();
+        xml = configuredAudioXml(resolved);
+        preferredSetup.inputDeviceName.clear();
+        error = manager.initialise(
+            0,
+            2,
+            xml.get(),
+            false,
+            {},
+            &preferredSetup);
+    }
+    if (error.isEmpty() && manager.getCurrentAudioDevice() == nullptr)
+        return "The requested audio driver did not open an output device.";
     return error;
 }
 
@@ -362,7 +458,9 @@ private:
     SafetyAudioCallback& audioCallback;
 };
 
-int serve(const std::optional<std::uint32_t> parentPid) {
+int serve(
+    const std::optional<std::uint32_t> parentPid,
+    const AudioConfiguration& startupConfiguration) {
     juce::AudioDeviceManager manager;
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -375,16 +473,32 @@ int serve(const std::optional<std::uint32_t> parentPid) {
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
 
-    auto error = initialiseDefaultAudio(manager);
+    auto error = initialiseConfiguredAudio(manager, startupConfiguration);
+    juce::String startupMessage;
     if (error.isNotEmpty()) {
-        writeJson(makeError("audioDevice", error));
-        return 2;
+        const auto requestedError = error;
+        manager.closeAudioDevice();
+        AudioConfiguration sharedFallback;
+        sharedFallback.driver = "Windows Audio (Low Latency Mode)";
+        error = initialiseConfiguredAudio(manager, sharedFallback);
+        if (error.isNotEmpty()) {
+            manager.closeAudioDevice();
+            sharedFallback.driver = "Windows Audio";
+            error = initialiseConfiguredAudio(manager, sharedFallback);
+        }
+        if (error.isNotEmpty()) {
+            writeJson(makeError(
+                "audioDevice",
+                requestedError + ". Shared Windows audio also failed: " + error));
+            return 2;
+        }
+        startupMessage = "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
     }
 
     manager.addAudioCallback(&callback);
     DeviceFaultWatcher deviceWatcher(manager, callback);
     manager.addChangeListener(&deviceWatcher);
-    writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+    writeJson(currentStatus(manager, callback, &rack, &midiMonitor, startupMessage));
 
     std::atomic<bool> watchdogRunning { true };
     std::thread watchdog;
@@ -658,10 +772,12 @@ int serve(const std::optional<std::uint32_t> parentPid) {
                 writeJson(makeError("recording", midiError));
                 continue;
             }
+            juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
+            manager.getAudioDeviceSetup(recoverySetup);
             manager.removeAudioCallback(&callback);
             manager.closeAudioDevice();
             callback.setEmergencyMuted(true);
-            const auto recoveryError = initialiseDefaultAudio(manager);
+            const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
             if (recoveryError.isNotEmpty()) {
                 writeJson(makeError("audioDevice", recoveryError));
                 continue;
@@ -688,29 +804,22 @@ int serve(const std::optional<std::uint32_t> parentPid) {
             manager.removeAudioCallback(&callback);
             manager.closeAudioDevice();
             callback.setEmergencyMuted(true);
-            manager.setCurrentAudioDeviceType(driver, true);
-            auto setupError = initialiseDefaultAudio(manager);
-            if (setupError.isEmpty()) {
-                juce::AudioDeviceManager::AudioDeviceSetup setup;
-                manager.getAudioDeviceSetup(setup);
-                const auto inputDevice = command.getProperty("inputDevice", {}).toString();
-                const auto outputDevice = command.getProperty("outputDevice", {}).toString();
-                if (inputDevice.isNotEmpty())
-                    setup.inputDeviceName = inputDevice;
-                if (outputDevice.isNotEmpty())
-                    setup.outputDeviceName = outputDevice;
-                const auto requestedSampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
-                const auto requestedBufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
-                if (requestedSampleRate > 0.0)
-                    setup.sampleRate = requestedSampleRate;
-                if (requestedBufferSize > 0)
-                    setup.bufferSize = requestedBufferSize;
-                setupError = manager.setAudioDeviceSetup(setup, true);
-            }
+            AudioConfiguration requested;
+            requested.driver = driver;
+            requested.inputDevice = command.getProperty("inputDevice", {}).toString();
+            requested.outputDevice = command.getProperty("outputDevice", {}).toString();
+            requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
+            requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
+            auto setupError = initialiseConfiguredAudio(manager, requested);
             if (setupError.isNotEmpty()) {
                 manager.closeAudioDevice();
-                manager.setCurrentAudioDeviceType(previousDriver, true);
-                const auto restoreError = manager.setAudioDeviceSetup(previousSetup, true);
+                AudioConfiguration previous;
+                previous.driver = previousDriver;
+                previous.inputDevice = previousSetup.inputDeviceName;
+                previous.outputDevice = previousSetup.outputDeviceName;
+                previous.sampleRate = previousSetup.sampleRate;
+                previous.bufferSize = previousSetup.bufferSize;
+                const auto restoreError = initialiseConfiguredAudio(manager, previous);
                 if (restoreError.isEmpty())
                     manager.addAudioCallback(&callback);
                 writeJson(makeError("audioDevice", setupError + (restoreError.isEmpty()
@@ -929,23 +1038,23 @@ juce::var runSafetySelfTest() {
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int runMain(const juce::StringArray& arguments) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
-    if (argc < 2) {
+    if (arguments.size() < 2) {
         writeJson(makeError("arguments", "Use --probe or --serve."));
         return 1;
     }
-    const juce::String command(argv[1]);
+    const auto command = arguments[1];
     if (command == "--probe") {
         writeJson(probeAudioDevices());
         return 0;
     }
     if (command == "--recording-self-test") {
-        if (argc < 3) {
+        if (arguments.size() < 3) {
             writeJson(makeError("arguments", "Use --recording-self-test <directory>."));
             return 1;
         }
-        writeJson(riffra::runRecordingSelfTest(juce::File(argv[2])));
+        writeJson(riffra::runRecordingSelfTest(juce::File(arguments[2])));
         return 0;
     }
     if (command == "--safety-self-test") {
@@ -954,23 +1063,58 @@ int main(int argc, char* argv[]) {
     }
     if (command == "--serve") {
         std::optional<std::uint32_t> parentPid;
-        for (int index = 2; index < argc; ++index) {
-            const juce::String argument(argv[index]);
-            if (argument != "--parent-pid")
+        AudioConfiguration configuration;
+        for (int index = 2; index < arguments.size(); ++index) {
+            const auto argument = arguments[index];
+            if (argument != "--parent-pid"
+                && argument != "--audio-driver"
+                && argument != "--input-device"
+                && argument != "--output-device"
+                && argument != "--sample-rate"
+                && argument != "--buffer-size")
                 continue;
-            if (index + 1 >= argc) {
-                writeJson(makeError("arguments", "--parent-pid requires a process id."));
+            if (index + 1 >= arguments.size()) {
+                writeJson(makeError("arguments", argument + " requires a value."));
                 return 1;
             }
-            const auto value = juce::String(argv[++index]).getLargeIntValue();
-            if (value <= 0 || value > std::numeric_limits<std::uint32_t>::max()) {
-                writeJson(makeError("arguments", "--parent-pid must be a positive process id."));
-                return 1;
+            const auto value = arguments[++index];
+            if (argument == "--parent-pid") {
+                const auto pid = value.getLargeIntValue();
+                if (pid <= 0 || pid > std::numeric_limits<std::uint32_t>::max()) {
+                    writeJson(makeError("arguments", "--parent-pid must be a positive process id."));
+                    return 1;
+                }
+                parentPid = static_cast<std::uint32_t>(pid);
+            } else if (argument == "--audio-driver") {
+                configuration.driver = value;
+            } else if (argument == "--input-device") {
+                configuration.inputDevice = value;
+            } else if (argument == "--output-device") {
+                configuration.outputDevice = value;
+            } else if (argument == "--sample-rate") {
+                configuration.sampleRate = value.getDoubleValue();
+            } else if (argument == "--buffer-size") {
+                configuration.bufferSize = value.getIntValue();
             }
-            parentPid = static_cast<std::uint32_t>(value);
         }
-        return serve(parentPid);
+        return serve(parentPid, configuration);
     }
     writeJson(makeError("arguments", "Unknown command: " + command));
     return 1;
 }
+
+#if JUCE_WINDOWS
+int wmain(int argc, wchar_t* argv[]) {
+    juce::StringArray arguments;
+    for (int index = 0; index < argc; ++index)
+        arguments.add(argv[index]);
+    return runMain(arguments);
+}
+#else
+int main(int argc, char* argv[]) {
+    juce::StringArray arguments;
+    for (int index = 0; index < argc; ++index)
+        arguments.add(juce::String::fromUTF8(argv[index]));
+    return runMain(arguments);
+}
+#endif

@@ -403,6 +403,8 @@ async function getAudioStatus(): Promise<AudioStatus> {
     return {
       state: 'offline',
       driver: null,
+      inputDevice: null,
+      outputDevice: null,
       sampleRate: null,
       bufferSize: null,
       roundTripMs: null,
@@ -477,15 +479,18 @@ async function recoverAudioDevice(): Promise<AudioStatus> {
 
 async function setAudioDriver(
   driver: string,
+  inputDevice: string | null = null,
+  outputDevice: string | null = null,
   sampleRate: number | null = null,
   bufferSize: number | null = null,
-): Promise<{ session: CreativeSession; audio: AudioStatus }> {
-  const result = await invoke<[CreativeSession, AudioStatus]>('set_audio_driver', {
+): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('set_audio_driver', {
     driver,
+    inputDevice,
+    outputDevice,
     sampleRate,
     bufferSize,
   });
-  return { session: result[0], audio: result[1] };
 }
 
 async function openMidiInput(name: string): Promise<AudioStatus> {

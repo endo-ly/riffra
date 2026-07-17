@@ -839,12 +839,9 @@ pub fn apply_ai_suggestion(
 
 // Audio + Session coupling operations.
 //
-// `set_master_gain_db` and `set_audio_driver` change an Audio Runtime setting
-// and a session preference at the same time. They share the same pattern:
-// validate the input, apply to the runtime, persist the new session preference
-// through the canonical commit, and report the runtime status. They are
-// Production Workflow because they coordinate the Audio Runtime, Persistence,
-// and canonical session settings in one user intent.
+// `set_master_gain_db` changes an Audio Runtime setting and a session preference
+// at the same time. Audio-device preferences are application settings and live
+// outside the CreativeSession.
 
 /// Sets the master gain on the Audio Runtime and persists the clamped value in
 /// the session settings so a reload reproduces the same loudness.
@@ -862,59 +859,6 @@ pub fn set_master_gain_db(
     Ok((committed, audio))
 }
 
-/// Sets the audio driver (and optional sample-rate / buffer preferences) on
-/// the Audio Runtime and persists the effective settings. The runtime may
-/// reject the requested preferences and use its own; the effective values are
-/// stored so a reload reproduces the same device state.
-pub fn set_audio_driver(
-    context: &SessionContext<'_>,
-    driver: &str,
-    sample_rate: Option<u32>,
-    buffer_size: Option<u32>,
-) -> Result<(CreativeSession, AudioStatus), String> {
-    if context.safe_mode {
-        return Err(
-            "Safe Mode blocks audio-driver changes; restart Riffra without --safe-mode first."
-                .into(),
-        );
-    }
-    if driver.trim().is_empty() {
-        return Err("Audio driver name must not be empty.".into());
-    }
-    let driver = driver.trim().to_owned();
-    if let Some(rate) = sample_rate
-        && !(8_000..=192_000).contains(&rate)
-    {
-        return Err("Audio sample rate preference is outside 8-192 kHz.".into());
-    }
-    if let Some(buffer) = buffer_size
-        && !(16..=8192).contains(&buffer)
-    {
-        return Err("Audio buffer preference is outside 16-8192 samples.".into());
-    }
-    let mut audio = context
-        .audio
-        .set_audio_driver(&driver, sample_rate, buffer_size)?;
-    if let Some(message) = effective_audio_preference_message(
-        sample_rate,
-        buffer_size,
-        audio.sample_rate,
-        audio.buffer_size,
-    ) {
-        audio.message = message;
-    }
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    apply_effective_audio_settings(
-        &mut session,
-        &driver,
-        audio.driver.as_deref(),
-        audio.sample_rate,
-        audio.buffer_size,
-    );
-    let committed = commit_session(context, session)?;
-    Ok((committed, audio))
-}
-
 /// Toggles emergency mute on the Audio Runtime and records the intent in the
 /// session settings so a reload reproduces the mute state.
 pub fn set_emergency_mute(
@@ -926,50 +870,6 @@ pub fn set_emergency_mute(
     session.settings.emergency_muted = muted;
     let committed = commit_session(context, session)?;
     Ok((committed, audio))
-}
-
-fn effective_audio_preference_message(
-    sample_rate: Option<u32>,
-    buffer_size: Option<u32>,
-    effective_sample_rate: Option<u32>,
-    effective_buffer_size: Option<u32>,
-) -> Option<String> {
-    let mut unavailable_preferences = Vec::new();
-    if sample_rate.is_some() && sample_rate != effective_sample_rate {
-        unavailable_preferences.push(format!(
-            "sample rate {} Hz (device uses {} Hz)",
-            sample_rate.unwrap_or_default(),
-            effective_sample_rate.unwrap_or_default()
-        ));
-    }
-    if buffer_size.is_some() && buffer_size != effective_buffer_size {
-        unavailable_preferences.push(format!(
-            "buffer {} samples (device uses {} samples)",
-            buffer_size.unwrap_or_default(),
-            effective_buffer_size.unwrap_or_default()
-        ));
-    }
-    (!unavailable_preferences.is_empty()).then(|| {
-        format!(
-            "The selected driver did not accept the requested {}; its effective settings are shown.",
-            unavailable_preferences.join(" and ")
-        )
-    })
-}
-
-/// Folds the runtime's effective audio settings into the bootstrap session
-/// before the first save. Shared with `lib.rs` setup so the canonical session
-/// reflects what the runtime actually accepted instead of the requested prefs.
-pub(crate) fn apply_effective_audio_settings(
-    session: &mut CreativeSession,
-    requested_driver: &str,
-    effective_driver: Option<&str>,
-    effective_sample_rate: Option<u32>,
-    effective_buffer_size: Option<u32>,
-) {
-    session.settings.audio_driver = Some(effective_driver.unwrap_or(requested_driver).to_owned());
-    session.settings.audio_sample_rate = effective_sample_rate;
-    session.settings.audio_buffer_size = effective_buffer_size;
 }
 
 // Missing-dependency recovery operations.

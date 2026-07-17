@@ -71,6 +71,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [audio, setAudio] = useState<AudioStatus>({
     state: 'starting',
     driver: null,
+    inputDevice: null,
+    outputDevice: null,
     sampleRate: null,
     bufferSize: null,
     roundTripMs: null,

@@ -557,12 +557,6 @@ pub struct SessionSettings {
     pub count_in_beats: u8,
     pub emergency_muted: bool,
     #[serde(default)]
-    pub audio_driver: Option<String>,
-    #[serde(default)]
-    pub audio_sample_rate: Option<u32>,
-    #[serde(default)]
-    pub audio_buffer_size: Option<u32>,
-    #[serde(default)]
     pub note: String,
     #[serde(default = "default_ai_permission")]
     pub ai_permission: String,
@@ -676,9 +670,6 @@ impl CreativeSession {
                 loop_enabled: false,
                 count_in_beats: 0,
                 emergency_muted: true,
-                audio_driver: None,
-                audio_sample_rate: None,
-                audio_buffer_size: None,
                 note: String::new(),
                 ai_permission: default_ai_permission(),
                 ai_context: default_ai_context(),
@@ -709,21 +700,6 @@ impl CreativeSession {
         settings.master_db = settings.master_db.clamp(-90.0, 0.0);
         if settings.count_in_beats > 8 {
             return Err("Count-in must be between 0 and 8 beats.".into());
-        }
-        settings.audio_driver = settings
-            .audio_driver
-            .take()
-            .map(|value| value.trim().chars().take(128).collect::<String>())
-            .filter(|value: &String| !value.is_empty());
-        if let Some(sample_rate) = settings.audio_sample_rate
-            && !(8_000..=192_000).contains(&sample_rate)
-        {
-            return Err("Audio sample rate preference is outside 8-192 kHz.".into());
-        }
-        if let Some(buffer_size) = settings.audio_buffer_size
-            && !(16..=8192).contains(&buffer_size)
-        {
-            return Err("Audio buffer preference is outside 16-8192 samples.".into());
         }
         settings.note.truncate(16_384);
         if !matches!(

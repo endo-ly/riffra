@@ -10,6 +10,8 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
   return {
     state: 'ready',
     driver: null,
+    inputDevice: null,
+    outputDevice: null,
     sampleRate: 48000,
     bufferSize: 1024,
     roundTripMs: 12,

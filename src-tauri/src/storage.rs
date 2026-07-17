@@ -330,7 +330,7 @@ fn invalid_data<E: std::fmt::Display>(error: E) -> io::Error {
 /// not let `std::fs::rename` overwrite an existing destination, so use the
 /// native replace primitive there; the fallback platforms already provide an
 /// atomic same-filesystem rename.
-fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
