@@ -1,6 +1,5 @@
-use crate::model::{CURRENT_SESSION_FORMAT, ScratchSession};
-use crate::session::{CREATIVE_SESSION_FORMAT, CreativeSession, migrate_v1_to_v2};
-use serde::{Deserialize, Serialize};
+use crate::session::{CREATIVE_SESSION_FORMAT, CreativeSession};
+use serde::Serialize;
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -10,56 +9,27 @@ use std::{
 
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
-const MIGRATION_BACKUP_TAG: &str = "migration-backup";
-const V1_FORMAT: u32 = CURRENT_SESSION_FORMAT;
 
 /// Result of loading the active session, including how the load resolved.
 #[derive(Debug, Clone)]
 pub struct LoadedSession {
     pub session: CreativeSession,
     pub recovered_from_generation: bool,
-    pub migration: Option<MigrationNotice>,
-}
-
-/// Explicit record produced when a session file uses an unsupported format
-/// version, or when a v1 session could not be migrated.
-///
-/// The original file is never modified or deleted by the migration reader; a
-/// byte-identical backup is written before any fallback so the user's data
-/// stays recoverable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MigrationNotice {
-    pub found_format: u32,
-    pub expected_format: u32,
-    pub backup_path: PathBuf,
 }
 
 /// Failure mode while reading a session file.
 #[derive(Debug)]
-pub enum SessionLoadError {
-    Corrupt(io::Error),
-    UnsupportedFormat(MigrationNotice),
-}
+pub struct SessionLoadError(pub io::Error);
 
 impl From<io::Error> for SessionLoadError {
     fn from(error: io::Error) -> Self {
-        Self::Corrupt(error)
+        Self(error)
     }
 }
 
 impl std::fmt::Display for SessionLoadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
-            Self::UnsupportedFormat(notice) => write!(
-                formatter,
-                "session format {} is unsupported (expected {}); original backed up to {}",
-                notice.found_format,
-                notice.expected_format,
-                notice.backup_path.display()
-            ),
-        }
+        write!(formatter, "session could not be loaded: {}", self.0)
     }
 }
 
@@ -96,34 +66,19 @@ impl SessionStore {
                     return Ok(LoadedSession {
                         session,
                         recovered_from_generation: false,
-                        migration: None,
                     });
                 }
-                Err(ActiveReadFailure::UnsupportedFormat(notice)) => {
+                Err(error) => {
                     if let Some(session) = self.newest_valid_generation()? {
                         return Ok(LoadedSession {
                             session,
                             recovered_from_generation: true,
-                            migration: Some(notice),
-                        });
-                    }
-                    // An unsupported current session must never be replaced by a
-                    // fresh v2 file. Keep the original available for manual
-                    // recovery and make the format distinction explicit.
-                    return Err(SessionLoadError::UnsupportedFormat(notice));
-                }
-                Err(ActiveReadFailure::Corrupt(error)) => {
-                    if let Some(session) = self.newest_valid_generation()? {
-                        return Ok(LoadedSession {
-                            session,
-                            recovered_from_generation: true,
-                            migration: None,
                         });
                     }
                     // A corrupt current session with no valid generation is a
                     // hard load failure. Creating a new file here would destroy
                     // the only recoverable copy of the user's session.
-                    return Err(SessionLoadError::Corrupt(error));
+                    return Err(SessionLoadError(error));
                 }
             }
         }
@@ -132,7 +87,6 @@ impl SessionStore {
             return Ok(LoadedSession {
                 session,
                 recovered_from_generation: true,
-                migration: None,
             });
         }
 
@@ -141,65 +95,25 @@ impl SessionStore {
         Ok(LoadedSession {
             session,
             recovered_from_generation: false,
-            migration: None,
         })
     }
 
-    /// Reads the active session file. v2 loads directly; v1 is backed up
-    /// byte-for-byte, migrated to v2, and persisted only after conversion
-    /// succeeds. Unknown versions and corrupt payloads are reported without
-    /// replacing the original file.
-    fn read_active(&self, path: &Path) -> Result<CreativeSession, ActiveReadFailure> {
-        let payload = fs::read(path).map_err(ActiveReadFailure::Corrupt)?;
-        let raw = match parse_raw_session(&payload) {
-            Ok(raw) => raw,
-            Err(ActiveReadFailure::UnsupportedFormat(mut notice)) => {
-                if notice.backup_path.as_os_str().is_empty() {
-                    notice.backup_path = self
-                        .write_migration_backup(path, &payload)
-                        .unwrap_or_else(|_| self.backup_path_for(path));
-                }
-                return Err(ActiveReadFailure::UnsupportedFormat(notice));
-            }
-            Err(error) => return Err(error),
-        };
-        match raw {
-            RawSession::V2(session) => session
-                .validate_and_normalize()
-                .map_err(|error| ActiveReadFailure::Corrupt(corrupt_io_error(&error))),
-            RawSession::V1(legacy) => {
-                // Preserve the v1 bytes before any conversion or fallback.
-                let backup_path = self
-                    .write_migration_backup(path, &payload)
-                    .unwrap_or_else(|_| self.backup_path_for(path));
-                match migrate_v1_to_v2(&legacy, &self.data_root)
-                    .and_then(|session| session.validate_and_normalize())
-                {
-                    Ok(session) => {
-                        self.save(&session).map_err(ActiveReadFailure::Corrupt)?;
-                        Ok(session)
-                    }
-                    Err(error) => Err(ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
-                        "v1 session migration failed; original backed up to {}: {error}",
-                        backup_path.display()
-                    )))),
-                }
-            }
+    /// Reads the active session file. Only the current v2 format is accepted;
+    /// any other shape is reported as corrupt without touching the original.
+    fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
+        let payload = fs::read(path)?;
+        let session: CreativeSession = serde_json::from_slice(&payload).map_err(|error| {
+            corrupt_io_error(&format!("v2 session is invalid: {error}"))
+        })?;
+        if session.format_version != CREATIVE_SESSION_FORMAT {
+            return Err(corrupt_io_error(&format!(
+                "session format {} is not supported (expected {})",
+                session.format_version, CREATIVE_SESSION_FORMAT
+            )));
         }
-    }
-
-    fn backup_path_for(&self, original: &Path) -> PathBuf {
-        let stem = original
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("current");
-        original.with_file_name(format!("{stem}.{MIGRATION_BACKUP_TAG}.{}.json", now_ms()))
-    }
-
-    fn write_migration_backup(&self, original: &Path, payload: &[u8]) -> io::Result<PathBuf> {
-        let backup_path = self.backup_path_for(original);
-        fs::write(&backup_path, payload)?;
-        Ok(backup_path)
+        session
+            .validate_and_normalize()
+            .map_err(|error| corrupt_io_error(&error))
     }
 
     fn newest_valid_generation(&self) -> io::Result<Option<CreativeSession>> {
@@ -211,16 +125,18 @@ impl SessionStore {
         Ok(None)
     }
 
-    /// Reads a generation file as a v2 session, migrating v1 generations on
-    /// the fly so recovery never offers a session the app cannot open.
+    /// Reads a generation file as a v2 session. Recovery never offers a session
+    /// the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        match parse_raw_session(&payload).map_err(invalid_data)? {
-            RawSession::V2(session) => session.validate_and_normalize().map_err(invalid_data),
-            RawSession::V1(legacy) => migrate_v1_to_v2(&legacy, &self.data_root)
-                .and_then(|session| session.validate_and_normalize())
-                .map_err(invalid_data),
+        let session: CreativeSession = serde_json::from_slice(&payload)?;
+        if session.format_version != CREATIVE_SESSION_FORMAT {
+            return Err(corrupt_io_error(&format!(
+                "generation format {} is not supported (expected {})",
+                session.format_version, CREATIVE_SESSION_FORMAT
+            )));
         }
+        session.validate_and_normalize().map_err(invalid_data)
     }
 
     pub fn save(&self, session: &CreativeSession) -> io::Result<()> {
@@ -322,74 +238,8 @@ impl SessionStore {
     }
 }
 
-enum ActiveReadFailure {
-    Corrupt(io::Error),
-    UnsupportedFormat(MigrationNotice),
-}
-
-impl std::fmt::Display for ActiveReadFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Corrupt(error) => write!(formatter, "corrupt session: {error}"),
-            Self::UnsupportedFormat(notice) => {
-                SessionLoadError::UnsupportedFormat(notice.clone()).fmt(formatter)
-            }
-        }
-    }
-}
-
-impl From<io::Error> for ActiveReadFailure {
-    fn from(error: io::Error) -> Self {
-        Self::Corrupt(error)
-    }
-}
-
-enum RawSession {
-    V2(CreativeSession),
-    V1(ScratchSession),
-}
-
-fn parse_raw_session(payload: &[u8]) -> Result<RawSession, ActiveReadFailure> {
-    let value: serde_json::Value = serde_json::from_slice(payload).map_err(|error| {
-        ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
-            "session is not valid JSON: {error}"
-        )))
-    })?;
-    let version = value
-        .get("formatVersion")
-        .and_then(serde_json::Value::as_u64)
-        .map(|value| u32::try_from(value).unwrap_or(u32::MAX));
-    match version {
-        Some(CREATIVE_SESSION_FORMAT) => {
-            let session: CreativeSession = serde_json::from_value(value).map_err(|error| {
-                ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
-                    "v2 session is invalid: {error}"
-                )))
-            })?;
-            Ok(RawSession::V2(session))
-        }
-        Some(V1_FORMAT) => {
-            let session: ScratchSession = serde_json::from_value(value).map_err(|error| {
-                ActiveReadFailure::Corrupt(corrupt_io_error(&format!(
-                    "v1 session is invalid: {error}"
-                )))
-            })?;
-            Ok(RawSession::V1(session))
-        }
-        Some(other) => Err(ActiveReadFailure::UnsupportedFormat(MigrationNotice {
-            found_format: other,
-            expected_format: CREATIVE_SESSION_FORMAT,
-            backup_path: PathBuf::new(),
-        })),
-        None => Err(ActiveReadFailure::Corrupt(corrupt_io_error(
-            "session is missing a formatVersion field.",
-        ))),
-    }
-}
-
-/// Extracts recovery-listing metadata from a session payload without performing
-/// a full (and asset-registering) migration, so listing candidates never
-/// mutates the Asset store.
+/// Extracts recovery-listing metadata from a session payload without a full
+/// deserialize, so listing candidates never mutates the Asset store.
 fn peek_recovery_metadata(payload: &[u8]) -> Option<RecoveryCandidate> {
     let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let session_id = value
@@ -404,16 +254,10 @@ fn peek_recovery_metadata(payload: &[u8]) -> Option<RecoveryCandidate> {
         .get("projectName")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
-    // v2 stores the note under settings.note; v1 stores it at the top level.
     let note = value
-        .get("note")
+        .get("settings")
+        .and_then(|settings| settings.get("note"))
         .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            value
-                .get("settings")
-                .and_then(|settings| settings.get("note"))
-                .and_then(serde_json::Value::as_str)
-        })
         .unwrap_or("")
         .to_owned();
     Some(RecoveryCandidate {
@@ -573,14 +417,13 @@ mod tests {
         let original = fs::read(&current).unwrap();
 
         let error = store.load_or_create().unwrap_err();
-        assert!(matches!(error, SessionLoadError::Corrupt(_)));
+        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&current).unwrap(), original);
-        assert!(!root.join("scratch/current.json").is_dir());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn backs_up_and_refuses_to_replace_an_unsupported_current() {
+    fn refuses_to_load_an_unsupported_format_without_touching_the_original() {
         let root = test_root("unsupported");
         let store = SessionStore::new(&root);
         store.ensure_layout().unwrap();
@@ -589,12 +432,10 @@ mod tests {
         fs::write(&current, payload).unwrap();
 
         let error = store.load_or_create().unwrap_err();
-        let SessionLoadError::UnsupportedFormat(notice) = error else {
-            panic!("unsupported session format should remain distinguishable");
-        };
-        assert_eq!(notice.found_format, 99);
+        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
+        // Unsupported format must surface as a load error and never overwrite
+        // the original file.
         assert_eq!(fs::read(&current).unwrap(), payload);
-        assert!(notice.backup_path.is_file());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -662,112 +503,27 @@ mod tests {
             None,
         )
         .unwrap();
-        fs::remove_file(&wav).unwrap();
+        std::fs::remove_file(&wav).unwrap();
 
         let mut session = CreativeSession::new(now_ms());
-        session.design_context.target_asset_id = Some(asset_id);
+        session.arrangement.audio_clips.push(AudioClip {
+            id: "clip:asset-backed".into(),
+            track_id: "main".into(),
+            asset_id,
+            position_ms: 0,
+            duration_ms: 100,
+            source_start_ms: 0,
+            source_end_ms: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_enabled: false,
+            muted: false,
+            name: "asset-backed".into(),
+        });
         SessionStore::new(&root).save(&session).unwrap();
         assert!(root.join("scratch/current.json").is_file());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn migrates_a_v1_session_to_v2_with_asset_backed_clips() {
-        let root = test_root("v1-to-v2");
-        let wav = root.join("take.wav");
-        write_wav(&wav);
-
-        let mut legacy = ScratchSession::new(now_ms());
-        assert!(legacy.clone().validate_and_normalize().is_ok());
-        legacy.workspace = crate::model::Workspace::Sample;
-        legacy.timeline.push(crate::model::TimelineClip {
-            id: "clip:1".into(),
-            asset_path: wav.to_string_lossy().into_owned(),
-            name: "take".into(),
-            track_id: "main".into(),
-            start_ms: 100,
-            duration_ms: 500,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
-        let scratch = root.join("scratch");
-        fs::create_dir_all(&scratch).unwrap();
-        fs::write(
-            scratch.join("current.json"),
-            serde_json::to_vec_pretty(&legacy).unwrap(),
-        )
-        .unwrap();
-
-        let store = SessionStore::new(&root);
-        let loaded = store.load_or_create().unwrap();
-        assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
-        assert_eq!(loaded.session.workspace, crate::session::Workspace::Design);
-        let clip = &loaded.session.arrangement.audio_clips[0];
-        assert_eq!(clip.position_ms, 100);
-        assert!(clip.asset_id.as_str().starts_with("asset:"));
-        assert!(
-            root.join("scratch")
-                .read_dir()
-                .unwrap()
-                .filter_map(Result::ok)
-                .any(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .contains(MIGRATION_BACKUP_TAG)
-                }),
-            "a byte-identical v1 backup must be preserved"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn failed_v1_migration_preserves_the_original_and_does_not_create_v2() {
-        let root = test_root("v1-failure");
-        let mut legacy = ScratchSession::new(now_ms());
-        legacy.timeline.push(crate::model::TimelineClip {
-            id: "clip:missing".into(),
-            asset_path: root.join("missing.wav").to_string_lossy().into_owned(),
-            name: "missing".into(),
-            track_id: "main".into(),
-            start_ms: 0,
-            duration_ms: 100,
-            source_in_ms: 0,
-            source_out_ms: 0,
-            loop_enabled: false,
-            gain_db: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            pan: 0.0,
-            muted: false,
-        });
-        let scratch = root.join("scratch");
-        fs::create_dir_all(&scratch).unwrap();
-        let payload = serde_json::to_vec_pretty(&legacy).unwrap();
-        let current = scratch.join("current.json");
-        fs::write(&current, &payload).unwrap();
-
-        let error = SessionStore::new(&root).load_or_create().unwrap_err();
-        assert!(matches!(error, SessionLoadError::Corrupt(_)));
-        assert_eq!(fs::read(&current).unwrap(), payload);
-        assert!(
-            scratch
-                .read_dir()
-                .unwrap()
-                .filter_map(Result::ok)
-                .any(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .contains(MIGRATION_BACKUP_TAG)
-                })
-        );
         let _ = fs::remove_dir_all(root);
     }
 

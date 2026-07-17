@@ -20,13 +20,13 @@ mod storage;
 use crate::session::{AudioClipPatch, CreativeSession, SamplePad as DomainSamplePad};
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, MidiProbe,
-    RecoveryCandidate, SamplePad,
+    RecoveryCandidate,
 };
 use native_audio::AudioSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Mutex};
-use storage::{MigrationNotice, SessionStore, now_ms};
+use storage::{SessionStore, now_ms};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
 
@@ -37,7 +37,6 @@ struct AppState {
     session: Mutex<CreativeSession>,
     audio: AudioSupervisor,
     recovered_from_generation: bool,
-    migration_notice: Option<MigrationNotice>,
     safe_mode: bool,
     jobs: jobs::JobRegistry,
 }
@@ -48,7 +47,6 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
         session: state.session.lock().map_err(lock_error)?.clone(),
         recovered_from_generation: state.recovered_from_generation,
         safe_mode: state.safe_mode,
-        migration: state.migration_notice.clone(),
         native_available: true,
         recovery_candidates: SessionStore::new(&state.data_root)
             .recovery_candidates()
@@ -1487,7 +1485,7 @@ fn configure_sample_pads(
         }
         let content_location = asset::resolve_content_location(&state.data_root, &pad.asset_id)
             .ok_or_else(|| format!("Sample pad '{}' references an unresolved asset.", pad.name))?;
-        native_pads.push(SamplePad {
+        native_pads.push(native_audio::NativeSamplePad {
             id: pad.id.clone(),
             name: pad.name.clone(),
             asset_path: content_location,
@@ -1656,7 +1654,6 @@ pub fn run() {
             let loaded = SessionStore::new(&data_root).load_or_create()?;
             let mut session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
-            let migration_notice = loaded.migration;
             session.settings.emergency_muted = true;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -1687,7 +1684,6 @@ pub fn run() {
                 session: Mutex::new(session),
                 audio,
                 recovered_from_generation,
-                migration_notice,
                 safe_mode,
                 jobs: jobs::JobRegistry::default(),
             });
@@ -2121,7 +2117,6 @@ mod inbox_ipc_integration {
                 session: Mutex::new(CreativeSession::new(now_ms())),
                 audio: AudioSupervisor::offline("integration test"),
                 recovered_from_generation: false,
-                migration_notice: None,
                 safe_mode: false,
                 jobs: jobs::JobRegistry::default(),
             })

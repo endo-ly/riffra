@@ -38,9 +38,10 @@ fn open(data_root: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
-/// Adds the canonical Asset columns to the shared `assets` table the first time
-/// the repository is opened. Existing Library rows keep their values; the new
-/// columns start NULL and are populated only for registered Assets.
+/// Ensures the canonical Asset tables exist. The full column set is declared
+/// up front in the single `CREATE TABLE` so no `ALTER TABLE` introspection is
+/// needed at startup. The Library module owns the `library_entries` and
+/// `library_relations` tables.
 fn ensure_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
@@ -54,10 +55,16 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  note TEXT,
                  created_at_ms INTEGER,
                  updated_at_ms INTEGER,
-                 stability TEXT NOT NULL DEFAULT 'unknown'
+                 stability TEXT NOT NULL DEFAULT 'unknown',
+                 asset_kind TEXT,
+                 content_location TEXT,
+                 provenance_operation TEXT,
+                 provenance_parameters TEXT,
+                 favorite INTEGER NOT NULL DEFAULT 0
              );
              CREATE INDEX IF NOT EXISTS idx_assets_updated ON assets(updated_at_ms DESC);
              CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
+             CREATE INDEX IF NOT EXISTS idx_assets_content_location ON assets(content_location);
              CREATE TABLE IF NOT EXISTS asset_relations (
                  asset_id TEXT NOT NULL,
                  related_asset_id TEXT NOT NULL,
@@ -65,47 +72,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  PRIMARY KEY (asset_id, related_asset_id, relation)
              );",
         )
-        .map_err(|error| format!("Library schema could not be prepared: {error}"))?;
-    add_column_if_missing(connection, "assets", "asset_kind", "TEXT")?;
-    add_column_if_missing(connection, "assets", "content_location", "TEXT")?;
-    add_column_if_missing(connection, "assets", "provenance_operation", "TEXT")?;
-    add_column_if_missing(connection, "assets", "provenance_parameters", "TEXT")?;
-    add_column_if_missing(
-        connection,
-        "assets",
-        "favorite",
-        "INTEGER NOT NULL DEFAULT 0",
-    )?;
-    connection
-        .execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_assets_content_location \
-             ON assets(content_location);",
-        )
-        .map_err(|error| format!("Asset content index could not be prepared: {error}"))?;
-    Ok(())
-}
-
-fn add_column_if_missing(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<(), String> {
-    let present: bool = connection
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|error| format!("Schema introspection failed: {error}"))?
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("Schema introspection failed: {error}"))?
-        .filter_map(Result::ok)
-        .any(|name| name == column);
-    if !present {
-        connection
-            .execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-                [],
-            )
-            .map_err(|error| format!("Schema migration could not add {column}: {error}"))?;
-    }
+        .map_err(|error| format!("Asset schema could not be prepared: {error}"))?;
     Ok(())
 }
 
@@ -448,25 +415,6 @@ fn set_source_relations(
     Ok(())
 }
 
-/// Returns the [`AssetId`] of an already-registered canonical Asset whose
-/// content lives at `content_location`, if any. Used to avoid double-registering
-/// the same file.
-pub fn find_by_content_location(data_root: &Path, content_location: &str) -> Option<AssetId> {
-    let connection = open(data_root).ok()?;
-    let mut statement = connection
-        .prepare(
-            "SELECT id FROM assets
-             WHERE content_location = ?1 AND asset_kind IS NOT NULL
-             ORDER BY updated_at_ms DESC
-             LIMIT 1",
-        )
-        .ok()?;
-    let id: Option<String> = statement
-        .query_row(params![content_location], |row| row.get(0))
-        .ok();
-    id.and_then(|value| AssetId::from_normalized(value).ok())
-}
-
 /// Resolves an [`AssetId`] to its content file location. Returns `None` when the
 /// canonical record is missing (a lone file is never auto-restored).
 pub fn resolve_content_location(data_root: &Path, id: &AssetId) -> Option<String> {
@@ -654,7 +602,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::asset::ProvenanceOperation;
-    use crate::session::{AudioClip, CreativeSession, SamplePad};
+    use crate::session::{AudioClip, SamplePad};
 
     fn root(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -700,24 +648,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("does not exist"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn find_by_content_location_reuses_an_existing_asset_id() {
-        let root = root("dedup");
-        let wav = root.join("take.wav");
-        write_wav(&wav);
-        let id = register(
-            &root,
-            AssetKind::Audio,
-            "take",
-            &wav.to_string_lossy(),
-            None,
-        )
-        .unwrap();
-        let found = find_by_content_location(&root, &wav.to_string_lossy());
-        assert_eq!(found.as_ref(), Some(&id));
         let _ = std::fs::remove_dir_all(root);
     }
 

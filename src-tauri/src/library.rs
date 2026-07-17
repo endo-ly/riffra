@@ -11,10 +11,6 @@ use std::{
 
 const SEARCH_LIMIT: i64 = 200;
 
-/// Current Library schema version. Bumping this number is the only trigger for
-/// migration; startup never infers the schema from table contents.
-const SCHEMA_VERSION: i64 = 1;
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryAsset {
@@ -43,9 +39,13 @@ fn open(data_root: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
-/// Prepares every table the Library and canonical Asset stores share, and runs
-/// the versioned migration that separates non-canonical Read Model rows out of
-/// `assets`/`asset_relations` into `library_entries`/`library_relations`.
+/// Final schema for the shared Library / canonical Asset store.
+///
+/// `assets` holds Canonical Production Assets only (audio/midi/sample/
+/// rackDefinition/generationDefinition); Library Read Model entries
+/// (project/plugin/recording-capture/session-rack-device/midi-clip/midi-sidecar)
+/// live in `library_entries`. Provenance relations between canonical Assets use
+/// `asset_relations`; Library Read Model relations use `library_relations`.
 fn ensure_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
@@ -59,10 +59,16 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  note TEXT,
                  created_at_ms INTEGER,
                  updated_at_ms INTEGER,
-                 stability TEXT NOT NULL DEFAULT 'unknown'
+                 stability TEXT NOT NULL DEFAULT 'unknown',
+                 asset_kind TEXT,
+                 content_location TEXT,
+                 provenance_operation TEXT,
+                 provenance_parameters TEXT,
+                 favorite INTEGER NOT NULL DEFAULT 0
              );
              CREATE INDEX IF NOT EXISTS idx_assets_updated ON assets(updated_at_ms DESC);
              CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
+             CREATE INDEX IF NOT EXISTS idx_assets_content_location ON assets(content_location);
              CREATE TABLE IF NOT EXISTS asset_relations (
                  asset_id TEXT NOT NULL,
                  related_asset_id TEXT NOT NULL,
@@ -91,128 +97,6 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
              );",
         )
         .map_err(|error| format!("Library schema could not be prepared: {error}"))?;
-    // Canonical Asset columns may still be missing on a DB created before the
-    // Asset module was rolled out. Add them here so a freshly-opened Library
-    // can run the v1 migration without depending on the Asset opener running
-    // first.
-    add_column_if_missing(connection, "assets", "asset_kind", "TEXT")?;
-    add_column_if_missing(connection, "assets", "content_location", "TEXT")?;
-    add_column_if_missing(connection, "assets", "provenance_operation", "TEXT")?;
-    add_column_if_missing(connection, "assets", "provenance_parameters", "TEXT")?;
-    add_column_if_missing(
-        connection,
-        "assets",
-        "favorite",
-        "INTEGER NOT NULL DEFAULT 0",
-    )?;
-    connection
-        .execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_assets_content_location \
-             ON assets(content_location);",
-        )
-        .map_err(|error| format!("Asset content index could not be prepared: {error}"))?;
-    let current_version: i64 = connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|error| format!("Library schema version could not be read: {error}"))?;
-    if current_version < 1 {
-        migrate_to_v1(connection)?;
-        connection
-            .execute_batch("PRAGMA user_version = 1")
-            .map_err(|error| format!("Library schema version could not be set: {error}"))?;
-    }
-    if current_version > SCHEMA_VERSION {
-        return Err(format!(
-            "Library schema version {current_version} is newer than this build supports ({SCHEMA_VERSION}); \
-             upgrade Riffra instead of downgrading."
-        ));
-    }
-    Ok(())
-}
-
-fn add_column_if_missing(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<(), String> {
-    let present: bool = connection
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|error| format!("Schema introspection failed: {error}"))?
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("Schema introspection failed: {error}"))?
-        .filter_map(Result::ok)
-        .any(|name| name == column);
-    if !present {
-        connection
-            .execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-                [],
-            )
-            .map_err(|error| format!("Schema migration could not add {column}: {error}"))?;
-    }
-    Ok(())
-}
-
-/// v0 → v1 migration: separates non-canonical Read Model rows out of the
-/// shared `assets`/`asset_relations` tables. Canonical Asset IDs, metadata,
-/// tag/note/favorite and Provenance relations are all preserved.
-///
-/// The whole migration runs inside one transaction. If any step fails the
-/// transaction rolls back and the DB stays on schema v0, so the next startup
-/// retries from a clean half-migrated state instead of guessing.
-fn migrate_to_v1(connection: &Connection) -> Result<(), String> {
-    let transaction = connection
-        .unchecked_transaction()
-        .map_err(|error| format!("Library v1 migration transaction could not start: {error}"))?;
-    // 1. Mirror non-canonical Library rows (those without an `asset_kind`) into
-    //    `library_entries`. Existing canonical Asset metadata is not touched.
-    transaction
-        .execute(
-            "INSERT OR IGNORE INTO library_entries
-                (id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability)
-             SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability
-             FROM assets WHERE asset_kind IS NULL",
-            [],
-        )
-        .map_err(|error| format!("Library entries could not be migrated: {error}"))?;
-    // 2. Move relations that involve at least one non-canonical endpoint into
-    //    `library_relations`. Pure canonical Provenance relations (both ends
-    //    registered canonical Assets) stay in `asset_relations`.
-    transaction
-        .execute(
-            "INSERT OR IGNORE INTO library_relations (entry_id, related_entry_id, relation)
-             SELECT asset_id, related_asset_id, relation FROM asset_relations
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM assets a1
-                 WHERE a1.id = asset_relations.asset_id AND a1.asset_kind IS NOT NULL
-             ) OR NOT EXISTS (
-                 SELECT 1 FROM assets a2
-                 WHERE a2.id = asset_relations.related_asset_id AND a2.asset_kind IS NOT NULL
-             )",
-            [],
-        )
-        .map_err(|error| format!("Library relations could not be migrated: {error}"))?;
-    transaction
-        .execute(
-            "DELETE FROM asset_relations
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM assets a1
-                 WHERE a1.id = asset_relations.asset_id AND a1.asset_kind IS NOT NULL
-             ) OR NOT EXISTS (
-                 SELECT 1 FROM assets a2
-                 WHERE a2.id = asset_relations.related_asset_id AND a2.asset_kind IS NOT NULL
-             )",
-            [],
-        )
-        .map_err(|error| format!("Stale Library relations could not be removed: {error}"))?;
-    // 3. Drop the non-canonical rows from `assets`. Canonical Asset rows are
-    //    identified by `asset_kind IS NOT NULL` and are never deleted here.
-    transaction
-        .execute("DELETE FROM assets WHERE asset_kind IS NULL", [])
-        .map_err(|error| format!("Stale Library rows could not be removed: {error}"))?;
-    transaction
-        .commit()
-        .map_err(|error| format!("Library v1 migration could not be committed: {error}"))?;
     Ok(())
 }
 
@@ -743,88 +627,6 @@ mod tests {
         std::env::temp_dir().join(format!("riffra-library-{name}-{}", now_ms()))
     }
 
-    /// Builds a "legacy" v0 schema DB (no library_entries / library_relations,
-    /// user_version = 0, non-canonical rows mixed into `assets`) so the v1
-    /// migration has something realistic to move.
-    fn seed_legacy_v0(directory: &Path) {
-        fs::create_dir_all(directory.join("library")).unwrap();
-        let connection = Connection::open(database_path(directory)).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE assets (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    path TEXT,
-                    tag TEXT,
-                    note TEXT,
-                    created_at_ms INTEGER,
-                    updated_at_ms INTEGER,
-                    stability TEXT NOT NULL DEFAULT 'unknown',
-                    asset_kind TEXT,
-                    content_location TEXT,
-                    provenance_operation TEXT,
-                    provenance_parameters TEXT,
-                    favorite INTEGER NOT NULL DEFAULT 0
-                 );
-                 CREATE TABLE asset_relations (
-                    asset_id TEXT NOT NULL,
-                    related_asset_id TEXT NOT NULL,
-                    relation TEXT NOT NULL,
-                    PRIMARY KEY (asset_id, related_asset_id, relation)
-                 );
-                 PRAGMA user_version = 0;",
-            )
-            .unwrap();
-        // Canonical Asset row (asset_kind IS NOT NULL).
-        connection
-            .execute(
-                "INSERT INTO assets (id, name, kind, path, tag, note, created_at_ms, updated_at_ms,
-                                     stability, asset_kind, content_location, favorite)
-                 VALUES ('asset:canonical-1', 'Raw', 'audio', 'C:\\raw.wav', 'idea', 'keep',
-                         10, 11, 'saved', 'audio', 'C:\\raw.wav', 0)",
-                [],
-            )
-            .unwrap();
-        // A second canonical Asset so the Provenance relation below is a true
-        // canonical-to-canonical edge that must survive migration.
-        connection
-            .execute(
-                "INSERT INTO assets (id, name, kind, path, tag, note, created_at_ms, updated_at_ms,
-                                     stability, asset_kind, content_location, favorite)
-                 VALUES ('asset:canonical-source', 'Source', 'audio', 'C:\\src.wav', NULL, NULL,
-                         9, 9, 'saved', 'audio', 'C:\\src.wav', 0)",
-                [],
-            )
-            .unwrap();
-        // Non-canonical Library row mixed into assets (asset_kind IS NULL).
-        connection
-            .execute(
-                "INSERT INTO assets (id, name, kind, path, tag, note, created_at_ms, updated_at_ms,
-                                     stability, asset_kind, content_location, favorite)
-                 VALUES ('project:scratch', 'Scratch', 'project', 'C:\\scratch.json', NULL, 'note',
-                         10, 12, 'saved', NULL, NULL, 0)",
-                [],
-            )
-            .unwrap();
-        // Canonical Provenance relation (both endpoints canonical).
-        connection
-            .execute(
-                "INSERT INTO asset_relations (asset_id, related_asset_id, relation)
-                 VALUES ('asset:canonical-1', 'asset:canonical-source', 'derived-from')",
-                [],
-            )
-            .unwrap();
-        // Non-canonical relation (both endpoints Library entries).
-        connection
-            .execute(
-                "INSERT INTO asset_relations (asset_id, related_asset_id, relation)
-                 VALUES ('rack-device:plugin-1', 'project:scratch', 'used-by')",
-                [],
-            )
-            .unwrap();
-    }
-
     #[test]
     fn indexes_session_and_finds_assets_across_kinds() {
         let directory = root("search");
@@ -867,141 +669,21 @@ mod tests {
     }
 
     #[test]
-    fn fresh_environment_creates_new_schema_without_migration_data() {
+    fn fresh_environment_creates_empty_library_entries_table() {
         let directory = root("fresh");
-        // Opening a brand-new DB should land on the current schema version
-        // without producing spurious rows.
         let connection = open(&directory).unwrap();
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
         let entry_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM library_entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(entry_count, 0);
-        let _ = fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn migration_moves_non_canonical_rows_out_of_assets_and_preserves_canonical() {
-        let directory = root("migrate");
-        seed_legacy_v0(&directory);
-        // Trigger the migration by opening through the public API.
-        let connection = open(&directory).unwrap();
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, 1);
-
-        // Canonical Asset row stays in `assets` with all metadata.
-        let canonical_in_assets: i64 = connection
+        let asset_count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM assets WHERE id = 'asset:canonical-1'",
+                "SELECT COUNT(*) FROM assets WHERE asset_kind IS NOT NULL",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(canonical_in_assets, 1);
-        let canonical_favorite: i64 = connection
-            .query_row(
-                "SELECT favorite FROM assets WHERE id = 'asset:canonical-1'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(canonical_favorite, 0);
-        let canonical_tag: Option<String> = connection
-            .query_row(
-                "SELECT tag FROM assets WHERE id = 'asset:canonical-1'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(canonical_tag.as_deref(), Some("idea"));
-
-        // Non-canonical row moved out of `assets` into `library_entries`.
-        let non_canonical_in_assets: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM assets WHERE id = 'project:scratch'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(non_canonical_in_assets, 0);
-        let project_in_library: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM library_entries WHERE id = 'project:scratch'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(project_in_library, 1);
-        let preserved_note: Option<String> = connection
-            .query_row(
-                "SELECT note FROM library_entries WHERE id = 'project:scratch'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(preserved_note.as_deref(), Some("note"));
-
-        // Canonical Provenance relation stays in `asset_relations`.
-        let canonical_relation: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM asset_relations
-                 WHERE asset_id = 'asset:canonical-1'
-                   AND related_asset_id = 'asset:canonical-source'
-                   AND relation = 'derived-from'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(canonical_relation, 1);
-
-        // Non-canonical relation moved into `library_relations`.
-        let non_canonical_relation: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM asset_relations
-                 WHERE asset_id = 'rack-device:plugin-1'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(non_canonical_relation, 0);
-        let library_relation: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM library_relations
-                 WHERE entry_id = 'rack-device:plugin-1'
-                   AND related_entry_id = 'project:scratch'
-                   AND relation = 'used-by'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(library_relation, 1);
-        let _ = fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn migration_is_idempotent_when_opened_twice() {
-        let directory = root("idempotent");
-        seed_legacy_v0(&directory);
-        let _ = open(&directory).unwrap();
-        // Reopening must not re-move rows or duplicate `library_entries`.
-        let connection = open(&directory).unwrap();
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
-        let project_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM library_entries WHERE id = 'project:scratch'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(project_count, 1);
+        assert_eq!(asset_count, 0);
         let _ = fs::remove_dir_all(directory);
     }
 

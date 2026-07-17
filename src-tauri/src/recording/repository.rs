@@ -1,6 +1,6 @@
 use crate::{
     asset::{self, AssetId},
-    model::RackDevice,
+    rack::RackDevice,
     recording::{RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };

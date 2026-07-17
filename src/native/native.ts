@@ -39,7 +39,6 @@ export async function bootstrap(): Promise<BootstrapState> {
       recoveryCandidates: [] as RecoveryCandidate[],
       dataRoot: 'Browser preview — native persistence is unavailable',
       vst3Root: defaultVst3Root,
-      migration: null,
     };
   }
 }

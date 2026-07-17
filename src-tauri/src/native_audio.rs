@@ -1,7 +1,7 @@
 use crate::model::{
-    AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus, SamplePad,
+    AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
     sync::{
@@ -34,6 +34,23 @@ struct NativeReply {
     result: Result<(), String>,
 }
 
+/// Sample-pad payload exchanged with the native audio sidecar. The sidecar
+/// consumes resolved filesystem paths, not Asset ids, so this is a distinct
+/// type from the domain [`crate::session::SamplePad`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSamplePad {
+    pub id: String,
+    pub name: String,
+    pub asset_path: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub midi_key: u8,
+    pub gain_db: f64,
+    pub loop_enabled: bool,
+}
+
+/// JSON message body for the audio sidecar IPC.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeStatus {
@@ -411,7 +428,7 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn configure_sample_pads(&self, pads: &[SamplePad]) -> Result<AudioStatus, String> {
+    pub fn configure_sample_pads(&self, pads: &[NativeSamplePad]) -> Result<AudioStatus, String> {
         let pads = serde_json::to_value(pads)
             .map_err(|error| format!("Sample pad mapping could not be encoded: {error}"))?;
         self.send_command(

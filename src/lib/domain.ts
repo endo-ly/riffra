@@ -233,13 +233,6 @@ export interface BootstrapState {
   recoveryCandidates: RecoveryCandidate[];
   dataRoot: string;
   vst3Root: string;
-  migration: MigrationNotice | null;
-}
-
-export interface MigrationNotice {
-  foundFormat: number;
-  expectedFormat: number;
-  backupPath: string;
 }
 
 export interface RecoveryCandidate {
