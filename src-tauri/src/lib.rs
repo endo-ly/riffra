@@ -141,9 +141,9 @@ fn save_rack_definition(
         &name,
         &path.to_string_lossy(),
     )?;
-    // Mirror the canonical RackDefinition asset into the Library index so the
-    // Racks section can list and load it without duplicating metadata.
-    library::sync_rack_definition(&state.data_root, &asset_id, &name, &path)?;
+    // The canonical RackDefinition Asset is searchable directly from the
+    // `assets` table via `list_rack_definitions` / `search`; do not mirror its
+    // metadata into the Library Read Model.
     Ok(asset_id)
 }
 
