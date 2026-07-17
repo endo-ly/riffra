@@ -72,6 +72,35 @@ export interface NativeApi {
   renderTimelineStems(options: RenderOptions): Promise<RenderResult[]>;
   exportMidi(): Promise<MidiExportResult | null>;
 
+  /**
+   * Loads a plugin into the rack as a single production operation: applies it to
+   * the Audio Runtime, projects it into the persisted CreativeSession rack, and
+   * returns both. React does not re-derive the rack. A faulted runtime leaves
+   * the session unchanged and is reflected in the returned audio status.
+   */
+  loadPluginIntoRack(
+    path: string,
+    name: string,
+    parameterValues: number[],
+    bypassed: boolean,
+    stateData: string | null,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /** Clears the plugin from the rack (runtime + session) as one operation. */
+  clearPluginFromRack(): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /** Sets the rack plugin bypass flag across the runtime and session. */
+  setRackPluginBypassed(
+    bypassed: boolean,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /** Sets a single rack plugin parameter across the runtime and session. */
+  setRackPluginParameter(
+    index: number,
+    value: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /**
+   * Synchronizes the current session rack into the Audio Runtime at startup.
+   * The session is already canonical, so a normal restore does not rewrite it.
+   */
+  restoreCurrentRack(): Promise<AudioStatus>;
   loadPlugin(path: string): Promise<AudioStatus>;
   clearPlugin(): Promise<AudioStatus>;
   previewSample(
@@ -102,6 +131,28 @@ export interface NativeApi {
   openMidiInput(name: string): Promise<AudioStatus>;
   closeMidiInput(): Promise<AudioStatus>;
   configureSamplePads(pads: SamplePad[]): Promise<AudioStatus>;
+  /**
+   * Creates a SamplePad from an existing audio Asset as one production
+   * operation: duplicate/MIDI-key rules, session update, runtime pad
+   * configuration, and persistence all happen in Rust. React applies the
+   * returned session and audio status directly instead of building the pad or
+   * relying on a follow-up runtime sync effect.
+   */
+  createSamplePad(
+    assetId: AssetId,
+    name: string,
+    durationMs: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  updateSamplePad(
+    padId: string,
+    patch: {
+      startMs?: number;
+      endMs?: number;
+      gainDb?: number;
+      loopEnabled?: boolean;
+    },
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  removeSamplePad(padId: string): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   resolveAssetContentLocation(assetId: AssetId): Promise<string | null>;
   addAudioClipToArrangement(
     assetId: AssetId,

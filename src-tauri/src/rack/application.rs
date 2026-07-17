@@ -1,0 +1,379 @@
+//! Rack Application Operations.
+//!
+//! These functions own the production workflow that keeps the Audio Runtime and
+//! the persisted [`CreativeSession`] rack in lock-step. A single user intent
+//! (load a plugin, clear it, toggle bypass, change a parameter, restore the
+//! rack at startup) is applied to the runtime first, then committed to the
+//! session and persisted. When persistence fails after a successful runtime
+//! apply, the runtime is rolled back to its previous plugin so the two never
+//! diverge; a failed rollback is surfaced as a distinct, more severe error and
+//! never reported as success.
+//!
+//! This layer deliberately knows nothing about `tauri::State`, Tauri `invoke`,
+//! or React DTO shapes. It receives the concrete dependencies it needs
+//! (`AudioSupervisor`, the data root, and the in-memory session lock) so the
+//! same orchestration is exercised directly from tests. There is no DI
+//! framework and no generic transaction/rollback abstraction: the compensation
+//! is local to the single plugin slot the runtime actually supports.
+
+use std::path::Path;
+use std::sync::Mutex;
+
+use crate::model::{AudioState, AudioStatus};
+use crate::native_audio::AudioSupervisor;
+use crate::rack::{DeviceKind, RackDevice};
+use crate::session::CreativeSession;
+use crate::storage::{SessionStore, now_ms};
+
+/// Concrete dependencies a Rack Application Operation needs. Bundling them keeps
+/// the operation signatures small without pulling in `tauri::State`.
+pub struct RackContext<'a> {
+    pub audio: &'a AudioSupervisor,
+    pub data_root: &'a Path,
+    pub session: &'a Mutex<CreativeSession>,
+    pub safe_mode: bool,
+}
+
+/// The committed result of a Rack Application Operation: the updated session and
+/// the runtime status after the change. React applies both directly instead of
+/// re-deriving the rack.
+pub type RackOutcome = (CreativeSession, AudioStatus);
+
+fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
+    format!("An internal state lock was poisoned: {error}")
+}
+
+/// Mirrors the React `audioCommandSucceeded` safety gate: a faulted or offline
+/// engine must not be treated as a successful apply.
+fn audio_command_succeeded(status: &AudioStatus) -> bool {
+    status.state != AudioState::Faulted && status.state != AudioState::Offline
+}
+
+/// The single active (non-placeholder) plugin device in a rack, if any.
+fn active_plugin_device(session: &CreativeSession) -> Option<RackDevice> {
+    session
+        .rack
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Plugin && !device.disabled_placeholder)
+        .cloned()
+}
+
+/// Replaces any existing plugin device with a freshly described one, leaving
+/// every non-plugin device untouched. This is the canonical rack projection the
+/// React `rackWithPluginLoaded` helper used to perform.
+fn rack_with_plugin_device(session: &mut CreativeSession, device: RackDevice) {
+    session
+        .rack
+        .devices
+        .retain(|d| d.kind != DeviceKind::Plugin);
+    session.rack.devices.push(device);
+}
+
+fn persist(
+    context: &RackContext<'_>,
+    mut session: CreativeSession,
+) -> Result<CreativeSession, String> {
+    session.updated_at_ms = now_ms();
+    SessionStore::new(context.data_root)
+        .save(&session)
+        .map_err(|error| error.to_string())?;
+    Ok(session)
+}
+
+/// Pushes a single plugin device's full state into the runtime, assuming any
+/// previous plugin has just been cleared. Returns the final status on success.
+fn apply_plugin_to_runtime(
+    audio: &AudioSupervisor,
+    path: &str,
+    parameter_values: &[f32],
+    bypassed: bool,
+    state_data: Option<&str>,
+) -> Result<AudioStatus, String> {
+    let plugin_path = Path::new(path);
+    if !plugin_path.exists()
+        || plugin_path.extension().and_then(|value| value.to_str()) != Some("vst3")
+    {
+        return Err(format!(
+            "Rack references a missing or invalid plugin bundle: {path}"
+        ));
+    }
+    let mut status = audio.load_plugin(plugin_path)?;
+    if !audio_command_succeeded(&status) {
+        return Ok(status);
+    }
+    // A saved state blob supersedes individual parameter restoration, matching
+    // the previous React `shouldRestoreIndividualParameters` rule.
+    let has_state = matches!(state_data, Some(value) if !value.is_empty());
+    if let Some(value) = state_data
+        && !value.is_empty()
+    {
+        status = audio.set_plugin_state(value)?;
+        if !audio_command_succeeded(&status) {
+            return Ok(status);
+        }
+    }
+    if !has_state {
+        let addressable = status
+            .plugin
+            .as_ref()
+            .map(|plugin| plugin.parameters.len())
+            .unwrap_or(0);
+        for (index, value) in parameter_values.iter().enumerate() {
+            if index >= addressable {
+                break;
+            }
+            let index = u32::try_from(index).map_err(|_| {
+                "Rack exposes more parameters than the runtime can address.".to_string()
+            })?;
+            status = audio.set_plugin_parameter(index, *value)?;
+            if !audio_command_succeeded(&status) {
+                return Ok(status);
+            }
+        }
+    }
+    if bypassed {
+        status = audio.set_plugin_bypassed(true)?;
+    }
+    Ok(status)
+}
+
+/// Restores the runtime to a previously captured plugin device, or clears it
+/// when there was none. Used as local compensation when persistence fails after
+/// a successful runtime apply. A failed step is surfaced so a broken rollback is
+/// never silently swallowed.
+fn restore_previous_plugin(
+    audio: &AudioSupervisor,
+    previous: Option<&RackDevice>,
+) -> Result<(), String> {
+    let cleared = audio.clear_plugin()?;
+    if !audio_command_succeeded(&cleared) {
+        return Err("Runtime could not clear the plugin during rollback.".into());
+    }
+    let Some(device) = previous else {
+        return Ok(());
+    };
+    let Some(path) = device.path.as_deref() else {
+        return Ok(());
+    };
+    let status = apply_plugin_to_runtime(
+        audio,
+        path,
+        &device.parameter_values,
+        device.bypassed,
+        device.state_data.as_deref(),
+    )?;
+    if !audio_command_succeeded(&status) {
+        return Err(format!(
+            "Runtime could not reload the previous plugin '{}' during rollback.",
+            device.name
+        ));
+    }
+    Ok(())
+}
+
+/// Commits a runtime change into the session and persists it, rolling the
+/// runtime back to `previous_plugin` if persistence fails.
+fn commit_with_rollback(
+    context: &RackContext<'_>,
+    session: CreativeSession,
+    previous_plugin: Option<RackDevice>,
+    runtime_status: AudioStatus,
+) -> Result<RackOutcome, String> {
+    match persist(context, session) {
+        Ok(saved) => {
+            crate::queue_session_index(context.data_root, &saved);
+            *context.session.lock().map_err(lock_error)? = saved.clone();
+            Ok((saved, runtime_status))
+        }
+        Err(error) => match restore_previous_plugin(context.audio, previous_plugin.as_ref()) {
+            Ok(()) => Err(format!(
+                "The rack change was applied to the runtime but the session could not be \
+                     saved; the previous rack was restored. Persistence error: {error}"
+            )),
+            Err(rollback_error) => Err(format!(
+                "The rack change was applied to the runtime but the session could not be \
+                     saved, and runtime rollback also failed ({rollback_error}). The runtime \
+                     may be out of sync with the persisted session. Persistence error: {error}"
+            )),
+        },
+    }
+}
+
+/// Loads a plugin into the rack: applies it to the runtime, projects it into the
+/// session rack, and persists. Replaces any existing plugin device.
+pub fn load_plugin_into_rack(
+    context: &RackContext<'_>,
+    path: &str,
+    parameter_values: &[f32],
+    bypassed: bool,
+    state_data: Option<&str>,
+    name: &str,
+) -> Result<RackOutcome, String> {
+    if context.safe_mode {
+        return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to reconnect external plugins.".into());
+    }
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
+    let previous_plugin = active_plugin_device(&previous_session);
+
+    // Clear the current plugin first so a fresh load never stacks.
+    let cleared = context.audio.clear_plugin()?;
+    if !audio_command_succeeded(&cleared) {
+        return Ok((previous_session, cleared));
+    }
+    let status =
+        apply_plugin_to_runtime(context.audio, path, parameter_values, bypassed, state_data)?;
+    if !audio_command_succeeded(&status) {
+        // The runtime rejected the new plugin. Leave the session untouched and
+        // report the faulted status so React does not project a phantom device.
+        return Ok((previous_session, status));
+    }
+
+    let mut session = previous_session.clone();
+    let device_params = status
+        .plugin
+        .as_ref()
+        .map(|plugin| {
+            plugin
+                .parameters
+                .iter()
+                .map(|p| p.value)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| parameter_values.to_vec());
+    rack_with_plugin_device(
+        &mut session,
+        RackDevice {
+            id: format!("plugin:{path}"),
+            name: name.to_owned(),
+            kind: DeviceKind::Plugin,
+            path: Some(path.to_owned()),
+            bypassed,
+            gain_db: 0.0,
+            parameter_values: device_params,
+            state_data: status
+                .plugin
+                .as_ref()
+                .and_then(|plugin| plugin.state_data.clone())
+                .or_else(|| state_data.map(|value| value.to_owned())),
+            disabled_placeholder: false,
+        },
+    );
+    commit_with_rollback(context, session, previous_plugin, status)
+}
+
+/// Clears the plugin from the rack: clears the runtime, removes the plugin
+/// device from the session, and persists.
+pub fn clear_plugin_from_rack(context: &RackContext<'_>) -> Result<RackOutcome, String> {
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
+    let previous_plugin = active_plugin_device(&previous_session);
+    let status = context.audio.clear_plugin()?;
+    if !audio_command_succeeded(&status) {
+        return Ok((previous_session, status));
+    }
+    let mut session = previous_session.clone();
+    session
+        .rack
+        .devices
+        .retain(|d| d.kind != DeviceKind::Plugin);
+    commit_with_rollback(context, session, previous_plugin, status)
+}
+
+/// Sets the bypass flag on the rack plugin device, applying it to the runtime
+/// first and persisting the result.
+pub fn set_rack_plugin_bypassed(
+    context: &RackContext<'_>,
+    bypassed: bool,
+) -> Result<RackOutcome, String> {
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
+    let previous_plugin = active_plugin_device(&previous_session);
+    let status = context.audio.set_plugin_bypassed(bypassed)?;
+    if !audio_command_succeeded(&status) {
+        return Ok((previous_session, status));
+    }
+    let mut session = previous_session.clone();
+    for device in session.rack.devices.iter_mut() {
+        if device.kind == DeviceKind::Plugin {
+            device.bypassed = bypassed;
+        }
+    }
+    commit_with_rollback(context, session, previous_plugin, status)
+}
+
+/// Sets a single plugin parameter, applying it to the runtime first and
+/// persisting the captured parameter values afterward.
+pub fn set_rack_plugin_parameter(
+    context: &RackContext<'_>,
+    index: u32,
+    value: f32,
+) -> Result<RackOutcome, String> {
+    if context.safe_mode {
+        return Err("Safe Mode blocks external VST3 parameter changes.".into());
+    }
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
+    let previous_plugin = active_plugin_device(&previous_session);
+    let status = context.audio.set_plugin_parameter(index, value)?;
+    if !audio_command_succeeded(&status) {
+        return Ok((previous_session, status));
+    }
+    let mut session = previous_session.clone();
+    let captured = status.plugin.as_ref().map(|plugin| {
+        plugin
+            .parameters
+            .iter()
+            .map(|p| p.value)
+            .collect::<Vec<_>>()
+    });
+    for device in session.rack.devices.iter_mut() {
+        if device.kind == DeviceKind::Plugin {
+            if let Some(values) = captured.clone() {
+                device.parameter_values = values;
+            }
+            device.state_data = status
+                .plugin
+                .as_ref()
+                .and_then(|plugin| plugin.state_data.clone())
+                .or_else(|| device.state_data.clone());
+        }
+    }
+    commit_with_rollback(context, session, previous_plugin, status)
+}
+
+/// Synchronizes the current session rack into the Audio Runtime at startup.
+///
+/// The session is already the canonical state, so a normal restore does not
+/// rewrite it; only the runtime is brought into agreement and the resulting
+/// [`AudioStatus`] is returned. In Safe Mode the runtime stays isolated and the
+/// current status is returned unchanged.
+pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, String> {
+    let session = context.session.lock().map_err(lock_error)?.clone();
+    if context.safe_mode {
+        return context.audio.refresh_status();
+    }
+    let cleared = context.audio.clear_plugin()?;
+    if !audio_command_succeeded(&cleared) {
+        return Ok(cleared);
+    }
+    let Some(device) = active_plugin_device(&session) else {
+        return Ok(cleared);
+    };
+    let Some(path) = device.path.as_deref() else {
+        return Ok(cleared);
+    };
+    let plugin_path = Path::new(path);
+    if !plugin_path.exists()
+        || plugin_path.extension().and_then(|value| value.to_str()) != Some("vst3")
+    {
+        // The persisted plugin is unavailable. The runtime is left cleared and
+        // the session is not rewritten; missing-dependency handling owns the
+        // session-level relink/disable decision separately.
+        return Ok(cleared);
+    }
+    apply_plugin_to_runtime(
+        context.audio,
+        path,
+        &device.parameter_values,
+        device.bypassed,
+        device.state_data.as_deref(),
+    )
+}

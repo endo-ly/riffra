@@ -301,7 +301,7 @@ describe('App driven by FakeNativeApi', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
 
-    await waitFor(() => expect(fake.calls).toContain('loadPlugin'));
+    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
       const loaded = saved.rack.devices.find((device) => device.kind === 'plugin');
@@ -348,7 +348,7 @@ describe('App driven by FakeNativeApi', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await waitFor(() => expect(fake.calls).toContain('loadPlugin'));
+    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
 
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
     await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));

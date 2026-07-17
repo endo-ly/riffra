@@ -18,17 +18,6 @@ import type {
   SeparationResult,
 } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
-import {
-  pluginParameterValuesForSession,
-  shouldRestoreIndividualParameters,
-} from '@/lib/plugin-session';
-import { audioCommandSucceeded } from '@/lib/audio-safety';
-import {
-  rackWithPluginBypassed,
-  rackWithPluginLoaded,
-  rackWithPluginParameter,
-  rackWithoutPlugin,
-} from '@/lib/rack';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { workspaces } from '@/constants';
@@ -53,17 +42,20 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     probeAudioDevices,
     listSeparations,
     renderTimeline,
-    loadPlugin,
-    clearPlugin,
+    saveSession,
+    loadPluginIntoRack: loadPluginIntoRackApi,
+    clearPluginFromRack: clearPluginFromRackApi,
+    setRackPluginBypassed,
+    setRackPluginParameter,
+    restoreCurrentRack,
+    createSamplePad: createSamplePadApi,
+    updateSamplePad: updateSamplePadApi,
+    removeSamplePad: removeSamplePadApi,
     previewSample,
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
-    setPluginBypassed,
-    setPluginParameter,
-    setPluginState,
     setMasterGainDb,
-    configureSamplePads,
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
@@ -197,6 +189,20 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
+  // Keeps the latest session available to production operations without adding
+  // it to their dependency arrays. Rack/pad Application Operations read the
+  // canonical session from the Rust in-memory copy, which only advances when the
+  // session is persisted. UI-local edits (workspace, notes, macros) reach the
+  // backend through the debounced autosave, so a rack/pad operation triggered
+  // before that flush would return a session missing those edits and clobber
+  // them. flushSession forces the current session to the backend first so the
+  // operation reads and returns a truly canonical session.
+  const latestSession = useRef(session);
+  latestSession.current = session;
+  const flushSession = useCallback(async () => {
+    const current = latestSession.current;
+    if (current) await saveSession({ ...current, updatedAtMs: Date.now() });
+  }, [saveSession]);
   const clearRelocatedMissingDependencies = useCallback(
     (recording: RecordingAsset) => {
       const previousDirectory = recording.path.replace(/[\\/]+$/, '').toLocaleLowerCase();
@@ -249,82 +255,46 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       bypassed = false,
       stateData: string | null = null,
     ) => {
-      let nextAudio = await loadPlugin(plugin.path);
-      if (!audioCommandSucceeded(nextAudio)) {
-        setAudio(nextAudio);
-        return;
-      }
-      if (stateData) nextAudio = await setPluginState(stateData);
-      if (shouldRestoreIndividualParameters(stateData)) {
-        for (const [index, value] of parameterValues.entries()) {
-          if (index >= (nextAudio.plugin?.parameters.length ?? 0)) break;
-          nextAudio = await setPluginParameter(index, value);
-        }
-      }
-      if (bypassed) nextAudio = await setPluginBypassed(true);
-      setAudio(nextAudio);
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              rack: rackWithPluginLoaded(current.rack, plugin, nextAudio.plugin, {
-                parameterValues,
-                bypassed,
-                stateData,
-              }),
-            }
-          : current,
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await loadPluginIntoRackApi(
+        plugin.path,
+        plugin.name,
+        parameterValues,
+        bypassed,
+        stateData,
       );
+      setAudio(nextAudio);
+      setSession(nextSession);
     },
-    [],
+    [flushSession, loadPluginIntoRackApi],
   );
 
   const clearPluginFromRack = useCallback(async () => {
-    const nextAudio = await clearPlugin();
+    await flushSession();
+    const { session: nextSession, audio: nextAudio } = await clearPluginFromRackApi();
     setAudio(nextAudio);
-    if (!audioCommandSucceeded(nextAudio)) return;
-    setSession((current) =>
-      current ? { ...current, rack: rackWithoutPlugin(current.rack) } : current,
-    );
-  }, []);
+    setSession(nextSession);
+  }, [flushSession, clearPluginFromRackApi]);
 
-  const togglePluginBypass = useCallback(async (bypassed: boolean) => {
-    const nextAudio = await setPluginBypassed(bypassed);
-    setAudio(nextAudio);
-    if (!audioCommandSucceeded(nextAudio)) return;
-    setSession((current) =>
-      current
-        ? {
-            ...current,
-            rack: rackWithPluginBypassed(current.rack, bypassed),
-          }
-        : current,
-    );
-  }, []);
+  const togglePluginBypass = useCallback(
+    async (bypassed: boolean) => {
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await setRackPluginBypassed(bypassed);
+      setAudio(nextAudio);
+      setSession(nextSession);
+    },
+    [flushSession, setRackPluginBypassed],
+  );
 
-  const setPluginParameterValue = useCallback(async (index: number, value: number) => {
-    const nextAudio = await setPluginParameter(index, value);
-    setAudio(nextAudio);
-    if (!audioCommandSucceeded(nextAudio)) return;
-    const values = nextAudio.plugin
-      ? pluginParameterValuesForSession(nextAudio.plugin.parameters)
-      : undefined;
-    if (values)
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              rack: rackWithPluginParameter(
-                current.rack,
-                values,
-                nextAudio.plugin?.stateData ??
-                  current.rack.devices.find((device) => device.kind === 'plugin')?.stateData ??
-                  null,
-              ),
-            }
-          : current,
-      );
-  }, []);
+  const setPluginParameterValue = useCallback(
+    async (index: number, value: number) => {
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await setRackPluginParameter(index, value);
+      setAudio(nextAudio);
+      setSession(nextSession);
+    },
+    [flushSession, setRackPluginParameter],
+  );
 
   const runBackgroundJob = useCallback(
     async (
@@ -725,37 +695,48 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         session.playState.sampleInstrument.pads.some((pad) => pad.assetId === assetId)
       )
         return;
-      const index = session.playState.sampleInstrument.pads.length;
-      const endMs =
+      const durationMs =
         recording.sampleRate && recording.samplesWritten
           ? Math.max(1, Math.round((recording.samplesWritten / recording.sampleRate) * 1000))
           : 1_000;
-      setSession({
-        ...session,
-        playState: {
-          ...session.playState,
-          sampleInstrument: {
-            ...session.playState.sampleInstrument,
-            pads: [
-              ...session.playState.sampleInstrument.pads,
-              {
-                id: `pad:${recording.id}`,
-                name: recording.name,
-                assetId,
-                startMs: 0,
-                endMs,
-                midiKey: 36 + index,
-                gainDb: 0,
-                loopEnabled: false,
-              },
-            ],
-          },
-        },
-        workspace: 'design',
-        designContext: { ...session.designContext, activeTool: 'sample', targetAssetId: assetId },
-      });
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await createSamplePadApi(
+        assetId,
+        recording.name,
+        durationMs,
+      );
+      setSession(nextSession);
+      setAudio(nextAudio);
     },
-    [session],
+    [flushSession, createSamplePadApi, session],
+  );
+
+  const updateSamplePad = useCallback(
+    async (
+      padId: string,
+      patch: {
+        startMs?: number;
+        endMs?: number;
+        gainDb?: number;
+        loopEnabled?: boolean;
+      },
+    ) => {
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await updateSamplePadApi(padId, patch);
+      setSession(nextSession);
+      setAudio(nextAudio);
+    },
+    [flushSession, updateSamplePadApi],
+  );
+
+  const removeSamplePad = useCallback(
+    async (padId: string) => {
+      await flushSession();
+      const { session: nextSession, audio: nextAudio } = await removeSamplePadApi(padId);
+      setSession(nextSession);
+      setAudio(nextAudio);
+    },
+    [flushSession, removeSamplePadApi],
   );
 
   useEffect(() => {
@@ -785,21 +766,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
               : `${report.plugins.length}件を検出`,
           );
-          const persisted = state.session.rack.devices.find(
-            (device) => device.kind === 'plugin' && device.path,
-          );
-          const restored =
-            persisted &&
-            report.plugins.find(
-              (plugin) => plugin.path === persisted.path && plugin.scanState === 'validated',
-            );
-          if (restored)
-            void loadPluginIntoRack(
-              restored,
-              persisted?.parameterValues ?? [],
-              persisted?.bypassed ?? false,
-              persisted?.stateData ?? null,
-            );
+          // Startup rack restore is a Rust Application Operation. React only
+          // asks the runtime to be synchronized with the canonical session and
+          // reflects the resulting status; it does not assemble the restore.
+          if (!state.safeMode) void restoreCurrentRack().then(setAudio);
         },
         (message) => setScanMessage(`VST3 scan failed: ${message}`),
       );
@@ -815,11 +785,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       window.clearInterval(audioPoll);
     };
   }, []);
-
-  useEffect(() => {
-    if (!session || !boot || boot.safeMode) return;
-    void configureSamplePads(session.playState.sampleInstrument.pads).then(setAudio);
-  }, [audio.state, boot, session?.playState.sampleInstrument.pads]);
 
   useEffect(() => {
     const keyboardKeys = ['z', 's', 'x', 'd', 'c', 'v', 'g', 'b', 'h', 'n', 'j', 'm'];
@@ -1030,6 +995,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     stopPreview,
     placeRecording,
     createSamplePad,
+    updateSamplePad,
+    removeSamplePad,
     saveCurrentRack,
     loadSavedRack,
     rackDefinitions,

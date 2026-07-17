@@ -122,6 +122,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     previewTimelineRender,
     stopTimelinePreview,
     createSamplePad,
+    updateSamplePad,
+    removeSamplePad,
     saveCurrentRack,
     loadSavedRack,
     rackDefinitions,
@@ -317,7 +319,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               onCreateSamplePad={createSamplePad}
               onPreviewPad={(pad) => void previewSamplePad(pad)}
             />
-            <SamplePadEditor session={session} setSession={setSession} />
+            <SamplePadEditor
+              session={session}
+              updateSamplePad={updateSamplePad}
+              removeSamplePad={removeSamplePad}
+            />
             <SamplePreviewControls
               session={session}
               playingId={previewPadId}

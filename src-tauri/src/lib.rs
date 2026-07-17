@@ -65,7 +65,7 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
     })
 }
 
-fn queue_session_index(data_root: &std::path::Path, session: &CreativeSession) {
+pub(crate) fn queue_session_index(data_root: &std::path::Path, session: &CreativeSession) {
     let data_root = data_root.to_path_buf();
     let session = session.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1505,27 +1505,7 @@ fn configure_sample_pads(
     if state.safe_mode {
         return Err("Safe Mode keeps MIDI-triggered pad playback isolated.".into());
     }
-    if pads.len() > 128 {
-        return Err("A sample instrument cannot contain more than 128 pads.".into());
-    }
-    let mut native_pads = Vec::with_capacity(pads.len());
-    for pad in &pads {
-        if pad.end_ms <= pad.start_ms {
-            return Err(format!("Sample pad '{}' has an invalid slice.", pad.name));
-        }
-        let content_location = asset::resolve_content_location(&state.data_root, &pad.asset_id)
-            .ok_or_else(|| format!("Sample pad '{}' references an unresolved asset.", pad.name))?;
-        native_pads.push(native_audio::NativeSamplePad {
-            id: pad.id.clone(),
-            name: pad.name.clone(),
-            asset_path: content_location,
-            start_ms: pad.start_ms,
-            end_ms: pad.end_ms,
-            midi_key: pad.midi_key,
-            gain_db: pad.gain_db,
-            loop_enabled: pad.loop_enabled,
-        });
-    }
+    let native_pads = crate::session::application::resolve_native_pads(&state.data_root, &pads)?;
     state.audio.configure_sample_pads(&native_pads)
 }
 
@@ -1727,6 +1707,14 @@ pub fn run() {
             save_rack_definition,
             list_rack_definitions,
             load_rack_definition_asset,
+            rack::commands::load_plugin_into_rack,
+            rack::commands::clear_plugin_from_rack,
+            rack::commands::set_rack_plugin_bypassed,
+            rack::commands::set_rack_plugin_parameter,
+            rack::commands::restore_current_rack,
+            session::commands::create_sample_pad,
+            session::commands::update_sample_pad,
+            session::commands::remove_sample_pad,
             add_audio_clip_to_arrangement,
             update_audio_clip,
             move_audio_clip_to_track,

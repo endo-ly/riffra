@@ -289,6 +289,59 @@ async function audioCommandError(
   };
 }
 
+export async function loadPluginIntoRack(
+  path: string,
+  name: string,
+  parameterValues: number[],
+  bypassed: boolean,
+  stateData: string | null,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('load_plugin_into_rack', {
+    path,
+    name,
+    parameterValues,
+    bypassed,
+    stateData,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+export async function clearPluginFromRack(): Promise<{
+  session: CreativeSession;
+  audio: AudioStatus;
+}> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('clear_plugin_from_rack');
+  return { session: result[0], audio: result[1] };
+}
+
+export async function setRackPluginBypassed(
+  bypassed: boolean,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_rack_plugin_bypassed', {
+    bypassed,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+export async function setRackPluginParameter(
+  index: number,
+  value: number,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('set_rack_plugin_parameter', {
+    index,
+    value,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+export async function restoreCurrentRack(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>('restore_current_rack');
+  } catch (error) {
+    return await audioCommandError('Restore rack', error);
+  }
+}
+
 export async function loadPlugin(path: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('load_plugin', { path });
@@ -486,6 +539,39 @@ export async function configureSamplePads(pads: SamplePad[]): Promise<AudioStatu
   }
 }
 
+export async function createSamplePad(
+  assetId: AssetId,
+  name: string,
+  durationMs: number,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('create_sample_pad', {
+    assetId,
+    name,
+    durationMs,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+export async function updateSamplePad(
+  padId: string,
+  patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('update_sample_pad', {
+    padId,
+    patch,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
+export async function removeSamplePad(
+  padId: string,
+): Promise<{ session: CreativeSession; audio: AudioStatus }> {
+  const result = await invoke<[CreativeSession, AudioStatus]>('remove_sample_pad', {
+    padId,
+  });
+  return { session: result[0], audio: result[1] };
+}
+
 export async function getMissingDependencies(): Promise<MissingDependency[]> {
   try {
     return await invoke<MissingDependency[]>('get_missing_dependencies');
@@ -667,6 +753,11 @@ export function createNativeApi(): NativeApi {
     renderTimeline,
     renderTimelineStems,
     exportMidi,
+    loadPluginIntoRack,
+    clearPluginFromRack,
+    setRackPluginBypassed,
+    setRackPluginParameter,
+    restoreCurrentRack,
     loadPlugin,
     clearPlugin,
     previewSample,
@@ -685,6 +776,9 @@ export function createNativeApi(): NativeApi {
     openMidiInput,
     closeMidiInput,
     configureSamplePads,
+    createSamplePad,
+    updateSamplePad,
+    removeSamplePad,
     resolveAssetContentLocation,
     getMissingDependencies,
     relinkMissingDependency,

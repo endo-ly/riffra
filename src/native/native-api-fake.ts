@@ -143,6 +143,7 @@ export class FakeNativeApi implements NativeApi {
 
   saveSession = async (session: CreativeSession): Promise<string | null> => {
     this.calls.push('saveSession');
+    this.bootstrapState = { ...this.bootstrapState, session };
     this.savedSessions.push(session);
     return null;
   };
@@ -486,6 +487,172 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
+  private commitSessionRack = (
+    project: (session: CreativeSession) => CreativeSession,
+  ): { session: CreativeSession; audio: AudioStatus } => {
+    const next = project(this.bootstrapState.session);
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+    return { session: next, audio: this.audio };
+  };
+
+  loadPluginIntoRack = async (
+    path: string,
+    name: string,
+    parameterValues: number[],
+    bypassed: boolean,
+    stateData: string | null,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('loadPluginIntoRack');
+    const session = this.bootstrapState.session;
+    if (this.pluginLoadFaulted) {
+      // Runtime rejected the load; the session rack is left unchanged, matching
+      // the Rust operation's faulted-status contract.
+      this.audio = {
+        ...this.audio,
+        state: 'faulted',
+        message: `Plugin ${path} could not be loaded; audio remains safe.`,
+      };
+      return { session, audio: this.audio };
+    }
+    this.audio = {
+      ...this.audio,
+      state: this.audio.state === 'offline' ? 'offline' : 'muted',
+      plugin: {
+        loaded: true,
+        bypassed,
+        path,
+        name,
+        sampleRate: this.audio.sampleRate,
+        blockSize: this.audio.bufferSize,
+        bypassedBlocks: 0,
+        parameters: this.pluginParameters,
+        stateData,
+      },
+      message: `Plugin ${path} loaded into the rack; output stays muted until explicitly enabled.`,
+    };
+    const parameters = this.pluginParameters.length
+      ? this.pluginParameters.map((p) => p.value)
+      : parameterValues;
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        devices: [
+          ...current.rack.devices.filter((device) => device.kind !== 'plugin'),
+          {
+            id: `plugin:${path}`,
+            name,
+            kind: 'plugin',
+            path,
+            bypassed,
+            gainDb: 0,
+            parameterValues: parameters,
+            stateData,
+          },
+        ],
+      },
+    }));
+  };
+
+  clearPluginFromRack = async (): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('clearPluginFromRack');
+    this.audio = { ...this.audio, plugin: null, message: 'Plugin removed from the rack.' };
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        devices: current.rack.devices.filter((device) => device.kind !== 'plugin'),
+      },
+    }));
+  };
+
+  setRackPluginBypassed = async (
+    bypassed: boolean,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('setRackPluginBypassed');
+    if (this.audio.plugin)
+      this.audio = { ...this.audio, plugin: { ...this.audio.plugin, bypassed } };
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        devices: current.rack.devices.map((device) =>
+          device.kind === 'plugin' ? { ...device, bypassed } : device,
+        ),
+      },
+    }));
+  };
+
+  setRackPluginParameter = async (
+    index: number,
+    value: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('setRackPluginParameter');
+    if (this.audio.plugin) {
+      const parameters = this.audio.plugin.parameters.some((p) => p.index === index)
+        ? this.audio.plugin.parameters.map((p) => (p.index === index ? { ...p, value } : p))
+        : [
+            ...this.audio.plugin.parameters,
+            {
+              index,
+              name: `Parameter ${index + 1}`,
+              value,
+              defaultValue: value,
+              automatable: true,
+            },
+          ];
+      this.audio = { ...this.audio, plugin: { ...this.audio.plugin, parameters } };
+    }
+    const values = this.audio.plugin?.parameters.map((p) => p.value) ?? [];
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      rack: {
+        ...current.rack,
+        devices: current.rack.devices.map((device) =>
+          device.kind === 'plugin'
+            ? {
+                ...device,
+                parameterValues: values,
+                stateData: this.audio.plugin?.stateData ?? device.stateData,
+              }
+            : device,
+        ),
+      },
+    }));
+  };
+
+  restoreCurrentRack = async (): Promise<AudioStatus> => {
+    this.calls.push('restoreCurrentRack');
+    const device = this.bootstrapState.session.rack.devices.find(
+      (item) => item.kind === 'plugin' && !item.disabledPlaceholder,
+    );
+    if (this.bootstrapState.safeMode || !device?.path) {
+      return this.audio;
+    }
+    this.audio = {
+      ...this.audio,
+      state: this.audio.state === 'offline' ? 'offline' : 'muted',
+      plugin: {
+        loaded: true,
+        bypassed: device.bypassed,
+        path: device.path,
+        name: device.name,
+        sampleRate: this.audio.sampleRate,
+        blockSize: this.audio.bufferSize,
+        bypassedBlocks: 0,
+        parameters: this.pluginParameters,
+        stateData: device.stateData,
+      },
+      message: `Rack restored: ${device.name} reconnected; output stays muted until enabled.`,
+    };
+    return this.audio;
+  };
+
   previewSample = async (
     _path: string,
     _startMs: number,
@@ -714,6 +881,121 @@ export class FakeNativeApi implements NativeApi {
       message: `${pads.length} sample pad mapping(s) applied.`,
     };
     return this.audio;
+  };
+
+  createSamplePad = async (
+    assetId: AssetId,
+    name: string,
+    durationMs: number,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('createSamplePad');
+    const session = this.bootstrapState.session;
+    const pads = session.playState.sampleInstrument.pads;
+    if (pads.some((pad) => pad.assetId === assetId)) {
+      throw new Error('This asset is already mapped to a sample pad.');
+    }
+    const midiKey = 36 + pads.length;
+    const nextPads = [
+      ...pads,
+      {
+        id: `pad:${assetId}`,
+        name,
+        assetId,
+        startMs: 0,
+        endMs: durationMs,
+        midiKey,
+        gainDb: 0,
+        loopEnabled: false,
+      },
+    ];
+    if (!this.bootstrapState.safeMode) {
+      this.audio = {
+        ...this.audio,
+        midiPadMappings: nextPads.length,
+        message: `${nextPads.length} sample pad mapping(s) applied.`,
+      };
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      workspace: 'design',
+      designContext: { ...current.designContext, activeTool: 'sample', targetAssetId: assetId },
+      playState: {
+        ...current.playState,
+        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
+      },
+    }));
+  };
+
+  updateSamplePad = async (
+    padId: string,
+    patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('updateSamplePad');
+    const session = this.bootstrapState.session;
+    const pads = session.playState.sampleInstrument.pads;
+    if (!pads.some((pad) => pad.id === padId)) {
+      throw new Error(`Sample pad is not registered: ${padId}`);
+    }
+    const nextPads = pads.map((pad) => {
+      if (pad.id !== padId) return pad;
+      const startMs = patch.startMs ?? pad.startMs;
+      const endMs = patch.endMs ?? pad.endMs;
+      const clampedStart = startMs;
+      const clampedEnd = Math.max(endMs, clampedStart + 1);
+      return {
+        ...pad,
+        startMs: clampedStart,
+        endMs: clampedEnd,
+        gainDb:
+          patch.gainDb !== undefined
+            ? Math.max(-90, Math.min(24, Number.isFinite(patch.gainDb) ? patch.gainDb : 0))
+            : pad.gainDb,
+        loopEnabled: patch.loopEnabled ?? pad.loopEnabled,
+      };
+    });
+    if (!this.bootstrapState.safeMode) {
+      this.audio = {
+        ...this.audio,
+        midiPadMappings: nextPads.length,
+        message: `${nextPads.length} sample pad mapping(s) applied.`,
+      };
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      playState: {
+        ...current.playState,
+        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
+      },
+    }));
+  };
+
+  removeSamplePad = async (
+    padId: string,
+  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+    this.calls.push('removeSamplePad');
+    const session = this.bootstrapState.session;
+    const pads = session.playState.sampleInstrument.pads;
+    if (!pads.some((pad) => pad.id === padId)) {
+      throw new Error(`Sample pad is not registered: ${padId}`);
+    }
+    const nextPads = pads.filter((pad) => pad.id !== padId);
+    if (!this.bootstrapState.safeMode) {
+      this.audio = {
+        ...this.audio,
+        midiPadMappings: nextPads.length,
+        message: `${nextPads.length} sample pad mapping(s) applied.`,
+      };
+    }
+    return this.commitSessionRack((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      playState: {
+        ...current.playState,
+        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
+      },
+    }));
   };
 
   getMissingDependencies = async (): Promise<MissingDependency[]> => {

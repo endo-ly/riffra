@@ -32,6 +32,8 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const saveTimer = useRef<number | undefined>(undefined);
   const previousSession = useRef<CreativeSession | null>(null);
   const historySkip = useRef(false);
+  const sessionRef = useRef<CreativeSession | null>(null);
+  sessionRef.current = session;
 
   const undo = useCallback(() => {
     if (!session || undoStack.length === 0) return;
@@ -130,19 +132,21 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   }, [session]);
 
   const switchWorkspace = useCallback((workspace: Workspace) => {
-    setSession((current) => (current ? { ...current, workspace } : current));
+    const current = sessionRef.current;
+    if (!current) return;
+    // Read from the ref (not the setSession updater argument) so a pending edit
+    // is not clobbered, then let the autosave effect persist the change.
+    setSession({ ...current, workspace });
   }, []);
 
   const switchDesignTool = useCallback((activeTool: DesignTool) => {
-    setSession((current) =>
-      current
-        ? {
-            ...current,
-            workspace: 'design',
-            designContext: { ...current.designContext, activeTool },
-          }
-        : current,
-    );
+    const current = sessionRef.current;
+    if (!current) return;
+    setSession({
+      ...current,
+      workspace: 'design',
+      designContext: { ...current.designContext, activeTool },
+    });
   }, []);
 
   const renameSession = useCallback(() => {
