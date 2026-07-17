@@ -102,9 +102,8 @@ impl SessionStore {
     /// any other shape is reported as corrupt without touching the original.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let session: CreativeSession = serde_json::from_slice(&payload).map_err(|error| {
-            corrupt_io_error(&format!("v2 session is invalid: {error}"))
-        })?;
+        let session: CreativeSession = serde_json::from_slice(&payload)
+            .map_err(|error| corrupt_io_error(&format!("v2 session is invalid: {error}")))?;
         if session.format_version != CREATIVE_SESSION_FORMAT {
             return Err(corrupt_io_error(&format!(
                 "session format {} is not supported (expected {})",
@@ -140,7 +139,8 @@ impl SessionStore {
             )));
         }
         let session = session.validate_and_normalize().map_err(invalid_data)?;
-        crate::asset::validate_session_references(&self.data_root, &session).map_err(invalid_data)?;
+        crate::asset::validate_session_references(&self.data_root, &session)
+            .map_err(invalid_data)?;
         Ok(session)
     }
 
@@ -381,7 +381,7 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{mint_asset_id, AssetKind};
+    use crate::asset::{AssetKind, mint_asset_id};
     use crate::rack::DeviceKind;
     use crate::session::AudioClip;
 
@@ -542,8 +542,11 @@ mod tests {
         generation.project_name = Some("Recoverable".into());
         let generation_payload = serde_json::to_vec_pretty(&generation).unwrap();
         fs::write(
-            root.join("scratch/generations")
-                .join(format!("{}-{}.json", now_ms(), std::process::id())),
+            root.join("scratch/generations").join(format!(
+                "{}-{}.json",
+                now_ms(),
+                std::process::id()
+            )),
             &generation_payload,
         )
         .unwrap();

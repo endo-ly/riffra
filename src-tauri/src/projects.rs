@@ -26,6 +26,8 @@ pub struct ProjectExport {
 struct PackagedAsset {
     asset_id: AssetId,
     name: String,
+    asset_kind: AssetKind,
+    provenance: Option<Provenance>,
     package_path: String,
     content_hash: u64,
     state: String,
@@ -98,6 +100,20 @@ pub fn export(
             assets.push(PackagedAsset {
                 asset_id: asset_id.clone(),
                 name: "missing".into(),
+                asset_kind: AssetKind::Audio,
+                provenance: None,
+                package_path: String::new(),
+                content_hash: 0,
+                state: "missing".into(),
+            });
+            continue;
+        };
+        let Some(canonical) = asset::load(data_root, &asset_id) else {
+            assets.push(PackagedAsset {
+                asset_id: asset_id.clone(),
+                name: "missing".into(),
+                asset_kind: AssetKind::Audio,
+                provenance: None,
                 package_path: String::new(),
                 content_hash: 0,
                 state: "missing".into(),
@@ -125,6 +141,8 @@ pub fn export(
         assets.push(PackagedAsset {
             asset_id,
             name: base,
+            asset_kind: canonical.kind,
+            provenance: canonical.provenance,
             package_path: package_path.to_string_lossy().replace('\\', "/"),
             content_hash,
             state,
@@ -211,10 +229,10 @@ fn import_packaged_asset(
         asset::register_with_id(
             data_root,
             &asset.asset_id,
-            AssetKind::Audio,
+            asset.asset_kind,
             &asset.name,
             &destination.to_string_lossy(),
-            Some(Provenance::imported()),
+            asset.provenance.clone(),
         )?;
         return Ok(());
     }
@@ -224,10 +242,10 @@ fn import_packaged_asset(
     asset::register_with_id(
         data_root,
         &asset.asset_id,
-        AssetKind::Audio,
+        asset.asset_kind,
         &asset.name,
         &destination.to_string_lossy(),
-        Some(Provenance::imported()),
+        asset.provenance.clone(),
     )?;
     Ok(())
 }

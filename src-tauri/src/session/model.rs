@@ -111,7 +111,7 @@ pub struct MidiClip {
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
 /// `source_end_ms == 0` means "to the end of the source asset", preserving the
-/// existing convention so migration loses no information.
+/// existing convention so existing sessions keep their meaning.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClip {
@@ -688,7 +688,7 @@ impl CreativeSession {
     }
 
     /// Validates production rules and normalizes clamped values, mirroring the
-    /// guarantees the v1 session enforced on load/save.
+    /// guarantees the canonical session model enforces on load/save.
     ///
     /// # Errors
     /// Returns a description of the first violated rule.

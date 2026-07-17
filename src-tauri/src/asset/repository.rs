@@ -40,29 +40,40 @@ fn open(data_root: &Path) -> Result<Connection, String> {
 
 /// Ensures the canonical Asset tables exist. The full column set is declared
 /// up front in the single `CREATE TABLE` so no `ALTER TABLE` introspection is
-/// needed at startup. The Library module owns the `library_entries` and
-/// `library_relations` tables.
-fn ensure_schema(connection: &Connection) -> Result<(), String> {
+/// needed at startup. The Library module owns the `library_entries` table.
+/// The single canonical definition of the `assets` store, shared by the asset
+/// repository and the library read model so the two never drift apart.
+pub(crate) fn ensure_assets_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
-            "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS assets (
+            "CREATE TABLE IF NOT EXISTS assets (
                  id TEXT PRIMARY KEY,
                  name TEXT NOT NULL,
-                  kind TEXT NOT NULL,
-                  tag TEXT,
-                  note TEXT,
-                  created_at_ms INTEGER,
-                  updated_at_ms INTEGER,
-                  content_location TEXT,
+                 kind TEXT NOT NULL,
+                 tag TEXT,
+                 note TEXT,
+                 created_at_ms INTEGER,
+                 updated_at_ms INTEGER,
+                 content_location TEXT,
                  provenance_operation TEXT,
                  provenance_parameters TEXT,
                  favorite INTEGER NOT NULL DEFAULT 0
              );
              CREATE INDEX IF NOT EXISTS idx_assets_updated ON assets(updated_at_ms DESC);
              CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
-             CREATE INDEX IF NOT EXISTS idx_assets_content_location ON assets(content_location);
-             CREATE TABLE IF NOT EXISTS asset_relations (
+             CREATE INDEX IF NOT EXISTS idx_assets_content_location ON assets(content_location);",
+        )
+        .map_err(|error| format!("Asset schema could not be prepared: {error}"))
+}
+
+fn ensure_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("PRAGMA journal_mode = WAL;")
+        .map_err(|error| format!("Asset schema could not be prepared: {error}"))?;
+    ensure_assets_schema(connection)?;
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS asset_relations (
                  asset_id TEXT NOT NULL,
                  related_asset_id TEXT NOT NULL,
                  relation TEXT NOT NULL,
@@ -517,7 +528,7 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         .ok()?;
     let (
         id_value,
-        asset_kind,
+        kind_value,
         name,
         content_location,
         created_at_ms,
@@ -528,7 +539,7 @@ pub fn load(data_root: &Path, id: &AssetId) -> Option<Asset> {
         operation,
         parameters,
     ) = row;
-    let kind = kind_from_db(asset_kind.as_deref()?)?;
+    let kind = kind_from_db(kind_value.as_deref()?)?;
     let provenance = build_provenance(&connection, id.as_str(), operation, parameters)
         .ok()
         .flatten();
@@ -591,7 +602,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{mint_asset_id, ProvenanceOperation};
+    use crate::asset::{ProvenanceOperation, mint_asset_id};
     use crate::session::{AudioClip, SamplePad};
 
     fn root(label: &str) -> PathBuf {

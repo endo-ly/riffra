@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 // Shared production types live in feature modules; nothing is re-exported here
-// any longer because the v1 mirror types that needed them have been removed.
+// because this module no longer aggregates the removed mirror types.
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

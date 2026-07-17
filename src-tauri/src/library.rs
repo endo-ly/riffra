@@ -39,34 +39,21 @@ fn open(data_root: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
-/// Final schema for the shared Library / canonical Asset store.
+/// Final schema for the Library Read Model store.
 ///
-/// `assets` holds Canonical Production Assets only (audio/midi/sample/
-/// rackDefinition/generationDefinition); Library Read Model entries
-/// (project/plugin/recording-capture/session-rack-device/midi-clip/midi-sidecar)
-/// live in `library_entries`. Provenance relations between canonical Assets use
-/// `asset_relations`; Library Read Model relations use `library_relations`.
+/// Canonical Production Assets (`audio`/`midi`/`sample`/`rackDefinition`/
+/// `generationDefinition`) are owned by the shared `assets` store, whose schema
+/// is defined once in `asset::ensure_assets_schema`. Library Read
+/// Model entries (project/plugin/recording-capture) live in `library_entries`.
+/// Provenance relations between canonical Assets use `asset_relations`.
 fn ensure_schema(connection: &Connection) -> Result<(), String> {
     connection
+        .execute_batch("PRAGMA journal_mode = WAL;")
+        .map_err(|error| format!("Library schema could not be prepared: {error}"))?;
+    crate::asset::ensure_assets_schema(connection)?;
+    connection
         .execute_batch(
-            "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS assets (
-                 id TEXT PRIMARY KEY,
-                 name TEXT NOT NULL,
-                 kind TEXT NOT NULL,
-                 tag TEXT,
-                 note TEXT,
-                 created_at_ms INTEGER,
-                 updated_at_ms INTEGER,
-                 content_location TEXT,
-                 provenance_operation TEXT,
-                 provenance_parameters TEXT,
-                 favorite INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE INDEX IF NOT EXISTS idx_assets_updated ON assets(updated_at_ms DESC);
-             CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
-             CREATE INDEX IF NOT EXISTS idx_assets_content_location ON assets(content_location);
-             CREATE TABLE IF NOT EXISTS asset_relations (
+            "CREATE TABLE IF NOT EXISTS asset_relations (
                  asset_id TEXT NOT NULL,
                  related_asset_id TEXT NOT NULL,
                  relation TEXT NOT NULL,
@@ -85,13 +72,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
              );
              CREATE INDEX IF NOT EXISTS idx_library_entries_updated
                  ON library_entries(updated_at_ms DESC);
-             CREATE INDEX IF NOT EXISTS idx_library_entries_kind ON library_entries(kind);
-             CREATE TABLE IF NOT EXISTS library_relations (
-                 entry_id TEXT NOT NULL,
-                 related_entry_id TEXT NOT NULL,
-                 relation TEXT NOT NULL,
-                 PRIMARY KEY (entry_id, related_entry_id, relation)
-             );",
+             CREATE INDEX IF NOT EXISTS idx_library_entries_kind ON library_entries(kind);",
         )
         .map_err(|error| format!("Library schema could not be prepared: {error}"))?;
     Ok(())
@@ -183,67 +164,6 @@ pub fn sync_session(data_root: &Path, session: &CreativeSession) -> Result<(), S
         stability: "saved".into(),
     };
     upsert_library_entry(&connection, &project)?;
-    for device in session
-        .rack
-        .devices
-        .iter()
-        .filter(|device| device.kind == crate::rack::DeviceKind::Plugin)
-    {
-        // Session rack devices are Session State, not Canonical Assets. They
-        // are indexed here only as Library Read Model entries that surface the
-        // session's current plugin chain.
-        let id = format!("rack-device:{}", device.id);
-        upsert_library_entry(
-            &connection,
-            &LibraryAsset {
-                id: id.clone(),
-                name: device.name.clone(),
-                kind: "rack".into(),
-                path: device.path.clone(),
-                tag: None,
-                note: None,
-                created_at_ms: Some(session.updated_at_ms),
-                updated_at_ms: Some(session.updated_at_ms),
-                stability: if device.bypassed {
-                    "bypassed"
-                } else {
-                    "active"
-                }
-                .into(),
-            },
-        )?;
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO library_relations (entry_id, related_entry_id, relation) VALUES (?1, ?2, 'used-by')",
-                params![id, project_id],
-            )
-            .map_err(|error| format!("Library relation could not be indexed: {error}"))?;
-    }
-    for clip in &session.arrangement.midi_clips {
-        // Session MIDI clips are Session State, never auto-promoted to
-        // Canonical MIDI Assets. They surface here as Read Model entries.
-        let id = format!("midi-clip:{}", clip.id);
-        upsert_library_entry(
-            &connection,
-            &LibraryAsset {
-                id: id.clone(),
-                name: clip.name.clone(),
-                kind: "midi".into(),
-                path: None,
-                tag: None,
-                note: Some(format!("{} notes", clip.notes.len())),
-                created_at_ms: Some(session.updated_at_ms),
-                updated_at_ms: Some(session.updated_at_ms),
-                stability: if clip.muted { "muted" } else { "saved" }.into(),
-            },
-        )?;
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO library_relations (entry_id, related_entry_id, relation) VALUES (?1, ?2, 'used-by')",
-                params![id, project_id],
-            )
-            .map_err(|error| format!("Library MIDI relation could not be indexed: {error}"))?;
-    }
     Ok(())
 }
 
@@ -295,10 +215,7 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                     .capture
                     .as_ref()
                     .and_then(|value| value.source.clone()),
-                created_at_ms: recording
-                    .capture
-                    .as_ref()
-                    .map(|value| value.started_at_ms),
+                created_at_ms: recording.capture.as_ref().map(|value| value.started_at_ms),
                 updated_at_ms: Some(indexed_at),
                 stability: recording.state.clone(),
             },
@@ -424,12 +341,6 @@ pub fn remove_recording_assets(data_root: &Path, id: &str) -> Result<(), String>
                 params![asset_id],
             )
             .map_err(|error| format!("Library entry could not be removed: {error}"))?;
-        transaction
-            .execute(
-                "DELETE FROM library_relations WHERE entry_id = ?1 OR related_entry_id = ?1",
-                params![asset_id],
-            )
-            .map_err(|error| format!("Library relation could not be removed: {error}"))?;
     }
     transaction
         .commit()
@@ -441,7 +352,6 @@ pub fn relocate_recording(
     old_id: &str,
     new_id: &str,
     audio_path: Option<&str>,
-    midi_path: Option<&str>,
 ) -> Result<(), String> {
     let old_key = recording_key(old_id);
     let new_key = recording_key(new_id);
@@ -450,8 +360,6 @@ pub fn relocate_recording(
     }
     let old_recording_id = format!("recording:{old_key}");
     let new_recording_id = format!("recording:{new_key}");
-    let old_midi_id = format!("midi:{old_key}");
-    let new_midi_id = format!("midi:{new_key}");
     let new_name = Path::new(new_key)
         .file_name()
         .and_then(|name| name.to_str())
@@ -470,71 +378,23 @@ pub fn relocate_recording(
         return Err("Recording Library entry was not found.".into());
     }
     transaction
-        .execute(
-            "UPDATE library_relations SET entry_id = ?1 WHERE entry_id = ?2",
-            params![new_recording_id, old_recording_id],
-        )
-        .map_err(|error| format!("Recording Library relations could not be relocated: {error}"))?;
-    transaction
-        .execute(
-            "UPDATE library_relations SET related_entry_id = ?1 WHERE related_entry_id = ?2",
-            params![new_recording_id, old_recording_id],
-        )
-        .map_err(|error| format!("Recording Library relations could not be relocated: {error}"))?;
-
-    transaction
-        .execute(
-            "UPDATE library_entries SET id = ?1, name = ?2, path = ?3 WHERE id = ?4",
-            params![
-                new_midi_id,
-                format!("{new_name} MIDI"),
-                midi_path,
-                old_midi_id
-            ],
-        )
-        .map_err(|error| format!("MIDI Library entry could not be relocated: {error}"))?;
-    transaction
-        .execute(
-            "UPDATE library_relations SET entry_id = ?1 WHERE entry_id = ?2",
-            params![new_midi_id, old_midi_id],
-        )
-        .map_err(|error| format!("MIDI Library relations could not be relocated: {error}"))?;
-    transaction
-        .execute(
-            "UPDATE library_relations SET related_entry_id = ?1 WHERE related_entry_id = ?2",
-            params![new_midi_id, old_midi_id],
-        )
-        .map_err(|error| format!("MIDI Library relations could not be relocated: {error}"))?;
-    transaction
         .commit()
         .map_err(|error| format!("Library relocation could not be committed: {error}"))
 }
 
 pub fn related(data_root: &Path, id: &str) -> Result<Vec<LibraryAsset>, String> {
     let connection = open(data_root)?;
-    // Related entries can live on either side (Canonical Asset Provenance, or
-    // Library Read Model relation). UNION the two stores so the caller does not
-    // need to know which side owns `id`.
+    // Related entries are resolved through Canonical Asset Provenance.
     let mut statement = connection
         .prepare(
-            "SELECT id, name, kind, path, tag, note, created_at_ms, updated_at_ms, stability FROM (
-                SELECT a.id, a.name, a.kind, a.content_location AS path, a.tag, a.note,
-                       a.created_at_ms, a.updated_at_ms,
-                       CASE WHEN a.favorite = 0 THEN 'saved' ELSE 'favorite' END AS stability
-                FROM assets a
-                JOIN asset_relations r
-                  ON (r.asset_id = a.id AND r.related_asset_id = ?1)
-                  OR (r.related_asset_id = a.id AND r.asset_id = ?1)
-                WHERE a.id != ?1
-                UNION ALL
-                SELECT e.id, e.name, e.kind, e.path, e.tag, e.note,
-                       e.created_at_ms, e.updated_at_ms, e.stability
-                FROM library_entries e
-                JOIN library_relations r
-                  ON (r.entry_id = e.id AND r.related_entry_id = ?1)
-                  OR (r.related_entry_id = e.id AND r.entry_id = ?1)
-                WHERE e.id != ?1
-             )
+            "SELECT a.id, a.name, a.kind, a.content_location AS path, a.tag, a.note,
+                    a.created_at_ms, a.updated_at_ms,
+                    CASE WHEN a.favorite = 0 THEN 'saved' ELSE 'favorite' END AS stability
+             FROM assets a
+             JOIN asset_relations r
+               ON (r.asset_id = a.id AND r.related_asset_id = ?1)
+               OR (r.related_asset_id = a.id AND r.asset_id = ?1)
+             WHERE a.id != ?1
              ORDER BY COALESCE(updated_at_ms, 0) DESC
              LIMIT ?2",
         )
@@ -568,7 +428,7 @@ fn row_to_asset(row: &Row<'_>) -> rusqlite::Result<LibraryAsset> {
 mod tests {
     use super::*;
     use crate::asset::{AssetKind, Provenance};
-    use crate::rack::{DeviceKind, RackDevice};
+
     use crate::session::CreativeSession;
 
     fn root(name: &str) -> PathBuf {
@@ -589,30 +449,42 @@ mod tests {
     #[test]
     fn updates_metadata_and_traverses_related_assets() {
         let directory = root("metadata");
-        let mut session = CreativeSession::new(now_ms());
-        session.rack.devices.push(RackDevice {
-            id: "plugin:test".into(),
-            name: "Test Plugin".into(),
-            kind: DeviceKind::Plugin,
-            path: Some("C:\\Test.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
-        sync_session(&directory, &session).unwrap();
+        fs::create_dir_all(&directory).unwrap();
+        let wav = directory.join("source.wav");
+        fs::write(&wav, b"RIFF\0\0\0\0WAVE").unwrap();
+        let source_id = crate::asset::register(
+            &directory,
+            crate::asset::AssetKind::Audio,
+            "Source Take",
+            &wav.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let derived_wav = directory.join("derived.wav");
+        fs::write(&derived_wav, b"RIFF\0\0\0\0WAVE").unwrap();
+        let _derived_id = crate::asset::register(
+            &directory,
+            crate::asset::AssetKind::Audio,
+            "Derived Take",
+            &derived_wav.to_string_lossy(),
+            Some(crate::asset::Provenance {
+                source_asset_ids: vec![source_id.clone()],
+                operation: crate::asset::ProvenanceOperation::Processed,
+                parameters: serde_json::Map::new(),
+            }),
+        )
+        .unwrap();
         let updated = update_metadata(
             &directory,
-            &format!("project:{}", session.session_id),
+            source_id.as_str(),
             Some("idea, guitar".into()),
             Some("keep this take".into()),
         )
         .unwrap();
         assert_eq!(updated.tag.as_deref(), Some("idea, guitar"));
-        let related_assets = related(&directory, &updated.id).unwrap();
+        let related_assets = related(&directory, source_id.as_str()).unwrap();
         assert_eq!(related_assets.len(), 1);
-        assert_eq!(related_assets[0].kind, "rack");
+        assert_eq!(related_assets[0].kind, "audio");
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -625,11 +497,7 @@ mod tests {
             .unwrap();
         assert_eq!(entry_count, 0);
         let asset_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM assets",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))
             .unwrap();
         assert_eq!(asset_count, 0);
         let _ = fs::remove_dir_all(directory);

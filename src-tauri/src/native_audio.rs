@@ -1,6 +1,4 @@
-use crate::model::{
-    AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
-};
+use crate::model::{AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,

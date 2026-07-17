@@ -280,7 +280,9 @@ mod tests {
             devices: vec![placeholder, active],
             macros: Vec::new(),
         };
-        let applied = definition.active_plugin_device().expect("a real plugin must be applicable");
+        let applied = definition
+            .active_plugin_device()
+            .expect("a real plugin must be applicable");
         assert_eq!(applied.id, "plugin:2");
         assert!(!applied.disabled_placeholder);
     }

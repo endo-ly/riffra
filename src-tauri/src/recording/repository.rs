@@ -80,10 +80,11 @@ struct RecordingManifest {
     capture: Option<RecordingCapture>,
 }
 
-/// Returns the canonical product references for a current `RecordingCapture`.
+/// Returns the canonical product references held by a `RecordingCapture`.
 ///
-/// A manifest without a nested capture is a Legacy Read/Recovery document; its
-/// flat fields are intentionally not promoted into the normal Asset flow.
+/// A manifest without a nested capture carries no product references and is
+/// treated as an invalid current-format document; its fields are not promoted
+/// into the normal Asset flow.
 fn canonical_asset_ids(
     manifest: &RecordingManifest,
 ) -> (Option<AssetId>, Option<AssetId>, Option<AssetId>) {
@@ -326,7 +327,7 @@ fn validate_manifest(
         }
         // A completed RecordingCapture is validated against canonical Asset
         // records by `list`. Its files may be missing and must remain visible
-        // as a missing dependency, so do not require legacy paths here.
+        // as a missing dependency, so do not require content paths here.
         if manifest
             .capture
             .as_ref()
@@ -406,13 +407,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         } else {
             declared_state
         };
-        let search_text = format!(
-            "{} {} {}",
-            name,
-            state,
-            path.to_string_lossy(),
-        )
-        .to_lowercase();
+        let search_text = format!("{} {} {}", name, state, path.to_string_lossy(),).to_lowercase();
         if !query.is_empty() && !search_text.contains(&query) {
             continue;
         }

@@ -962,14 +962,8 @@ fn rename_recording_impl(
     new_name: &str,
 ) -> Result<String, String> {
     let new_id = recording::rename(data_root, id, new_name)?;
-    let (audio_path, midi_path) = recording::media_paths(&new_id)?;
-    library::relocate_recording(
-        data_root,
-        id,
-        &new_id,
-        audio_path.as_deref(),
-        midi_path.as_deref(),
-    )?;
+    let (audio_path, _midi_path) = recording::media_paths(&new_id)?;
+    library::relocate_recording(data_root, id, &new_id, audio_path.as_deref())?;
     let old_directory = id.strip_prefix("recording:").unwrap_or(id);
     let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
     asset::relocate_content_location(data_root, old_directory, new_directory)?;
@@ -1002,14 +996,8 @@ fn move_recording_out_of_inbox(
     relocate: fn(&std::path::Path, &str) -> Result<String, String>,
 ) -> Result<String, String> {
     let new_id = relocate(data_root, id)?;
-    let (audio_path, midi_path) = recording::media_paths(&new_id)?;
-    library::relocate_recording(
-        data_root,
-        id,
-        &new_id,
-        audio_path.as_deref(),
-        midi_path.as_deref(),
-    )?;
+    let (audio_path, _midi_path) = recording::media_paths(&new_id)?;
+    library::relocate_recording(data_root, id, &new_id, audio_path.as_deref())?;
     let old_directory = id.strip_prefix("recording:").unwrap_or(id);
     let new_directory = new_id.strip_prefix("recording:").unwrap_or(&new_id);
     asset::relocate_content_location(data_root, old_directory, new_directory)?;
