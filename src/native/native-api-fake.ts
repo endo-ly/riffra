@@ -501,7 +501,6 @@ export class FakeNativeApi implements NativeApi {
 
   loadPluginIntoRack = async (
     path: string,
-    name: string,
     parameterValues: number[],
     bypassed: boolean,
     stateData: string | null,
@@ -510,6 +509,13 @@ export class FakeNativeApi implements NativeApi {
     if (this.unsupportedRuntimeState) {
       throw new Error('Plugin loading is unsupported by the fake runtime.');
     }
+    const catalogPlugin = this.plugins.find(
+      (plugin) => plugin.path === path && plugin.scanState === 'validated',
+    );
+    if (!catalogPlugin) {
+      throw new Error(`Plugin is not validated in the current catalog: ${path}`);
+    }
+    const name = catalogPlugin.name;
     const session = this.bootstrapState.session;
     if (this.pluginLoadFaulted) {
       // Runtime rejected the load; the session rack is left unchanged, matching
@@ -531,6 +537,8 @@ export class FakeNativeApi implements NativeApi {
         name,
         sampleRate: this.audio.sampleRate,
         blockSize: this.audio.bufferSize,
+        inputChannels: 2,
+        outputChannels: 2,
         bypassedBlocks: 0,
         contentionBlocks: 0,
         transitionBlocks: 0,
@@ -698,6 +706,8 @@ export class FakeNativeApi implements NativeApi {
         name: device.name,
         sampleRate: this.audio.sampleRate,
         blockSize: this.audio.bufferSize,
+        inputChannels: 2,
+        outputChannels: 2,
         bypassedBlocks: 0,
         contentionBlocks: 0,
         transitionBlocks: 0,
@@ -738,6 +748,8 @@ export class FakeNativeApi implements NativeApi {
           name: plugin.name,
           sampleRate: this.audio.sampleRate,
           blockSize: this.audio.bufferSize,
+          inputChannels: 2,
+          outputChannels: 2,
           bypassedBlocks: 0,
           contentionBlocks: 0,
           transitionBlocks: 0,

@@ -60,6 +60,8 @@ pub struct PluginStatus {
     pub name: Option<String>,
     pub sample_rate: Option<u32>,
     pub block_size: Option<u32>,
+    pub input_channels: u32,
+    pub output_channels: u32,
     pub bypassed_blocks: u64,
     pub contention_blocks: u64,
     pub transition_blocks: u64,

@@ -350,6 +350,8 @@ interface PluginStatus {
   name: string | null;
   sampleRate: number | null;
   blockSize: number | null;
+  inputChannels: number;
+  outputChannels: number;
   bypassedBlocks: number;
   contentionBlocks: number;
   transitionBlocks: number;

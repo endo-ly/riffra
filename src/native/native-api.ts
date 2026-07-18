@@ -80,7 +80,6 @@ export interface NativeApi {
    */
   loadPluginIntoRack(
     path: string,
-    name: string,
     parameterValues: number[],
     bypassed: boolean,
     stateData: string | null,

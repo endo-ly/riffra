@@ -21,6 +21,7 @@ use std::sync::Mutex;
 
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::AudioSupervisor;
+use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
 use crate::session::{CreativeSession, SessionSnapshot};
 use crate::storage::{SessionStore, now_ms};
@@ -228,21 +229,23 @@ pub fn load_plugin_into_rack(
     parameter_values: &[f32],
     bypassed: bool,
     state_data: Option<&str>,
-    name: &str,
 ) -> Result<RackOutcome, String> {
     if context.safe_mode {
         return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to reconnect external plugins.".into());
     }
+    let (name, validated_path) =
+        plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
+    let validated_path = validated_path.to_string_lossy().into_owned();
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let previous_plugin = active_plugin_device(&previous_session);
 
-    // Clear the current plugin first so a fresh load never stacks.
-    let cleared = context.audio.clear_plugin()?;
-    if !audio_command_succeeded(&cleared) {
-        return Ok((previous_session, cleared));
-    }
-    let status =
-        apply_plugin_to_runtime(context.audio, path, parameter_values, bypassed, state_data)?;
+    let status = apply_plugin_to_runtime(
+        context.audio,
+        &validated_path,
+        parameter_values,
+        bypassed,
+        state_data,
+    )?;
     if !audio_command_succeeded(&status) {
         // The runtime rejected the new plugin. Leave the session untouched and
         // report the faulted status so React does not project a phantom device.
@@ -264,10 +267,10 @@ pub fn load_plugin_into_rack(
     rack_with_plugin_device(
         &mut session,
         RackDevice {
-            id: format!("plugin:{path}"),
-            name: name.to_owned(),
+            id: format!("plugin:{validated_path}"),
+            name,
             kind: DeviceKind::Plugin,
-            path: Some(path.to_owned()),
+            path: Some(validated_path),
             bypassed,
             gain_db: 0.0,
             parameter_values: device_params,

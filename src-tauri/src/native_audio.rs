@@ -22,6 +22,7 @@ pub struct AudioSupervisor {
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
     next_request_id: AtomicU64,
     sidecar_generation: Arc<AtomicU64>,
+    pending_request_id: Arc<AtomicU64>,
     child: Mutex<Option<CommandChild>>,
     restart_preferences: Mutex<AudioPreferences>,
 }
@@ -117,6 +118,8 @@ struct NativePluginStatus {
     name: Option<String>,
     sample_rate: Option<f64>,
     block_size: Option<u32>,
+    input_channels: Option<u32>,
+    output_channels: Option<u32>,
     bypassed_blocks: Option<u64>,
     contention_blocks: Option<u64>,
     transition_blocks: Option<u64>,
@@ -184,6 +187,7 @@ impl AudioSupervisor {
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
             next_request_id: AtomicU64::new(1),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
+            pending_request_id: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(AudioPreferences::default()),
         }
@@ -223,6 +227,7 @@ impl AudioSupervisor {
             responses,
             next_request_id: AtomicU64::new(1),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
+            pending_request_id: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(preferences),
         };
@@ -290,6 +295,7 @@ impl AudioSupervisor {
         let event_status = Arc::clone(&self.status);
         let event_responses = Arc::clone(&self.responses);
         let event_generation = Arc::clone(&self.sidecar_generation);
+        let event_pending_request_id = Arc::clone(&self.pending_request_id);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 if event_generation.load(Ordering::Acquire) != generation {
@@ -316,19 +322,21 @@ impl AudioSupervisor {
                             ),
                         );
                     }
-                    CommandEvent::Error(error) => set_faulted(
-                        &event_status,
-                        format!(
+                    CommandEvent::Error(error) => {
+                        let message = format!(
                             "Native audio communication failed: {error}. The engine is isolated and saved data is safe."
-                        ),
-                    ),
-                    CommandEvent::Terminated(payload) => set_faulted(
-                        &event_status,
-                        format!(
+                        );
+                        set_faulted(&event_status, message.clone());
+                        fail_pending_request(&event_responses, &event_pending_request_id, message);
+                    }
+                    CommandEvent::Terminated(payload) => {
+                        let message = format!(
                             "Native audio process stopped (code {:?}); the UI and saved session remain available.",
                             payload.code
-                        ),
-                    ),
+                        );
+                        set_faulted(&event_status, message.clone());
+                        fail_pending_request(&event_responses, &event_pending_request_id, message);
+                    }
                     _ => {}
                 }
             }
@@ -398,16 +406,29 @@ impl AudioSupervisor {
         let response = response_lock
             .lock()
             .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
-        child
-            .write(format!("{payload}\n").as_bytes())
-            .map_err(|error| {
-                format!("Audio command could not reach the isolated audio process: {error}")
-            })?;
-        let (response, wait_result) = response_ready
-            .wait_timeout_while(response, Duration::from_secs(3), |current| {
-                current.request_id != Some(request_id)
-            })
-            .map_err(|error| format!("Audio response wait failed: {error}"))?;
+        self.pending_request_id.store(request_id, Ordering::Release);
+        if let Err(error) = child.write(format!("{payload}\n").as_bytes()) {
+            let _ = self.pending_request_id.compare_exchange(
+                request_id,
+                0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            return Err(format!(
+                "Audio command could not reach the isolated audio process: {error}"
+            ));
+        }
+        let wait = response_ready.wait_timeout_while(response, Duration::from_secs(3), |current| {
+            current.request_id != Some(request_id)
+        });
+        let _ = self.pending_request_id.compare_exchange(
+            request_id,
+            0,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        let (response, wait_result) =
+            wait.map_err(|error| format!("Audio response wait failed: {error}"))?;
         if wait_result.timed_out() && response.request_id != Some(request_id) {
             return Err("Native audio did not acknowledge the command within 3 seconds.".into());
         }
@@ -740,6 +761,8 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
             name: plugin.name.filter(|name| !name.is_empty()),
             sample_rate: plugin.sample_rate.and_then(normalize_sample_rate),
             block_size: plugin.block_size,
+            input_channels: plugin.input_channels.unwrap_or_default(),
+            output_channels: plugin.output_channels.unwrap_or_default(),
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
             contention_blocks: plugin.contention_blocks.unwrap_or_default(),
             transition_blocks: plugin.transition_blocks.unwrap_or_default(),
@@ -896,6 +919,17 @@ fn record_command_response(
         response.request_id = Some(request_id);
         response.error = error;
         response_ready.notify_all();
+    }
+}
+
+fn fail_pending_request(
+    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
+    pending_request_id: &AtomicU64,
+    error: String,
+) {
+    let request_id = pending_request_id.swap(0, Ordering::AcqRel);
+    if request_id != 0 {
+        record_command_response(responses, request_id, Some(error));
     }
 }
 
@@ -1073,6 +1107,19 @@ mod tests {
         assert!(!sidecar_restart_required(
             "Native audio device error: device missing."
         ));
+    }
+
+    #[test]
+    fn sidecar_termination_completes_the_pending_command() {
+        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
+        let pending = AtomicU64::new(42);
+
+        fail_pending_request(&responses, &pending, "plugin process stopped".into());
+
+        let response = responses.0.lock().unwrap();
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+        assert_eq!(response.request_id, Some(42));
+        assert_eq!(response.error.as_deref(), Some("plugin process stopped"));
     }
 
     #[test]

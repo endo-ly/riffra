@@ -276,14 +276,12 @@ async function audioCommandError(
 
 async function loadPluginIntoRack(
   path: string,
-  name: string,
   parameterValues: number[],
   bypassed: boolean,
   stateData: string | null,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
   const result = await invoke<[CreativeSession, AudioStatus]>('load_plugin_into_rack', {
     path,
-    name,
     parameterValues,
     bypassed,
     stateData,

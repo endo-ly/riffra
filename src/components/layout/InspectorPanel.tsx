@@ -79,6 +79,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <dd>{audio.plugin?.bypassed ? 'Bypassed' : 'Active'}</dd>
           </div>
           <div>
+            <dt>Layout</dt>
+            <dd>
+              {audio.plugin?.loaded
+                ? `${audio.plugin.inputChannels} in / ${audio.plugin.outputChannels} out`
+                : '—'}
+            </dd>
+          </div>
+          <div>
             <dt>Bypassed blocks</dt>
             <dd>{audio.plugin?.bypassedBlocks ?? 0}</dd>
           </div>

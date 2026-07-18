@@ -278,7 +278,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     ) => {
       const { session: nextSession, audio: nextAudio } = await loadPluginIntoRackApi(
         plugin.path,
-        plugin.name,
         parameterValues,
         bypassed,
         stateData,

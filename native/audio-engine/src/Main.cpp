@@ -620,12 +620,18 @@ int serve(
             auto* device = manager.getCurrentAudioDevice();
             const auto sampleRate = callback.getSampleRate();
             const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
-            juce::String pluginError;
-            if (path.isEmpty() || sampleRate <= 0.0 || blockSize <= 0
-                || !rack.load(path, sampleRate, blockSize, pluginError)) {
+            if (path.isEmpty()) {
+                writeJson(makeError("pluginPath", "VST3 path is required."));
+                continue;
+            }
+            if (sampleRate <= 0.0 || blockSize <= 0) {
                 writeJson(makeError(
-                    "plugin",
-                    path.isEmpty() ? "VST3 path is required." : pluginError));
+                    "pluginInitialization",
+                    "VST3 loading requires an active audio device."));
+                continue;
+            }
+            if (const auto pluginError = rack.load(path, sampleRate, blockSize)) {
+                writeJson(makeError(pluginError->scope, pluginError->message));
                 continue;
             }
             writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
@@ -1138,6 +1144,9 @@ juce::var runSafetySelfTest() {
                 && left.back() == mono.back() && right.back() == mono.back());
         checks.add(juce::var(check));
     }
+
+    for (const auto& check : riffra::runPluginRackSelfTests())
+        checks.add(check);
 
     {
         PluginRack rack;

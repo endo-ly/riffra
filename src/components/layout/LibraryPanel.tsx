@@ -147,7 +147,12 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                 className={styles.pluginRow}
                 key={plugin.id}
                 onClick={() => void rack.onLoadPlugin(plugin)}
-                title={`Load ${plugin.name}`}
+                disabled={plugin.scanState !== 'validated'}
+                title={
+                  plugin.scanState === 'validated'
+                    ? `Load ${plugin.name}`
+                    : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
+                }
               >
                 <span>{plugin.name.slice(0, 1).toUpperCase()}</span>
                 <div>

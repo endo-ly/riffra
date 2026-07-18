@@ -28,7 +28,6 @@ fn context<'a>(state: &'a State<'_, AppState>) -> RackContext<'a> {
 #[tauri::command]
 pub fn load_plugin_into_rack(
     path: String,
-    name: String,
     parameter_values: Vec<f32>,
     bypassed: bool,
     state_data: Option<String>,
@@ -40,7 +39,6 @@ pub fn load_plugin_into_rack(
         &parameter_values,
         bypassed,
         state_data.as_deref(),
-        &name,
     )
 }
 
