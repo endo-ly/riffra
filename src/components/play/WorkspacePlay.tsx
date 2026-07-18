@@ -1,42 +1,27 @@
 import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
-import { Icon, Meter } from '../shared/ui';
+import { Meter } from '../shared/ui';
 
 export function WorkspacePlay({
   session,
   audio,
-  plugins,
   missingPluginPaths,
-  setSession,
-  setAudio,
-  api,
   onTogglePluginBypass,
-  onSetPluginParameter,
   onClearPlugin,
-  onSaveRack,
-  onLoadRack,
   onCaptureSnapshot,
   onRecallSnapshot,
 }: {
   session: CreativeSession;
   audio: AudioStatus;
-  plugins: PluginEntry[];
   missingPluginPaths: string[];
-  setSession: (value: CreativeSession) => void;
-  setAudio: (value: AudioStatus) => void;
-  api: NativeApi;
   onTogglePluginBypass: (bypassed: boolean) => void;
-  onSetPluginParameter: (index: number, value: number) => void;
   onClearPlugin: () => void;
-  onSaveRack: () => void;
-  onLoadRack: () => void;
   onCaptureSnapshot: (slot: 'A' | 'B') => void;
   onRecallSnapshot: (slot: 'A' | 'B') => void;
 }) {
   const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
   const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
-  const persistedPlugins = session.rack.devices
+  const loadedPlugins = session.rack.devices
     .filter((device) => device.kind === 'plugin')
     .map(
       (device) =>
@@ -52,21 +37,10 @@ export function WorkspacePlay({
           scanState: device.path && missingPaths.has(device.path) ? 'quarantined' : 'validated',
         }) as PluginEntry,
     );
-  const visiblePlugins = persistedPlugins.length ? persistedPlugins : plugins.slice(0, 3);
   const loadedBypassed =
     session.rack.devices.find((device) => device.kind === 'plugin')?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A');
   const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:B');
-  const setMacro = async (macroId: string, value: number) => {
-    const result = await api.setRackMacroValue(macroId, value);
-    setSession(result.session);
-    setAudio(result.audio);
-  };
-  const mapMacro = async (macroId: string, value: string) => {
-    const result = await api.mapRackMacro(macroId, value === '' ? null : Number(value));
-    setSession(result.session);
-    setAudio(result.audio);
-  };
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header">
@@ -93,12 +67,9 @@ export function WorkspacePlay({
             <Meter value={Math.round(audio.inputPeak * 100)} />
           </div>
           <h3>{inputChannel?.name ?? 'No input channel'}</h3>
-          <small>Mono · {inputDb.toFixed(1)} dBFS</small>
+          <small>{inputDb.toFixed(1)} dBFS</small>
         </article>
-        {(visiblePlugins.length
-          ? visiblePlugins
-          : [{ id: 'placeholder', name: 'Add a VST3', vendor: null } as PluginEntry]
-        ).map((plugin, index) => (
+        {loadedPlugins.map((plugin, index) => (
           <article
             className={`rack-device ${plugin.scanState === 'quarantined' ? 'missing-dependency' : ''}`}
             key={plugin.id}
@@ -110,32 +81,34 @@ export function WorkspacePlay({
             </div>
             <h3>{plugin.name}</h3>
             <small>
-              {plugin.scanState === 'quarantined'
-                ? 'Missing dependency'
-                : (plugin.vendor ?? 'VST3 discovered')}
+              {plugin.scanState === 'quarantined' ? 'Missing dependency' : 'Loaded in rack'}
             </small>
             <div className="device-controls">
               <button onClick={() => onTogglePluginBypass(!loadedBypassed)}>
                 {loadedBypassed ? 'Enable' : 'Bypass'}
               </button>
               <button onClick={onClearPlugin}>Remove</button>
-              <strong>0.0 dB</strong>
             </div>
           </article>
         ))}
-        <button className="add-device">
-          <Icon name="plus" />
-          <span>Add Device</span>
-        </button>
+        {loadedPlugins.length === 0 && (
+          <article className="rack-device rack-empty">
+            <span className="device-order">01</span>
+            <div className="device-face">
+              <span>—</span>
+            </div>
+            <h3>No plugin loaded</h3>
+            <small>Pick a VST3 from the Library to add it to the rack.</small>
+          </article>
+        )}
         <article className="rack-device output-device">
           <span className="device-order">OUT</span>
           <div className="device-face">
             <Meter value={Math.round(audio.outputPeak * 100)} />
-            <Meter value={Math.round(audio.outputPeak * 100)} />
           </div>
-          <h3>Main Out</h3>
+          <h3>Output</h3>
           <small>
-            Safety limited
+            {audio.outputDevice ?? 'No output device'}
             {audio.outputChannels.length > 0
               ? ` · ${audio.outputChannels
                   .slice(0, 2)
@@ -145,117 +118,6 @@ export function WorkspacePlay({
           </small>
         </article>
       </section>
-      <section className="section-card rack-library-actions">
-        <header>
-          <div>
-            <span className="eyebrow">RACK LIBRARY</span>
-            <h2>Reusable rack definition</h2>
-          </div>
-          <small>Asset-backed snapshots of the current rack</small>
-        </header>
-        <div className="button-row">
-          <button className="text-button" onClick={onSaveRack}>
-            Save Rack
-          </button>
-          <button className="text-button" onClick={onLoadRack}>
-            Load Rack
-          </button>
-        </div>
-      </section>
-      {audio.plugin?.loaded && audio.plugin.parameters.length > 0 && (
-        <section className="section-card plugin-parameters">
-          <header>
-            <div>
-              <span className="eyebrow">COMMON PARAMETER VIEW</span>
-              <h2>{audio.plugin.parameters.length} VST3 parameters</h2>
-            </div>
-            <small>Native GUI is optional; changes stay inside the isolated rack.</small>
-          </header>
-          <div className="plugin-parameter-grid">
-            {audio.plugin.parameters.slice(0, 48).map((parameter) => (
-              <label className="plugin-parameter" key={parameter.index}>
-                <span>
-                  <strong>{parameter.name || `Parameter ${parameter.index + 1}`}</strong>
-                  <small>
-                    {Math.round(parameter.value * 100)}%
-                    {parameter.automatable ? ' · automatable' : ''}
-                  </small>
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.001"
-                  value={parameter.value}
-                  onChange={(event) =>
-                    onSetPluginParameter(parameter.index, Number(event.target.value))
-                  }
-                />
-              </label>
-            ))}
-          </div>
-          {audio.plugin.parameters.length > 48 && (
-            <small className="inspector-copy">
-              Showing first 48 parameters; the rest remain available to the plugin.
-            </small>
-          )}
-        </section>
-      )}
-      <section className="macro-section">
-        <header>
-          <div>
-            <span className="eyebrow">MACROS</span>
-            <h2>Performance controls</h2>
-          </div>
-          <small>
-            {session.rack.macros.filter((macro) => macro.parameterIndex != null).length} mapped
-          </small>
-        </header>
-        <div className="macro-grid">
-          {session.rack.macros.map((macro) => (
-            <label className="macro" key={macro.id}>
-              <span
-                className="knob"
-                style={{ '--turn': `${-120 + macro.value * 240}deg` } as React.CSSProperties}
-              >
-                <i />
-              </span>
-              <strong>{macro.name}</strong>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.001"
-                value={macro.value}
-                onChange={(event) => void setMacro(macro.id, Number(event.target.value))}
-              />
-              <small>{Math.round(macro.value * 100)}%</small>
-              <select
-                aria-label={`${macro.name} target`}
-                value={macro.parameterIndex == null ? '' : macro.parameterIndex}
-                onChange={(event) => void mapMacro(macro.id, event.target.value)}
-              >
-                <option value="">Unmapped</option>
-                {audio.plugin?.parameters.map((parameter) => (
-                  <option value={parameter.index} key={parameter.index}>
-                    {parameter.name || `Parameter ${parameter.index + 1}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      </section>
-      <label className="session-note">
-        <span>Session note</span>
-        <textarea
-          value={session.settings.note}
-          onChange={(event) =>
-            void api.updateSessionSettings({ note: event.target.value }).then(setSession)
-          }
-          placeholder="意図、比較対象、使用場面を記録…"
-        />
-      </label>
     </div>
   );
 }

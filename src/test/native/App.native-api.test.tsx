@@ -226,19 +226,20 @@ describe('App driven by FakeNativeApi', () => {
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
     const user = userEvent.setup();
     await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
-    const sessionNote = screen.getByPlaceholderText(/意図、比較対象/);
-    await user.type(sessionNote, 'remember this tone');
-    expect((sessionNote as HTMLTextAreaElement).value).toContain('remember this tone');
+
+    // Capture snapshot A — this mutates session state from the Play workspace.
+    await user.click(screen.getByRole('button', { name: '＋' }));
+    await waitFor(() => expect(fake.calls).toContain('captureSnapshot'));
 
     await user.click(within(workspaceNav).getByRole('button', { name: /Home/ }));
     await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
-    expect((screen.getByPlaceholderText(/意図、比較対象/) as HTMLTextAreaElement).value).toContain(
-      'remember this tone',
-    );
 
+    // The captured snapshot must survive workspace switches and reach persistence.
     await waitFor(() => {
       expect(
-        fake.savedSessions.some((session) => session.settings.note.includes('remember this tone')),
+        fake.savedSessions.some((session) =>
+          session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A'),
+        ),
       ).toBe(true);
     });
   });

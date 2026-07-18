@@ -112,7 +112,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     dismissRecovery,
     selectAudioDriver,
     togglePluginBypass,
-    setPluginParameterValue,
     clearPluginFromRack,
     captureSnapshot,
     recallSnapshot,
@@ -124,7 +123,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
-    saveCurrentRack,
     loadSavedRack,
     rackDefinitions,
     previewSamplePad,
@@ -283,16 +281,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           <WorkspacePlay
             session={session}
             audio={audio}
-            plugins={plugins}
             missingPluginPaths={missingPluginPaths}
-            setSession={setSession}
-            setAudio={setAudio}
-            api={nativeApi}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
-            onSetPluginParameter={(index, value) => void setPluginParameterValue(index, value)}
             onClearPlugin={() => void clearPluginFromRack()}
-            onSaveRack={() => void saveCurrentRack()}
-            onLoadRack={() => setLibrarySection('Racks')}
             onCaptureSnapshot={captureSnapshot}
             onRecallSnapshot={(slot) => void recallSnapshot(slot)}
           />
