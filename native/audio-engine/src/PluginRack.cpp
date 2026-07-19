@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 
 namespace riffra {
 
@@ -41,7 +42,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
             "VST3 bundle or file does not exist: " + path,
         };
     }
-    if (formatManager.getNumFormats() == 0) juce::addHeadlessDefaultFormatsToManager(formatManager);
+    if (formatManager.getNumFormats() == 0) juce::addDefaultFormatsToManager(formatManager);
 
     juce::VST3PluginFormat format;
     juce::OwnedArray<juce::PluginDescription> descriptions;
@@ -97,6 +98,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
+    processedBlocks.store(0, std::memory_order_release);
     contentionBlocks.store(0, std::memory_order_release);
     transitionBlocks.store(0, std::memory_order_release);
     loaded.store(true, std::memory_order_release);
@@ -173,6 +175,10 @@ void PluginRack::clear() noexcept {
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
+    bypassedBlocks.store(0, std::memory_order_release);
+    processedBlocks.store(0, std::memory_order_release);
+    contentionBlocks.store(0, std::memory_order_release);
+    transitionBlocks.store(0, std::memory_order_release);
 }
 
 void PluginRack::release() noexcept {
@@ -193,6 +199,32 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
 
 void PluginRack::setBypassed(const bool shouldBypass) noexcept {
     bypassed.store(shouldBypass, std::memory_order_release);
+}
+
+juce::AudioProcessorEditor* PluginRack::createEditor(juce::String& error) {
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return nullptr;
+    }
+    try {
+        if (!plugin->hasEditor()) {
+            error = "The loaded VST3 does not provide an editor.";
+            return nullptr;
+        }
+        return plugin->createEditorAndMakeActive();
+    } catch (const std::exception& exception) {
+        error = "VST3 editor creation raised an exception: " + juce::String(exception.what());
+    } catch (...) {
+        error = "VST3 editor creation failed with an unknown exception.";
+    }
+    return nullptr;
+}
+
+juce::String PluginRack::currentPluginName() const {
+    const juce::ScopedLock lock(statusLock);
+    return pluginName;
 }
 
 bool PluginRack::setParameter(const int index, const float value, juce::String& error) noexcept {
@@ -277,6 +309,7 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
     juce::MidiBuffer midi;
     plugin->processBlock(buffer, midi);
+    processedBlocks.fetch_add(1, std::memory_order_relaxed);
 }
 
 void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
@@ -298,7 +331,7 @@ void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
     cachedParameters = std::move(next);
 }
 
-juce::var PluginRack::cachedStatus() const {
+juce::var PluginRack::cachedStatus(const bool includeParameters) const {
     const juce::ScopedLock lock(statusLock);
     auto* result = new juce::DynamicObject();
     result->setProperty("loaded", loaded.load(std::memory_order_acquire));
@@ -311,35 +344,30 @@ juce::var PluginRack::cachedStatus() const {
     result->setProperty("outputChannels", pluginOutputChannels.load(std::memory_order_acquire));
     result->setProperty("bypassedBlocks",
                         static_cast<juce::int64>(bypassedBlocks.load(std::memory_order_acquire)));
+    result->setProperty("processedBlocks",
+                        static_cast<juce::int64>(processedBlocks.load(std::memory_order_acquire)));
     result->setProperty("contentionBlocks",
                         static_cast<juce::int64>(contentionBlocks.load(std::memory_order_acquire)));
     result->setProperty("transitionBlocks",
                         static_cast<juce::int64>(transitionBlocks.load(std::memory_order_acquire)));
-    juce::Array<juce::var> parameters;
-    for (const auto& parameter : cachedParameters) {
-        auto* item = new juce::DynamicObject();
-        item->setProperty("index", parameter.index);
-        item->setProperty("name", parameter.name);
-        item->setProperty("value", parameter.value);
-        item->setProperty("defaultValue", parameter.defaultValue);
-        item->setProperty("automatable", parameter.automatable);
-        parameters.add(juce::var(item));
+    if (includeParameters) {
+        juce::Array<juce::var> parameters;
+        for (const auto& parameter : cachedParameters) {
+            auto* item = new juce::DynamicObject();
+            item->setProperty("index", parameter.index);
+            item->setProperty("name", parameter.name);
+            item->setProperty("value", parameter.value);
+            item->setProperty("defaultValue", parameter.defaultValue);
+            item->setProperty("automatable", parameter.automatable);
+            parameters.add(juce::var(item));
+        }
+        result->setProperty("parameters", parameters);
     }
-    result->setProperty("parameters", parameters);
     return juce::var(result);
 }
 
-juce::var PluginRack::status() const { return cachedStatus(); }
+juce::var PluginRack::status() const { return cachedStatus(false); }
 
-juce::var PluginRack::completeStatus() const {
-    const juce::SpinLock::ScopedLockType lock(pluginLock);
-    auto result = cachedStatus();
-    if (plugin != nullptr) {
-        juce::MemoryBlock state;
-        plugin->getStateInformation(state);
-        result.getDynamicObject()->setProperty("stateData", state.toBase64Encoding());
-    }
-    return result;
-}
+juce::var PluginRack::parameterStatus() const { return cachedStatus(true); }
 
 }  // namespace riffra

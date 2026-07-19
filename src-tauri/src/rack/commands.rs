@@ -48,6 +48,11 @@ pub fn clear_plugin_from_rack(state: State<'_, AppState>) -> Result<RackOutcome,
 }
 
 #[tauri::command]
+pub fn open_plugin_editor(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    application::open_plugin_editor(&context(&state))
+}
+
+#[tauri::command]
 pub fn set_rack_plugin_bypassed(
     bypassed: bool,
     state: State<'_, AppState>,

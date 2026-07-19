@@ -121,6 +121,7 @@ struct NativePluginStatus {
     input_channels: Option<u32>,
     output_channels: Option<u32>,
     bypassed_blocks: Option<u64>,
+    processed_blocks: Option<u64>,
     contention_blocks: Option<u64>,
     transition_blocks: Option<u64>,
     parameters: Option<Vec<NativePluginParameter>>,
@@ -388,8 +389,17 @@ impl AudioSupervisor {
 
     fn send_command(
         &self,
+        command: serde_json::Value,
+        message: &str,
+    ) -> Result<AudioStatus, String> {
+        self.send_command_with_timeout(command, message, Duration::from_secs(3))
+    }
+
+    fn send_command_with_timeout(
+        &self,
         mut command: serde_json::Value,
         message: &str,
+        timeout: Duration,
     ) -> Result<AudioStatus, String> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         command["requestId"] = serde_json::json!(request_id);
@@ -418,7 +428,7 @@ impl AudioSupervisor {
                 "Audio command could not reach the isolated audio process: {error}"
             ));
         }
-        let wait = response_ready.wait_timeout_while(response, Duration::from_secs(3), |current| {
+        let wait = response_ready.wait_timeout_while(response, timeout, |current| {
             current.request_id != Some(request_id)
         });
         let _ = self.pending_request_id.compare_exchange(
@@ -430,7 +440,10 @@ impl AudioSupervisor {
         let (response, wait_result) =
             wait.map_err(|error| format!("Audio response wait failed: {error}"))?;
         if wait_result.timed_out() && response.request_id != Some(request_id) {
-            return Err("Native audio did not acknowledge the command within 3 seconds.".into());
+            return Err(format!(
+                "Native audio did not acknowledge the command within {} seconds.",
+                timeout.as_secs()
+            ));
         }
         if let Some(error) = response.error.clone() {
             return Err(error);
@@ -446,9 +459,10 @@ impl AudioSupervisor {
     }
 
     pub fn load_plugin(&self, path: &Path) -> Result<AudioStatus, String> {
-        self.send_command(
+        self.send_command_with_timeout(
             serde_json::json!({"type": "loadPlugin", "path": path.to_string_lossy()}),
             "VST3 loaded into the isolated rack; audio remains under the safety limiter.",
+            Duration::from_secs(30),
         )
     }
 
@@ -456,6 +470,14 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "clearPlugin"}),
             "VST3 removed from the isolated rack; the safety path remains active.",
+        )
+    }
+
+    pub fn open_plugin_editor(&self) -> Result<AudioStatus, String> {
+        self.send_command_with_timeout(
+            serde_json::json!({"type": "openPluginEditor"}),
+            "VST3 editor opened for the active rack plugin.",
+            Duration::from_secs(10),
         )
     }
 
@@ -504,8 +526,8 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn capture_plugin_state(&self) -> Result<AudioStatus, String> {
-        self.send_command(serde_json::json!({"type": "capturePluginState"}), "")
+    pub fn plugin_parameter_status(&self) -> Result<AudioStatus, String> {
+        self.send_command(serde_json::json!({"type": "pluginParameterStatus"}), "")
     }
 
     pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
@@ -764,6 +786,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
             input_channels: plugin.input_channels.unwrap_or_default(),
             output_channels: plugin.output_channels.unwrap_or_default(),
             bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
+            processed_blocks: plugin.processed_blocks.unwrap_or_default(),
             contention_blocks: plugin.contention_blocks.unwrap_or_default(),
             transition_blocks: plugin.transition_blocks.unwrap_or_default(),
             parameters: plugin

@@ -40,6 +40,8 @@ target_sources(riffra-audio PRIVATE
   src/RecordingSession.h
   src/PluginRack.cpp
   src/PluginRack.h
+  src/PluginEditorHost.cpp
+  src/PluginEditorHost.h
   src/PluginRackSelfTest.cpp
   src/RecordingSelfTest.cpp
   src/RecordingSelfTest.h

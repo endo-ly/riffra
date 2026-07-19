@@ -3,11 +3,13 @@
 #include "SafetyAudioCallback.h"
 #include "AudioSafetyDsp.h"
 #include "RecordingSelfTest.h"
+#include "PluginEditorHost.h"
 #include "PluginRack.h"
 
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -28,11 +30,13 @@
 namespace {
 
 using riffra::SafetyAudioCallback;
+using riffra::PluginEditorHost;
 using riffra::PluginRack;
 using riffra::DCBlocker;
 using riffra::FeedbackDetector;
 
 thread_local juce::String currentRequestId;
+std::mutex responseMutex;
 
 struct AudioConfiguration {
     juce::String driver;
@@ -229,6 +233,7 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
 }
 
 void writeJson(const juce::var& value) {
+    const std::lock_guard lock(responseMutex);
     auto response = value;
     if (currentRequestId.isNotEmpty())
         if (auto* object = response.getDynamicObject())
@@ -286,8 +291,7 @@ juce::var currentStatus(
     const SafetyAudioCallback& callback,
     const PluginRack* rack = nullptr,
     const MidiMonitor* midi = nullptr,
-    const juce::String& message = {},
-    const bool includePluginState = false) {
+    const juce::String& message = {}) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state = callback.isDeviceFaulted() ? "faulted"
@@ -376,7 +380,7 @@ juce::var currentStatus(
         status->setProperty("roundTripMs", latencyMs);
     }
     if (rack != nullptr)
-        status->setProperty("plugin", includePluginState ? rack->completeStatus() : rack->status());
+        status->setProperty("plugin", rack->status());
     return juce::var(status);
 }
 
@@ -533,6 +537,7 @@ int serve(
     formatManager.registerBasicFormats();
     SafetyAudioCallback callback;
     PluginRack rack;
+    PluginEditorHost pluginEditor(rack);
     MidiMonitor midiMonitor;
     std::unique_ptr<juce::MidiInput> midiInput;
     callback.setPluginRack(&rack);
@@ -592,394 +597,424 @@ int serve(
         });
     }
 
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        currentRequestId.clear();
-        const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
-        if (!command.isObject()) {
-            writeJson(makeError("protocol", "Expected one JSON object per line."));
-            continue;
-        }
+    std::thread commandThread([&] {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            currentRequestId.clear();
+            const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
+            if (!command.isObject()) {
+                writeJson(makeError("protocol", "Expected one JSON object per line."));
+                continue;
+            }
 
-        currentRequestId = command.getProperty("requestId", {}).toString();
-        const auto type = command.getProperty("type", {}).toString();
-        if (type == "shutdown")
-            break;
-        if (type == "setEmergencyMute") {
-            callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "setMasterGainDb") {
-            callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "loadPlugin") {
-            const auto path = command.getProperty("path", {}).toString();
-            auto* device = manager.getCurrentAudioDevice();
-            const auto sampleRate = callback.getSampleRate();
-            const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
-            if (path.isEmpty()) {
-                writeJson(makeError("pluginPath", "VST3 path is required."));
+            currentRequestId = command.getProperty("requestId", {}).toString();
+            const auto type = command.getProperty("type", {}).toString();
+            if (type == "shutdown") break;
+            if (type == "setEmergencyMute") {
+                callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (sampleRate <= 0.0 || blockSize <= 0) {
-                writeJson(makeError(
-                    "pluginInitialization",
-                    "VST3 loading requires an active audio device."));
+            if (type == "setMasterGainDb") {
+                callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (const auto pluginError = rack.load(path, sampleRate, blockSize)) {
-                writeJson(makeError(pluginError->scope, pluginError->message));
+            if (type == "loadPlugin") {
+                const auto path = command.getProperty("path", {}).toString();
+                auto* device = manager.getCurrentAudioDevice();
+                const auto sampleRate = callback.getSampleRate();
+                const auto blockSize =
+                    device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+                if (path.isEmpty()) {
+                    writeJson(makeError("pluginPath", "VST3 path is required."));
+                    continue;
+                }
+                if (sampleRate <= 0.0 || blockSize <= 0) {
+                    writeJson(makeError("pluginInitialization",
+                                        "VST3 loading requires an active audio device."));
+                    continue;
+                }
+                if (const auto pluginError = pluginEditor.load(path, sampleRate, blockSize)) {
+                    writeJson(makeError(pluginError->scope, pluginError->message));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "clearPlugin") {
-            rack.clear();
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "probeMidiDevices") {
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "configureSamplePads") {
-            const auto padsValue = command.getProperty("pads", {});
-            const auto sampleRate = callback.getSampleRate();
-            juce::String mappingError;
-            std::map<int, MidiMonitor::Pad> nextPads;
-            if (!padsValue.isArray()) {
-                mappingError = "Sample pad mappings must be an array.";
-            } else if (sampleRate <= 0.0) {
-                mappingError = "Sample pad mappings require an active audio device.";
-            } else {
-                for (const auto& item : *padsValue.getArray()) {
-                    const auto path = item.getProperty("assetPath", {}).toString();
-                    const auto midiKey = static_cast<int>(item.getProperty("midiKey", -1));
-                    if (path.isEmpty() || midiKey < 0 || midiKey > 127) {
-                        mappingError = "Each sample pad requires a source path and MIDI key 0-127.";
-                        break;
+            if (type == "clearPlugin") {
+                juce::String clearError;
+                if (!pluginEditor.clear(clearError)) {
+                    writeJson(makeError("pluginLifecycle", clearError));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "probeMidiDevices") {
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "configureSamplePads") {
+                const auto padsValue = command.getProperty("pads", {});
+                const auto sampleRate = callback.getSampleRate();
+                juce::String mappingError;
+                std::map<int, MidiMonitor::Pad> nextPads;
+                if (!padsValue.isArray()) {
+                    mappingError = "Sample pad mappings must be an array.";
+                } else if (sampleRate <= 0.0) {
+                    mappingError = "Sample pad mappings require an active audio device.";
+                } else {
+                    for (const auto& item : *padsValue.getArray()) {
+                        const auto path = item.getProperty("assetPath", {}).toString();
+                        const auto midiKey = static_cast<int>(item.getProperty("midiKey", -1));
+                        if (path.isEmpty() || midiKey < 0 || midiKey > 127) {
+                            mappingError =
+                                "Each sample pad requires a source path and MIDI key 0-127.";
+                            break;
+                        }
+                        std::unique_ptr<juce::AudioFormatReader> reader(
+                            formatManager.createReaderFor(juce::File(path)));
+                        if (reader == nullptr) {
+                            mappingError = "A sample pad source could not be opened: " + path;
+                            break;
+                        }
+                        if (std::abs(reader->sampleRate - sampleRate) > 0.5) {
+                            mappingError =
+                                "A sample pad source sample rate does not match the active audio "
+                                "device: " +
+                                path;
+                            break;
+                        }
+                        const auto length = juce::jmin<juce::int64>(
+                            reader->lengthInSamples,
+                            static_cast<juce::int64>(std::numeric_limits<int>::max()));
+                        auto buffer = std::make_shared<juce::AudioBuffer<float>>(
+                            reader->numChannels, static_cast<int>(length));
+                        if (length <= 0 || buffer->getNumChannels() <= 0 ||
+                            !reader->read(buffer.get(), 0, static_cast<int>(length), 0, true,
+                                          true)) {
+                            mappingError =
+                                "A sample pad source contains no readable audio: " + path;
+                            break;
+                        }
+                        const auto startMs = static_cast<double>(item.getProperty("startMs", 0.0));
+                        const auto endMs = static_cast<double>(item.getProperty("endMs", -1.0));
+                        const auto start = juce::jlimit(
+                            0, static_cast<int>(length),
+                            static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
+                        const auto end =
+                            endMs <= 0.0 ? static_cast<int>(length)
+                                         : juce::jlimit(start + 1, static_cast<int>(length),
+                                                        static_cast<int>(std::llround(
+                                                            endMs * reader->sampleRate / 1000.0)));
+                        if (end <= start || nextPads.find(midiKey) != nextPads.end()) {
+                            mappingError =
+                                "Sample pad slice is empty or its MIDI key is duplicated.";
+                            break;
+                        }
+                        const auto gainDb = juce::jlimit(
+                            -90.0, 24.0, static_cast<double>(item.getProperty("gainDb", 0.0)));
+                        nextPads.emplace(
+                            midiKey, MidiMonitor::Pad{
+                                         std::move(buffer),
+                                         start,
+                                         end,
+                                         juce::Decibels::decibelsToGain(static_cast<float>(gainDb)),
+                                         static_cast<bool>(item.getProperty("loopEnabled", false)),
+                                     });
                     }
-                    std::unique_ptr<juce::AudioFormatReader> reader(
-                        formatManager.createReaderFor(juce::File(path)));
-                    if (reader == nullptr) {
-                        mappingError = "A sample pad source could not be opened: " + path;
-                        break;
-                    }
-                    if (std::abs(reader->sampleRate - sampleRate) > 0.5) {
-                        mappingError = "A sample pad source sample rate does not match the active audio device: " + path;
-                        break;
-                    }
+                }
+                if (mappingError.isNotEmpty()) {
+                    writeJson(makeError("midi", mappingError));
+                    continue;
+                }
+                midiMonitor.replacePads(std::move(nextPads));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "openMidiInput") {
+                const auto name = command.getProperty("name", {}).toString();
+                const auto devices = juce::MidiInput::getAvailableDevices();
+                const auto device =
+                    std::find_if(devices.begin(), devices.end(),
+                                 [&name](const auto& item) { return item.name == name; });
+                if (device == devices.end()) {
+                    writeJson(
+                        makeError("midi", "The requested MIDI input is no longer available."));
+                    continue;
+                }
+                if (midiInput != nullptr) {
+                    midiInput->stop();
+                    midiInput.reset();
+                }
+                midiMonitor.setActive(false);
+                midiInput = juce::MidiInput::openDevice(device->identifier, &midiMonitor);
+                if (midiInput == nullptr) {
+                    writeJson(
+                        makeError("midi", "Windows could not open the requested MIDI input."));
+                    continue;
+                }
+                midiInput->start();
+                midiMonitor.setActive(true);
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "closeMidiInput") {
+                midiMonitor.setActive(false);
+                callback.stopPreview();
+                callback.allNotesOff();
+                if (midiInput != nullptr) {
+                    midiInput->stop();
+                    midiInput.reset();
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "previewSample") {
+                const auto path = command.getProperty("path", {}).toString();
+                std::unique_ptr<juce::AudioFormatReader> reader(
+                    path.isEmpty() ? nullptr : formatManager.createReaderFor(juce::File(path)));
+                juce::String previewError;
+                const auto sampleRate = callback.getSampleRate();
+                if (reader == nullptr) {
+                    previewError = "Preview source could not be opened as an audio file.";
+                } else if (sampleRate <= 0.0 || std::abs(reader->sampleRate - sampleRate) > 0.5) {
+                    previewError =
+                        "Preview source sample rate does not match the active audio device.";
+                } else {
                     const auto length = juce::jmin<juce::int64>(
                         reader->lengthInSamples,
                         static_cast<juce::int64>(std::numeric_limits<int>::max()));
-                    auto buffer = std::make_shared<juce::AudioBuffer<float>>(reader->numChannels, static_cast<int>(length));
-                    if (length <= 0 || buffer->getNumChannels() <= 0 || !reader->read(
-                            buffer.get(),
-                            0,
-                            static_cast<int>(length),
-                            0,
-                            true,
-                            true)) {
-                        mappingError = "A sample pad source contains no readable audio: " + path;
-                        break;
+                    juce::AudioBuffer<float> buffer(reader->numChannels, static_cast<int>(length));
+                    if (length <= 0 ||
+                        !reader->read(&buffer, 0, static_cast<int>(length), 0, true, true)) {
+                        previewError = "Preview source contains no readable audio samples.";
+                    } else {
+                        const auto startMs =
+                            static_cast<double>(command.getProperty("startMs", 0.0));
+                        const auto endMs = static_cast<double>(command.getProperty("endMs", -1.0));
+                        const auto start = juce::jlimit(
+                            0, static_cast<int>(length),
+                            static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
+                        const auto end =
+                            endMs <= 0.0 ? static_cast<int>(length)
+                                         : juce::jlimit(start + 1, static_cast<int>(length),
+                                                        static_cast<int>(std::llround(
+                                                            endMs * reader->sampleRate / 1000.0)));
+                        if (!callback.startPreview(
+                                buffer, start, end,
+                                static_cast<float>(
+                                    static_cast<double>(command.getProperty("gain", 1.0))),
+                                static_cast<bool>(command.getProperty("loop", false)), previewError,
+                                static_cast<int>(command.getProperty("voiceKey", -1))))
+                            previewError =
+                                previewError.isEmpty() ? "Preview range is invalid." : previewError;
                     }
-                    const auto startMs = static_cast<double>(item.getProperty("startMs", 0.0));
-                    const auto endMs = static_cast<double>(item.getProperty("endMs", -1.0));
-                    const auto start = juce::jlimit(
-                        0,
-                        static_cast<int>(length),
-                        static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
-                    const auto end = endMs <= 0.0
-                        ? static_cast<int>(length)
-                        : juce::jlimit(
-                            start + 1,
-                            static_cast<int>(length),
-                            static_cast<int>(std::llround(endMs * reader->sampleRate / 1000.0)));
-                    if (end <= start || nextPads.find(midiKey) != nextPads.end()) {
-                        mappingError = "Sample pad slice is empty or its MIDI key is duplicated.";
-                        break;
-                    }
-                    const auto gainDb = juce::jlimit(-90.0, 24.0, static_cast<double>(item.getProperty("gainDb", 0.0)));
-                    nextPads.emplace(midiKey, MidiMonitor::Pad {
-                        std::move(buffer),
-                        start,
-                        end,
-                        juce::Decibels::decibelsToGain(static_cast<float>(gainDb)),
-                        static_cast<bool>(item.getProperty("loopEnabled", false)),
-                    });
                 }
-            }
-            if (mappingError.isNotEmpty()) {
-                writeJson(makeError("midi", mappingError));
-                continue;
-            }
-            midiMonitor.replacePads(std::move(nextPads));
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "openMidiInput") {
-            const auto name = command.getProperty("name", {}).toString();
-            const auto devices = juce::MidiInput::getAvailableDevices();
-            const auto device = std::find_if(devices.begin(), devices.end(), [&name](const auto& item) {
-                return item.name == name;
-            });
-            if (device == devices.end()) {
-                writeJson(makeError("midi", "The requested MIDI input is no longer available."));
-                continue;
-            }
-            if (midiInput != nullptr) {
-                midiInput->stop();
-                midiInput.reset();
-            }
-            midiMonitor.setActive(false);
-            midiInput = juce::MidiInput::openDevice(device->identifier, &midiMonitor);
-            if (midiInput == nullptr) {
-                writeJson(makeError("midi", "Windows could not open the requested MIDI input."));
-                continue;
-            }
-            midiInput->start();
-            midiMonitor.setActive(true);
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "closeMidiInput") {
-            midiMonitor.setActive(false);
-            callback.stopPreview();
-            callback.allNotesOff();
-            if (midiInput != nullptr) {
-                midiInput->stop();
-                midiInput.reset();
-            }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "previewSample") {
-            const auto path = command.getProperty("path", {}).toString();
-            std::unique_ptr<juce::AudioFormatReader> reader(
-                path.isEmpty() ? nullptr : formatManager.createReaderFor(juce::File(path)));
-            juce::String previewError;
-            const auto sampleRate = callback.getSampleRate();
-            if (reader == nullptr) {
-                previewError = "Preview source could not be opened as an audio file.";
-            } else if (sampleRate <= 0.0 || std::abs(reader->sampleRate - sampleRate) > 0.5) {
-                previewError = "Preview source sample rate does not match the active audio device.";
-            } else {
-                const auto length = juce::jmin<juce::int64>(
-                    reader->lengthInSamples,
-                    static_cast<juce::int64>(std::numeric_limits<int>::max()));
-                juce::AudioBuffer<float> buffer(reader->numChannels, static_cast<int>(length));
-                if (length <= 0 || !reader->read(
-                    &buffer,
-                    0,
-                    static_cast<int>(length),
-                    0,
-                    true,
-                    true)) {
-                    previewError = "Preview source contains no readable audio samples.";
-                } else {
-                    const auto startMs = static_cast<double>(command.getProperty("startMs", 0.0));
-                    const auto endMs = static_cast<double>(command.getProperty("endMs", -1.0));
-                    const auto start = juce::jlimit(
-                        0,
-                        static_cast<int>(length),
-                        static_cast<int>(std::llround(startMs * reader->sampleRate / 1000.0)));
-                    const auto end = endMs <= 0.0
-                        ? static_cast<int>(length)
-                        : juce::jlimit(
-                            start + 1,
-                            static_cast<int>(length),
-                            static_cast<int>(std::llround(endMs * reader->sampleRate / 1000.0)));
-                    if (!callback.startPreview(
-                        buffer,
-                        start,
-                        end,
-                        static_cast<float>(static_cast<double>(command.getProperty("gain", 1.0))),
-                        static_cast<bool>(command.getProperty("loop", false)),
-                        previewError,
-                        static_cast<int>(command.getProperty("voiceKey", -1))))
-                        previewError = previewError.isEmpty() ? "Preview range is invalid." : previewError;
+                if (previewError.isNotEmpty()) {
+                    writeJson(makeError("preview", previewError));
+                    continue;
                 }
-            }
-            if (previewError.isNotEmpty()) {
-                writeJson(makeError("preview", previewError));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "stopPreview") {
-            callback.stopPreview();
-            callback.allNotesOff();
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "stopPreviewForKey") {
-            const auto voiceKey = static_cast<int>(command.getProperty("voiceKey", -1));
-            callback.stopPreviewForKey(voiceKey);
-            callback.stopSynthNote(voiceKey);
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "setPluginBypassed") {
-            rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "setPluginParameter") {
-            juce::String parameterError;
-            const auto index = static_cast<int>(command.getProperty("index", -1));
-            const auto value = static_cast<float>(command.getProperty("value", 0.0));
-            if (!rack.setParameter(index, value, parameterError)) {
-                writeJson(makeError("plugin", parameterError));
+            if (type == "stopPreview") {
+                callback.stopPreview();
+                callback.allNotesOff();
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "setPluginState") {
-            juce::String stateError;
-            const auto stateData = command.getProperty("stateData", {}).toString();
-            if (!rack.setState(stateData, stateError)) {
-                writeJson(makeError("plugin", stateError));
+            if (type == "stopPreviewForKey") {
+                const auto voiceKey = static_cast<int>(command.getProperty("voiceKey", -1));
+                callback.stopPreviewForKey(voiceKey);
+                callback.stopSynthNote(voiceKey);
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "capturePluginState") {
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, true));
-            continue;
-        }
-        if (type == "recoverAudioDevice") {
-            juce::String midiError;
-            if (!midiMonitor.finishRecording(midiError)) {
-                writeJson(makeError("recording", midiError));
+            if (type == "setPluginBypassed") {
+                rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
-            manager.getAudioDeviceSetup(recoverySetup);
-            manager.removeAudioCallback(&callback);
-            manager.closeAudioDevice();
-            callback.setEmergencyMuted(true);
-            const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
-            if (recoveryError.isNotEmpty()) {
-                writeJson(makeError("audioDevice", recoveryError));
+            if (type == "openPluginEditor") {
+                juce::String editorError;
+                if (!pluginEditor.open(editorError)) {
+                    writeJson(makeError("pluginEditor", editorError));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            manager.addAudioCallback(&callback);
-            callback.setDeviceFaulted(false);
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "setAudioDriver") {
-            const auto driver = command.getProperty("driver", {}).toString();
-            if (driver.isEmpty()) {
-                writeJson(makeError("audioDevice", "An audio driver name is required."));
+            if (type == "setPluginParameter") {
+                juce::String parameterError;
+                const auto index = static_cast<int>(command.getProperty("index", -1));
+                const auto value = static_cast<float>(command.getProperty("value", 0.0));
+                if (!rack.setParameter(index, value, parameterError)) {
+                    writeJson(makeError("plugin", parameterError));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            AudioConfiguration requested;
-            requested.driver = driver;
-            requested.inputDevice = command.getProperty("inputDevice", {}).toString();
-            requested.outputDevice = command.getProperty("outputDevice", {}).toString();
-            requested.inputChannel = static_cast<int>(command.getProperty("inputChannel", 0));
-            if (requested.inputChannel < 0) {
-                writeJson(makeError("audioDevice", "Input channel must be zero or greater."));
+            if (type == "setPluginState") {
+                juce::String stateError;
+                const auto stateData = command.getProperty("stateData", {}).toString();
+                if (!rack.setState(stateData, stateError)) {
+                    writeJson(makeError("plugin", stateError));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
-            requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
-            juce::String midiError;
-            if (!midiMonitor.finishRecording(midiError)) {
-                writeJson(makeError("recording", midiError));
+            if (type == "pluginParameterStatus") {
+                auto status = currentStatus(manager, callback, &rack, &midiMonitor);
+                status.getDynamicObject()->setProperty("plugin", rack.parameterStatus());
+                writeJson(status);
                 continue;
             }
-            const auto previousDriver = manager.getCurrentAudioDeviceType();
-            const auto previousInputChannel = callback.getInputChannel();
-            juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
-            manager.getAudioDeviceSetup(previousSetup);
-            manager.removeAudioCallback(&callback);
-            manager.closeAudioDevice();
-            callback.setEmergencyMuted(true);
-            const auto restorePreviousDevice = [&]() {
+            if (type == "recoverAudioDevice") {
+                juce::String midiError;
+                if (!midiMonitor.finishRecording(midiError)) {
+                    writeJson(makeError("recording", midiError));
+                    continue;
+                }
+                juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
+                manager.getAudioDeviceSetup(recoverySetup);
+                manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
-                AudioConfiguration previous;
-                previous.driver = previousDriver;
-                previous.inputDevice = previousSetup.inputDeviceName;
-                previous.outputDevice = previousSetup.outputDeviceName;
-                previous.inputChannel = previousInputChannel;
-                previous.sampleRate = previousSetup.sampleRate;
-                previous.bufferSize = previousSetup.bufferSize;
-                const auto restoreError = initialiseConfiguredAudio(manager, previous);
-                if (restoreError.isEmpty()) {
-                    callback.setInputChannel(previousInputChannel);
-                    manager.addAudioCallback(&callback);
+                callback.setEmergencyMuted(true);
+                const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
+                if (recoveryError.isNotEmpty()) {
+                    writeJson(makeError("audioDevice", recoveryError));
+                    continue;
                 }
-                return restoreError;
-            };
-            auto setupError = initialiseConfiguredAudio(manager, requested);
-            if (setupError.isNotEmpty()) {
-                const auto restoreError = restorePreviousDevice();
-                writeJson(makeError("audioDevice", setupError + (restoreError.isEmpty()
-                    ? ". The previous device was restored."
-                    : ". The previous device could not be restored: " + restoreError)));
+                manager.addAudioCallback(&callback);
+                callback.setDeviceFaulted(false);
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            auto* activeDevice = manager.getCurrentAudioDevice();
-            const auto activeInputs = activeDevice != nullptr
-                ? activeDevice->getActiveInputChannels().countNumberOfSetBits()
-                : 0;
-            if (requested.inputChannel >= activeInputs) {
-                const auto restoreError = restorePreviousDevice();
-                const auto message = juce::String("The selected physical input channel is unavailable.")
-                    + (restoreError.isEmpty()
-                        ? " The previous device was restored."
-                        : " The previous device could not be restored: " + restoreError);
-                writeJson(makeError("audioDevice", message));
+            if (type == "setAudioDriver") {
+                const auto driver = command.getProperty("driver", {}).toString();
+                if (driver.isEmpty()) {
+                    writeJson(makeError("audioDevice", "An audio driver name is required."));
+                    continue;
+                }
+                AudioConfiguration requested;
+                requested.driver = driver;
+                requested.inputDevice = command.getProperty("inputDevice", {}).toString();
+                requested.outputDevice = command.getProperty("outputDevice", {}).toString();
+                requested.inputChannel = static_cast<int>(command.getProperty("inputChannel", 0));
+                if (requested.inputChannel < 0) {
+                    writeJson(makeError("audioDevice", "Input channel must be zero or greater."));
+                    continue;
+                }
+                requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
+                requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
+                juce::String midiError;
+                if (!midiMonitor.finishRecording(midiError)) {
+                    writeJson(makeError("recording", midiError));
+                    continue;
+                }
+                const auto previousDriver = manager.getCurrentAudioDeviceType();
+                const auto previousInputChannel = callback.getInputChannel();
+                juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
+                manager.getAudioDeviceSetup(previousSetup);
+                manager.removeAudioCallback(&callback);
+                manager.closeAudioDevice();
+                callback.setEmergencyMuted(true);
+                const auto restorePreviousDevice = [&]() {
+                    manager.closeAudioDevice();
+                    AudioConfiguration previous;
+                    previous.driver = previousDriver;
+                    previous.inputDevice = previousSetup.inputDeviceName;
+                    previous.outputDevice = previousSetup.outputDeviceName;
+                    previous.inputChannel = previousInputChannel;
+                    previous.sampleRate = previousSetup.sampleRate;
+                    previous.bufferSize = previousSetup.bufferSize;
+                    const auto restoreError = initialiseConfiguredAudio(manager, previous);
+                    if (restoreError.isEmpty()) {
+                        callback.setInputChannel(previousInputChannel);
+                        manager.addAudioCallback(&callback);
+                    }
+                    return restoreError;
+                };
+                auto setupError = initialiseConfiguredAudio(manager, requested);
+                if (setupError.isNotEmpty()) {
+                    const auto restoreError = restorePreviousDevice();
+                    writeJson(makeError(
+                        "audioDevice",
+                        setupError + (restoreError.isEmpty()
+                                          ? ". The previous device was restored."
+                                          : ". The previous device could not be restored: " +
+                                                restoreError)));
+                    continue;
+                }
+                auto* activeDevice = manager.getCurrentAudioDevice();
+                const auto activeInputs =
+                    activeDevice != nullptr
+                        ? activeDevice->getActiveInputChannels().countNumberOfSetBits()
+                        : 0;
+                if (requested.inputChannel >= activeInputs) {
+                    const auto restoreError = restorePreviousDevice();
+                    const auto message =
+                        juce::String("The selected physical input channel is unavailable.") +
+                        (restoreError.isEmpty()
+                             ? " The previous device was restored."
+                             : " The previous device could not be restored: " + restoreError);
+                    writeJson(makeError("audioDevice", message));
+                    continue;
+                }
+                callback.setInputChannel(requested.inputChannel);
+                manager.addAudioCallback(&callback);
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            callback.setInputChannel(requested.inputChannel);
-            manager.addAudioCallback(&callback);
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "startRecording") {
-            const auto directory = command.getProperty("directory", {}).toString();
-            juce::String recordingError;
-            if (directory.isEmpty() || !callback.startRecording(juce::File(directory), recordingError)) {
-                writeJson(makeError("recording", directory.isEmpty() ? "Recording directory is required." : recordingError));
+            if (type == "startRecording") {
+                const auto directory = command.getProperty("directory", {}).toString();
+                juce::String recordingError;
+                if (directory.isEmpty() ||
+                    !callback.startRecording(juce::File(directory), recordingError)) {
+                    writeJson(makeError("recording", directory.isEmpty()
+                                                         ? "Recording directory is required."
+                                                         : recordingError));
+                    continue;
+                }
+                midiMonitor.beginRecording(juce::File(directory).getChildFile("midi.json"));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            midiMonitor.beginRecording(juce::File(directory).getChildFile("midi.json"));
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "stopRecording") {
-            juce::String recordingError;
-            if (!callback.stopRecording(recordingError)) {
-                writeJson(makeError("recording", recordingError));
+            if (type == "stopRecording") {
+                juce::String recordingError;
+                if (!callback.stopRecording(recordingError)) {
+                    writeJson(makeError("recording", recordingError));
+                    continue;
+                }
+                if (!midiMonitor.finishRecording(recordingError)) {
+                    writeJson(makeError("recording", recordingError));
+                    continue;
+                }
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (!midiMonitor.finishRecording(recordingError)) {
-                writeJson(makeError("recording", recordingError));
+            if (type == "status") {
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
+            if (type == "meterStatus") {
+                writeJson(currentMeters(callback));
+                continue;
+            }
+            writeJson(makeError("protocol", "Unsupported command: " + type));
         }
-        if (type == "status") {
-            writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
-            continue;
-        }
-        if (type == "meterStatus") {
-            writeJson(currentMeters(callback));
-            continue;
-        }
-        writeJson(makeError("protocol", "Unsupported command: " + type));
-    }
+
+        juce::MessageManager::callAsync(
+            [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+    });
+
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    if (commandThread.joinable()) commandThread.join();
+    pluginEditor.close();
 
     callback.setEmergencyMuted(true);
     juce::String ignoredMidiError;
@@ -1153,7 +1188,8 @@ juce::var runSafetySelfTest() {
         const auto status = rack.status();
         auto* check = new juce::DynamicObject();
         check->setProperty("name", "Runtime plugin status excludes persisted state");
-        check->setProperty("passed", !status.hasProperty("stateData"));
+        check->setProperty(
+            "passed", !status.hasProperty("stateData") && !status.hasProperty("parameters"));
         checks.add(juce::var(check));
     }
 

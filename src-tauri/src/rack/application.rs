@@ -50,16 +50,6 @@ fn audio_command_succeeded(status: &AudioStatus) -> bool {
     status.state != AudioState::Faulted && status.state != AudioState::Offline
 }
 
-fn capture_plugin_state(
-    audio: &AudioSupervisor,
-    status: AudioStatus,
-) -> Result<AudioStatus, String> {
-    if !status.plugin.as_ref().is_some_and(|plugin| plugin.loaded) {
-        return Ok(status);
-    }
-    audio.capture_plugin_state()
-}
-
 /// The single active (non-placeholder) plugin device in a rack, if any.
 fn active_plugin_device(session: &CreativeSession) -> Option<RackDevice> {
     session
@@ -123,6 +113,7 @@ fn apply_plugin_to_runtime(
     if !audio_command_succeeded(&status) {
         return Ok(status);
     }
+    status = audio.plugin_parameter_status()?;
     // A saved state blob supersedes individual parameter restoration, matching
     // the previous React `shouldRestoreIndividualParameters` rule.
     let has_state = matches!(state_data, Some(value) if !value.is_empty());
@@ -154,9 +145,12 @@ fn apply_plugin_to_runtime(
         }
     }
     if bypassed {
-        status = audio.set_plugin_bypassed(true)?;
+        let bypass_status = audio.set_plugin_bypassed(true)?;
+        if !audio_command_succeeded(&bypass_status) {
+            return Ok(bypass_status);
+        }
     }
-    capture_plugin_state(audio, status)
+    audio.plugin_parameter_status()
 }
 
 /// Restores the runtime to a previously captured plugin device, or clears it
@@ -302,6 +296,14 @@ pub fn clear_plugin_from_rack(context: &RackContext<'_>) -> Result<RackOutcome, 
     commit_with_rollback(context, session, previous_plugin, status)
 }
 
+/// Opens the native editor belonging to the active runtime plugin instance.
+pub fn open_plugin_editor(context: &RackContext<'_>) -> Result<AudioStatus, String> {
+    if context.safe_mode {
+        return Err("Safe Mode blocks external VST3 editors.".into());
+    }
+    context.audio.open_plugin_editor()
+}
+
 /// Sets the bypass flag on the rack plugin device, applying it to the runtime
 /// first and persisting the result.
 pub fn set_rack_plugin_bypassed(
@@ -324,7 +326,7 @@ pub fn set_rack_plugin_bypassed(
 }
 
 /// Sets a single plugin parameter, applying it to the runtime first and
-/// persisting the captured parameter values afterward.
+/// persisting the current parameter values afterward.
 pub fn set_rack_plugin_parameter(
     context: &RackContext<'_>,
     index: u32,
@@ -339,7 +341,7 @@ pub fn set_rack_plugin_parameter(
     if !audio_command_succeeded(&status) {
         return Ok((previous_session, status));
     }
-    let status = capture_plugin_state(context.audio, status)?;
+    let status = context.audio.plugin_parameter_status()?;
     let mut session = previous_session.clone();
     let captured = status.plugin.as_ref().map(|plugin| {
         plugin
@@ -446,7 +448,7 @@ pub fn set_rack_macro_value(
             status.message
         ));
     }
-    let status = capture_plugin_state(context.audio, status)?;
+    let status = context.audio.plugin_parameter_status()?;
     if let Some(values) = status.plugin.as_ref().map(|plugin| {
         plugin
             .parameters

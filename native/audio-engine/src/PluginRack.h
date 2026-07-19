@@ -9,6 +9,8 @@
 
 namespace riffra {
 
+class PluginEditorHost;
+
 struct PluginLoadError final {
     juce::String scope;
     juce::String message;
@@ -27,9 +29,10 @@ public:
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
     [[nodiscard]] juce::var status() const;
-    [[nodiscard]] juce::var completeStatus() const;
+    [[nodiscard]] juce::var parameterStatus() const;
 
 private:
+    friend class PluginEditorHost;
     friend juce::Array<juce::var> runPluginRackSelfTests();
 
     struct CachedParameter {
@@ -41,9 +44,11 @@ private:
     };
 
     void updateParameterCache(juce::AudioProcessor& processor);
+    [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
+    [[nodiscard]] juce::String currentPluginName() const;
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
-    [[nodiscard]] juce::var cachedStatus() const;
+    [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
@@ -59,6 +64,7 @@ private:
     std::atomic<bool> loaded{false};
     std::atomic<bool> mutationInProgress{false};
     std::atomic<std::uint64_t> bypassedBlocks{0};
+    std::atomic<std::uint64_t> processedBlocks{0};
     std::atomic<std::uint64_t> contentionBlocks{0};
     std::atomic<std::uint64_t> transitionBlocks{0};
     std::atomic<bool> bypassed{false};

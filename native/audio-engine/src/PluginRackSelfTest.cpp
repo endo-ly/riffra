@@ -96,6 +96,9 @@ juce::Array<juce::var> runPluginRackSelfTests() {
                          rack.pluginOutputChannels.load(std::memory_order_acquire) == 2));
     checks.add(
         check("Plugin is prepared before DSP processing", trace.prepared && trace.processed));
+    checks.add(check("Processed blocks report live DSP execution",
+                     static_cast<juce::int64>(rack.status().getProperty("processedBlocks", 0)) ==
+                         1));
     checks.add(check("Mono input reaches both processed output channels",
                      left.front() == 0.5f && right.front() == 0.5f && left.back() == 0.5f &&
                          right.back() == 0.5f));
@@ -104,6 +107,10 @@ juce::Array<juce::var> runPluginRackSelfTests() {
     rack.process(inputs.data(), 1, outputs.data(), 2, blockSize);
     checks.add(check("Plugin bypass returns dry mono input on both output channels",
                      left.front() == 0.25f && right.front() == 0.25f));
+    const auto parameterStatus = rack.parameterStatus();
+    checks.add(check("Parameter status does not capture plugin state",
+                     parameterStatus.hasProperty("parameters") &&
+                         !parameterStatus.hasProperty("stateData")));
 
     rack.clear();
     checks.add(check("Plugin resources are released before unload",
