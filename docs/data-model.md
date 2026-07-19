@@ -51,7 +51,7 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 | DesignContext                     | Design workspaceの現在の対象（active_tool + target_asset_id）                                                    | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
 | PlayState                         | Play側のライブ状態（sample_instrument）                                                                          | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
 | SampleInstrumentState / SamplePad | MIDIキーにマップされたサンプルスライスのパッドセット                                                             | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `native/audio-engine/src/Main.cpp`（MidiMonitor） |
-| SessionSettings                   | master / loop / countIn / emergencyMuted / note / AI関連設定                                                     | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
+| SessionSettings                   | master / loop / countIn / note / AI関連設定                                                                      | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
 | SessionSnapshot                   | A/B比較用のラック+マスタ状態キャプチャ                                                                           | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
 | AiChangeSet                       | AI提案の変更履歴エントリ                                                                                         | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
 
@@ -95,17 +95,17 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 
 ### 2.6 ランタイム状態（C++起点・Rust経由でTSへ伝播）
 
-| エンティティ                                           | 役割                                                  | TS                  | Rust                     | C++                                                               |
-| ------------------------------------------------------ | ----------------------------------------------------- | ------------------- | ------------------------ | ----------------------------------------------------------------- |
-| AudioStatus                                            | オーディオランタイムの状態・メーター・MIDI状況        | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（currentStatus）               |
-| AudioState                                             | 5状態（offline / starting / ready / muted / faulted） | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                |
-| PluginStatus                                           | ロード済みプラグインのパラメータ・状態                | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`（status / completeStatus） |
-| PluginParameter                                        | プラグインの単一パラメータ                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`                            |
-| RecordingStatus                                        | 録音中の進捗・サンプル数・欠落情報                    | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/RecordingSession.h`（status）            |
-| AudioDeviceProbe                                       | オーディオ/MIDIデバイスのprobing結果                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（probeAudioDevices）           |
-| AudioDriverInfo / AudioAccessMode / AudioDevicePairing | ドライバ情報とアクセス特性                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                |
-| MidiProbe                                              | MIDIデバイスのprobing結果                             | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                 |
-| BootstrapState / RecoveryCandidate                     | 起動時状態・復旧候補                                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                 |
+| エンティティ                                           | 役割                                                  | TS                  | Rust                     | C++                                                                |
+| ------------------------------------------------------ | ----------------------------------------------------- | ------------------- | ------------------------ | ------------------------------------------------------------------ |
+| AudioStatus                                            | オーディオランタイムの状態・メーター・MIDI状況        | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（currentStatus）                |
+| AudioState                                             | 5状態（offline / starting / ready / muted / faulted） | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
+| PluginStatus                                           | ロード済みプラグインのパラメータ・状態                | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`（status / parameterStatus） |
+| PluginParameter                                        | プラグインの単一パラメータ                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`                             |
+| RecordingStatus                                        | 録音中の進捗・サンプル数・欠落情報                    | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/RecordingSession.h`（status）             |
+| AudioDeviceProbe                                       | オーディオ/MIDIデバイスのprobing結果                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（probeAudioDevices）            |
+| AudioDriverInfo / AudioAccessMode / AudioDevicePairing | ドライバ情報とアクセス特性                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
+| MidiProbe                                              | MIDIデバイスのprobing結果                             | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
+| BootstrapState / RecoveryCandidate                     | 起動時状態・復旧候補                                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
 
 ---
 
