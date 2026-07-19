@@ -7,16 +7,7 @@ export const workspaces: { id: Workspace; label: string; key: string }[] = [
   { id: 'design', label: 'Design', key: '4' },
 ];
 
-export const librarySections = [
-  'Plugins',
-  'Racks',
-  'Presets',
-  'Samples',
-  'Recordings',
-  'MIDI',
-  'Projects',
-  'References',
-];
+export const librarySections = ['Plugins', 'Racks', 'Recordings'];
 
-export const DEFAULT_TEMPO_BPM = 120;
+const DEFAULT_TEMPO_BPM = 120;
 export const COUNT_IN_BEAT_MS = 60_000 / DEFAULT_TEMPO_BPM;

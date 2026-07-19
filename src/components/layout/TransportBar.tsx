@@ -1,6 +1,5 @@
 import type { AudioStatus, CreativeSession } from '@/lib/domain';
 import clsx from 'clsx';
-import { DEFAULT_TEMPO_BPM } from '@/constants';
 import type { NativeApi } from '@/native/native-api';
 import { Icon, Meter } from '../shared/ui';
 import styles from './TransportBar.module.css';
@@ -53,7 +52,6 @@ export function TransportBar(props: TransportBarProps) {
         >
           <Icon name="loop" />
         </button>
-        <button aria-label="Previous position">◀</button>
         <button
           className={styles.playButton}
           aria-label={transportPlaying ? 'Stop playback' : 'Play'}
@@ -77,20 +75,6 @@ export function TransportBar(props: TransportBarProps) {
           }
         >
           <Icon name="record" />
-        </button>
-      </div>
-      <div className={styles.position}>
-        <strong>001 · 01 · 000</strong>
-        <small>00:00:00.000</small>
-      </div>
-      <div className={styles.tempo}>
-        <button>
-          <strong>{DEFAULT_TEMPO_BPM.toFixed(2)}</strong>
-          <small>BPM</small>
-        </button>
-        <button>
-          <strong>4 / 4</strong>
-          <small>TIME</small>
         </button>
       </div>
       <div className={styles.transportMeter}>

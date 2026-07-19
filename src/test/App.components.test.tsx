@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioDriverPicker, CaptureSettings } from '@/components';
-import { defaultSession, type AudioDeviceProbe } from '@/lib/domain';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { AudioDriverPicker } from '@/components';
+import type { AudioDeviceProbe } from '@/lib/domain';
 
 const probe: AudioDeviceProbe = {
   drivers: [
@@ -155,25 +154,5 @@ describe('AudioDriverPicker', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Input channel' }), '1');
 
     expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 1, 'Speakers', 48_000, 480);
-  });
-});
-
-describe('CaptureSettings', () => {
-  it('stores visual count-in changes in the Scratch Session', async () => {
-    const session = defaultSession();
-    const setSession = vi.fn();
-    const api = new FakeNativeApi({ bootstrapState: { session } });
-    const user = userEvent.setup();
-    render(<CaptureSettings session={session} setSession={setSession} api={api} />);
-
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Visual count-in' }), '4');
-
-    await waitFor(() =>
-      expect(setSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          settings: expect.objectContaining({ countInBeats: 4 }),
-        }),
-      ),
-    );
   });
 });

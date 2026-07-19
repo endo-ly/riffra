@@ -45,9 +45,6 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
     <aside className="library-panel">
       <div className="panel-heading">
         <span>LIBRARY</span>
-        <button>
-          <Icon name="plus" />
-        </button>
       </div>
       <label className={styles.panelSearch}>
         <Icon name="search" />

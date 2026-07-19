@@ -1,5 +1,5 @@
 import type { BootstrapState, Workspace } from '@/lib/domain';
-import { Icon, Meter } from '../shared/ui';
+import { Icon } from '../shared/ui';
 
 export function WorkspaceHome({
   state,
@@ -91,7 +91,6 @@ export function WorkspaceHome({
             <span className="eyebrow">AUDIO DEVICE</span>
             <h2>Sound First Setup</h2>
           </div>
-          <span className="status-tag warning">ENGINE NEXT</span>
         </header>
         <div className="device-row">
           <div className="device-icon">
@@ -108,56 +107,6 @@ export function WorkspaceHome({
           <button className="text-button" disabled={state.safeMode} onClick={onRecoverAudioDevice}>
             {state.safeMode ? 'Safe Mode' : 'Recover device'}
           </button>
-        </div>
-        <div className="safety-row">
-          <span>Startup volume</span>
-          <strong>−18.0 dB</strong>
-          <Meter value={34} />
-          <span className="safe-label">SAFE</span>
-        </div>
-      </section>
-
-      <section className="section-card continue-card">
-        <header>
-          <div>
-            <span className="eyebrow">CONTINUE</span>
-            <h2>前回の状態</h2>
-          </div>
-          <button className="icon-button">
-            <Icon name="chevron" />
-          </button>
-        </header>
-        <div className="continue-visual">
-          <div className="wave-lines">
-            {Array.from({ length: 48 }, (_, i) => (
-              <i key={i} style={{ height: `${18 + ((i * 19) % 58)}%` }} />
-            ))}
-          </div>
-          <div>
-            <strong>{state.session.projectName ?? 'Untitled Scratch'}</strong>
-            <small>{state.recoveredFromGeneration ? 'Recovery世代から復元' : '自動保存済み'}</small>
-          </div>
-        </div>
-      </section>
-
-      <section className="section-card recent-card">
-        <header>
-          <div>
-            <span className="eyebrow">RECENT MEMORY</span>
-            <h2>最近の制作資産</h2>
-          </div>
-          <button className="text-button">Open Library</button>
-        </header>
-        <div className="asset-strip">
-          {['Glass Clean', 'Night Practice', 'Raw DI 07', 'Wide Space'].map((name, i) => (
-            <button className="asset-tile" key={name}>
-              <span className={`asset-art art-${i}`}>
-                <i />
-              </span>
-              <strong>{name}</strong>
-              <small>{i < 2 ? 'Rack' : i === 2 ? 'Recording' : 'Snapshot'}</small>
-            </button>
-          ))}
         </div>
       </section>
     </>

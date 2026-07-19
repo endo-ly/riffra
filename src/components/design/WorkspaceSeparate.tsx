@@ -28,7 +28,6 @@ export function WorkspaceSeparate({
           <span className="eyebrow">SEPARATE WORKSPACE</span>
           <h1>Preserve the source, derive channel assets</h1>
         </div>
-        <span className="status-tag">CHANNEL SPLIT FALLBACK</span>
       </section>
       <section className="section-card separate-card">
         <header>

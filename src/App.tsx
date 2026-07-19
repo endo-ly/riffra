@@ -6,7 +6,6 @@ import { workspaces } from '@/constants';
 import { isOutputMuted } from '@/lib/audio-safety';
 import {
   AudioDriverPicker,
-  CaptureSettings,
   Icon,
   WorkspaceHome,
   AudioDevices,
@@ -274,13 +273,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 )
               }
             />
-            <CaptureSettings session={session} setSession={setSession} api={nativeApi} />
           </div>
         )}
         {session.workspace === 'play' && (
           <WorkspacePlay
             session={session}
-            audio={audio}
             missingPluginPaths={missingPluginPaths}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
             onClearPlugin={() => void clearPluginFromRack()}
@@ -397,7 +394,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       </section>
 
       <InspectorPanel
-        session={session}
         audio={audio}
         boot={boot}
         focusMode={focusMode}

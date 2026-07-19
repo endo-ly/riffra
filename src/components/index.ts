@@ -12,7 +12,6 @@ export { AudioDevices } from './home/AudioDevices';
 export { AudioDriverPicker } from './home/AudioDriverPicker';
 
 export { WorkspacePlay } from './play/WorkspacePlay';
-export { CaptureSettings } from './play/CaptureSettings';
 export { MidiDevices } from './play/MidiDevices';
 export { MidiMonitor } from './play/MidiMonitor';
 
