@@ -773,8 +773,16 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 .map(|parameter| PluginParameter {
                     index: parameter.index,
                     name: parameter.name,
-                    value: parameter.value.clamp(0.0, 1.0),
-                    default_value: parameter.default_value.clamp(0.0, 1.0),
+                    value: if parameter.value.is_finite() {
+                        parameter.value.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    },
+                    default_value: if parameter.default_value.is_finite() {
+                        parameter.default_value.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    },
                     automatable: parameter.automatable,
                 })
                 .collect(),

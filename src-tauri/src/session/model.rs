@@ -785,29 +785,19 @@ fn normalize_rack(rack: &mut RackInstance) -> Result<(), String> {
         }
         device.gain_db = device.gain_db.clamp(-90.0, 24.0);
         if device.parameter_values.len() > 512 {
-            return Err(format!(
-                "Device '{}' exposes too many parameter values.",
-                device.name
-            ));
+            device.parameter_values.truncate(512);
         }
         for value in &mut device.parameter_values {
-            if !value.is_finite() {
-                return Err(format!(
-                    "Device '{}' has an invalid parameter value.",
-                    device.name
-                ));
-            }
-            *value = value.clamp(0.0, 1.0);
+            *value = if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
         }
-        if device
-            .state_data
-            .as_ref()
-            .is_some_and(|state| state.len() > 4_000_000)
-        {
-            return Err(format!(
-                "Device '{}' has an oversized state blob.",
-                device.name
-            ));
+        if let Some(state) = device.state_data.as_ref() {
+            if state.len() > 4_000_000 {
+                device.state_data = Some(state.chars().take(4_000_000).collect());
+            }
         }
     }
     for macro_control in &mut rack.macros {

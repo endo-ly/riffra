@@ -278,6 +278,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         {session.workspace === 'play' && (
           <WorkspacePlay
             session={session}
+            audio={audio}
             missingPluginPaths={missingPluginPaths}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
             onClearPlugin={() => void clearPluginFromRack()}
