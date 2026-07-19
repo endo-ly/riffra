@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
-import { Meter } from '../shared/ui';
+import { Icon, Meter } from '../shared/ui';
 
 export function WorkspacePlay({
   session,
   audio,
   missingPluginPaths,
+  onOpenPluginEditor,
   onTogglePluginBypass,
   onClearPlugin,
   onCaptureSnapshot,
@@ -13,11 +15,13 @@ export function WorkspacePlay({
   session: CreativeSession;
   audio: AudioStatus;
   missingPluginPaths: string[];
+  onOpenPluginEditor: () => void;
   onTogglePluginBypass: (bypassed: boolean) => void;
   onClearPlugin: () => void;
   onCaptureSnapshot: (slot: 'A' | 'B') => void;
   onRecallSnapshot: (slot: 'A' | 'B') => void;
 }) {
+  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
   const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
@@ -71,23 +75,62 @@ export function WorkspacePlay({
         </article>
         {loadedPlugins.map((plugin, index) => (
           <article
-            className={`rack-device ${plugin.scanState === 'quarantined' ? 'missing-dependency' : ''}`}
+            className={[
+              'rack-device plugin-device',
+              selectedPluginId === plugin.id ? 'selected' : '',
+              plugin.scanState === 'quarantined' ? 'missing-dependency' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
             key={plugin.id}
+            onClick={() => setSelectedPluginId(plugin.id)}
+            onDoubleClick={() => {
+              if (plugin.scanState === 'validated') onOpenPluginEditor();
+            }}
           >
             <span className="device-order">{String(index + 1).padStart(2, '0')}</span>
             <div className={`device-face face-${index}`}>
               <span>{plugin.name.slice(0, 2).toUpperCase()}</span>
               <i />
+              {plugin.scanState === 'validated' && (
+                <button
+                  className="plugin-editor-trigger"
+                  aria-label={`Open ${plugin.name} editor`}
+                  title="Open plugin editor"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedPluginId(plugin.id);
+                    onOpenPluginEditor();
+                  }}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                >
+                  <Icon name="sliders" />
+                </button>
+              )}
             </div>
             <h3>{plugin.name}</h3>
             <small>
               {plugin.scanState === 'quarantined' ? 'Missing dependency' : 'Loaded in rack'}
             </small>
             <div className="device-controls">
-              <button onClick={() => onTogglePluginBypass(!loadedBypassed)}>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTogglePluginBypass(!loadedBypassed);
+                }}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
                 {loadedBypassed ? 'Enable' : 'Bypass'}
               </button>
-              <button onClick={onClearPlugin}>Remove</button>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClearPlugin();
+                }}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                Remove
+              </button>
             </div>
           </article>
         ))}

@@ -913,6 +913,16 @@ p {
   border-color: #50606e;
   transform: translateY(-1px);
 }
+.rack-device.plugin-device {
+  cursor: pointer;
+}
+.rack-device.plugin-device.selected {
+  border-color: rgba(85, 217, 232, 0.82);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.24),
+    0 0 0 1px rgba(85, 217, 232, 0.14),
+    0 0 18px rgba(85, 217, 232, 0.1);
+}
 .rack-device.missing-dependency {
   border-color: rgba(239, 111, 111, 0.72);
   background: linear-gradient(145deg, rgba(71, 29, 35, 0.75), #14191f);
@@ -943,6 +953,41 @@ p {
   inset: 8px;
   border: 1px solid rgba(117, 217, 224, 0.12);
   border-radius: 50%;
+}
+.plugin-editor-trigger {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  color: #8ee2e5;
+  opacity: 0;
+  background: rgba(9, 15, 19, 0.88);
+  border: 1px solid rgba(85, 217, 232, 0.38);
+  border-radius: 5px;
+  transform: translateY(3px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    border-color 0.14s ease;
+}
+.plugin-device:hover .plugin-editor-trigger,
+.plugin-device.selected .plugin-editor-trigger,
+.plugin-editor-trigger:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.plugin-editor-trigger:hover {
+  color: #d9fbfc;
+  border-color: rgba(85, 217, 232, 0.78);
+}
+.plugin-editor-trigger svg {
+  width: 100%;
+  height: 100%;
 }
 .device-face > .meter {
   width: 64px;

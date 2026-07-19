@@ -61,6 +61,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <dd>{audio.plugin?.bypassedBlocks ?? 0}</dd>
           </div>
           <div>
+            <dt>Processed blocks</dt>
+            <dd>{audio.plugin?.processedBlocks ?? 0}</dd>
+          </div>
+          <div>
             <dt>Contention blocks</dt>
             <dd>{audio.plugin?.contentionBlocks ?? 0}</dd>
           </div>

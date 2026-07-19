@@ -268,6 +268,19 @@ async fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, Str
 }
 
 #[tauri::command]
+fn preview_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if !gain_db.is_finite() {
+        return Err("Master gain must be finite.".into());
+    }
+    state.audio.set_master_gain_db(gain_db)
+}
+
+#[tauri::command]
+fn set_emergency_mute(muted: bool, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.set_emergency_mute(muted)
+}
+
+#[tauri::command]
 fn recover_audio_device(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStatus, String> {
     if state.safe_mode {
         return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
@@ -339,9 +352,8 @@ pub fn run() {
             })?;
             std::fs::create_dir_all(&data_root)?;
             let loaded = SessionStore::new(&data_root).load_or_create()?;
-            let mut session = loaded.session;
+            let session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
-            session.settings.emergency_muted = true;
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -384,6 +396,8 @@ pub fn run() {
             probe_audio_devices,
             probe_midi_devices,
             get_audio_status,
+            preview_master_gain_db,
+            set_emergency_mute,
             recover_audio_device,
             open_midi_input,
             close_midi_input,
@@ -392,6 +406,7 @@ pub fn run() {
             // Rack Application Operations.
             rack::commands::load_plugin_into_rack,
             rack::commands::clear_plugin_from_rack,
+            rack::commands::open_plugin_editor,
             rack::commands::set_rack_plugin_bypassed,
             rack::commands::set_rack_plugin_parameter,
             rack::commands::set_rack_macro_value,
@@ -429,7 +444,6 @@ pub fn run() {
             session::commands::apply_ai_suggestion,
             session::commands::set_master_gain_db,
             audio_preferences::set_audio_driver,
-            session::commands::set_emergency_mute,
             session::commands::relink_missing_dependency,
             session::commands::disable_missing_plugin,
             session::commands::get_missing_dependencies,

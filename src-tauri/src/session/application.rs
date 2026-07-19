@@ -859,19 +859,6 @@ pub fn set_master_gain_db(
     Ok((committed, audio))
 }
 
-/// Toggles emergency mute on the Audio Runtime and records the intent in the
-/// session settings so a reload reproduces the mute state.
-pub fn set_emergency_mute(
-    context: &SessionContext<'_>,
-    muted: bool,
-) -> Result<(CreativeSession, AudioStatus), String> {
-    let audio = context.audio.set_emergency_mute(muted)?;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    session.settings.emergency_muted = muted;
-    let committed = commit_session(context, session)?;
-    Ok((committed, audio))
-}
-
 // Missing-dependency recovery operations.
 //
 // Relink and disable both mutate the canonical session (asset references or

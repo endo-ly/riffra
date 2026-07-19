@@ -20,6 +20,7 @@ import type {
   Workspace,
 } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
+import { audioCommandSucceeded } from '@/lib/audio-safety';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { workspaces } from '@/constants';
@@ -46,6 +47,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     renderTimeline,
     loadPluginIntoRack: loadPluginIntoRackApi,
     clearPluginFromRack: clearPluginFromRackApi,
+    openPluginEditor: openPluginEditorApi,
     setRackPluginBypassed,
     setRackPluginParameter,
     restoreCurrentRack,
@@ -56,6 +58,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
+    setEmergencyMute,
     setMasterGainDb,
     getMissingDependencies,
     relinkMissingDependency,
@@ -249,7 +252,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     audio,
     setAudio,
     session,
-    setSession,
     setRecordings,
   });
   const {
@@ -293,6 +295,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setAudio(nextAudio);
     setSession(nextSession);
   }, [clearPluginFromRackApi]);
+
+  const openPluginEditor = useCallback(async () => {
+    setAudio(await openPluginEditorApi());
+  }, [openPluginEditorApi]);
 
   const togglePluginBypass = useCallback(
     async (bypassed: boolean) => {
@@ -712,12 +718,23 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setSession(state.session);
       void getMissingDependencies().then(setMissingDependencies);
       if (!state.safeMode)
-        void setMasterGainDb(state.session.settings.masterDb).then((result) => {
+        void (async () => {
+          const result = await setMasterGainDb(state.session.settings.masterDb);
           setAudio(result.audio);
-          // The Rust Session Operation persists the clamped master gain; trust
-          // the canonical session it returns instead of re-deriving it here.
           setSession(result.session);
-        });
+          let startupAudio = result.audio;
+          try {
+            startupAudio = await restoreCurrentRack();
+            setAudio(startupAudio);
+          } catch (error) {
+            setScanMessage(
+              `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          if (audioCommandSucceeded(startupAudio) && !startupAudio.feedbackSuspected) {
+            setAudio(await setEmergencyMute(false));
+          }
+        })();
       void runBackgroundJob(
         () => startScanJob(state.vst3Root),
         (value) => {
@@ -739,10 +756,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
               : `${report.plugins.length}件を検出`,
           );
-          // Startup rack restore is a Rust Application Operation. React only
-          // asks the runtime to be synchronized with the canonical session and
-          // reflects the resulting status; it does not assemble the restore.
-          if (!state.safeMode) void restoreCurrentRack().then(setAudio);
         },
         (message) => setScanMessage(`VST3 scan failed: ${message}`),
       );
@@ -946,6 +959,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     recordingCommandLock,
     loadPluginIntoRack,
     clearPluginFromRack,
+    openPluginEditor,
     togglePluginBypass,
     setPluginParameterValue,
     recoverAudio,

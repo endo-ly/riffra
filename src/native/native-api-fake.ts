@@ -540,6 +540,7 @@ export class FakeNativeApi implements NativeApi {
         inputChannels: 2,
         outputChannels: 2,
         bypassedBlocks: 0,
+        processedBlocks: 0,
         contentionBlocks: 0,
         transitionBlocks: 0,
         parameters: this.pluginParameters,
@@ -583,6 +584,12 @@ export class FakeNativeApi implements NativeApi {
         devices: current.rack.devices.filter((device) => device.kind !== 'plugin'),
       },
     }));
+  };
+
+  openPluginEditor = async (): Promise<AudioStatus> => {
+    this.calls.push('openPluginEditor');
+    if (!this.audio.plugin) throw new Error('No VST3 plugin is loaded.');
+    return this.audio;
   };
 
   setRackPluginBypassed = async (
@@ -709,6 +716,7 @@ export class FakeNativeApi implements NativeApi {
         inputChannels: 2,
         outputChannels: 2,
         bypassedBlocks: 0,
+        processedBlocks: 0,
         contentionBlocks: 0,
         transitionBlocks: 0,
         parameters: this.pluginParameters,
@@ -751,6 +759,7 @@ export class FakeNativeApi implements NativeApi {
           inputChannels: 2,
           outputChannels: 2,
           bypassedBlocks: 0,
+          processedBlocks: 0,
           contentionBlocks: 0,
           transitionBlocks: 0,
           parameters: this.pluginParameters,
@@ -824,9 +833,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setEmergencyMute = async (
-    muted: boolean,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
     this.calls.push('setEmergencyMute');
     if (muted) {
       this.audio = {
@@ -847,11 +854,7 @@ export class FakeNativeApi implements NativeApi {
         message: 'Emergency mute released; output is live.',
       };
     }
-    return this.commitSessionRack((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      settings: { ...current.settings, emergencyMuted: muted },
-    }));
+    return this.audio;
   };
 
   startRecording = async (): Promise<AudioStatus> => {
@@ -939,6 +942,13 @@ export class FakeNativeApi implements NativeApi {
       updatedAtMs: Date.now(),
       settings: { ...current.settings, masterDb: clamped },
     }));
+  };
+
+  previewMasterGainDb = async (gainDb: number): Promise<AudioStatus> => {
+    this.calls.push('previewMasterGainDb');
+    const clamped = Math.max(-90, Math.min(0, gainDb));
+    this.audio = { ...this.audio, message: `Master gain previewed at ${clamped.toFixed(1)} dB.` };
+    return this.audio;
   };
 
   recoverAudioDevice = async (): Promise<AudioStatus> => {

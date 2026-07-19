@@ -112,6 +112,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     selectAudioDriver,
     togglePluginBypass,
     clearPluginFromRack,
+    openPluginEditor,
     captureSnapshot,
     recallSnapshot,
     placeRecording,
@@ -151,7 +152,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       </div>
     );
 
-  const isMuted = isOutputMuted(session.settings.emergencyMuted, audio);
+  const isMuted = isOutputMuted(audio);
   return (
     <main className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''}`}>
       <GlobalBar
@@ -282,6 +283,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             missingPluginPaths={missingPluginPaths}
             onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
             onClearPlugin={() => void clearPluginFromRack()}
+            onOpenPluginEditor={() => void openPluginEditor()}
             onCaptureSnapshot={captureSnapshot}
             onRecallSnapshot={(slot) => void recallSnapshot(slot)}
           />

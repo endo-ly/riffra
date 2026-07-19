@@ -555,7 +555,6 @@ pub struct SessionSettings {
     pub loop_enabled: bool,
     #[serde(default)]
     pub count_in_beats: u8,
-    pub emergency_muted: bool,
     #[serde(default)]
     pub note: String,
     #[serde(default = "default_ai_permission")]
@@ -669,7 +668,6 @@ impl CreativeSession {
                 master_db: -18.0,
                 loop_enabled: false,
                 count_in_beats: 0,
-                emergency_muted: true,
                 note: String::new(),
                 ai_permission: default_ai_permission(),
                 ai_context: default_ai_context(),

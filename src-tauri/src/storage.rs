@@ -627,7 +627,6 @@ mod tests {
             .unwrap();
         assert_eq!(session.arrangement.tracks.len(), 1);
         assert_eq!(session.rack.devices.len(), 3);
-        assert!(session.settings.emergency_muted);
         assert_eq!(session.rack.devices[0].kind, DeviceKind::Input);
     }
 }

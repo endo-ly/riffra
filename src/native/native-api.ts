@@ -86,6 +86,8 @@ export interface NativeApi {
   ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
   /** Clears the plugin from the rack (runtime + session) as one operation. */
   clearPluginFromRack(): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /** Opens the native editor for the plugin instance currently processing the rack. */
+  openPluginEditor(): Promise<AudioStatus>;
   /** Sets the rack plugin bypass flag across the runtime and session. */
   setRackPluginBypassed(
     bypassed: boolean,
@@ -128,11 +130,10 @@ export interface NativeApi {
   stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
-  /**
-   * Engages or releases emergency mute and persists the intent into the
-   * canonical session settings so a reload reproduces the same mute state.
-   */
-  setEmergencyMute(muted: boolean): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  /** Applies master gain to the live Audio Runtime without persisting a session edit. */
+  previewMasterGainDb(gainDb: number): Promise<AudioStatus>;
+  /** Engages or releases the Audio Runtime's emergency output mute. */
+  setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   startRecording(): Promise<AudioStatus>;
   stopRecording(): Promise<AudioStatus>;
   /**

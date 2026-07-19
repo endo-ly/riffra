@@ -145,7 +145,6 @@ interface SessionSettings {
   masterDb: number;
   loopEnabled: boolean;
   countInBeats: number;
-  emergencyMuted: boolean;
   note: string;
   aiPermission: 'Explain' | 'Suggest' | 'Apply';
   aiContext: string[];
@@ -353,6 +352,7 @@ interface PluginStatus {
   inputChannels: number;
   outputChannels: number;
   bypassedBlocks: number;
+  processedBlocks: number;
   contentionBlocks: number;
   transitionBlocks: number;
   parameters: PluginParameter[];
@@ -561,7 +561,6 @@ export const defaultSession = (): CreativeSession => ({
     masterDb: -18,
     loopEnabled: false,
     countInBeats: 0,
-    emergencyMuted: true,
     note: '',
     aiPermission: 'Suggest',
     aiContext: ['analysis', 'selectedClip'],

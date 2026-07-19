@@ -297,6 +297,14 @@ async function clearPluginFromRack(): Promise<{
   return { session: result[0], audio: result[1] };
 }
 
+async function openPluginEditor(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>('open_plugin_editor');
+  } catch (error) {
+    return await audioCommandError('Open plugin editor', error);
+  }
+}
+
 async function setRackPluginBypassed(
   bypassed: boolean,
 ): Promise<{ session: CreativeSession; audio: AudioStatus }> {
@@ -438,11 +446,8 @@ async function getAudioStatus(): Promise<AudioStatus> {
   }
 }
 
-async function setEmergencyMute(
-  muted: boolean,
-): Promise<{ session: CreativeSession; audio: AudioStatus }> {
-  const result = await invoke<[CreativeSession, AudioStatus]>('set_emergency_mute', { muted });
-  return { session: result[0], audio: result[1] };
+async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('set_emergency_mute', { muted });
 }
 
 async function startRecording(): Promise<AudioStatus> {
@@ -468,6 +473,10 @@ async function setMasterGainDb(
     gainDb,
   });
   return { session: result[0], audio: result[1] };
+}
+
+async function previewMasterGainDb(gainDb: number): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('preview_master_gain_db', { gainDb });
 }
 
 async function recoverAudioDevice(): Promise<AudioStatus> {
@@ -785,6 +794,7 @@ function createNativeApi(): NativeApi {
     exportMidi,
     loadPluginIntoRack,
     clearPluginFromRack,
+    openPluginEditor,
     setRackPluginBypassed,
     setRackPluginParameter,
     setRackMacroValue,
@@ -800,6 +810,7 @@ function createNativeApi(): NativeApi {
     startRecording,
     stopRecording,
     setMasterGainDb,
+    previewMasterGainDb,
     recoverAudioDevice,
     setAudioDriver,
     openMidiInput,

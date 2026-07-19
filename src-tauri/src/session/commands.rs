@@ -306,14 +306,6 @@ pub fn set_master_gain_db(
 }
 
 #[tauri::command]
-pub fn set_emergency_mute(
-    muted: bool,
-    state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
-    application::set_emergency_mute(&context(&state), muted)
-}
-
-#[tauri::command]
 pub fn relink_missing_dependency(
     asset_id: String,
     new_path: String,

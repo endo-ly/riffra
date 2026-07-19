@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, CreativeSession } from '@/lib/domain';
 import clsx from 'clsx';
 import type { NativeApi } from '@/native/native-api';
@@ -36,6 +37,52 @@ export function TransportBar(props: TransportBarProps) {
     audioPreferenceMessage,
     api,
   } = props;
+  const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
+  const masterEditing = useRef(false);
+  const previewTimer = useRef<number | null>(null);
+  const previewChain = useRef<Promise<void>>(Promise.resolve());
+  const lastCommittedMasterDb = useRef(session.settings.masterDb);
+
+  useEffect(() => {
+    lastCommittedMasterDb.current = session.settings.masterDb;
+    if (!masterEditing.current) setMasterDraftDb(session.settings.masterDb);
+  }, [session.settings.masterDb]);
+
+  useEffect(
+    () => () => {
+      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    },
+    [],
+  );
+
+  const previewMaster = (gainDb: number) => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => {
+      previewTimer.current = null;
+      previewChain.current = previewChain.current
+        .catch(() => undefined)
+        .then(async () => setAudio(await api.previewMasterGainDb(gainDb)));
+    }, 40);
+  };
+
+  const commitMaster = async (gainDb: number) => {
+    if (previewTimer.current !== null) {
+      window.clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+    }
+    await previewChain.current.catch(() => undefined);
+    if (gainDb === lastCommittedMasterDb.current) return;
+    lastCommittedMasterDb.current = gainDb;
+    try {
+      const result = await api.setMasterGainDb(gainDb);
+      setSession(result.session);
+      setAudio(result.audio);
+    } catch {
+      lastCommittedMasterDb.current = session.settings.masterDb;
+      setMasterDraftDb(session.settings.masterDb);
+    }
+  };
+
   const statusDotState =
     audio.recording.active || recordCountdown !== null ? 'recording' : audio.state;
   return (
@@ -85,22 +132,35 @@ export function TransportBar(props: TransportBarProps) {
       </div>
       <div className={styles.master}>
         <span>MASTER</span>
-        <strong>{session.settings.masterDb.toFixed(1)} dB</strong>
+        <strong>{masterDraftDb.toFixed(1)} dB</strong>
         <input
           aria-label="Master volume"
           type="range"
           min="-60"
           max="0"
           step="0.5"
-          value={session.settings.masterDb}
+          value={masterDraftDb}
+          onPointerDown={() => {
+            masterEditing.current = true;
+          }}
+          onPointerUp={(event) => {
+            masterEditing.current = false;
+            void commitMaster(Number(event.currentTarget.value));
+          }}
+          onBlur={(event) => {
+            masterEditing.current = false;
+            void commitMaster(Number(event.currentTarget.value));
+          }}
+          onKeyUp={(event) => {
+            if (
+              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+            )
+              void commitMaster(Number(event.currentTarget.value));
+          }}
           onChange={(event) => {
             const gainDb = Number(event.target.value);
-            void api.setMasterGainDb(gainDb).then((result) => {
-              // The Rust Session Operation owns the clamped master gain; trust
-              // the canonical session it returns instead of re-deriving it.
-              setSession(result.session);
-              setAudio(result.audio);
-            });
+            setMasterDraftDb(gainDb);
+            previewMaster(gainDb);
           }}
         />
       </div>

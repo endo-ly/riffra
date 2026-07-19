@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultSession } from '@/lib/domain';
@@ -33,22 +33,18 @@ async function waitForAppShell() {
 }
 
 describe('App driven by FakeNativeApi', () => {
-  it('boots muted and toggles emergency mute through the injected api', async () => {
+  it('releases the startup safety mute and toggles emergency mute through the injected api', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
 
     await waitForAppShell();
-    expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
     expect(fake.calls).toContain('bootstrap');
     expect(fake.calls).toContain('getAudioStatus');
+    expect(fake.calls).toContain('restoreCurrentRack');
+    expect(fake.calls).toContain('setEmergencyMute');
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /UNMUTE/ }));
-
-    await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
-    expect(fake.calls).toContain('setEmergencyMute');
-    expect(fake.audio.state).toBe('ready');
-
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(fake.audio.state).toBe('muted');
@@ -60,7 +56,6 @@ describe('App driven by FakeNativeApi', () => {
     await waitForAppShell();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /UNMUTE/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
@@ -79,8 +74,25 @@ describe('App driven by FakeNativeApi', () => {
 
     for (const label of ['Play', 'Arrange', 'Design']) {
       await user.click(within(workspaceNav).getByRole('button', { name: new RegExp(label) }));
-      expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^(MUTE|UNMUTE)$/ })).toBeInTheDocument();
     }
+  });
+
+  it('previews master gain during a gesture and persists it once at the end', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+
+    const master = screen.getByRole('slider', { name: /Master volume/ });
+    fireEvent.pointerDown(master);
+    fireEvent.change(master, { target: { value: '-12' } });
+    await waitFor(() => expect(fake.calls).toContain('previewMasterGainDb'));
+    fireEvent.pointerUp(master, { target: { value: '-12' } });
+
+    await waitFor(() => expect(screen.getByText('-12.0 dB')).toBeInTheDocument());
+    await waitFor(() => {
+      expect(fake.calls.filter((call) => call === 'setMasterGainDb')).toHaveLength(2);
+    });
   });
 
   it('cancels a render without promoting a result and allows a clean retry', async () => {
@@ -365,6 +377,24 @@ describe('App driven by FakeNativeApi', () => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
       expect(saved.rack.devices.find((device) => device.kind === 'plugin')?.bypassed).toBe(false);
     });
+  });
+
+  it('opens the loaded plugin editor from the Play rack', async () => {
+    const fake = new FakeNativeApi({ plugins: [examplePlugin] });
+    renderApp(fake);
+    await waitForAppShell();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Example Synth/ }));
+    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
+    await user.click(
+      within(screen.getByRole('navigation', { name: /Workspace/ })).getByRole('button', {
+        name: /Play/,
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: /Open Example Synth editor/ }));
+
+    await waitFor(() => expect(fake.calls).toContain('openPluginEditor'));
   });
 
   it('applies an audio driver selection without changing the Scratch Session', async () => {

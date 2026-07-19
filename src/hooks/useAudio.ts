@@ -11,7 +11,6 @@ interface UseAudioOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
   session: CreativeSession | null;
-  setSession: Dispatch<SetStateAction<CreativeSession | null>>;
   setRecordings: (recordings: RecordingAsset[]) => void;
 }
 
@@ -26,7 +25,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
     stopRecording,
     listRecordings,
   } = api;
-  const { audio, setAudio, session, setSession, setRecordings } = options;
+  const { audio, setAudio, session, setRecordings } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
   const [recordCountdown, setRecordCountdown] = useState<number | null>(null);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
@@ -71,12 +70,9 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   }, []);
 
   const toggleMute = useCallback(async () => {
-    if (!session) return;
-    const muted = !isOutputMuted(session.settings.emergencyMuted, audio);
-    const { session: nextSession, audio: nextAudio } = await setEmergencyMute(muted);
-    setAudio(nextAudio);
-    setSession(nextSession);
-  }, [audio, session]);
+    const muted = !isOutputMuted(audio);
+    setAudio(await setEmergencyMute(muted));
+  }, [audio]);
 
   const startRecordingNow = useCallback(async () => {
     if (recordingCommandLock.current) return;

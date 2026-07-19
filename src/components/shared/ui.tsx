@@ -9,6 +9,8 @@ export function Icon({ name }: { name: string }) {
     plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6Z',
     chevron: 'm9 18 6-6-6-6',
     bolt: 'm13 2-9 12h7l-1 8 9-12h-7Z',
+    sliders:
+      'M4 7h10v2H4V7Zm14 0h2v2h-2V7Zm-3-2h2v6h-2V5ZM4 15h2v2H4v-2Zm6 0h10v2H10v-2Zm-3-2h2v6H7v-6Z',
     command:
       'M9 6a3 3 0 1 0-3 3h3V6Zm2 0v3h2V6h-2Zm4 0v3h3a3 3 0 1 0-3-3ZM9 11H6a3 3 0 1 0 3 3v-3Zm2 0v2h2v-2h-2Zm4 0v3a3 3 0 1 0 3-3h-3Zm-6 5H6a1 1 0 1 1 1-1h2v1Zm2-1h2v2h-2v-2Zm4 0h2a1 1 0 1 1-2 1v-1Z',
   };
