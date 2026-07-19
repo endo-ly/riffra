@@ -27,8 +27,8 @@ public:
     void releaseResources() override { trace.released = true; }
 
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
-               layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
+            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
 
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
@@ -53,6 +53,60 @@ public:
 
 private:
     ProcessorTrace& trace;
+};
+
+struct InstrumentTrace final {
+    bool prepared = false;
+    bool processed = false;
+    bool released = false;
+    juce::MidiMessage lastMidiMessage;
+    int midiMessageCount = 0;
+};
+
+class TestInstrumentProcessor final : public juce::AudioProcessor {
+public:
+    explicit TestInstrumentProcessor(InstrumentTrace& processorTrace)
+        : AudioProcessor(BusesProperties()
+                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+          trace(processorTrace) {}
+
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override {
+        trace.prepared = sampleRate > 0.0 && samplesPerBlock > 0;
+    }
+
+    void releaseResources() override { trace.released = true; }
+
+    bool isBusesLayoutSupported(const BusesLayout& layout) const override {
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
+            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    }
+
+    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
+        trace.processed = trace.prepared;
+        for (const auto meta : midi) {
+            trace.lastMidiMessage = meta.getMessage();
+            ++trace.midiMessageCount;
+        }
+        buffer.applyGain(0.5f);
+    }
+
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    const juce::String getName() const override { return "Riffra Test Instrument"; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+    void getStateInformation(juce::MemoryBlock&) override {}
+    void setStateInformation(const void*, int) override {}
+
+private:
+    InstrumentTrace& trace;
 };
 
 juce::var check(const juce::String& name, const bool passed) {
@@ -115,6 +169,60 @@ juce::Array<juce::var> runPluginRackSelfTests() {
     rack.clear();
     checks.add(check("Plugin resources are released before unload",
                      trace.released && !rack.status().getProperty("loaded", true)));
+
+    InstrumentTrace instrumentTrace;
+    PluginRack instrumentRack;
+    auto instrument = std::make_unique<TestInstrumentProcessor>(instrumentTrace);
+    const auto instrumentConfigError =
+        PluginRack::configureProcessor(*instrument, 48'000.0, blockSize);
+    if (!instrumentConfigError) {
+        instrumentRack.pluginInputChannels.store(instrument->getMainBusNumInputChannels(),
+                                                  std::memory_order_release);
+        instrumentRack.pluginOutputChannels.store(instrument->getMainBusNumOutputChannels(),
+                                                  std::memory_order_release);
+        instrumentRack.preparedSampleRate.store(48'000.0, std::memory_order_release);
+        instrumentRack.preparedBlockSize.store(blockSize, std::memory_order_release);
+        instrumentRack.midiCollector.reset(48'000);
+        instrumentRack.plugin = std::move(instrument);
+        instrumentRack.loaded.store(true, std::memory_order_release);
+    }
+
+    checks.add(check("Instrument plugin with no input bus configures as output-only stereo",
+                     !instrumentConfigError
+                         && instrumentRack.pluginInputChannels.load(std::memory_order_acquire) == 0
+                         && instrumentRack.pluginOutputChannels.load(std::memory_order_acquire) == 2));
+    checks.add(check("Instrument plugin reports instrument mode",
+                     instrumentRack.isInstrument()));
+
+    std::array<float, blockSize> instrumentLeft{};
+    std::array<float, blockSize> instrumentRight{};
+    const std::array<float*, 2> instrumentOutputs{instrumentLeft.data(), instrumentRight.data()};
+    instrumentRack.process(nullptr, 0, instrumentOutputs.data(), 2, blockSize);
+    checks.add(check("Instrument plugin runs processBlock without input audio",
+                     instrumentTrace.processed
+                         && static_cast<juce::int64>(
+                                instrumentRack.status().getProperty("processedBlocks", 0))
+                             == 1));
+
+    instrumentRack.enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    juce::Thread::sleep(2);
+    instrumentRack.process(nullptr, 0, instrumentOutputs.data(), 2, blockSize);
+    checks.add(check("Enqueued note-on MIDI reaches the instrument plugin processBlock",
+                     instrumentTrace.midiMessageCount >= 1
+                         && instrumentTrace.lastMidiMessage.isNoteOn()
+                         && instrumentTrace.lastMidiMessage.getNoteNumber() == 60
+                         && instrumentTrace.lastMidiMessage.getVelocity() == static_cast<juce::uint8>(102)));
+
+    instrumentRack.enqueueMidi(juce::MidiMessage::noteOff(1, 60));
+    juce::Thread::sleep(2);
+    instrumentRack.process(nullptr, 0, instrumentOutputs.data(), 2, blockSize);
+    checks.add(check("Enqueued note-off MIDI reaches the instrument plugin processBlock",
+                     instrumentTrace.lastMidiMessage.isNoteOff()
+                         && instrumentTrace.lastMidiMessage.getNoteNumber() == 60));
+
+    instrumentRack.clear();
+    checks.add(check("Instrument plugin resources are released before unload",
+                     instrumentTrace.released && !instrumentRack.status().getProperty("loaded", true)));
     return checks;
 }
 

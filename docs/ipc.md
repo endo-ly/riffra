@@ -175,10 +175,10 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 - **状態照会**: `status` / `meterStatus`
 - **オーディオ設定**: `setEmergencyMute` / `setMasterGainDb` / `setAudioDriver` / `recoverAudioDevice`
-- **プラグイン**: `loadPlugin` / `clearPlugin` / `setPluginBypassed` / `setPluginParameter` / `setPluginState` / `pluginParameterStatus`
+- **プラグイン**: `loadPlugin` / `clearPlugin` / `setPluginBypassed` / `openPluginEditor` / `setPluginParameter` / `setPluginState` / `pluginParameterStatus`
 - **録音**: `startRecording` / `stopRecording`
 - **プレビュー**: `previewSample` / `stopPreview` / `stopPreviewForKey`
-- **MIDI・サンプルパッド**: `openMidiInput` / `closeMidiInput` / `configureSamplePads` / `probeMidiDevices`
+- **MIDI・サンプルパッド**: `openMidiInput` / `closeMidiInput` / `configureSamplePads` / `probeMidiDevices` / `sendMidi`
 - **シャットダウン**: `shutdown`
 
 命名はすべてcamelCase。Rust側の `AudioSupervisor` メソッドが対応する。未対応の `type` は C++側で `protocol` スコープのエラーになる。

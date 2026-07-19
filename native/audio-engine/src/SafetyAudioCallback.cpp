@@ -14,6 +14,15 @@ void SafetyAudioCallback::setPluginRack(PluginRack* const rack) noexcept {
     pluginRack = rack;
 }
 
+bool SafetyAudioCallback::hasInstrumentPlugin() const noexcept {
+    return pluginRack != nullptr && pluginRack->isInstrument();
+}
+
+void SafetyAudioCallback::enqueuePluginMidi(const juce::MidiMessage& message) noexcept {
+    if (pluginRack != nullptr)
+        pluginRack->enqueueMidi(message);
+}
+
 
 void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
     if (shouldMute)

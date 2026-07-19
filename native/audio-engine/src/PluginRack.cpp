@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <vector>
 
 namespace riffra {
 
@@ -82,6 +83,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         return configurationError;
 
     updateParameterCache(*candidate);
+    midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
     const auto inputChannels = candidate->getMainBusNumInputChannels();
     const auto outputChannels = candidate->getMainBusNumOutputChannels();
     const juce::SpinLock::ScopedLockType lock(pluginLock);
@@ -114,26 +116,33 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
             "VST3 initialization requires an active sample rate and block size.",
         };
     }
-    if (processor.getBusCount(true) == 0 || processor.getBusCount(false) == 0) {
+    if (processor.getBusCount(false) == 0) {
         return PluginLoadError{
             "pluginLayout",
-            "The VST3 does not expose both an audio input bus and an audio output bus.",
+            "The VST3 does not expose an audio output bus.",
         };
     }
 
-    const std::array layouts{
-        layoutWithMainBuses(processor, juce::AudioChannelSet::stereo(),
-                            juce::AudioChannelSet::stereo()),
-        layoutWithMainBuses(processor, juce::AudioChannelSet::mono(),
-                            juce::AudioChannelSet::stereo()),
-    };
+    const bool hasInputBus = processor.getBusCount(true) > 0;
+    std::vector<juce::AudioProcessor::BusesLayout> candidates;
+    if (hasInputBus) {
+        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::stereo(),
+                                                 juce::AudioChannelSet::stereo()));
+        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::mono(),
+                                                 juce::AudioChannelSet::stereo()));
+    } else {
+        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::disabled(),
+                                                 juce::AudioChannelSet::stereo()));
+    }
     const auto selected = std::find_if(
-        layouts.begin(), layouts.end(),
+        candidates.begin(), candidates.end(),
         [&processor](const auto& layout) { return processor.checkBusesLayoutSupported(layout); });
-    if (selected == layouts.end() || !processor.setBusesLayout(*selected)) {
+    if (selected == candidates.end() || !processor.setBusesLayout(*selected)) {
         return PluginLoadError{
             "pluginLayout",
-            "The VST3 supports neither stereo-to-stereo nor mono-to-stereo processing.",
+            hasInputBus
+                ? "The VST3 supports neither stereo-to-stereo nor mono-to-stereo processing."
+                : "The VST3 does not support stereo output.",
         };
     }
 
@@ -190,6 +199,8 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     preparedSampleRate.store(sampleRate, std::memory_order_release);
     preparedBlockSize.store(blockSize, std::memory_order_release);
+    if (sampleRate > 0.0)
+        midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
     if (plugin != nullptr) {
         plugin->setRateAndBufferSizeDetails(sampleRate, blockSize);
         plugin->prepareToPlay(sampleRate, blockSize);
@@ -260,6 +271,23 @@ bool PluginRack::setState(const juce::String& base64, juce::String& error) noexc
     return true;
 }
 
+void PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
+    if (!loaded.load(std::memory_order_acquire))
+        return;
+    auto stamped = message;
+    stamped.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
+    midiCollector.addMessageToQueue(stamped);
+}
+
+bool PluginRack::isLoaded() const noexcept {
+    return loaded.load(std::memory_order_acquire);
+}
+
+bool PluginRack::isInstrument() const noexcept {
+    return loaded.load(std::memory_order_acquire)
+        && pluginInputChannels.load(std::memory_order_acquire) == 0;
+}
+
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
                          const int numSamples) noexcept {
@@ -308,6 +336,7 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
 
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
     juce::MidiBuffer midi;
+    midiCollector.removeNextBlockOfMessages(midi, numSamples);
     plugin->processBlock(buffer, midi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
 }

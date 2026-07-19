@@ -28,6 +28,9 @@ public:
     bool setState(const juce::String& base64, juce::String& error) noexcept;
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
+    void enqueueMidi(const juce::MidiMessage& message) noexcept;
+    [[nodiscard]] bool isLoaded() const noexcept;
+    [[nodiscard]] bool isInstrument() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
 
@@ -52,6 +55,7 @@ private:
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
+    juce::MidiMessageCollector midiCollector;
     mutable juce::SpinLock pluginLock;
     mutable juce::CriticalSection statusLock;
     std::vector<CachedParameter> cachedParameters;

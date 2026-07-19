@@ -40,6 +40,8 @@ public:
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
+    [[nodiscard]] bool hasInstrumentPlugin() const noexcept;
+    void enqueuePluginMidi(const juce::MidiMessage& message) noexcept;
 
 
     void audioDeviceIOCallbackWithContext(

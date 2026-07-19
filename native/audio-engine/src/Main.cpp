@@ -149,6 +149,12 @@ public:
             return;
 
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
+
+        if (audioCallback != nullptr && audioCallback->hasInstrumentPlugin()) {
+            audioCallback->enqueuePluginMidi(message);
+            return;
+        }
+
         if (message.isNoteOff()) {
             if (audioCallback != nullptr) {
                 audioCallback->stopPreviewForKey(message.getNoteNumber());
@@ -871,6 +877,36 @@ int serve(
                 auto status = currentStatus(manager, callback, &rack, &midiMonitor);
                 status.getDynamicObject()->setProperty("plugin", rack.parameterStatus());
                 writeJson(status);
+                continue;
+            }
+            if (type == "sendMidi") {
+                if (!rack.isLoaded()) {
+                    writeJson(makeError("plugin", "No VST3 plugin is loaded."));
+                    continue;
+                }
+                const auto bytesValue = command.getProperty("bytes", {});
+                juce::Array<juce::var> bytesArray;
+                if (bytesValue.isArray()) {
+                    bytesArray = *bytesValue.getArray();
+                } else {
+                    writeJson(makeError("midi", "A bytes array of MIDI data is required."));
+                    continue;
+                }
+                if (bytesArray.isEmpty() || bytesArray.size() > 3) {
+                    writeJson(makeError("midi", "MIDI bytes must contain between 1 and 3 bytes."));
+                    continue;
+                }
+                std::array<std::uint8_t, 3> bytes{};
+                for (int i = 0; i < bytesArray.size(); ++i)
+                    bytes[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(
+                        juce::jlimit(0, 255, static_cast<int>(bytesArray[i])));
+                const auto message = juce::MidiMessage(
+                    bytes[0],
+                    bytesArray.size() > 1 ? bytes[1] : 0,
+                    bytesArray.size() > 2 ? bytes[2] : 0,
+                    bytesArray.size());
+                callback.enqueuePluginMidi(message);
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
             if (type == "recoverAudioDevice") {
