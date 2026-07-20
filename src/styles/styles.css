@@ -2096,3 +2096,212 @@ dd {
     }
   }
 }
+
+.midi-input-panel {
+  margin-top: 16px;
+}
+.midi-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.midi-input-octave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.midi-input-octave strong {
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  min-width: 28px;
+  text-align: center;
+}
+.midi-input-octave button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  background: var(--surface);
+  color: #d8dde5;
+  font-size: 12px;
+  cursor: pointer;
+}
+.midi-input-octave button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.midi-input-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.midi-input-source-row > button[role='radio'] {
+  flex: 1 1 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: #d8dde5;
+  text-align: left;
+  cursor: pointer;
+}
+.midi-input-source-row > button[role='radio']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.midi-input-source-row > button[role='radio'].active {
+  border-color: var(--teal);
+  background: rgba(69, 214, 179, 0.12);
+  box-shadow: 0 0 0 1px rgba(69, 214, 179, 0.35) inset;
+}
+.midi-input-source-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.midi-input-source-row > button[role='radio'] > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.midi-input-source-row > button[role='radio'].active > small {
+  color: var(--teal);
+}
+.midi-input-empty-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.midi-input-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.midi-input-meta strong {
+  color: #cbd3dc;
+  font-variant-numeric: tabular-nums;
+}
+.midi-input-active-notes {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.musical-typing-keyboard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.musical-typing-white-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--white-count), minmax(0, 1fr));
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  height: 84px;
+}
+.musical-typing-black-row {
+  position: absolute;
+  top: 12px;
+  left: 8px;
+  right: 8px;
+  height: 52px;
+  pointer-events: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.musical-typing-key {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-bright);
+}
+.musical-typing-key.white {
+  background: linear-gradient(180deg, #f4f6fa 0%, #c4cbd4 100%);
+  color: #1a1f25;
+}
+.musical-typing-key.black {
+  position: absolute;
+  top: 0;
+  width: calc(100% / var(--white-count) * 0.6);
+  height: 100%;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #2b333d 0%, #11151a 100%);
+  color: #d8dde5;
+  border-color: #050709;
+  z-index: 2;
+}
+.musical-typing-key.active.white {
+  background: linear-gradient(180deg, var(--teal) 0%, #2ea78c 100%);
+  box-shadow: 0 0 14px rgba(69, 214, 179, 0.45) inset;
+  color: #04110d;
+}
+.musical-typing-key.active.black {
+  background: linear-gradient(180deg, var(--cyan) 0%, #2a98ab 100%);
+  box-shadow: 0 0 14px rgba(85, 217, 232, 0.5) inset;
+}
+.musical-typing-key-letter {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.musical-typing-key-note {
+  font-size: 9px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.rack-device.midi-source-device {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px rgba(69, 214, 179, 0.25) inset;
+}
+.midi-source-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(69, 214, 179, 0.08);
+}
+.midi-source-face .midi-led {
+  width: 10px;
+  height: 10px;
+  background: var(--faint);
+  box-shadow: none;
+}
+.midi-source-face .midi-led.active {
+  background: var(--teal);
+  box-shadow: 0 0 12px rgba(69, 214, 179, 0.7);
+}
+.rack-device.instrument-device {
+  border-color: rgba(85, 217, 232, 0.35);
+}

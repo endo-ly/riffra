@@ -18,8 +18,8 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   const {
     recoverAudioDevice,
     setAudioDriver,
-    openMidiInput,
-    closeMidiInput,
+    enableMidiListening,
+    disableMidiListening,
     setEmergencyMute,
     startRecording,
     stopRecording,
@@ -61,12 +61,12 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
     [],
   );
 
-  const connectMidiInput = useCallback(async (name: string) => {
-    setAudio(await openMidiInput(name));
+  const enableMidi = useCallback(async () => {
+    setAudio(await enableMidiListening());
   }, []);
 
-  const disconnectMidiInput = useCallback(async () => {
-    setAudio(await closeMidiInput());
+  const disableMidi = useCallback(async () => {
+    setAudio(await disableMidiListening());
   }, []);
 
   const toggleMute = useCallback(async () => {
@@ -145,8 +145,8 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
     recordingCommandLock,
     recoverAudio,
     selectAudioDriver,
-    connectMidiInput,
-    disconnectMidiInput,
+    enableMidi,
+    disableMidi,
     toggleMute,
     startRecordingNow,
     toggleRecording,

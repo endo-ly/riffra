@@ -1,6 +1,21 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
+import { midiNoteName } from '@/lib/musical-typing';
+import { useMusicalTyping } from '@/hooks/useMusicalTyping';
 import { Icon, Meter } from '../shared/ui';
+import { MidiInputPanel, MIDI_INPUT_DEFAULT_OCTAVE } from './MidiInputPanel';
+
+interface WorkspacePlayProps {
+  session: CreativeSession;
+  audio: AudioStatus;
+  missingPluginPaths: string[];
+  onOpenPluginEditor: () => void;
+  onTogglePluginBypass: (bypassed: boolean) => void;
+  onClearPlugin: () => void;
+  onCaptureSnapshot: (slot: 'A' | 'B') => void;
+  onRecallSnapshot: (slot: 'A' | 'B') => void;
+  onSendMidi: (bytes: number[]) => void | Promise<void>;
+}
 
 export function WorkspacePlay({
   session,
@@ -11,17 +26,10 @@ export function WorkspacePlay({
   onClearPlugin,
   onCaptureSnapshot,
   onRecallSnapshot,
-}: {
-  session: CreativeSession;
-  audio: AudioStatus;
-  missingPluginPaths: string[];
-  onOpenPluginEditor: () => void;
-  onTogglePluginBypass: (bypassed: boolean) => void;
-  onClearPlugin: () => void;
-  onCaptureSnapshot: (slot: 'A' | 'B') => void;
-  onRecallSnapshot: (slot: 'A' | 'B') => void;
-}) {
+  onSendMidi,
+}: WorkspacePlayProps) {
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const [octave, setOctave] = useState(MIDI_INPUT_DEFAULT_OCTAVE);
   const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
   const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
@@ -45,12 +53,31 @@ export function WorkspacePlay({
     session.rack.devices.find((device) => device.kind === 'plugin')?.bypassed ?? false;
   const hasSnapshotA = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A');
   const hasSnapshotB = session.snapshots.some((snapshot) => snapshot.id === 'snapshot:B');
+
+  const pluginStatus = audio.plugin ?? null;
+  const pluginIsInstrument =
+    pluginStatus != null && pluginStatus.loaded && pluginStatus.inputChannels === 0;
+
+  const { activeNotes } = useMusicalTyping({
+    enabled: pluginIsInstrument,
+    octave,
+    sendMidi: onSendMidi,
+  });
+
+  const heldNoteSummary = useMemo(() => {
+    if (activeNotes.size === 0) return pluginIsInstrument ? 'No notes held' : null;
+    return Array.from(activeNotes)
+      .sort((a, b) => a - b)
+      .map((note) => midiNoteName(note))
+      .join(' ');
+  }, [activeNotes, pluginIsInstrument]);
+
   return (
     <div className="workspace-scroll play-view">
       <section className="play-header">
         <div>
           <span className="eyebrow">LIVE SIGNAL</span>
-          <h1>Input → Tone → Output</h1>
+          <h1>{pluginIsInstrument ? 'MIDI → Tone → Output' : 'Input → Tone → Output'}</h1>
         </div>
         <div className="snapshot-tabs">
           <button className={hasSnapshotA ? 'active' : ''} onClick={() => onRecallSnapshot('A')}>
@@ -64,21 +91,39 @@ export function WorkspacePlay({
       </section>
       <div className="signal-line" />
       <section className="rack-flow">
-        <article className="rack-device input-device">
-          <span className="device-order">IN</span>
-          <div className="device-face live-meter-face">
-            <span className="meter-label">INPUT LEVEL</span>
-            <Meter value={Math.round(audio.inputPeak * 100)} />
-          </div>
-          <h3>{inputChannel?.name ?? 'No input channel'}</h3>
-          <small>{inputDb.toFixed(1)} dBFS</small>
-        </article>
+        {pluginIsInstrument ? (
+          <article className="rack-device midi-source-device" aria-label="MIDI source">
+            <span className="device-order">IN</span>
+            <div className="device-face midi-source-face">
+              <span className="meter-label">MIDI</span>
+              <i
+                className={`midi-led${activeNotes.size > 0 || audio.midiMessages > 0 ? ' active' : ''}`}
+                aria-hidden="true"
+              />
+            </div>
+            <h3>
+              {audio.midiInputs.length > 0 ? audio.midiInputs.join(' · ') : 'Computer Keyboard'}
+            </h3>
+            <small>{heldNoteSummary ?? 'Awaiting input'}</small>
+          </article>
+        ) : (
+          <article className="rack-device input-device">
+            <span className="device-order">IN</span>
+            <div className="device-face live-meter-face">
+              <span className="meter-label">INPUT LEVEL</span>
+              <Meter value={Math.round(audio.inputPeak * 100)} />
+            </div>
+            <h3>{inputChannel?.name ?? 'No input channel'}</h3>
+            <small>{inputDb.toFixed(1)} dBFS</small>
+          </article>
+        )}
         {loadedPlugins.map((plugin, index) => (
           <article
             className={[
               'rack-device plugin-device',
               selectedPluginId === plugin.id ? 'selected' : '',
               plugin.scanState === 'quarantined' ? 'missing-dependency' : '',
+              pluginIsInstrument ? 'instrument-device' : '',
             ]
               .filter(Boolean)
               .join(' ')}
@@ -110,7 +155,11 @@ export function WorkspacePlay({
             </div>
             <h3>{plugin.name}</h3>
             <small>
-              {plugin.scanState === 'quarantined' ? 'Missing dependency' : 'Loaded in rack'}
+              {plugin.scanState === 'quarantined'
+                ? 'Missing dependency'
+                : pluginIsInstrument
+                  ? 'Instrument · Loaded in rack'
+                  : 'Loaded in rack'}
             </small>
             <div className="device-controls">
               <button
@@ -161,6 +210,14 @@ export function WorkspacePlay({
           </small>
         </article>
       </section>
+      {pluginIsInstrument && (
+        <MidiInputPanel
+          audio={audio}
+          octave={octave}
+          onOctaveChange={setOctave}
+          activeNotes={activeNotes}
+        />
+      )}
     </div>
   );
 }

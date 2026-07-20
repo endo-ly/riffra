@@ -113,6 +113,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     togglePluginBypass,
     clearPluginFromRack,
     openPluginEditor,
+    sendMidi,
     captureSnapshot,
     recallSnapshot,
     placeRecording,
@@ -127,8 +128,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     rackDefinitions,
     previewSamplePad,
     stopPreview,
-    connectMidiInput,
-    disconnectMidiInput,
     selectReference,
     previewReference,
     stopReferencePreview,
@@ -286,6 +285,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onOpenPluginEditor={() => void openPluginEditor()}
             onCaptureSnapshot={captureSnapshot}
             onRecallSnapshot={(slot) => void recallSnapshot(slot)}
+            onSendMidi={(bytes) => void sendMidi(bytes)}
           />
         )}
         {session.workspace === 'arrange' && (
@@ -345,13 +345,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               probe={midi}
               onRefresh={() => void nativeApi.probeMidiDevices().then(setMidi)}
             />
-            <MidiMonitor
-              probe={midi}
-              audio={audio}
-              onOpen={(name) => void connectMidiInput(name)}
-              onClose={() => void disconnectMidiInput()}
-              onPanic={() => void stopPreview()}
-            />
+            <MidiMonitor probe={midi} audio={audio} onPanic={() => void stopPreview()} />
           </>
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'analyze' && (

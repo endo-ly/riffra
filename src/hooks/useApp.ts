@@ -69,6 +69,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     saveRackDefinition,
     listRackDefinitions,
     loadRackDefinitionAsset,
+    sendMidiToPlugin,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>({
@@ -264,8 +265,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     recordingCommandLock,
     recoverAudio,
     selectAudioDriver,
-    connectMidiInput,
-    disconnectMidiInput,
+    enableMidi,
+    disableMidi,
     toggleMute,
     startRecordingNow,
     toggleRecording,
@@ -299,6 +300,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const openPluginEditor = useCallback(async () => {
     setAudio(await openPluginEditorApi());
   }, [openPluginEditorApi]);
+
+  const sendMidi = useCallback(
+    async (bytes: number[]) => {
+      setAudio(await sendMidiToPlugin(bytes));
+    },
+    [sendMidiToPlugin],
+  );
 
   const togglePluginBypass = useCallback(
     async (bypassed: boolean) => {
@@ -764,6 +772,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     void listSeparations().then(setSeparations);
     void probeMidiDevices().then(setMidi);
     void probeAudioDevices().then(setDeviceProbe);
+    void enableMidi();
     let cancelled = false;
     let audioPoll: number | null = null;
     const refreshAudio = async () => {
@@ -960,12 +969,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     loadPluginIntoRack,
     clearPluginFromRack,
     openPluginEditor,
+    sendMidi,
     togglePluginBypass,
     setPluginParameterValue,
     recoverAudio,
     selectAudioDriver,
-    connectMidiInput,
-    disconnectMidiInput,
+    enableMidi,
+    disableMidi,
     undo,
     redo,
     captureSnapshot,

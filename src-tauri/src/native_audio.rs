@@ -580,10 +580,33 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn open_midi_input(&self, name: &str) -> Result<AudioStatus, String> {
+    pub fn enable_midi_listening(&self) -> Result<AudioStatus, String> {
         self.send_command(
-            serde_json::json!({"type": "openMidiInput", "name": name}),
-            "MIDI input opening requested; incoming note activity will remain isolated from audio safety state.",
+            serde_json::json!({"type": "enableMidiListening"}),
+            "MIDI listening enabled; all detected inputs are routed to the rack.",
+        )
+    }
+
+    pub fn disable_midi_listening(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "disableMidiListening"}),
+            "MIDI listening disabled; no external MIDI device is being consumed.",
+        )
+    }
+
+    pub fn send_midi(&self, bytes: &[u8]) -> Result<AudioStatus, String> {
+        if bytes.is_empty() {
+            return Err("MIDI bytes must contain at least one status byte.".into());
+        }
+        if bytes.len() > 3 {
+            return Err(
+                "MIDI bytes must contain at most three bytes (status, data1, data2).".into(),
+            );
+        }
+        let payload_bytes: Vec<u64> = bytes.iter().map(|byte| *byte as u64).collect();
+        self.send_command(
+            serde_json::json!({"type": "sendMidi", "bytes": payload_bytes}),
+            "MIDI message enqueued for the loaded plugin.",
         )
     }
 
@@ -593,13 +616,6 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "configureSamplePads", "pads": pads}),
             "Sample pad mappings were prepared for MIDI-triggered audition.",
-        )
-    }
-
-    pub fn close_midi_input(&self) -> Result<AudioStatus, String> {
-        self.send_command(
-            serde_json::json!({"type": "closeMidiInput"}),
-            "MIDI input closed; no notes are being consumed.",
         )
     }
 

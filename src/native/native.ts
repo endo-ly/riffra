@@ -505,19 +505,27 @@ async function setAudioDriver(
   });
 }
 
-async function openMidiInput(name: string): Promise<AudioStatus> {
+async function enableMidiListening(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('open_midi_input', { name });
+    return await invoke<AudioStatus>('enable_midi_listening');
   } catch (error) {
-    return await audioCommandError('Open MIDI input', error);
+    return await audioCommandError('Enable MIDI listening', error);
   }
 }
 
-async function closeMidiInput(): Promise<AudioStatus> {
+async function disableMidiListening(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('close_midi_input');
+    return await invoke<AudioStatus>('disable_midi_listening');
   } catch (error) {
-    return await audioCommandError('Close MIDI input', error);
+    return await audioCommandError('Disable MIDI listening', error);
+  }
+}
+
+async function sendMidiToPlugin(bytes: number[]): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>('send_midi_to_plugin', { bytes });
+  } catch (error) {
+    return await audioCommandError('Send MIDI to plugin', error);
   }
 }
 
@@ -813,8 +821,9 @@ function createNativeApi(): NativeApi {
     previewMasterGainDb,
     recoverAudioDevice,
     setAudioDriver,
-    openMidiInput,
-    closeMidiInput,
+    enableMidiListening,
+    disableMidiListening,
+    sendMidiToPlugin,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,

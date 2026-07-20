@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -545,11 +546,35 @@ int serve(
     PluginRack rack;
     PluginEditorHost pluginEditor(rack);
     MidiMonitor midiMonitor;
-    std::unique_ptr<juce::MidiInput> midiInput;
+    std::mutex midiInputsLock;
+    std::vector<std::unique_ptr<juce::MidiInput>> midiInputs;
+    std::atomic<bool> midiListeningEnabled { false };
+    std::set<juce::String> activeMidiDeviceIds;
     callback.setPluginRack(&rack);
     midiMonitor.setAudioCallback(&callback);
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
+
+    auto reopenAllMidiInputs = [&] {
+        const std::lock_guard lock(midiInputsLock);
+        for (auto& input : midiInputs) {
+            if (input != nullptr) input->stop();
+        }
+        midiInputs.clear();
+        activeMidiDeviceIds.clear();
+        if (!midiListeningEnabled.load(std::memory_order_acquire)) return;
+        for (const auto& device : juce::MidiInput::getAvailableDevices()) {
+            try {
+                auto input = juce::MidiInput::openDevice(device.identifier, &midiMonitor);
+                if (input == nullptr) continue;
+                input->start();
+                activeMidiDeviceIds.insert(device.identifier);
+                midiInputs.push_back(std::move(input));
+            } catch (...) {
+                // A single MIDI device that fails to open must not block the others.
+            }
+        }
+    };
 
     auto error = initialiseConfiguredAudio(manager, startupConfiguration);
     juce::String startupMessage;
@@ -602,6 +627,27 @@ int serve(
             }
         });
     }
+
+    std::atomic<bool> midiPollRunning { true };
+    std::thread midiPollThread([&] {
+        while (midiPollRunning.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (!midiPollRunning.load(std::memory_order_acquire)) break;
+            if (!midiListeningEnabled.load(std::memory_order_acquire)) continue;
+            std::set<juce::String> currentIds;
+            for (const auto& device : juce::MidiInput::getAvailableDevices())
+                currentIds.insert(device.identifier);
+            bool changed = false;
+            {
+                const std::lock_guard lock(midiInputsLock);
+                changed = currentIds != activeMidiDeviceIds;
+            }
+            if (changed) {
+                reopenAllMidiInputs();
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+            }
+        }
+    });
 
     std::thread commandThread([&] {
         std::string line;
@@ -739,41 +785,19 @@ int serve(
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (type == "openMidiInput") {
-                const auto name = command.getProperty("name", {}).toString();
-                const auto devices = juce::MidiInput::getAvailableDevices();
-                const auto device =
-                    std::find_if(devices.begin(), devices.end(),
-                                 [&name](const auto& item) { return item.name == name; });
-                if (device == devices.end()) {
-                    writeJson(
-                        makeError("midi", "The requested MIDI input is no longer available."));
-                    continue;
-                }
-                if (midiInput != nullptr) {
-                    midiInput->stop();
-                    midiInput.reset();
-                }
-                midiMonitor.setActive(false);
-                midiInput = juce::MidiInput::openDevice(device->identifier, &midiMonitor);
-                if (midiInput == nullptr) {
-                    writeJson(
-                        makeError("midi", "Windows could not open the requested MIDI input."));
-                    continue;
-                }
-                midiInput->start();
+            if (type == "enableMidiListening") {
+                midiListeningEnabled.store(true, std::memory_order_release);
+                reopenAllMidiInputs();
                 midiMonitor.setActive(true);
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (type == "closeMidiInput") {
+            if (type == "disableMidiListening") {
+                midiListeningEnabled.store(false, std::memory_order_release);
                 midiMonitor.setActive(false);
                 callback.stopPreview();
                 callback.allNotesOff();
-                if (midiInput != nullptr) {
-                    midiInput->stop();
-                    midiInput.reset();
-                }
+                reopenAllMidiInputs();
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
@@ -1056,16 +1080,17 @@ int serve(
     juce::String ignoredMidiError;
     midiMonitor.finishRecording(ignoredMidiError);
     midiMonitor.setActive(false);
-    if (midiInput != nullptr) {
-        midiInput->stop();
-        midiInput.reset();
-    }
+    midiListeningEnabled.store(false, std::memory_order_release);
+    reopenAllMidiInputs();
     manager.removeAudioCallback(&callback);
     manager.removeChangeListener(&deviceWatcher);
     manager.closeAudioDevice();
     watchdogRunning.store(false, std::memory_order_release);
     if (watchdog.joinable())
     watchdog.join();
+    midiPollRunning.store(false, std::memory_order_release);
+    if (midiPollThread.joinable())
+        midiPollThread.join();
     return 0;
 }
 

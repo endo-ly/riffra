@@ -289,21 +289,29 @@ fn recover_audio_device(app: AppHandle, state: State<'_, AppState>) -> Result<Au
 }
 
 #[tauri::command]
-fn open_midi_input(name: String, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+fn enable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     if state.safe_mode {
         return Err(
             "Safe Mode blocks MIDI input; offline MIDI and audio export remain available.".into(),
         );
     }
-    if name.trim().is_empty() {
-        return Err("MIDI input name must not be empty.".into());
-    }
-    state.audio.open_midi_input(name.trim())
+    state.audio.enable_midi_listening()
 }
 
 #[tauri::command]
-fn close_midi_input(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.close_midi_input()
+fn disable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    state.audio.disable_midi_listening()
+}
+
+#[tauri::command]
+fn send_midi_to_plugin(bytes: Vec<u8>, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+    if state.safe_mode {
+        return Err(
+            "Safe Mode blocks outgoing MIDI; offline MIDI and audio export remain available."
+                .into(),
+        );
+    }
+    state.audio.send_midi(&bytes)
 }
 
 #[tauri::command]
@@ -399,8 +407,9 @@ pub fn run() {
             preview_master_gain_db,
             set_emergency_mute,
             recover_audio_device,
-            open_midi_input,
-            close_midi_input,
+            enable_midi_listening,
+            disable_midi_listening,
+            send_midi_to_plugin,
             stop_preview,
             stop_preview_for_key,
             // Rack Application Operations.

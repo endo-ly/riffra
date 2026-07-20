@@ -994,15 +994,50 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  openMidiInput = async (name: string): Promise<AudioStatus> => {
-    this.calls.push('openMidiInput');
-    this.audio = { ...this.audio, midiInputActive: true, message: `MIDI input ${name} opened.` };
+  enableMidiListening = async (): Promise<AudioStatus> => {
+    this.calls.push('enableMidiListening');
+    this.audio = {
+      ...this.audio,
+      midiInputActive: true,
+      message: 'MIDI listening enabled; all detected inputs are routed to the rack.',
+    };
     return this.audio;
   };
 
-  closeMidiInput = async (): Promise<AudioStatus> => {
-    this.calls.push('closeMidiInput');
-    this.audio = { ...this.audio, midiInputActive: false, message: 'MIDI input closed.' };
+  disableMidiListening = async (): Promise<AudioStatus> => {
+    this.calls.push('disableMidiListening');
+    this.audio = {
+      ...this.audio,
+      midiInputActive: false,
+      message: 'MIDI listening disabled; no external MIDI device is being consumed.',
+    };
+    return this.audio;
+  };
+
+  sendMidiToPlugin = async (bytes: number[]): Promise<AudioStatus> => {
+    this.calls.push('sendMidiToPlugin');
+    if (bytes.length === 0 || bytes.length > 3) {
+      throw new Error('MIDI bytes must contain between 1 and 3 bytes.');
+    }
+    const status = bytes[0] & 0xf0;
+    const noteOn = status === 0x90;
+    const noteOff = status === 0x80;
+    if (noteOn && bytes.length >= 2) {
+      this.audio = {
+        ...this.audio,
+        lastMidiNote: bytes[1],
+        midiMessages: this.audio.midiMessages + 1,
+        message: `Note on ${bytes[1]} enqueued.`,
+      };
+    } else if (noteOff && bytes.length >= 2) {
+      this.audio = {
+        ...this.audio,
+        midiMessages: this.audio.midiMessages + 1,
+        message: `Note off ${bytes[1]} enqueued.`,
+      };
+    } else {
+      this.audio = { ...this.audio, message: 'MIDI message enqueued.' };
+    }
     return this.audio;
   };
 

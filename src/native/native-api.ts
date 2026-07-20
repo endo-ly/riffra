@@ -152,8 +152,20 @@ export interface NativeApi {
     sampleRate?: number | null,
     bufferSize?: number | null,
   ): Promise<AudioStatus>;
-  openMidiInput(name: string): Promise<AudioStatus>;
-  closeMidiInput(): Promise<AudioStatus>;
+  /**
+   * Enables the audio runtime to listen on every detected MIDI input device
+   * at once. Hot-plug is handled inside the runtime so newly connected devices
+   * start routing without further calls. Safe Mode rejects this call.
+   */
+  enableMidiListening(): Promise<AudioStatus>;
+  /** Stops all MIDI input devices and silences any held notes. */
+  disableMidiListening(): Promise<AudioStatus>;
+  /**
+   * Enqueues a raw MIDI message (1-3 bytes: status, data1, data2) for the
+   * currently loaded rack plugin. Intended for computer-keyboard performance
+   * and headless rendering when no MIDI device is connected.
+   */
+  sendMidiToPlugin(bytes: number[]): Promise<AudioStatus>;
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
