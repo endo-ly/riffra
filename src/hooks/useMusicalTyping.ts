@@ -5,6 +5,8 @@ import {
   MUSICAL_TYPING_KEYS,
   MUSICAL_TYPING_MAX_OCTAVE,
   MUSICAL_TYPING_MIN_OCTAVE,
+  MUSICAL_TYPING_OCTAVE_DOWN_KEY,
+  MUSICAL_TYPING_OCTAVE_UP_KEY,
   baseNoteForOctave,
   encodeNoteOff,
   encodeNoteOn,
@@ -19,6 +21,8 @@ interface UseMusicalTypingOptions {
   velocity?: number;
   /** Receives encoded MIDI bytes; usually `api.sendMidiToPlugin`. */
   sendMidi: (bytes: number[]) => void | Promise<void>;
+  /** Called when the user presses Z or X to shift the octave down or up. */
+  onOctaveChange?: (delta: number) => void;
 }
 
 const TYPING_KEY_BY_LOWER = new Map(
@@ -30,11 +34,12 @@ export function useMusicalTyping({
   octave = MUSICAL_TYPING_DEFAULT_OCTAVE,
   velocity = MUSICAL_TYPING_DEFAULT_VELOCITY,
   sendMidi,
+  onOctaveChange,
 }: UseMusicalTypingOptions) {
   const [activeNotes, setActiveNotes] = useState<ReadonlySet<number>>(() => new Set());
   const heldKeysRef = useRef<Set<string>>(new Set());
-  const paramsRef = useRef({ octave, velocity, sendMidi });
-  paramsRef.current = { octave, velocity, sendMidi };
+  const paramsRef = useRef({ octave, velocity, sendMidi, onOctaveChange });
+  paramsRef.current = { octave, velocity, sendMidi, onOctaveChange };
 
   const releaseHeldNotes = useCallback(() => {
     const { octave: oc, sendMidi: sm } = paramsRef.current;
@@ -70,6 +75,17 @@ export function useMusicalTyping({
       if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
+
+      if (key === MUSICAL_TYPING_OCTAVE_DOWN_KEY || key === MUSICAL_TYPING_OCTAVE_UP_KEY) {
+        const currentOctave = paramsRef.current.octave;
+        const delta = key === MUSICAL_TYPING_OCTAVE_DOWN_KEY ? -1 : 1;
+        const next = currentOctave + delta;
+        if (next < MUSICAL_TYPING_MIN_OCTAVE || next > MUSICAL_TYPING_MAX_OCTAVE) return;
+        event.preventDefault();
+        paramsRef.current.onOctaveChange?.(delta);
+        return;
+      }
+
       if (!TYPING_KEY_BY_LOWER.has(key) || heldKeysRef.current.has(key)) return;
       const { octave: oc, velocity: vel, sendMidi: sm } = paramsRef.current;
       const semitone = TYPING_KEY_BY_LOWER.get(key)!;

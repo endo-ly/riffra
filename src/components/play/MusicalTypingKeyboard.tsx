@@ -22,6 +22,7 @@ export function MusicalTypingKeyboard({ octave, activeNotes }: MusicalTypingKeyb
     const note = base + semitone;
     const typingKey = typingKeyForSemitone(semitone);
     const active = activeNotes.has(note);
+    const isC = semitone % 12 === 0;
     return (
       <li
         className={`musical-typing-key white${active ? ' active' : ''}`}
@@ -29,7 +30,7 @@ export function MusicalTypingKeyboard({ octave, activeNotes }: MusicalTypingKeyb
         data-note={note}
       >
         {typingKey && <span className="musical-typing-key-letter">{typingKey}</span>}
-        <span className="musical-typing-key-note">{midiNoteName(note)}</span>
+        {isC && <span className="musical-typing-key-note">{midiNoteName(note)}</span>}
       </li>
     );
   };

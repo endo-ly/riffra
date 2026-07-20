@@ -791,8 +791,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, []);
 
   useEffect(() => {
+    const pluginIsInstrument =
+      audio.plugin != null && audio.plugin.loaded && audio.plugin.inputChannels === 0;
     const keyboardKeys = ['z', 's', 'x', 'd', 'c', 'v', 'g', 'b', 'h', 'n', 'j', 'm'];
     const onKey = (event: KeyboardEvent) => {
+      if (pluginIsInstrument) return;
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
@@ -803,6 +806,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
+      if (pluginIsInstrument) return;
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
@@ -818,7 +822,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [previewSamplePad, session?.playState.sampleInstrument.pads]);
+  }, [previewSamplePad, session?.playState.sampleInstrument.pads, audio.plugin]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

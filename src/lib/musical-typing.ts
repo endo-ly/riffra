@@ -34,6 +34,8 @@ export const MUSICAL_TYPING_MIN_OCTAVE = 0;
 export const MUSICAL_TYPING_MAX_OCTAVE = 8;
 export const MUSICAL_TYPING_DEFAULT_OCTAVE = 4;
 export const MUSICAL_TYPING_DEFAULT_VELOCITY = 100;
+export const MUSICAL_TYPING_OCTAVE_DOWN_KEY = 'z';
+export const MUSICAL_TYPING_OCTAVE_UP_KEY = 'x';
 
 /** MIDI note number for C{octave}. C4 → 60, C5 → 72, etc. */
 export function baseNoteForOctave(octave: number): number {

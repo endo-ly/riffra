@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { AudioStatus } from '@/lib/domain';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
@@ -24,6 +24,8 @@ export function MidiInputPanel({
   velocity = MUSICAL_TYPING_DEFAULT_VELOCITY,
   activeNotes,
 }: MidiInputPanelProps) {
+  const [expanded, setExpanded] = useState(false);
+
   const decOctave = () => {
     if (octave > MUSICAL_TYPING_MIN_OCTAVE) onOctaveChange(octave - 1);
   };
@@ -44,15 +46,21 @@ export function MidiInputPanel({
     return parts.join(' · ');
   }, [audio.midiInputs, audio.midiInputActive]);
 
-  const hasExternalDevices = (audio.midiInputs ?? []).length > 0;
+  const rangeLow = midiNoteName(octave * 12 + 12);
+  const rangeHigh = midiNoteName(octave * 12 + 12 + 16);
 
   return (
     <section className="section-card midi-input-panel">
-      <header className="midi-input-header">
-        <div>
-          <span className="eyebrow">MIDI INPUT</span>
-          <h2>Performance source</h2>
-        </div>
+      <div className="midi-input-bar">
+        <button
+          type="button"
+          className="midi-input-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((prev) => !prev)}
+        >
+          <span className="midi-input-toggle-arrow">{expanded ? '▾' : '▸'}</span>
+          <span>Musical Typing</span>
+        </button>
         <div className="midi-input-octave" aria-label="Base octave">
           <button
             type="button"
@@ -71,31 +79,32 @@ export function MidiInputPanel({
           >
             +
           </button>
+          <kbd className="midi-input-kbd">Z</kbd>
+          <kbd className="midi-input-kbd">X</kbd>
         </div>
-      </header>
-
-      <div className="midi-input-source-row">
-        <span className="midi-input-source-label">Inputs</span>
-        <small>{sourceSummary}</small>
-        {!hasExternalDevices && (
-          <em className="midi-input-empty-hint">
-            No external MIDI device detected — computer keyboard is active.
-          </em>
-        )}
+        <span className="midi-input-sources">{sourceSummary}</span>
       </div>
-
-      <div className="midi-input-meta">
-        <span>
-          Velocity <strong>{velocity}</strong>
-        </span>
-        <span aria-label="Active notes" className="midi-input-active-notes">
-          {sortedActiveNotes.length === 0
-            ? 'No notes held'
-            : sortedActiveNotes.map((note) => midiNoteName(note)).join(' ')}
-        </span>
-      </div>
-
-      <MusicalTypingKeyboard octave={octave} activeNotes={activeNotes} />
+      {expanded && (
+        <>
+          <MusicalTypingKeyboard octave={octave} activeNotes={activeNotes} />
+          <div className="midi-input-footer">
+            <span>
+              Vel <strong>{velocity}</strong>
+            </span>
+            <span>
+              Range{' '}
+              <strong>
+                {rangeLow}–{rangeHigh}
+              </strong>
+            </span>
+            <span className="midi-input-active-notes">
+              {sortedActiveNotes.length === 0
+                ? ''
+                : sortedActiveNotes.map((note) => midiNoteName(note)).join(' ')}
+            </span>
+          </div>
+        </>
+      )}
     </section>
   );
 }

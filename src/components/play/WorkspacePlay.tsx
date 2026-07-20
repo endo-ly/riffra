@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 import type { AudioStatus, CreativeSession, PluginEntry } from '@/lib/domain';
-import { midiNoteName } from '@/lib/musical-typing';
+import {
+  MUSICAL_TYPING_MAX_OCTAVE,
+  MUSICAL_TYPING_MIN_OCTAVE,
+  midiNoteName,
+} from '@/lib/musical-typing';
 import { useMusicalTyping } from '@/hooks/useMusicalTyping';
 import { Icon, Meter } from '../shared/ui';
 import { MidiInputPanel, MIDI_INPUT_DEFAULT_OCTAVE } from './MidiInputPanel';
@@ -62,6 +66,10 @@ export function WorkspacePlay({
     enabled: pluginIsInstrument,
     octave,
     sendMidi: onSendMidi,
+    onOctaveChange: (delta) =>
+      setOctave((current) =>
+        Math.max(MUSICAL_TYPING_MIN_OCTAVE, Math.min(MUSICAL_TYPING_MAX_OCTAVE, current + delta)),
+      ),
   });
 
   const heldNoteSummary = useMemo(() => {
