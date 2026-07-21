@@ -5,9 +5,11 @@ import {
   MUSICAL_TYPING_MIN_OCTAVE,
   midiNoteName,
 } from '@/lib/musical-typing';
+import { drumPadByNote } from '@/lib/drum-map';
 import { useMusicalTyping } from '@/hooks/useMusicalTyping';
+import { useDrumPads } from '@/hooks/useDrumPads';
 import { Icon, Meter } from '../shared/ui';
-import { MidiInputPanel, MIDI_INPUT_DEFAULT_OCTAVE } from './MidiInputPanel';
+import { MidiInputPanel, MIDI_INPUT_DEFAULT_OCTAVE, type InstrumentMode } from './MidiInputPanel';
 
 interface WorkspacePlayProps {
   session: CreativeSession;
@@ -34,6 +36,7 @@ export function WorkspacePlay({
 }: WorkspacePlayProps) {
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [octave, setOctave] = useState(MIDI_INPUT_DEFAULT_OCTAVE);
+  const [instrumentMode, setInstrumentMode] = useState<InstrumentMode>('melodic');
   const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
   const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
@@ -62,8 +65,12 @@ export function WorkspacePlay({
   const pluginIsInstrument =
     pluginStatus != null && pluginStatus.loaded && pluginStatus.inputChannels === 0;
 
-  const { activeNotes } = useMusicalTyping({
-    enabled: pluginIsInstrument,
+  const {
+    activeNotes: melodicActiveNotes,
+    triggerNoteDown: melodicTriggerDown,
+    triggerNoteUp: melodicTriggerUp,
+  } = useMusicalTyping({
+    enabled: pluginIsInstrument && instrumentMode === 'melodic',
     octave,
     sendMidi: onSendMidi,
     onOctaveChange: (delta) =>
@@ -72,13 +79,30 @@ export function WorkspacePlay({
       ),
   });
 
+  const {
+    activeNotes: drumActiveNotes,
+    triggerPadDown,
+    triggerPadUp,
+  } = useDrumPads({
+    enabled: pluginIsInstrument && instrumentMode === 'drum',
+    sendMidi: onSendMidi,
+  });
+
+  const activeNotes = instrumentMode === 'drum' ? drumActiveNotes : melodicActiveNotes;
+
   const heldNoteSummary = useMemo(() => {
     if (activeNotes.size === 0) return pluginIsInstrument ? 'No notes held' : null;
+    if (instrumentMode === 'drum') {
+      return Array.from(activeNotes)
+        .sort((a, b) => a - b)
+        .map((note) => drumPadByNote(note)?.shortName ?? midiNoteName(note))
+        .join(' ');
+    }
     return Array.from(activeNotes)
       .sort((a, b) => a - b)
       .map((note) => midiNoteName(note))
       .join(' ');
-  }, [activeNotes, pluginIsInstrument]);
+  }, [activeNotes, pluginIsInstrument, instrumentMode]);
 
   return (
     <div className="workspace-scroll play-view">
@@ -224,6 +248,12 @@ export function WorkspacePlay({
           octave={octave}
           onOctaveChange={setOctave}
           activeNotes={activeNotes}
+          instrumentMode={instrumentMode}
+          onInstrumentModeChange={setInstrumentMode}
+          onPadDown={triggerPadDown}
+          onPadUp={triggerPadUp}
+          onNoteDown={melodicTriggerDown}
+          onNoteUp={melodicTriggerUp}
         />
       )}
     </div>

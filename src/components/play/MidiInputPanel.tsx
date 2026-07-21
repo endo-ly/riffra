@@ -8,6 +8,10 @@ import {
   midiNoteName,
 } from '@/lib/musical-typing';
 import { MusicalTypingKeyboard } from './MusicalTypingKeyboard';
+import { DrumPadGrid } from './DrumPadGrid';
+import styles from './MidiInputPanel.module.css';
+
+export type InstrumentMode = 'melodic' | 'drum';
 
 interface MidiInputPanelProps {
   audio: AudioStatus;
@@ -15,6 +19,12 @@ interface MidiInputPanelProps {
   onOctaveChange: (octave: number) => void;
   velocity?: number;
   activeNotes: ReadonlySet<number>;
+  instrumentMode: InstrumentMode;
+  onInstrumentModeChange: (mode: InstrumentMode) => void;
+  onPadDown: (note: number) => void;
+  onPadUp: (note: number) => void;
+  onNoteDown: (note: number) => void;
+  onNoteUp: (note: number) => void;
 }
 
 export function MidiInputPanel({
@@ -23,8 +33,15 @@ export function MidiInputPanel({
   onOctaveChange,
   velocity = MUSICAL_TYPING_DEFAULT_VELOCITY,
   activeNotes,
+  instrumentMode,
+  onInstrumentModeChange,
+  onPadDown,
+  onPadUp,
+  onNoteDown,
+  onNoteUp,
 }: MidiInputPanelProps) {
   const [expanded, setExpanded] = useState(false);
+  const isDrum = instrumentMode === 'drum';
 
   const decOctave = () => {
     if (octave > MUSICAL_TYPING_MIN_OCTAVE) onOctaveChange(octave - 1);
@@ -50,59 +67,99 @@ export function MidiInputPanel({
   const rangeHigh = midiNoteName(octave * 12 + 12 + 16);
 
   return (
-    <section className="section-card midi-input-panel">
-      <div className="midi-input-bar">
+    <section className={`section-card ${styles.panel}`}>
+      <div className={styles.bar}>
         <button
           type="button"
-          className="midi-input-toggle"
+          className={styles.toggle}
           aria-expanded={expanded}
           onClick={() => setExpanded((prev) => !prev)}
         >
-          <span className="midi-input-toggle-arrow">{expanded ? '▾' : '▸'}</span>
-          <span>Musical Typing</span>
+          <span className={styles.toggleArrow}>{expanded ? '▾' : '▸'}</span>
+          <span>{isDrum ? 'Pad Grid' : 'Musical Typing'}</span>
         </button>
-        <div className="midi-input-octave" aria-label="Base octave">
+        <div className={styles.modeToggle} role="radiogroup" aria-label="Instrument mode">
           <button
             type="button"
-            onClick={decOctave}
-            disabled={octave <= MUSICAL_TYPING_MIN_OCTAVE}
-            aria-label="Octave down"
+            role="radio"
+            aria-checked={!isDrum}
+            className={!isDrum ? styles.active : undefined}
+            onClick={() => onInstrumentModeChange('melodic')}
           >
-            −
+            Melodic
           </button>
-          <strong>{midiNoteName(octave * 12 + 12)}</strong>
           <button
             type="button"
-            onClick={incOctave}
-            disabled={octave >= MUSICAL_TYPING_MAX_OCTAVE}
-            aria-label="Octave up"
+            role="radio"
+            aria-checked={isDrum}
+            className={isDrum ? styles.active : undefined}
+            onClick={() => onInstrumentModeChange('drum')}
           >
-            +
+            Drum
           </button>
-          <kbd className="midi-input-kbd">Z</kbd>
-          <kbd className="midi-input-kbd">X</kbd>
         </div>
-        <span className="midi-input-sources">{sourceSummary}</span>
+        {!isDrum && (
+          <div className={styles.octave} aria-label="Base octave">
+            <button
+              type="button"
+              onClick={decOctave}
+              disabled={octave <= MUSICAL_TYPING_MIN_OCTAVE}
+              aria-label="Octave down"
+            >
+              −
+            </button>
+            <strong>{midiNoteName(octave * 12 + 12)}</strong>
+            <button
+              type="button"
+              onClick={incOctave}
+              disabled={octave >= MUSICAL_TYPING_MAX_OCTAVE}
+              aria-label="Octave up"
+            >
+              +
+            </button>
+            <kbd className={styles.kbd}>Z</kbd>
+            <kbd className={styles.kbd}>X</kbd>
+          </div>
+        )}
+        <span className={styles.sources}>{sourceSummary}</span>
       </div>
       {expanded && (
         <>
-          <MusicalTypingKeyboard octave={octave} activeNotes={activeNotes} />
-          <div className="midi-input-footer">
+          {isDrum ? (
+            <DrumPadGrid activeNotes={activeNotes} onPadDown={onPadDown} onPadUp={onPadUp} />
+          ) : (
+            <MusicalTypingKeyboard
+              octave={octave}
+              activeNotes={activeNotes}
+              onNoteDown={onNoteDown}
+              onNoteUp={onNoteUp}
+            />
+          )}
+          <div className={styles.footer}>
             <span>
               Vel <strong>{velocity}</strong>
             </span>
-            <span>
-              Range{' '}
-              <strong>
-                {rangeLow}–{rangeHigh}
-              </strong>
-            </span>
-            <span className="midi-input-active-notes">
+            {!isDrum && (
+              <span>
+                Range{' '}
+                <strong>
+                  {rangeLow}–{rangeHigh}
+                </strong>
+              </span>
+            )}
+            <span className={styles.activeNotes}>
               {sortedActiveNotes.length === 0
                 ? ''
-                : sortedActiveNotes.map((note) => midiNoteName(note)).join(' ')}
+                : sortedActiveNotes.length <= 8
+                  ? sortedActiveNotes.map((note) => midiNoteName(note)).join(' ')
+                  : `${sortedActiveNotes.length} notes`}
             </span>
           </div>
+          {isDrum && (
+            <p className={styles.gmNotice}>
+              GM standard map — select a GM kit in your drum plugin for correct sounds.
+            </p>
+          )}
         </>
       )}
     </section>

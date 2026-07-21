@@ -38,8 +38,38 @@ export function useMusicalTyping({
 }: UseMusicalTypingOptions) {
   const [activeNotes, setActiveNotes] = useState<ReadonlySet<number>>(() => new Set());
   const heldKeysRef = useRef<Set<string>>(new Set());
+  const heldNoteCountsRef = useRef<Map<number, number>>(new Map());
   const paramsRef = useRef({ octave, velocity, sendMidi, onOctaveChange });
   paramsRef.current = { octave, velocity, sendMidi, onOctaveChange };
+
+  const noteOn = useCallback((note: number) => {
+    const { velocity: vel, sendMidi: sm } = paramsRef.current;
+    const count = (heldNoteCountsRef.current.get(note) ?? 0) + 1;
+    heldNoteCountsRef.current.set(note, count);
+    if (count === 1) {
+      void sm(encodeNoteOn(note, vel));
+      setActiveNotes((prev) => {
+        const next = new Set(prev);
+        next.add(note);
+        return next;
+      });
+    }
+  }, []);
+
+  const noteOff = useCallback((note: number) => {
+    const count = (heldNoteCountsRef.current.get(note) ?? 0) - 1;
+    if (count <= 0) {
+      heldNoteCountsRef.current.delete(note);
+      void paramsRef.current.sendMidi(encodeNoteOff(note));
+      setActiveNotes((prev) => {
+        const next = new Set(prev);
+        next.delete(note);
+        return next;
+      });
+    } else {
+      heldNoteCountsRef.current.set(note, count);
+    }
+  }, []);
 
   const releaseHeldNotes = useCallback(() => {
     const { octave: oc, sendMidi: sm } = paramsRef.current;
@@ -50,6 +80,7 @@ export function useMusicalTyping({
       void sm(encodeNoteOff(base + semitone));
     });
     heldKeysRef.current.clear();
+    heldNoteCountsRef.current.clear();
     setActiveNotes(new Set());
   }, []);
 
@@ -87,32 +118,22 @@ export function useMusicalTyping({
       }
 
       if (!TYPING_KEY_BY_LOWER.has(key) || heldKeysRef.current.has(key)) return;
-      const { octave: oc, velocity: vel, sendMidi: sm } = paramsRef.current;
+      const { octave: oc } = paramsRef.current;
       const semitone = TYPING_KEY_BY_LOWER.get(key)!;
       const note = baseNoteForOctave(oc) + semitone;
       event.preventDefault();
       heldKeysRef.current.add(key);
-      void sm(encodeNoteOn(note, vel));
-      setActiveNotes((prev) => {
-        const next = new Set(prev);
-        next.add(note);
-        return next;
-      });
+      noteOn(note);
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (!heldKeysRef.current.has(key)) return;
-      const { octave: oc, sendMidi: sm } = paramsRef.current;
+      const { octave: oc } = paramsRef.current;
       const semitone = TYPING_KEY_BY_LOWER.get(key);
       if (semitone === undefined) return;
       heldKeysRef.current.delete(key);
-      void sm(encodeNoteOff(baseNoteForOctave(oc) + semitone));
-      setActiveNotes((prev) => {
-        const next = new Set(prev);
-        next.delete(baseNoteForOctave(oc) + semitone);
-        return next;
-      });
+      noteOff(baseNoteForOctave(oc) + semitone);
     };
 
     const onBlur = () => releaseHeldNotes();
@@ -125,7 +146,7 @@ export function useMusicalTyping({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [enabled, releaseHeldNotes]);
+  }, [enabled, releaseHeldNotes, noteOn, noteOff]);
 
   const clampOctave = useCallback(
     (next: number) =>
@@ -133,5 +154,19 @@ export function useMusicalTyping({
     [],
   );
 
-  return { activeNotes, clampOctave, releaseHeldNotes };
+  const triggerNoteDown = useCallback(
+    (note: number) => {
+      noteOn(note);
+    },
+    [noteOn],
+  );
+
+  const triggerNoteUp = useCallback(
+    (note: number) => {
+      noteOff(note);
+    },
+    [noteOff],
+  );
+
+  return { activeNotes, clampOctave, releaseHeldNotes, triggerNoteDown, triggerNoteUp };
 }

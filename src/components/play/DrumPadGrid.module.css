@@ -1,0 +1,121 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 5px;
+  margin-top: 8px;
+  padding: 10px;
+  background: linear-gradient(180deg, #06080b 0%, #0a0d11 100%);
+  border: 1px solid #1a2028;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 2px 12px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  aspect-ratio: 4 / 3;
+  max-height: 300px;
+  max-width: 400px;
+}
+.pad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 70%, #0e1217 100%);
+  color: #8a92a0;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 1px 2px rgba(0, 0, 0, 0.3);
+  transition:
+    transform 50ms ease-out,
+    box-shadow 50ms ease-out,
+    background 50ms ease-out,
+    color 50ms ease-out,
+    border-color 50ms ease-out;
+}
+.pad:hover {
+  border-color: var(--border-bright);
+  background: linear-gradient(180deg, #1f2630 0%, var(--surface-2) 70%, #12161c 100%);
+}
+.pad:active {
+  transform: translateY(1px);
+}
+.padIndex {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 8px;
+  opacity: 0.35;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+}
+.padName {
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+.padKey {
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 0.4;
+  text-transform: uppercase;
+}
+.padNote {
+  position: absolute;
+  bottom: 3px;
+  right: 5px;
+  font-size: 7px;
+  opacity: 0.25;
+  font-variant-numeric: tabular-nums;
+}
+.kick {
+  --pad-accent: #e7553f;
+}
+.snare {
+  --pad-accent: #4e8eff;
+}
+.hihat {
+  --pad-accent: #45d6b3;
+}
+.tom {
+  --pad-accent: #e7b55d;
+}
+.cymbal {
+  --pad-accent: #a47ce0;
+}
+.percussion {
+  --pad-accent: #8a92a0;
+}
+.active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--pad-accent) 40%, var(--surface-2)) 0%,
+    color-mix(in srgb, var(--pad-accent) 18%, var(--surface)) 60%,
+    color-mix(in srgb, var(--pad-accent) 8%, #0e1217) 100%
+  );
+  border-color: var(--pad-accent);
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--pad-accent) 55%, transparent),
+    inset 0 0 10px color-mix(in srgb, var(--pad-accent) 30%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--pad-accent) 50%, transparent);
+  color: #fff;
+  transform: translateY(1px);
+}
+.active .padKey,
+.active .padName {
+  opacity: 1;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--pad-accent) 60%, transparent);
+}
+.active .padIndex,
+.active .padNote {
+  opacity: 0.5;
+}

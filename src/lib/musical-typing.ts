@@ -37,6 +37,9 @@ export const MUSICAL_TYPING_DEFAULT_VELOCITY = 100;
 export const MUSICAL_TYPING_OCTAVE_DOWN_KEY = 'z';
 export const MUSICAL_TYPING_OCTAVE_UP_KEY = 'x';
 
+/** General MIDI percussion channel (0-indexed: 9 = MIDI channel 10). */
+export const GM_DRUM_CHANNEL = 9;
+
 /** MIDI note number for C{octave}. C4 → 60, C5 → 72, etc. */
 export function baseNoteForOctave(octave: number): number {
   return (octave + 1) * 12;
