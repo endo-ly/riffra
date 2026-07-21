@@ -8,17 +8,13 @@ import type {
   BootstrapState,
   AssetId,
   AssetPreviewOptions,
-  AudioClipPatch,
   LibraryAsset,
   MissingDependency,
-  MidiExportResult,
   MidiProbe,
   ProjectExport,
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  RenderJobStatus,
-  RenderStemsJobStatus,
   ScanJobStatus,
   ScanReport,
   SeparationJobStatus,
@@ -50,8 +46,6 @@ export interface NativeApi {
   scanVst3Folder(path?: string): Promise<ScanReport>;
   startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus>;
   startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus>;
-  startRenderJob(options: RenderOptions): Promise<RenderJobStatus>;
-  startRenderStemsJob(options: RenderOptions): Promise<RenderStemsJobStatus>;
   startScanJob(path?: string): Promise<ScanJobStatus>;
   getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
@@ -76,8 +70,6 @@ export interface NativeApi {
 
   listSeparations(): Promise<SeparationResult[]>;
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
-  renderTimelineStems(options: RenderOptions): Promise<RenderResult[]>;
-  exportMidi(): Promise<MidiExportResult | null>;
 
   /**
    * Loads a plugin into the rack as a single production operation: applies it to
@@ -199,39 +191,7 @@ export interface NativeApi {
     aiPermission?: string;
     aiContext?: string[];
   }): Promise<CreativeSession>;
-  addTrack(name: string): Promise<CreativeSession>;
-  updateTrack(
-    trackId: string,
-    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
-  ): Promise<CreativeSession>;
-  importMidiClip(assetId: AssetId, name: string): Promise<CreativeSession>;
-  updateMidiNote(
-    clipId: string,
-    noteId: string,
-    patch: {
-      note?: number;
-      startMs?: number;
-      durationMs?: number;
-      velocity?: number;
-      channel?: number;
-    },
-  ): Promise<CreativeSession>;
-  removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
-  removeMidiClip(clipId: string): Promise<CreativeSession>;
   applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
-
-  /**
-   * Commits a partial update to an existing audio clip through the Rust
-   * Arrangement Domain. The Domain applies the canonical clamp and validation
-   * rules and returns the updated session.
-   */
-  updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
-  moveAudioClipToTrack(clipId: string, trackId: string): Promise<CreativeSession | null>;
-  setAudioClipMuted(clipId: string, muted: boolean): Promise<CreativeSession | null>;
-  setAudioClipLoop(clipId: string, loopEnabled: boolean): Promise<CreativeSession | null>;
-  duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
-  splitAudioClip(clipId: string, atOffsetMs?: number): Promise<CreativeSession | null>;
-  removeAudioClip(clipId: string): Promise<CreativeSession | null>;
 
   saveRackDefinition(name: string, path: string): Promise<AssetId | null>;
   /**

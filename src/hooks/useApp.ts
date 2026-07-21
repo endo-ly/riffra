@@ -14,7 +14,6 @@ import type {
   MidiProbe,
   PluginEntry,
   RecordingAsset,
-  RenderOptions,
   RenderResult,
   SeparationResult,
   Workspace,
@@ -38,8 +37,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     bootstrap,
     startAnalysisJob,
     startSeparationJob,
-    startRenderJob,
-    startRenderStemsJob,
     startScanJob,
     getBackgroundJob,
     cancelBackgroundJob,
@@ -90,10 +87,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     null,
   );
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-  const [stemResults, setStemResults] = useState<RenderResult[]>([]);
   const [renderPreviewing, setRenderPreviewing] = useState(false);
   const [transportPlaying, setTransportPlaying] = useState(false);
-  const [renderMessage, setRenderMessage] = useState('Timeline render has not been requested.');
   const [previewPadId, setPreviewPadId] = useState<string | null>(null);
   const [midi, setMidi] = useState<MidiProbe>({
     inputs: [],
@@ -513,65 +508,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     [addAudioClipToArrangement, runSessionOp, session, setSession],
   );
 
-  const runTimelineRender = useCallback(
-    async (options: RenderOptions) => {
-      setRenderResult(null);
-      setStemResults([]);
-      setRenderPreviewing(false);
-      setRenderMessage('Rendering a new stereo WAV…');
-      await runBackgroundJob(
-        () => startRenderJob(options),
-        (result) => {
-          setRenderResult(result);
-          setRenderMessage(result.message);
-        },
-        (message) => setRenderMessage(`Render failed: ${message}`),
-      );
-    },
-    [runBackgroundJob, startRenderJob],
-  );
-
-  const runTimelineStemRender = useCallback(
-    async (options: RenderOptions) => {
-      setRenderResult(null);
-      setStemResults([]);
-      setRenderPreviewing(false);
-      setRenderMessage('Rendering independent track stems…');
-      await runBackgroundJob(
-        () => startRenderStemsJob(options),
-        (results) => {
-          if (!results.length) {
-            setRenderMessage(
-              'Stem render returned no completed result; source clips remain unchanged.',
-            );
-            return;
-          }
-          setStemResults(results);
-          setRenderMessage(`${results.length} track stems rendered without changing source clips.`);
-        },
-        (message) => setRenderMessage(`Stem render failed: ${message}`),
-      );
-    },
-    [runBackgroundJob, startRenderStemsJob],
-  );
-
-  const previewTimelineRender = useCallback(async () => {
-    if (!renderResult) return;
-    setAudio(
-      await previewAssetApi(renderResult.assetId, {
-        looped: session?.settings.loopEnabled ?? false,
-      }),
-    );
-    setRenderPreviewing(true);
-    setTransportPlaying(true);
-  }, [previewAssetApi, renderResult, session?.settings.loopEnabled]);
-
-  const stopTimelinePreview = useCallback(async () => {
-    setAudio(await stopSamplePreview());
-    setRenderPreviewing(false);
-    setTransportPlaying(false);
-  }, []);
-
   const playTransport = useCallback(async () => {
     if (!session) return;
     let result = renderResult;
@@ -633,24 +569,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       current.filter((candidate) => !(candidate.kind === item.kind && candidate.id === item.id)),
     );
   }, []);
-
-  const placeRecording = useCallback(
-    async (recording: RecordingAsset) => {
-      if (!session) return;
-      const assetId = recording.processedAssetId ?? recording.rawAssetId;
-      if (!assetId) return;
-      const durationMs = Math.max(
-        1,
-        Math.round((recording.samplesWritten / (recording.sampleRate ?? 1)) * 1_000),
-      );
-      const next = await runSessionOp(
-        () => addAudioClipToArrangement(assetId, recording.name, durationMs),
-        'Place recording',
-      );
-      if (next) setSession(next);
-    },
-    [addAudioClipToArrangement, runSessionOp, session, setSession],
-  );
 
   const createSamplePad = useCallback(
     async (recording: RecordingAsset) => {
@@ -893,8 +811,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setSeparationPreviewingAssetId,
     renderResult,
     setRenderResult,
-    stemResults,
-    setStemResults,
     renderPreviewing,
     setRenderPreviewing,
     transportPlaying,
@@ -903,8 +819,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setRecordCountdown,
     recordingCommandPending,
     setRecordingCommandPending,
-    renderMessage,
-    setRenderMessage,
     previewPadId,
     setPreviewPadId,
     exportMessage,
@@ -972,16 +886,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     previewSeparation,
     stopSeparationPreview,
     addSeparationToTimeline,
-    runSessionOp,
-    runTimelineRender,
-    runTimelineStemRender,
-    previewTimelineRender,
-    stopTimelinePreview,
     playTransport,
     stopTransport,
     previewSamplePad,
     stopPreview,
-    placeRecording,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,

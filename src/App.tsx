@@ -11,15 +11,11 @@ import {
   AudioDevices,
   WorkspacePlay,
   WorkspaceAnalyze,
-  WorkspaceArrange,
   WorkspaceSample,
   MidiDevices,
   MidiMonitor,
   SamplePadEditor,
   SamplePreviewControls,
-  TimelineClipInspector,
-  TimelineRenderControls,
-  MidiClipEditor,
   ReferenceSuggestion,
   WorkspaceSeparate,
   GlobalBar,
@@ -61,10 +57,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     separationBusy,
     separationMessage,
     separationPreviewingAssetId,
-    renderResult,
-    stemResults,
-    renderMessage,
-    renderPreviewing,
     previewPadId,
     transportPlaying,
     recordingCommandPending,
@@ -115,11 +107,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     sendMidi,
     captureSnapshot,
     recallSnapshot,
-    placeRecording,
-    runTimelineRender,
-    runTimelineStemRender,
-    previewTimelineRender,
-    stopTimelinePreview,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
@@ -138,7 +125,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     playTransport,
     stopTransport,
     toggleRecording,
-    runSessionOp,
     api: nativeApi,
   } = useApp(api);
   if (!boot || !session)
@@ -284,38 +270,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           />
         )}
         {session.workspace === 'arrange' && (
-          <div className="workspace-scroll arrange-workspace-stack">
-            <WorkspaceArrange
-              session={session}
-              setSession={setSession}
-              recordings={usableRecordings}
-              onPlaceRecording={placeRecording}
-              api={nativeApi}
-            />
-            <TimelineClipInspector
-              session={session}
-              setSession={setSession}
-              api={nativeApi}
-              runSessionOp={runSessionOp}
-            />
-            <MidiClipEditor
-              session={session}
-              setSession={setSession}
-              recordings={usableRecordings}
-              api={nativeApi}
-            />
-            <TimelineRenderControls
-              session={session}
-              result={renderResult}
-              stems={stemResults}
-              message={renderMessage}
-              onRender={(options) => void runTimelineRender(options)}
-              onRenderStems={(options) => void runTimelineStemRender(options)}
-              onPreview={() => void previewTimelineRender()}
-              onStop={() => void stopTimelinePreview()}
-              previewing={renderPreviewing}
-            />
-          </div>
+          <div className="workspace-scroll arrange-workspace-stack" />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
           <>

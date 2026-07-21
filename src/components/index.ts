@@ -20,8 +20,3 @@ export { SamplePreviewControls } from './design/SamplePreviewControls';
 export { WorkspaceAnalyze } from './design/WorkspaceAnalyze';
 export { ReferenceSuggestion } from './design/ReferenceSuggestion';
 export { WorkspaceSeparate } from './design/WorkspaceSeparate';
-
-export { WorkspaceArrange } from './arrange/WorkspaceArrange';
-export { TimelineClipInspector } from './arrange/TimelineClipInspector';
-export { TimelineRenderControls } from './arrange/TimelineRenderControls';
-export { MidiClipEditor } from './arrange/MidiClipEditor';

@@ -7,20 +7,16 @@ import type {
   AnalysisJobStatus,
   AssetId,
   AssetPreviewOptions,
-  AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
   LibraryAsset,
   MissingDependency,
-  MidiExportResult,
   MidiProbe,
   ProjectExport,
   RecordingAsset,
   RecoveryCandidate,
   RenderOptions,
   RenderResult,
-  RenderJobStatus,
-  RenderStemsJobStatus,
   ScanJobStatus,
   ScanReport,
   SeparationJobStatus,
@@ -47,7 +43,7 @@ async function bootstrap(): Promise<BootstrapState> {
       safeMode: false,
       nativeAvailable: false,
       recoveryCandidates: [] as RecoveryCandidate[],
-      dataRoot: 'Browser preview — native persistence is unavailable',
+      dataRoot: 'Browser preview \u2014 native persistence is unavailable',
       vst3Root: defaultVst3Root,
     },
   );
@@ -98,14 +94,6 @@ async function startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus> {
 
 async function startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus> {
   return await invoke<SeparationJobStatus>('start_separation_job', { assetId });
-}
-
-async function startRenderJob(options: RenderOptions): Promise<RenderJobStatus> {
-  return await invoke<RenderJobStatus>('start_render_job', { options });
-}
-
-async function startRenderStemsJob(options: RenderOptions): Promise<RenderStemsJobStatus> {
-  return await invoke<RenderStemsJobStatus>('start_render_stems_job', { options });
 }
 
 async function startScanJob(path?: string): Promise<ScanJobStatus> {
@@ -206,14 +194,6 @@ async function listSeparations(): Promise<SeparationResult[]> {
 
 async function renderTimeline(options: RenderOptions): Promise<RenderResult | null> {
   return invokeOrFallback<RenderResult | null>('render_timeline', { options }, null);
-}
-
-async function renderTimelineStems(options: RenderOptions): Promise<RenderResult[]> {
-  return invokeOrFallback<RenderResult[]>('render_timeline_stems', { options }, []);
-}
-
-async function exportMidi(): Promise<MidiExportResult | null> {
-  return invokeOrFallback<MidiExportResult | null>('export_midi', {}, null);
 }
 
 function nativeErrorText(error: unknown): string {
@@ -468,58 +448,6 @@ async function addAudioClipToArrangement(
   );
 }
 
-async function updateAudioClip(
-  clipId: string,
-  patch: AudioClipPatch,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
-}
-
-async function moveAudioClipToTrack(
-  clipId: string,
-  trackId: string,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'move_audio_clip_to_track',
-    { clipId, trackId },
-    null,
-  );
-}
-
-async function setAudioClipMuted(clipId: string, muted: boolean): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('set_audio_clip_muted', { clipId, muted }, null);
-}
-
-async function setAudioClipLoop(
-  clipId: string,
-  loopEnabled: boolean,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'set_audio_clip_loop',
-    { clipId, loopEnabled },
-    null,
-  );
-}
-
-async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('duplicate_audio_clip', { clipId }, null);
-}
-
-async function splitAudioClip(
-  clipId: string,
-  atOffsetMs?: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'split_audio_clip',
-    { clipId, atOffsetMs: atOffsetMs ?? null },
-    null,
-  );
-}
-
-async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('remove_audio_clip', { clipId }, null);
-}
-
 async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
   return invokeOrFallback<AssetId | null>('save_rack_definition', { name, path }, null);
 }
@@ -554,43 +482,6 @@ async function updateSessionSettings(patch: {
   return await invoke<CreativeSession>('update_session_settings', { patch });
 }
 
-async function addTrack(name: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track', { name });
-}
-
-async function updateTrack(
-  trackId: string,
-  patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_track', { trackId, patch });
-}
-
-async function importMidiClip(assetId: AssetId, name: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('import_midi_clip', { assetId, name });
-}
-
-async function updateMidiNote(
-  clipId: string,
-  noteId: string,
-  patch: {
-    note?: number;
-    startMs?: number;
-    durationMs?: number;
-    velocity?: number;
-    channel?: number;
-  },
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
-}
-
-async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
-}
-
-async function removeMidiClip(clipId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_midi_clip', { clipId });
-}
-
 async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession> {
   return await invoke<CreativeSession>('apply_ai_suggestion', { clipId, proposedGainDb });
 }
@@ -611,8 +502,6 @@ function createNativeApi(): NativeApi {
     scanVst3Folder,
     startAnalysisJob,
     startSeparationJob,
-    startRenderJob,
-    startRenderStemsJob,
     startScanJob,
     getBackgroundJob,
     cancelBackgroundJob,
@@ -625,8 +514,6 @@ function createNativeApi(): NativeApi {
     probeAudioDevices,
     listSeparations,
     renderTimeline,
-    renderTimelineStems,
-    exportMidi,
     loadPluginIntoRack,
     clearPluginFromRack,
     openPluginEditor,
@@ -661,20 +548,7 @@ function createNativeApi(): NativeApi {
     openAssetInDesign,
     switchWorkspace,
     updateSessionSettings,
-    addTrack,
-    updateTrack,
-    importMidiClip,
-    updateMidiNote,
-    removeMidiNote,
-    removeMidiClip,
     applyAiSuggestion,
-    updateAudioClip,
-    moveAudioClipToTrack,
-    setAudioClipMuted,
-    setAudioClipLoop,
-    duplicateAudioClip,
-    splitAudioClip,
-    removeAudioClip,
     saveRackDefinition,
     listRackDefinitions,
     loadRackDefinitionAsset,
