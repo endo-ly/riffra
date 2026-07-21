@@ -69,6 +69,18 @@ private:
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
+    /// Shared epilogue for the silenced paths (emergency-mute and feedback
+    /// detection). Clears the output bus, holds the input peak, zeroes the
+    /// output peak, and writes the recording — all in one place so the two
+    /// call sites cannot drift apart.
+    void silenceAndCommit(
+        float* const* outputChannelData,
+        int numOutputChannels,
+        int numSamples,
+        const float* const* inputChannelData,
+        int numInputChannels,
+        float rawInputPeak) noexcept;
+
     /// Sine lookup table size. Power-of-two keeps the index wrap cheap; the
     /// stored table has one extra element duplicating index 0 so linear
     /// interpolation can read `lut[i0 + 1]` without a separate wrap branch.

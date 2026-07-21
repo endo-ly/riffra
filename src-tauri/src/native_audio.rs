@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_shell::{
     ShellExt,
     process::{CommandChild, CommandEvent},
@@ -224,7 +224,7 @@ impl AudioSupervisor {
         let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
 
         let supervisor = Self {
-            status,
+            status: Arc::clone(&status),
             responses,
             next_request_id: AtomicU64::new(1),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
@@ -246,6 +246,7 @@ impl AudioSupervisor {
                 ),
             ),
         }
+
         supervisor
     }
 
@@ -297,6 +298,7 @@ impl AudioSupervisor {
         let event_responses = Arc::clone(&self.responses);
         let event_generation = Arc::clone(&self.sidecar_generation);
         let event_pending_request_id = Arc::clone(&self.pending_request_id);
+        let event_app = app.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 if event_generation.load(Ordering::Acquire) != generation {
@@ -313,6 +315,7 @@ impl AudioSupervisor {
                                 response.result.err(),
                             );
                         }
+                        emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Stderr(bytes) => {
                         let detail = String::from_utf8_lossy(&bytes);
@@ -322,6 +325,7 @@ impl AudioSupervisor {
                                 "Native audio diagnostic: {detail}. The engine is isolated and saved data is safe."
                             ),
                         );
+                        emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Error(error) => {
                         let message = format!(
@@ -329,6 +333,7 @@ impl AudioSupervisor {
                         );
                         set_faulted(&event_status, message.clone());
                         fail_pending_request(&event_responses, &event_pending_request_id, message);
+                        emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Terminated(payload) => {
                         let message = format!(
@@ -337,6 +342,7 @@ impl AudioSupervisor {
                         );
                         set_faulted(&event_status, message.clone());
                         fail_pending_request(&event_responses, &event_pending_request_id, message);
+                        emit_audio_status(&event_app, &event_status);
                     }
                     _ => {}
                 }
@@ -999,6 +1005,16 @@ fn sidecar_restart_required(error: &str) -> bool {
     error.contains("could not reach the isolated audio process")
         || error.contains("Native audio is unavailable")
         || error.contains("did not acknowledge the command")
+}
+
+/// Emits the current AudioStatus to the frontend via the Tauri event bus so
+/// React receives status changes as they happen instead of polling. The emit
+/// is best-effort: if the frontend listener is gone (app shutting down) the
+/// error is silently ignored because there is nothing to recover into.
+fn emit_audio_status<R: Runtime>(app: &AppHandle<R>, status: &Arc<Mutex<AudioStatus>>) {
+    if let Ok(current) = status.lock() {
+        let _ = app.emit("audio-status", &*current);
+    }
 }
 
 #[cfg(test)]

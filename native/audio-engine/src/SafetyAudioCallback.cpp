@@ -373,6 +373,21 @@ void SafetyAudioCallback::writeRecording(
     recordingReaders.fetch_sub(1, std::memory_order_acq_rel);
 }
 
+void SafetyAudioCallback::silenceAndCommit(
+    float* const* outputChannelData,
+    const int numOutputChannels,
+    const int numSamples,
+    const float* const* inputChannelData,
+    const int numInputChannels,
+    const float rawInputPeak) noexcept {
+    for (int channel = 0; channel < numOutputChannels; ++channel)
+        if (outputChannelData[channel] != nullptr)
+            juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+    holdPeak(inputPeak, rawInputPeak);
+    outputPeak.store(0.0f, std::memory_order_release);
+    writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+}
+
 void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const float* const* inputChannelData,
     const int numInputChannels,
@@ -396,17 +411,13 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     }
 
     if (emergencyMuted.load(std::memory_order_acquire)) {
-        for (int channel = 0; channel < numOutputChannels; ++channel)
-            if (outputChannelData[channel] != nullptr)
-                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        holdPeak(inputPeak, rawInputPeak);
-        outputPeak.store(0.0f, std::memory_order_release);
-        writeRecording(
-            logicalInputs.data(),
-            numLogicalInputs,
+        silenceAndCommit(
             outputChannelData,
             numOutputChannels,
-            numSamples);
+            numSamples,
+            logicalInputs.data(),
+            numLogicalInputs,
+            rawInputPeak);
         return;
     }
 
@@ -415,17 +426,13 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         emergencyMuted.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);
         allNotesOff();
-        for (int channel = 0; channel < numOutputChannels; ++channel)
-            if (outputChannelData[channel] != nullptr)
-                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        holdPeak(inputPeak, rawInputPeak);
-        outputPeak.store(0.0f, std::memory_order_release);
-        writeRecording(
-            logicalInputs.data(),
-            numLogicalInputs,
+        silenceAndCommit(
             outputChannelData,
             numOutputChannels,
-            numSamples);
+            numSamples,
+            logicalInputs.data(),
+            numLogicalInputs,
+            rawInputPeak);
         return;
     }
 

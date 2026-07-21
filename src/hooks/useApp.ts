@@ -71,6 +71,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     listRackDefinitions,
     loadRackDefinitionAsset,
     sendMidiToPlugin,
+    onAudioStatus,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
@@ -460,7 +461,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setAudio(await stopSamplePreview());
     setReferencePreviewingId(null);
     setReferenceSyncPreviewing(false);
-  }, []);
+  }, [api]);
 
   const runSeparation = useCallback(
     async (recording: RecordingAsset) => {
@@ -667,22 +668,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
     void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
     void enableMidi();
-    let cancelled = false;
-    let audioPoll: number | null = null;
-    const refreshAudio = async () => {
-      try {
-        const nextAudio = await getAudioStatus();
-        if (!cancelled) setAudio(nextAudio);
-      } catch (error) {
-        logNativeError('getAudioStatus')(error);
-      } finally {
-        if (!cancelled) audioPoll = window.setTimeout(refreshAudio, 200);
-      }
-    };
-    void refreshAudio();
+    void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
+    const unlistenAudio = onAudioStatus((status) => setAudio(status));
     return () => {
-      cancelled = true;
-      if (audioPoll !== null) window.clearTimeout(audioPoll);
+      unlistenAudio();
     };
   }, []);
 

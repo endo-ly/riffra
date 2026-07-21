@@ -391,6 +391,11 @@ export class FakeNativeApi implements NativeApi {
     return [...byContent.values()].filter((group) => group.length > 1);
   };
 
+  onAudioStatus = (_callback: (status: AudioStatus) => void): (() => void) => {
+    this.calls.push('onAudioStatus');
+    return () => undefined;
+  };
+
   analyzeAsset = async (assetId: AssetId): Promise<AudioAnalysis | null> => {
     this.calls.push('analyzeAsset');
     this.assertAsset(assetId);

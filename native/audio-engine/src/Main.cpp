@@ -649,6 +649,18 @@ int serve(
         }
     });
 
+    // Meter push thread: periodically writes peak/dropout meters to stdout so
+    // the Rust supervisor can emit audio-status events to the frontend without
+    // React polling. 50 ms ≈ 20 fps, smooth enough for meter UI.
+    std::atomic<bool> meterPushRunning { true };
+    std::thread meterPushThread([&] {
+        while (meterPushRunning.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (!meterPushRunning.load(std::memory_order_acquire)) break;
+            writeJson(currentMeters(callback));
+        }
+    });
+
     std::thread commandThread([&] {
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -1091,6 +1103,9 @@ int serve(
     midiPollRunning.store(false, std::memory_order_release);
     if (midiPollThread.joinable())
         midiPollThread.join();
+    meterPushRunning.store(false, std::memory_order_release);
+    if (meterPushThread.joinable())
+        meterPushThread.join();
     return 0;
 }
 

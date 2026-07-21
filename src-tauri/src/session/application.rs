@@ -45,7 +45,9 @@ pub struct SessionContext<'a> {
 }
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
-    format!("An internal state lock was poisoned: {error}")
+    let message = format!("An internal state lock was poisoned: {error}");
+    eprintln!("[riffra] {message}. Aborting to prevent corrupted state from propagating.");
+    std::process::abort();
 }
 
 fn audio_command_succeeded(status: &AudioStatus) -> bool {

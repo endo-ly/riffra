@@ -220,4 +220,13 @@ export interface NativeApi {
    * Application Operation that mutates and persists the canonical session.
    */
   disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
+
+  /**
+   * Subscribes to the `audio-status` event pushed by the Rust audio supervisor.
+   * The callback receives the latest AudioStatus whenever the sidecar reports
+   * a status or meter change. Returns an unlisten function. In the browser
+   * preview (no native runtime) the callback is never invoked and the returned
+   * unlisten is a no-op.
+   */
+  onAudioStatus(callback: (status: AudioStatus) => void): () => void;
 }

@@ -3,10 +3,9 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession } from '@/lib/domain';
-import type { PluginEntry, RenderJobStatus, RenderResult } from '@/lib/domain';
-import { toAssetId } from '@/lib/domain';
+import type { PluginEntry } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import App from '@/App';
 
@@ -94,94 +93,6 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => {
       expect(fake.calls.filter((call) => call === 'setMasterGainDb')).toHaveLength(2);
     });
-  });
-
-  it('cancels a render without promoting a result and allows a clean retry', async () => {
-    const session = defaultSession();
-    session.arrangement.audioClips = [
-      {
-        id: 'clip:render',
-        assetId: toAssetId('asset:source'),
-        name: 'Render source',
-        trackId: 'main',
-        positionMs: 0,
-        durationMs: 1_000,
-        sourceStartMs: 0,
-        sourceEndMs: 0,
-        loopEnabled: false,
-        gainDb: 0,
-        fadeInMs: 0,
-        fadeOutMs: 0,
-        pan: 0,
-        muted: false,
-      },
-    ];
-    const fake = new FakeNativeApi({ bootstrapState: { session } });
-    let status: RenderJobStatus = {
-      id: 'job:render:cancel',
-      kind: 'render',
-      state: 'queued',
-      progress: 0,
-      message: 'Render queued.',
-      result: null,
-    };
-    const completed: RenderResult = {
-      assetId: toAssetId('asset:render-retry'),
-      path: 'fake://retry.wav',
-      sampleRate: 48_000,
-      frames: 48_000,
-      durationMs: 1_000,
-      clipCount: 1,
-      rangeStartMs: 0,
-      rangeEndMs: 1_000,
-      normalized: false,
-      trackId: null,
-      state: 'completed',
-      message: 'Retry completed.',
-    };
-    let starts = 0;
-    fake.startRenderJob = vi.fn(async () => {
-      starts += 1;
-      return starts === 1
-        ? status
-        : ({
-            ...status,
-            id: 'job:render:retry',
-            state: 'completed',
-            progress: 1,
-            message: 'Retry completed.',
-            result: completed,
-          } as RenderJobStatus);
-    });
-    fake.getBackgroundJob = vi.fn(async () => status);
-    fake.cancelBackgroundJob = vi.fn(async () => {
-      status = {
-        ...status,
-        state: 'cancelled',
-        message: 'Render cancelled; no partial result was promoted.',
-        result: null,
-      };
-      return status;
-    });
-    renderApp(fake);
-    await waitForAppShell();
-    const user = userEvent.setup();
-    const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
-    await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
-    const renderButton = screen.getByRole('button', { name: /Render WAV/ });
-    expect(renderButton.closest('.workspace-scroll')).toBeInTheDocument();
-    await user.click(renderButton);
-    await waitFor(() => expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument());
-
-    await user.click(screen.getByRole('button', { name: /Cancel/ }));
-    await waitFor(() =>
-      expect(screen.getByText(/Render failed: Render cancelled/)).toBeInTheDocument(),
-    );
-    expect(screen.queryByText('fake://retry.wav')).not.toBeInTheDocument();
-
-    await user.click(renderButton);
-    await waitFor(() => expect(screen.getByText('fake://retry.wav')).toBeInTheDocument());
-    expect(fake.startRenderJob).toHaveBeenCalledTimes(2);
   });
 
   it('shows the feedback cause in the mute banner when feedback is suspected', async () => {

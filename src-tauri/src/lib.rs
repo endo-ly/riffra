@@ -325,7 +325,9 @@ fn stop_preview_for_key(voice_key: i32, state: State<'_, AppState>) -> Result<Au
 }
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
-    format!("An internal state lock was poisoned: {error}")
+    let message = format!("An internal state lock was poisoned: {error}");
+    eprintln!("[riffra] {message}. Aborting to prevent corrupted state from propagating.");
+    std::process::abort();
 }
 
 fn safe_mode_from_args<I, S>(args: I) -> bool

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
@@ -28,7 +29,7 @@ import type {
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
-import { invokeOrFallback } from './invoke';
+import { invokeOrFallback, isNativeRuntime } from './invoke';
 import type { NativeApi } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -558,6 +559,23 @@ function createNativeApi(): NativeApi {
     promoteRecording,
     tagRecording,
     detectDuplicateRecordings,
+    onAudioStatus: (callback: (status: AudioStatus) => void) => {
+      if (!isNativeRuntime()) {
+        return () => undefined;
+      }
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<AudioStatus>('audio-status', (event) => {
+        callback(event.payload);
+      }).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
   };
 }
 
