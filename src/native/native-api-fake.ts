@@ -32,6 +32,7 @@ import type {
   DesignTool,
   SessionAudioPair,
   Workspace,
+  TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
 import type { NativeApi } from './native-api';
@@ -393,6 +394,11 @@ export class FakeNativeApi implements NativeApi {
 
   onAudioStatus = (_callback: (status: AudioStatus) => void): (() => void) => {
     this.calls.push('onAudioStatus');
+    return () => undefined;
+  };
+
+  onTransportStatus = (_callback: (status: TransportStatus) => void): (() => void) => {
+    this.calls.push('onTransportStatus');
     return () => undefined;
   };
 
@@ -1208,16 +1214,39 @@ export class FakeNativeApi implements NativeApi {
   addAudioClipToArrangement = async (
     assetId: AssetId,
     name: string,
-    durationMs: number,
+    startTick?: number,
     trackId?: string,
   ): Promise<CreativeSession | null> => {
     this.calls.push('addAudioClipToArrangement');
     this.assertAsset(assetId);
     this.assertPersistence();
     const session = this.bootstrapState.session;
-    const selectedTrack = trackId ?? session.arrangement.tracks[0]?.id ?? 'main';
-    const positionMs = session.arrangement.audioClips.reduce(
-      (end, clip) => Math.max(end, clip.positionMs + clip.durationMs),
+    const selectedTrack = trackId ?? session.arrangement.tracks[0]?.id ?? `track:${Date.now()}`;
+    const tracks = session.arrangement.tracks.length
+      ? session.arrangement.tracks
+      : [
+          {
+            id: selectedTrack,
+            name: 'Audio 1',
+            kind: 'audio' as const,
+            gainDb: 0,
+            pan: 0,
+            muted: false,
+            solo: false,
+          },
+        ];
+    const appendTick = session.arrangement.audioClips.reduce(
+      (end, clip) =>
+        Math.max(
+          end,
+          clip.startTick +
+            Math.round(
+              ((clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
+                session.arrangement.timebase.bpm *
+                session.arrangement.timebase.ppq) /
+                60,
+            ),
+        ),
       0,
     );
     const next: CreativeSession = {
@@ -1226,6 +1255,8 @@ export class FakeNativeApi implements NativeApi {
       updatedAtMs: Date.now(),
       arrangement: {
         ...session.arrangement,
+        revision: session.arrangement.revision + 1,
+        tracks,
         audioClips: [
           ...session.arrangement.audioClips,
           {
@@ -1233,14 +1264,14 @@ export class FakeNativeApi implements NativeApi {
             name,
             trackId: selectedTrack,
             assetId,
-            positionMs,
-            durationMs,
-            sourceStartMs: 0,
-            sourceEndMs: 0,
+            startTick: startTick ?? appendTick,
+            sourceRange: { start: 0, end: 48_000 },
+            sourceSampleRate: 48_000,
+            timelineDuration: { frames: 48_000, sampleRate: 48_000 },
             gainDb: 0,
             pan: 0,
-            fadeInMs: 0,
-            fadeOutMs: 0,
+            fadeIn: { frames: 0, sampleRate: 48_000 },
+            fadeOut: { frames: 0, sampleRate: 48_000 },
             loopEnabled: false,
             muted: false,
           },
@@ -1269,7 +1300,11 @@ export class FakeNativeApi implements NativeApi {
     const updated: CreativeSession = {
       ...session,
       updatedAtMs: Date.now(),
-      arrangement: { ...session.arrangement, audioClips: next },
+      arrangement: {
+        ...session.arrangement,
+        revision: session.arrangement.revision + 1,
+        audioClips: next,
+      },
     };
     this.bootstrapState = { ...this.bootstrapState, session: updated };
     this.savedSessions.push(updated);
@@ -1289,14 +1324,14 @@ export class FakeNativeApi implements NativeApi {
       name: patch.name ?? current.name,
       trackId: patch.trackId ?? current.trackId,
       assetId: current.assetId,
-      positionMs: patch.positionMs ?? current.positionMs,
-      durationMs: patch.durationMs ?? current.durationMs,
-      sourceStartMs: patch.sourceStartMs ?? current.sourceStartMs,
-      sourceEndMs: patch.sourceEndMs ?? current.sourceEndMs,
+      startTick: patch.startTick ?? current.startTick,
+      sourceRange: patch.sourceRange ?? current.sourceRange,
+      sourceSampleRate: current.sourceSampleRate,
+      timelineDuration: patch.timelineDuration ?? current.timelineDuration,
       gainDb: patch.gainDb ?? current.gainDb,
       pan: patch.pan ?? current.pan,
-      fadeInMs: patch.fadeInMs ?? current.fadeInMs,
-      fadeOutMs: patch.fadeOutMs ?? current.fadeOutMs,
+      fadeIn: patch.fadeIn ?? current.fadeIn,
+      fadeOut: patch.fadeOut ?? current.fadeOut,
       loopEnabled: patch.loopEnabled ?? current.loopEnabled,
       muted: patch.muted ?? current.muted,
     };
@@ -1313,94 +1348,44 @@ export class FakeNativeApi implements NativeApi {
     return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, patch));
   };
 
-  moveAudioClipToTrack = async (
-    clipId: string,
-    trackId: string,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('moveAudioClipToTrack');
-    const session = this.bootstrapState.session;
-    if (!session.arrangement.tracks.some((track) => track.id === trackId)) return null;
-    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { trackId }));
-  };
-
-  setAudioClipMuted = async (clipId: string, muted: boolean): Promise<CreativeSession | null> => {
-    this.calls.push('setAudioClipMuted');
-    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { muted }));
-  };
-
-  setAudioClipLoop = async (
-    clipId: string,
-    loopEnabled: boolean,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('setAudioClipLoop');
-    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, { loopEnabled }));
-  };
-
-  duplicateAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
-    this.calls.push('duplicateAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      const index = clips.findIndex((clip) => clip.id === clipId);
-      if (index < 0) return null;
-      const original = clips[index];
-      const copy: AudioClip = {
-        ...original,
-        id: `${original.id}:copy:${Date.now()}`,
-        name: `${original.name} copy`,
-        positionMs: original.positionMs + original.durationMs,
-      };
-      const next = clips.slice();
-      next.splice(index + 1, 0, copy);
-      return next;
-    });
-  };
-
-  splitAudioClip = async (clipId: string, atOffsetMs?: number): Promise<CreativeSession | null> => {
-    this.calls.push('splitAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      const index = clips.findIndex((clip) => clip.id === clipId);
-      if (index < 0) return null;
-      const original = clips[index];
-      const offset = atOffsetMs ?? Math.floor(original.durationMs / 2);
-      if (offset <= 0 || offset >= original.durationMs) return null;
-      const loopEnabled = original.loopEnabled;
-      const firstDuration = offset;
-      const secondDuration = original.durationMs - offset;
-      const effectiveSourceEnd =
-        original.sourceEndMs > 0
-          ? original.sourceEndMs
-          : original.sourceStartMs + original.durationMs;
-      const sourceSplit = Math.min(effectiveSourceEnd, original.sourceStartMs + firstDuration);
-      const first: AudioClip = {
-        ...original,
-        durationMs: firstDuration,
-        sourceEndMs: loopEnabled ? original.sourceEndMs : sourceSplit,
-      };
-      const secondSourceEnd = loopEnabled
-        ? original.sourceEndMs
-        : original.sourceEndMs > 0 && effectiveSourceEnd > sourceSplit
-          ? original.sourceEndMs
-          : 0;
-      const second: AudioClip = {
-        ...original,
-        id: `${original.id}:split:${Date.now()}`,
-        name: `${original.name} 2`,
-        positionMs: original.positionMs + firstDuration,
-        durationMs: secondDuration,
-        sourceStartMs: loopEnabled ? original.sourceStartMs : sourceSplit,
-        sourceEndMs: secondSourceEnd,
-      };
-      const next = clips.slice();
-      next.splice(index, 1, first, second);
-      return next;
-    });
-  };
-
   removeAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
     this.calls.push('removeAudioClip');
     return this.commitArrangementEdit((clips) => {
       if (!clips.some((clip) => clip.id === clipId)) return null;
       return clips.filter((clip) => clip.id !== clipId);
     });
+  };
+
+  syncArrangementRuntime = async (): Promise<void> => {
+    this.calls.push('syncArrangementRuntime');
+  };
+
+  playTimeline = async (): Promise<void> => {
+    this.calls.push('playTimeline');
+  };
+
+  stopTimeline = async (): Promise<void> => {
+    this.calls.push('stopTimeline');
+  };
+
+  seekTimeline = async (_tick: number): Promise<void> => {
+    this.calls.push('seekTimeline');
+  };
+
+  updateTimelineLoopRange = async (
+    enabled: boolean,
+    startTick: number,
+    endTick: number,
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateTimelineLoopRange');
+    return this.commitSession((current) => ({
+      ...current,
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        loopRange: { enabled, startTick, endTick },
+      },
+    }));
   };
 
   openAssetInDesign = async (
@@ -1482,11 +1467,13 @@ export class FakeNativeApi implements NativeApi {
       updatedAtMs: Date.now(),
       arrangement: {
         ...current.arrangement,
+        revision: current.arrangement.revision + 1,
         tracks: [
           ...current.arrangement.tracks,
           {
             id: `track:${Date.now()}`,
             name: name.trim().slice(0, 80),
+            kind: 'audio',
             gainDb: 0,
             pan: 0,
             muted: false,
@@ -1510,6 +1497,7 @@ export class FakeNativeApi implements NativeApi {
       updatedAtMs: Date.now(),
       arrangement: {
         ...current.arrangement,
+        revision: current.arrangement.revision + 1,
         tracks: current.arrangement.tracks.map((track) =>
           track.id === trackId
             ? {
@@ -1524,106 +1512,6 @@ export class FakeNativeApi implements NativeApi {
               }
             : track,
         ),
-      },
-    }));
-  };
-
-  importMidiClip = async (assetId: AssetId, name: string): Promise<CreativeSession> => {
-    this.calls.push('importMidiClip');
-    this.assertAsset(assetId);
-    return this.commitSession((current) => {
-      const startMs = Math.max(
-        0,
-        ...current.arrangement.audioClips.map((clip) => clip.positionMs + clip.durationMs),
-        ...current.arrangement.midiClips.map((clip) => clip.startMs + clip.durationMs),
-      );
-      const id = `midi:${assetId}`;
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        workspace: 'arrange',
-        arrangement: {
-          ...current.arrangement,
-          midiClips: [
-            ...current.arrangement.midiClips.filter((clip) => clip.id !== id),
-            {
-              id,
-              name,
-              startMs,
-              durationMs: 500,
-              muted: false,
-              notes: [
-                {
-                  id: `${id}:note:0`,
-                  note: 60,
-                  startMs: 0,
-                  durationMs: 500,
-                  velocity: 100,
-                  channel: 1,
-                },
-              ],
-            },
-          ],
-        },
-      };
-    });
-  };
-
-  updateMidiNote = async (
-    clipId: string,
-    noteId: string,
-    patch: {
-      note?: number;
-      startMs?: number;
-      durationMs?: number;
-      velocity?: number;
-      channel?: number;
-    },
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateMidiNote');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: clip.notes.map((note) =>
-                  note.id === noteId ? { ...note, ...patch } : note,
-                ),
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  removeMidiNote = async (clipId: string, noteId: string): Promise<CreativeSession> => {
-    this.calls.push('removeMidiNote');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  removeMidiClip = async (clipId: string): Promise<CreativeSession> => {
-    this.calls.push('removeMidiClip');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        midiClips: current.arrangement.midiClips.filter((clip) => clip.id !== clipId),
       },
     }));
   };

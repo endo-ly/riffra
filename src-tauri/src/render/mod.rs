@@ -58,6 +58,19 @@ fn clip_source(data_root: &Path, clip: &AudioClip) -> Result<PathBuf, String> {
         })
 }
 
+fn tick_to_frame(tick: u64, timebase: crate::session::ProjectTimebase, sample_rate: u32) -> u64 {
+    (tick as f64 * f64::from(sample_rate) * 60.0 / (timebase.bpm * f64::from(timebase.ppq)))
+        .round()
+        .max(0.0) as u64
+}
+
+fn rescale_frames(frames: u64, source_rate: u32, target_rate: u32) -> u64 {
+    if source_rate == 0 {
+        return 0;
+    }
+    (u128::from(frames) * u128::from(target_rate) / u128::from(source_rate)) as u64
+}
+
 pub fn render_timeline_with_options(
     data_root: &Path,
     session: &CreativeSession,
@@ -125,32 +138,22 @@ pub fn render_timeline_with_options_cancel(
                 clip.name
             ));
         }
-        if let Some(expected) = sample_rate {
-            if expected != wav.sample_rate {
-                return Err(
-                    "Timeline sources must share one sample rate before offline render.".into(),
-                );
-            }
-        } else {
+        if sample_rate.is_none() {
             sample_rate = Some(wav.sample_rate);
         }
         let bytes_per_sample = usize::from(wav.bits_per_sample / 8);
         let frame_bytes = bytes_per_sample * usize::from(wav.channels);
         let source_frames = (wav.data_len / frame_bytes) as u64;
-        let start_frame = clip.position_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
-        let duration_frames = clip.duration_ms.saturating_mul(u64::from(wav.sample_rate)) / 1_000;
-        let source_in_frame = clip
-            .source_start_ms
-            .saturating_mul(u64::from(wav.sample_rate))
-            / 1_000;
-        let source_out_frame = if clip.source_end_ms == 0 {
-            source_frames
-        } else {
-            clip.source_end_ms
-                .saturating_mul(u64::from(wav.sample_rate))
-                / 1_000
-        }
-        .min(source_frames);
+        let output_rate = sample_rate.unwrap_or(wav.sample_rate);
+        let start_frame =
+            tick_to_frame(clip.start_tick.0, session.arrangement.timebase, output_rate);
+        let duration_frames = rescale_frames(
+            clip.timeline_duration.frames,
+            clip.timeline_duration.sample_rate,
+            output_rate,
+        );
+        let source_in_frame = clip.source_range.start;
+        let source_out_frame = clip.source_range.end.min(source_frames);
         let available_frames =
             source_out_frame.saturating_sub(source_in_frame.min(source_out_frame));
         let audible_frames = if clip.loop_enabled {
@@ -208,16 +211,14 @@ pub fn render_timeline_with_options_cancel(
                 )
             })?;
         let start_frame =
-            (clip.position_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
-        let requested = (clip.duration_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
-        let source_start_frame =
-            (clip.source_start_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize;
-        let source_end_frame = if clip.source_end_ms == 0 {
-            source_frames
-        } else {
-            (clip.source_end_ms.saturating_mul(u64::from(sample_rate)) / 1_000) as usize
-        }
-        .min(source_frames);
+            tick_to_frame(clip.start_tick.0, session.arrangement.timebase, sample_rate) as usize;
+        let requested = rescale_frames(
+            clip.timeline_duration.frames,
+            clip.timeline_duration.sample_rate,
+            sample_rate,
+        ) as usize;
+        let source_start_frame = clip.source_range.start as usize;
+        let source_end_frame = (clip.source_range.end as usize).min(source_frames);
         let source_range =
             source_end_frame.saturating_sub(source_start_frame.min(source_end_frame));
         if source_range == 0 {
@@ -250,11 +251,16 @@ pub fn render_timeline_with_options_cancel(
             if output_frame >= frames {
                 continue;
             }
+            let source_offset =
+                rescale_frames(frame as u64, sample_rate, clip.source_sample_rate) as usize;
             let source_frame = if clip.loop_enabled {
-                source_start_frame + frame % source_range
+                source_start_frame + source_offset % source_range
             } else {
-                source_start_frame + frame
+                source_start_frame + source_offset
             };
+            if source_frame >= source_end_frame {
+                continue;
+            }
             let source_start = source_frame * frame_bytes;
             let left = decode_sample(
                 &data[source_start..source_start + bytes_per_sample],
@@ -270,18 +276,21 @@ pub fn render_timeline_with_options_cancel(
             } else {
                 left
             };
-            let fade_in = if clip.fade_in_ms == 0 {
+            let fade_in_frames =
+                rescale_frames(clip.fade_in.frames, clip.fade_in.sample_rate, sample_rate) as usize;
+            let fade_out_frames =
+                rescale_frames(clip.fade_out.frames, clip.fade_out.sample_rate, sample_rate)
+                    as usize;
+            let fade_in = if fade_in_frames == 0 {
                 1.0
             } else {
-                ((frame as f64 * 1_000.0 / f64::from(sample_rate)) / clip.fade_in_ms as f64)
-                    .clamp(0.0, 1.0) as f32
+                (frame as f64 / fade_in_frames as f64).clamp(0.0, 1.0) as f32
             };
-            let fade_out = if clip.fade_out_ms == 0 {
+            let fade_out = if fade_out_frames == 0 {
                 1.0
             } else {
-                let remaining_ms = (render_frames.saturating_sub(frame + 1) as f64 * 1_000.0)
-                    / f64::from(sample_rate);
-                (remaining_ms / clip.fade_out_ms as f64).clamp(0.0, 1.0) as f32
+                (render_frames.saturating_sub(frame + 1) as f64 / fade_out_frames as f64)
+                    .clamp(0.0, 1.0) as f32
             };
             let envelope = fade_in.min(fade_out);
             let left_pan = (1.0 - pan).clamp(0.0, 1.0);
@@ -366,64 +375,6 @@ pub fn render_timeline_with_options_cancel(
     Ok(result)
 }
 
-pub fn render_stems_with_options(
-    data_root: &Path,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-) -> Result<Vec<RenderResult>, String> {
-    render_stems_with_options_cancel(data_root, session, created_at_ms, options, None)
-}
-
-pub fn render_stems_with_options_cancel(
-    data_root: &Path,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-    cancelled: Option<&AtomicBool>,
-) -> Result<Vec<RenderResult>, String> {
-    let mut stem_session = session.clone();
-    for track in &mut stem_session.arrangement.tracks {
-        track.muted = false;
-        track.solo = false;
-    }
-    let track_ids = stem_session
-        .arrangement
-        .tracks
-        .iter()
-        .filter(|track| {
-            stem_session
-                .arrangement
-                .audio_clips
-                .iter()
-                .any(|clip| clip.track_id == track.id && !clip.muted)
-        })
-        .map(|track| track.id.clone())
-        .collect::<Vec<_>>();
-    if track_ids.is_empty() {
-        return Err("Timeline has no audible tracks to render as stems.".into());
-    }
-    let mut results = Vec::with_capacity(track_ids.len());
-    for (index, track_id) in track_ids.into_iter().enumerate() {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return Err("Stem render cancelled; no partial result was promoted.".into());
-        }
-        let mut track_options = options.clone();
-        track_options.track_id = Some(track_id.clone());
-        let created = created_at_ms.saturating_add(index as u64);
-        let result = render_timeline_with_options_cancel(
-            data_root,
-            &stem_session,
-            created,
-            track_options,
-            cancelled,
-        )
-        .map_err(|error| format!("Track stem '{track_id}' failed: {error}"))?;
-        results.push(result);
-    }
-    Ok(results)
-}
-
 fn apply_master_gain(samples: &mut [f32], gain_db: f64) {
     let gain = 10.0_f32.powf((gain_db as f32) / 20.0);
     for sample in samples {
@@ -501,22 +452,24 @@ mod tests {
     }
 
     fn clip(id: &str, track_id: &str, asset_id: AssetId) -> AudioClip {
-        AudioClip {
-            id: id.into(),
-            track_id: track_id.into(),
+        AudioClip::full_source(
+            id.into(),
+            id.into(),
+            track_id.into(),
             asset_id,
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: id.into(),
-        }
+            crate::session::TimelineTick(0),
+            44_100,
+            4_410,
+        )
+    }
+
+    fn session_with_main_track() -> CreativeSession {
+        let mut session = CreativeSession::new(now_ms());
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
+        session
     }
 
     #[test]
@@ -524,13 +477,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!("riffra-render-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let asset_id = register_source(&root, "source.wav");
-        let mut session = CreativeSession::new(now_ms());
+        let mut session = session_with_main_track();
         session
             .arrangement
             .audio_clips
             .push(clip("clip:test", "main", asset_id));
-        session.arrangement.audio_clips[0].position_ms = 100;
-        session.arrangement.audio_clips[0].duration_ms = 200;
+        session.arrangement.audio_clips[0].start_tick = crate::session::TimelineTick(192);
+        session.arrangement.audio_clips[0].timeline_duration.frames = 8_820;
         session.arrangement.audio_clips[0].gain_db = -6.0;
         let result =
             render_timeline_with_options(&root, &session, 42, RenderOptions::default()).unwrap();
@@ -546,7 +499,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("riffra-render-cancel-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let asset_id = register_source(&root, "source.wav");
-        let mut session = CreativeSession::new(now_ms());
+        let mut session = session_with_main_track();
         session
             .arrangement
             .audio_clips
@@ -582,10 +535,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("riffra-render-loop-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let asset_id = register_source(&root, "source.wav");
-        let mut session = CreativeSession::new(now_ms());
+        let mut session = session_with_main_track();
         let mut looped = clip("clip:loop", "main", asset_id);
-        looped.duration_ms = 200;
-        looped.source_end_ms = 50;
+        looped.timeline_duration.frames = 8_820;
+        looped.source_range.end = 2_205;
         looped.loop_enabled = true;
         session.arrangement.audio_clips.push(looped);
         let result =
@@ -599,9 +552,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("riffra-render-range-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let asset_id = register_source(&root, "source.wav");
-        let mut session = CreativeSession::new(now_ms());
+        let mut session = session_with_main_track();
         let mut ranged = clip("clip:range", "main", asset_id);
-        ranged.duration_ms = 200;
+        ranged.timeline_duration.frames = 8_820;
         session.arrangement.audio_clips.push(ranged);
         let result = render_timeline_with_options(
             &root,
@@ -618,41 +571,6 @@ mod tests {
         assert_eq!(result.frames, 2_205);
         assert_eq!(result.duration_ms, 50);
         assert!(result.normalized);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn renders_one_stem_for_each_audible_track() {
-        let root = std::env::temp_dir().join(format!("riffra-render-stems-{}", now_ms()));
-        fs::create_dir_all(&root).unwrap();
-        let asset_id = register_source(&root, "source.wav");
-        let mut session = CreativeSession::new(now_ms());
-        session.arrangement.tracks.push(Track {
-            id: "alt".into(),
-            name: "Alt".into(),
-            gain_db: 0.0,
-            pan: 0.0,
-            muted: true,
-            solo: false,
-        });
-        session
-            .arrangement
-            .audio_clips
-            .push(clip("clip:main", "main", asset_id.clone()));
-        session
-            .arrangement
-            .audio_clips
-            .push(clip("clip:alt", "alt", asset_id));
-        let results =
-            render_stems_with_options(&root, &session, 50, RenderOptions::default()).unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].track_id.as_deref(), Some("main"));
-        assert_eq!(results[1].track_id.as_deref(), Some("alt"));
-        assert!(
-            results
-                .iter()
-                .all(|result| Path::new(&result.path).exists())
-        );
         let _ = fs::remove_dir_all(root);
     }
 

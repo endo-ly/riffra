@@ -354,22 +354,19 @@ mod tests {
     fn session_with_clip(root: &Path, asset_id: AssetId) -> CreativeSession {
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean Session".into());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:1".into(),
-            track_id: "main".into(),
+        session
+            .arrangement
+            .tracks
+            .push(crate::session::Track::audio("main".into(), "Main".into()));
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:1".into(),
+            "take".into(),
+            "main".into(),
             asset_id,
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "take".into(),
-        });
+            crate::session::TimelineTick(0),
+            48_000,
+            4_800,
+        ));
         let _ = root;
         session
     }

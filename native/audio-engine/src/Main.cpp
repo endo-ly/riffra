@@ -5,6 +5,7 @@
 #include "RecordingSelfTest.h"
 #include "PluginEditorHost.h"
 #include "PluginRack.h"
+#include "TimelineEngine.h"
 
 #include <iostream>
 #include <map>
@@ -35,6 +36,7 @@ using riffra::PluginEditorHost;
 using riffra::PluginRack;
 using riffra::DCBlocker;
 using riffra::FeedbackDetector;
+using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
 std::mutex responseMutex;
@@ -542,6 +544,7 @@ int serve(
     juce::AudioDeviceManager manager;
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
+    TimelineEngine timelineEngine;
     SafetyAudioCallback callback;
     PluginRack rack;
     PluginEditorHost pluginEditor(rack);
@@ -551,6 +554,7 @@ int serve(
     std::atomic<bool> midiListeningEnabled { false };
     std::set<juce::String> activeMidiDeviceIds;
     callback.setPluginRack(&rack);
+    callback.setTimelineEngine(&timelineEngine);
     midiMonitor.setAudioCallback(&callback);
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
@@ -661,6 +665,15 @@ int serve(
         }
     });
 
+    std::atomic<bool> transportPushRunning { true };
+    std::thread transportPushThread([&] {
+        while (transportPushRunning.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (!transportPushRunning.load(std::memory_order_acquire)) break;
+            writeJson(timelineEngine.status());
+        }
+    });
+
     std::thread commandThread([&] {
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -682,6 +695,54 @@ int serve(
             if (type == "setMasterGainDb") {
                 callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                continue;
+            }
+            if (type == "loadTimelineSnapshot") {
+                if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
+                    writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));
+                    continue;
+                }
+                auto* device = manager.getCurrentAudioDevice();
+                const auto blockSize = device != nullptr
+                    ? device->getCurrentBufferSizeSamples()
+                    : 0;
+                juce::String timelineError;
+                const auto snapshot = command.getProperty("snapshot", {});
+                if (!timelineEngine.loadSnapshot(
+                        snapshot,
+                        formatManager,
+                        callback.getSampleRate(),
+                        blockSize,
+                        timelineError)) {
+                    writeJson(makeError("timeline", timelineError));
+                    continue;
+                }
+                auto* ack = new juce::DynamicObject();
+                ack->setProperty("type", "timelineAck");
+                ack->setProperty("revision", snapshot.getProperty("revision", 0));
+                ack->setProperty("appliedAtAudioClockSample",
+                    timelineEngine.status().getProperty("audioClockSample", 0));
+                ack->setProperty(
+                    "unavailableClipIds",
+                    snapshot.getProperty("unavailableClipIds", juce::Array<juce::var> {}));
+                writeJson(juce::var(ack));
+                continue;
+            }
+            if (type == "playTimeline") {
+                timelineEngine.play();
+                writeJson(timelineEngine.status());
+                continue;
+            }
+            if (type == "stopTimeline") {
+                timelineEngine.stop();
+                writeJson(timelineEngine.status());
+                continue;
+            }
+            if (type == "seekTimeline") {
+                const auto tick = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                    command.getProperty("tick", 0)));
+                timelineEngine.seekToTick(tick);
+                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "loadPlugin") {
@@ -1106,6 +1167,9 @@ int serve(
     meterPushRunning.store(false, std::memory_order_release);
     if (meterPushThread.joinable())
         meterPushThread.join();
+    transportPushRunning.store(false, std::memory_order_release);
+    if (transportPushThread.joinable())
+        transportPushThread.join();
     return 0;
 }
 
@@ -1343,6 +1407,14 @@ int runMain(const juce::StringArray& arguments) {
     }
     if (command == "--safety-self-test") {
         writeJson(runSafetySelfTest());
+        return 0;
+    }
+    if (command == "--timeline-self-test") {
+        if (arguments.size() != 3) {
+            writeJson(makeError("arguments", "Use --timeline-self-test <directory>."));
+            return 2;
+        }
+        writeJson(riffra::runTimelineSelfTest(juce::File(arguments[2])));
         return 0;
     }
     if (command == "--serve") {

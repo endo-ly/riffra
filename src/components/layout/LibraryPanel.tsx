@@ -77,6 +77,14 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               <button
                 className={styles.librarySearchRow}
                 key={asset.id}
+                draggable={asset.kind === 'audio'}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'copy';
+                  event.dataTransfer.setData(
+                    'application/x-riffra-asset',
+                    JSON.stringify({ id: asset.id, name: asset.name, kind: asset.kind }),
+                  );
+                }}
                 onClick={() => void library.onSelectAsset(asset)}
               >
                 <span className="nav-glyph" />

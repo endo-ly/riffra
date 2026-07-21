@@ -55,14 +55,14 @@ export interface AudioClip {
   name: string;
   trackId: string;
   assetId: AssetId;
-  positionMs: number;
-  durationMs: number;
-  sourceStartMs: number;
-  sourceEndMs: number;
+  startTick: number;
+  sourceRange: FrameRange;
+  sourceSampleRate: number;
+  timelineDuration: FrameDuration;
   gainDb: number;
   pan: number;
-  fadeInMs: number;
-  fadeOutMs: number;
+  fadeIn: FrameDuration;
+  fadeOut: FrameDuration;
   loopEnabled: boolean;
   muted: boolean;
 }
@@ -75,21 +75,44 @@ export interface AudioClip {
 export interface AudioClipPatch {
   name?: string;
   trackId?: string;
-  positionMs?: number;
-  durationMs?: number;
-  sourceStartMs?: number;
-  sourceEndMs?: number;
+  startTick?: number;
+  sourceRange?: FrameRange;
+  timelineDuration?: FrameDuration;
   gainDb?: number;
   pan?: number;
-  fadeInMs?: number;
-  fadeOutMs?: number;
+  fadeIn?: FrameDuration;
+  fadeOut?: FrameDuration;
   loopEnabled?: boolean;
   muted?: boolean;
 }
 
-interface Track {
+export interface FrameRange {
+  start: number;
+  end: number;
+}
+
+export interface FrameDuration {
+  frames: number;
+  sampleRate: number;
+}
+
+export interface ProjectTimebase {
+  ppq: 960;
+  bpm: number;
+  timeSignatureNumerator: number;
+  timeSignatureDenominator: number;
+}
+
+export interface TimelineLoopRange {
+  enabled: boolean;
+  startTick: number;
+  endTick: number;
+}
+
+export interface Track {
   id: string;
   name: string;
+  kind: 'audio' | 'instrument';
   gainDb: number;
   pan: number;
   muted: boolean;
@@ -99,8 +122,8 @@ interface Track {
 export interface MidiNote {
   id: string;
   note: number;
-  startMs: number;
-  durationMs: number;
+  startTick: number;
+  durationTicks: number;
   velocity: number;
   channel: number;
 }
@@ -108,8 +131,9 @@ export interface MidiNote {
 interface MidiClip {
   id: string;
   name: string;
-  startMs: number;
-  durationMs: number;
+  trackId: string;
+  startTick: number;
+  durationTicks: number;
   notes: MidiNote[];
   muted: boolean;
 }
@@ -144,10 +168,26 @@ interface DesignContextDto {
   targetAssetId: AssetId | null;
 }
 
-interface Arrangement {
+export interface Arrangement {
+  revision: number;
+  timebase: ProjectTimebase;
+  loopRange: TimelineLoopRange;
   tracks: Track[];
   audioClips: AudioClip[];
   midiClips: MidiClip[];
+}
+
+export interface TransportStatus {
+  type: 'transportStatus';
+  state: 'stopped' | 'playing' | 'faulted';
+  revision: number;
+  timelineTick: number;
+  timelineSample: number;
+  audioClockSample: number;
+  sampleRate: number;
+  sequence: number;
+  clockGeneration: number;
+  discontinuity: number;
 }
 
 interface SampleInstrumentState {
@@ -584,7 +624,7 @@ export interface MidiExportResult {
 }
 
 export const defaultSession = (): CreativeSession => ({
-  formatVersion: 2,
+  formatVersion: 3,
   sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),
   projectName: null,
@@ -592,7 +632,15 @@ export const defaultSession = (): CreativeSession => ({
   designContext: { activeTool: 'sample', targetAssetId: null },
   playState: { sampleInstrument: { pads: [] } },
   arrangement: {
-    tracks: [{ id: 'main', name: 'Main', gainDb: 0, pan: 0, muted: false, solo: false }],
+    revision: 0,
+    timebase: {
+      ppq: 960,
+      bpm: 120,
+      timeSignatureNumerator: 4,
+      timeSignatureDenominator: 4,
+    },
+    loopRange: { enabled: false, startTick: 0, endTick: 0 },
+    tracks: [],
     audioClips: [],
     midiClips: [],
   },

@@ -3,6 +3,7 @@ import type {
   AudioDeviceProbe,
   AudioDriverConfig,
   AudioStatus,
+  AudioClipPatch,
   AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
@@ -23,6 +24,7 @@ import type {
   DesignTool,
   SessionAudioPair,
   Workspace,
+  TransportStatus,
 } from '@/lib/domain';
 
 /**
@@ -168,9 +170,25 @@ export interface NativeApi {
   addAudioClipToArrangement(
     assetId: AssetId,
     name: string,
-    durationMs: number,
+    startTick?: number,
     trackId?: string,
   ): Promise<CreativeSession | null>;
+  updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
+  removeAudioClip(clipId: string): Promise<CreativeSession | null>;
+  addTrack(name: string): Promise<CreativeSession>;
+  updateTrack(
+    trackId: string,
+    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+  ): Promise<CreativeSession>;
+  syncArrangementRuntime(): Promise<void>;
+  playTimeline(): Promise<void>;
+  stopTimeline(): Promise<void>;
+  seekTimeline(tick: number): Promise<void>;
+  updateTimelineLoopRange(
+    enabled: boolean,
+    startTick: number,
+    endTick: number,
+  ): Promise<CreativeSession>;
 
   /**
    * Opens a canonical Asset in a Design workspace. One user intent updates
@@ -229,4 +247,5 @@ export interface NativeApi {
    * unlisten is a no-op.
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
+  onTransportStatus(callback: (status: TransportStatus) => void): () => void;
 }

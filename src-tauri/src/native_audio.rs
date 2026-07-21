@@ -306,6 +306,12 @@ impl AudioSupervisor {
                 }
                 match event {
                     CommandEvent::Stdout(bytes) => {
+                        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                            && payload.get("type").and_then(serde_json::Value::as_str)
+                                == Some("transportStatus")
+                        {
+                            let _ = event_app.emit("transport-status", &payload);
+                        }
                         if let Some(response) = handle_native_stdout(&event_status, &bytes)
                             && let Some(request_id) = response.request_id
                         {
@@ -391,6 +397,37 @@ impl AudioSupervisor {
 
     pub fn refresh_meters(&self) -> Result<AudioStatus, String> {
         self.send_command(serde_json::json!({"type": "meterStatus"}), "")
+    }
+
+    pub fn load_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
+        self.send_command_with_timeout(
+            serde_json::json!({
+                "type": "loadTimelineSnapshot",
+                "protocolVersion": 1,
+                "snapshot": snapshot,
+            }),
+            "",
+            Duration::from_secs(15),
+        )?;
+        Ok(())
+    }
+
+    pub fn play_timeline(&self) -> Result<(), String> {
+        self.send_command(serde_json::json!({"type": "playTimeline"}), "")?;
+        Ok(())
+    }
+
+    pub fn stop_timeline(&self) -> Result<(), String> {
+        self.send_command(serde_json::json!({"type": "stopTimeline"}), "")?;
+        Ok(())
+    }
+
+    pub fn seek_timeline(&self, tick: u64) -> Result<(), String> {
+        self.send_command(
+            serde_json::json!({"type": "seekTimeline", "tick": tick}),
+            "",
+        )?;
+        Ok(())
     }
 
     fn send_command(
@@ -858,6 +895,9 @@ enum ParsedNativeLine {
         request_id: Option<u64>,
         meters: NativeMeters,
     },
+    Acknowledgement {
+        request_id: Option<u64>,
+    },
     Error {
         request_id: Option<u64>,
         fault: bool,
@@ -891,6 +931,9 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
         Some("audioMeters") => {
             let meters = serde_json::from_value::<NativeMeters>(payload).ok()?;
             Some(ParsedNativeLine::Meters { request_id, meters })
+        }
+        Some("transportStatus" | "timelineAck") => {
+            Some(ParsedNativeLine::Acknowledgement { request_id })
         }
         Some("error") => {
             let scope = payload
@@ -939,6 +982,10 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
                 result: Ok(()),
             })
         }
+        ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
+            request_id,
+            result: Ok(()),
+        }),
         ParsedNativeLine::Error {
             request_id,
             fault,
@@ -1134,7 +1181,9 @@ mod tests {
                 assert_eq!(status.state, "ready");
                 assert_eq!(status.midi_input_active, Some(true));
             }
-            ParsedNativeLine::Meters { .. } | ParsedNativeLine::Error { .. } => {
+            ParsedNativeLine::Meters { .. }
+            | ParsedNativeLine::Acknowledgement { .. }
+            | ParsedNativeLine::Error { .. } => {
                 panic!("expected a status line")
             }
         }
@@ -1191,7 +1240,9 @@ mod tests {
                 assert_eq!(request_id, Some(9));
                 assert!(!fault);
             }
-            ParsedNativeLine::Status { .. } | ParsedNativeLine::Meters { .. } => {
+            ParsedNativeLine::Status { .. }
+            | ParsedNativeLine::Meters { .. }
+            | ParsedNativeLine::Acknowledgement { .. } => {
                 panic!("expected an error line")
             }
         }

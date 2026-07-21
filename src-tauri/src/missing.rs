@@ -179,22 +179,19 @@ mod tests {
     fn session_with_missing_asset(data_root: &Path) -> (CreativeSession, AssetId) {
         let asset_id = asset::mint_asset_id();
         let mut session = CreativeSession::new(now_ms());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:missing".into(),
-            track_id: "main".into(),
-            asset_id: asset_id.clone(),
-            position_ms: 0,
-            duration_ms: 1_000,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "lost".into(),
-        });
+        session
+            .arrangement
+            .tracks
+            .push(crate::session::Track::audio("main".into(), "Main".into()));
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:missing".into(),
+            "lost".into(),
+            "main".into(),
+            asset_id.clone(),
+            crate::session::TimelineTick(0),
+            48_000,
+            48_000,
+        ));
         session.rack.devices.push(RackDevice {
             id: "plugin:gone".into(),
             name: "Lost".into(),

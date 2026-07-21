@@ -35,6 +35,8 @@ target_sources(riffra-audio PRIVATE
   src/Main.cpp
   src/SafetyAudioCallback.cpp
   src/SafetyAudioCallback.h
+  src/TimelineEngine.cpp
+  src/TimelineEngine.h
   src/AudioSafetyDsp.h
   src/RecordingSession.cpp
   src/RecordingSession.h

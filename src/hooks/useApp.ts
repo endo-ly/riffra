@@ -72,6 +72,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     loadRackDefinitionAsset,
     sendMidiToPlugin,
     onAudioStatus,
+    onTransportStatus,
+    playTimeline,
+    stopTimeline,
+    seekTimeline,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
@@ -498,10 +502,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, [stopSamplePreview]);
 
   const addSeparationToTimeline = useCallback(
-    async (assetId: AssetId, name: string, durationMs: number) => {
+    async (assetId: AssetId, name: string, _durationMs: number) => {
       if (!session) return;
       const next = await runSessionOp(
-        () => addAudioClipToArrangement(assetId, name, durationMs),
+        () => addAudioClipToArrangement(assetId, name),
         'Add clip to timeline',
       );
       if (next) setSession(next);
@@ -511,6 +515,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const playTransport = useCallback(async () => {
     if (!session) return;
+    if (session.workspace === 'arrange') {
+      await playTimeline();
+      setTransportPlaying(true);
+      return;
+    }
     let result = renderResult;
     if (!result) {
       result = await renderTimeline({
@@ -524,13 +533,28 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     }
     setAudio(await previewAssetApi(result.assetId, { looped: session.settings.loopEnabled }));
     setTransportPlaying(true);
-  }, [previewAssetApi, renderResult, renderTimeline, session]);
+  }, [playTimeline, previewAssetApi, renderResult, renderTimeline, session]);
 
   const stopTransport = useCallback(async () => {
+    if (session?.workspace === 'arrange') {
+      await stopTimeline();
+      setTransportPlaying(false);
+      return;
+    }
     setAudio(await stopSamplePreview());
     setTransportPlaying(false);
     setRenderPreviewing(false);
-  }, []);
+  }, [session?.workspace, stopSamplePreview, stopTimeline]);
+
+  const goToStart = useCallback(async () => {
+    if (session?.workspace === 'arrange') {
+      await stopTimeline();
+      await seekTimeline(0);
+      setTransportPlaying(false);
+      return;
+    }
+    await stopTransport();
+  }, [seekTimeline, session?.workspace, stopTimeline, stopTransport]);
 
   const previewSamplePad = useCallback(
     async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
@@ -670,8 +694,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     void enableMidi();
     void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
     const unlistenAudio = onAudioStatus((status) => setAudio(status));
+    const unlistenTransport = onTransportStatus((status) =>
+      setTransportPlaying(status.state === 'playing'),
+    );
     return () => {
       unlistenAudio();
+      unlistenTransport();
     };
   }, []);
 
@@ -877,6 +905,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     addSeparationToTimeline,
     playTransport,
     stopTransport,
+    goToStart,
     previewSamplePad,
     stopPreview,
     createSamplePad,

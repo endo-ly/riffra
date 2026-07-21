@@ -57,13 +57,15 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 
 ### 2.2 アレンジメント
 
-| エンティティ        | 役割                                                       | TS                  | Rust                             | C++ |
-| ------------------- | ---------------------------------------------------------- | ------------------- | -------------------------------- | --- |
-| Arrangement         | Arrange workspaceの状態（tracks / audioClips / midiClips） | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —   |
-| Track               | タイムラインの1トラック                                    | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —   |
-| AudioClip           | アセットを参照する非破壊オーディオクリップ                 | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —   |
-| AudioClipPatch      | AudioClipへの部分更新。ドメイン側でクランプ適用            | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —   |
-| MidiClip / MidiNote | MIDIクリップとノート                                       | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —   |
+| エンティティ                   | 役割                                                                 | TS                  | Rust                             | C++                                        |
+| ------------------------------ | -------------------------------------------------------------------- | ------------------- | -------------------------------- | ------------------------------------------ |
+| Arrangement                    | revision・timebase・loopRange・Track・Clipを所有する正準タイムライン | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生） |
+| ProjectTimebase / TimelineTick | PPQ 960の音楽時間と単一テンポ・拍子                                  | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生） |
+| FrameRange / FrameDuration     | 半開区間のSource Frame範囲とSample Rate付き実時間                    | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::Clip`（派生）             |
+| TimelineLoopRange              | 有効状態を含む音楽時間上のLoop範囲                                   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生） |
+| Track / TrackKind              | audio / instrumentのタイムライントラック                             | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | Runtime Snapshotでmix値へ解決              |
+| AudioClip / AudioClipPatch     | AssetId、開始Tick、Source Frame範囲、実時間長を持つ非破壊編集        | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `native/audio-engine/src/TimelineEngine.h` |
+| MidiClip / MidiNote            | Tickだけで位置と長さを保持するMIDIクリップとノート                   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                          |
 
 ### 2.3 ラック
 
@@ -106,6 +108,7 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 | AudioDriverInfo / AudioAccessMode / AudioDevicePairing | ドライバ情報とアクセス特性                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
 | MidiProbe                                              | MIDIデバイスのprobing結果                             | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
 | BootstrapState / RecoveryCandidate                     | 起動時状態・復旧候補                                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
+| TransportStatus                                        | Engine Clock、Timeline位置、revision、不連続通知      | `src/lib/domain.ts` | JSON event relay         | `native/audio-engine/src/TimelineEngine.cpp`                       |
 
 ---
 
@@ -162,20 +165,20 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 
 ### 4.2 コレクションサイズ上限
 
-| 対象                        | 上限                                            |
-| --------------------------- | ----------------------------------------------- |
-| RackInstance.devices        | 256 / ラック                                    |
-| RackInstance.macros         | 64 / ラック                                     |
-| RackDevice.parameter_values | 512 / デバイス                                  |
-| SessionSnapshot.rack        | 256 / スナップショット                          |
-| snapshots                   | 16 / セッション                                 |
-| Arrangement.tracks          | 128 / アレンジ（最低1、空時は自動で main 補完） |
-| Arrangement.audio_clips     | 512 / アレンジ                                  |
-| Arrangement.midi_clips      | 256 / アレンジ                                  |
-| MidiClip.notes              | 200,000 / クリップ                              |
-| SampleInstrumentState.pads  | 128 / セッション                                |
-| ai_context                  | 16 / セッション                                 |
-| ai_history                  | 128 / セッション                                |
+| 対象                        | 上限                                                             |
+| --------------------------- | ---------------------------------------------------------------- |
+| RackInstance.devices        | 256 / ラック                                                     |
+| RackInstance.macros         | 64 / ラック                                                      |
+| RackDevice.parameter_values | 512 / デバイス                                                   |
+| SessionSnapshot.rack        | 256 / スナップショット                                           |
+| snapshots                   | 16 / セッション                                                  |
+| Arrangement.tracks          | 128 / アレンジ（空を許容。最初のAudio Asset配置時にTrackを作成） |
+| Arrangement.audio_clips     | 512 / アレンジ                                                   |
+| Arrangement.midi_clips      | 256 / アレンジ                                                   |
+| MidiClip.notes              | 200,000 / クリップ                                               |
+| SampleInstrumentState.pads  | 128 / セッション                                                 |
+| ai_context                  | 16 / セッション                                                  |
+| ai_history                  | 128 / セッション                                                 |
 
 ### 4.3 数値範囲
 
@@ -222,10 +225,13 @@ Completing → Failed
 
 ### 4.7 非破壊編集の規則
 
-- AudioClip の `source_end_ms == 0` は「アセット末尾まで」を意味する
-- AudioClip のフェード長は `duration_ms` を超えない（クランプ）
+- `FrameRange`は半開区間`[start, end)`であり、Sentinel値を使わない
+- AudioClipの開始位置は`start_tick`、Source範囲はFrame、再生長とFadeはSample Rate付きFrame数で保存する
+- 非Loop AudioClipの再生長はSource範囲長と一致し、Loop AudioClipの再生長はSource範囲長以上とする
+- AudioClipのフェード長は再生長を超えない（クランプ）
+- Arrangement編集が確定するたびにrevisionを単調増加させる
 - スナップショットの `master_db` は -90..0 にクランプ（セッション master と異なり 24 dB 上限なし）
-- MIDI ノートの duration_ms は最低 1
+- MIDIノートの`duration_ticks`は最低1
 
 ### 4.8 ランタイム制約
 

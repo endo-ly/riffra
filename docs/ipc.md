@@ -63,7 +63,7 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`src-tauri/src/lib.rs` 
 
 ### 2.3 Session Application Operations（`session/commands.rs`）
 
-`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `move_audio_clip_to_track` / `set_audio_clip_muted` / `set_audio_clip_loop` / `duplicate_audio_clip` / `split_audio_clip` / `remove_audio_clip` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `add_track` / `update_track` / `import_midi_clip` / `update_midi_note` / `remove_midi_note` / `remove_midi_clip` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
+`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `remove_audio_clip` / `add_track` / `update_track` / `update_timeline_loop_range` / `sync_arrangement_runtime` / `play_timeline` / `stop_timeline` / `seek_timeline` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
 
 ### 2.4 Audio Preferences（`audio_preferences.rs`）
 
@@ -81,18 +81,14 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`src-tauri/src/lib.rs` 
 
 `search_library` / `update_library_asset` / `related_library_assets`
 
-### 2.8 MIDI Export（`midi/commands.rs`）
-
-`export_midi`
-
-### 2.9 Background Jobs（各featureの `commands.rs`）
+### 2.8 Background Jobs（各featureの `commands.rs`）
 
 - Analysis: `start_analysis_job` / `analyze_asset`
 - Separation: `start_separation_job` / `list_separations`
-- Render: `start_render_job` / `start_render_stems_job` / `render_timeline` / `render_timeline_stems`
+- Render: `render_timeline`
 - Plugins: `scan_vst3_folder` / `start_scan_job`
 
-### 2.10 エラー型
+### 2.9 エラー型
 
 Tauri命令の戻り値は `Result<T, String>`。文字列は利用者向けの表示メッセージ。構造化エラーは `src-tauri/src/errors.rs` の `DomainError` enum で定義し、`Display` 経由で小文字のメッセージに変換する。
 
@@ -159,13 +155,15 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 ### 4.2 メッセージ種別（C++ → Rust）
 
-`audioStatus` / `audioMeters` / `error` の3種類。フィールド詳細はcodeを真実源とする。
+通常稼働時は次の5種類を使用する。フィールド詳細はcodeを真実源とする。
 
-| type          | 役割                                                                                     | 送信契機                 |
-| ------------- | ---------------------------------------------------------------------------------------- | ------------------------ |
-| `audioStatus` | 実行時オーディオ状態（state・deviceInfo・recording・plugin概要・meters・midi）           | 状態変化時・コマンド応答 |
-| `audioMeters` | メーター値のみ（inputPeak・outputPeak・invalidSamples・feedbackSuspected）。高頻度・軽量 | 定期的                   |
-| `error`       | エラー通知（scope・message・dataSafe）                                                   | エラー発生時             |
+| type              | 役割                                                                                     | 送信契機                  |
+| ----------------- | ---------------------------------------------------------------------------------------- | ------------------------- |
+| `audioStatus`     | 実行時オーディオ状態（state・deviceInfo・recording・plugin概要・meters・midi）           | 状態変化時・コマンド応答  |
+| `audioMeters`     | メーター値のみ（inputPeak・outputPeak・invalidSamples・feedbackSuspected）。高頻度・軽量 | 定期的                    |
+| `error`           | エラー通知（scope・message・dataSafe）                                                   | エラー発生時              |
+| `timelineAck`     | Timeline Snapshotの準備完了revision・適用時刻・利用不能Clip                              | Snapshotコマンド応答      |
+| `transportStatus` | Engine ClockとTimeline位置、再生状態、revision、不連続通知                               | 状態変化時・20 Hz定期送信 |
 
 起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_midi_probe` 等で処理される。
 
@@ -178,12 +176,17 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 - **プラグイン**: `loadPlugin` / `clearPlugin` / `setPluginBypassed` / `openPluginEditor` / `setPluginParameter` / `setPluginState` / `pluginParameterStatus`
 - **録音**: `startRecording` / `stopRecording`
 - **プレビュー**: `previewSample` / `stopPreview` / `stopPreviewForKey`
+- **タイムライン**: `loadTimelineSnapshot` / `playTimeline` / `stopTimeline` / `seekTimeline`
 - **MIDI・サンプルパッド**: `openMidiInput` / `closeMidiInput` / `configureSamplePads` / `probeMidiDevices` / `sendMidi`
 - **シャットダウン**: `shutdown`
 
 命名はすべてcamelCase。Rust側の `AudioSupervisor` メソッドが対応する。未対応の `type` は C++側で `protocol` スコープのエラーになる。
 
 通常の `audioStatus` にプラグインのパラメータ一覧とstateDataは含めない。パラメータ一覧は `pluginParameterStatus` の応答で取得し、プラグイン状態はSessionからランタイムへ復元するときだけ渡す。Masterのドラッグ中は `preview_master_gain_db` がAudio Runtimeだけを更新し、操作確定時に `set_master_gain_db` がSessionへ保存する。
+
+Timeline Snapshotは`protocolVersion: 1`とArrangement revisionを持つ。RustはAssetIdを解決済みパスとSource Frame情報へ変換し、利用不能AssetはSnapshotから除外して`unavailableClipIds`へ残す。C++はファイルopen、read-ahead、Sample Rate補正、作業バッファ確保をコマンドスレッドで完了してから交換する。Audio CallbackはファイルI/O・JSON解析・メモリ確保を行わない。
+
+`transportStatus.timelineSample`はseekやloopで不連続になり得る。`audioClockSample`はAudio Callbackごとに単調増加する。UIは最新イベントをanchorとして`requestAnimationFrame`で表示だけを補間し、補間値を正準状態へ書き戻さない。
 
 ### 4.4 状態遷移
 

@@ -2,7 +2,7 @@
 //! canonical [`CreativeSession`] and keep it consistent with the Audio Runtime
 //! and the Asset registry.
 //!
-//! Two families live here:
+//! The operations use three consistency policies:
 //!
 //! - Sample-pad operations ([`create_sample_pad`], [`update_sample_pad`],
 //!   [`remove_sample_pad`]) touch play state, design context, the Asset
@@ -11,7 +11,12 @@
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
 //!
-//! - Pure-session operations ([`commit_session`], [`apply_arrangement_edit`],
+//! - Arrangement operations commit the canonical Session first, then prepare
+//!   and exchange a resolved runtime Timeline Snapshot. Runtime failure never
+//!   rolls back a successful save; the next explicit sync or play rebuilds the
+//!   latest revision.
+//!
+//! - Pure-session operations ([`commit_session`],
 //!   [`save_session`], [`import_session`], [`restore_generation`],
 //!   [`open_asset_in_design`], [`switch_workspace`]) mutate the session and
 //!   persist it without touching the Audio Runtime, so they reuse
@@ -23,16 +28,16 @@
 //! framework: the only compensation is re-applying the previous pad set, which
 //! matches the runtime's "reconfigure the whole pad set" capability.
 
-use std::path::Path;
 use std::sync::Mutex;
+use std::{fs, path::Path};
 
 use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::session::{
-    AiChangeSet, Arrangement, CreativeSession, DesignTool, MidiClip, MidiNote, SamplePad, Track,
-    Workspace,
+    AiChangeSet, Arrangement, CreativeSession, DesignTool, SamplePad, TimelineTick, Track,
+    TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -414,7 +419,89 @@ pub fn apply_arrangement_edit(
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     edit(&mut session.arrangement).map_err(|error| error.to_string())?;
-    commit_session(context, session)
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+fn runtime_timeline_snapshot(
+    context: &SessionContext<'_>,
+    session: &CreativeSession,
+) -> serde_json::Value {
+    let arrangement = &session.arrangement;
+    let has_solo = arrangement.tracks.iter().any(|track| track.solo);
+    let mut clips = Vec::with_capacity(arrangement.audio_clips.len());
+    let mut unavailable_clip_ids = Vec::new();
+    for clip in &arrangement.audio_clips {
+        let Some(path) = asset::resolve_content_location(context.data_root, &clip.asset_id) else {
+            unavailable_clip_ids.push(clip.id.clone());
+            continue;
+        };
+        let Some(track) = arrangement
+            .tracks
+            .iter()
+            .find(|track| track.id == clip.track_id)
+        else {
+            unavailable_clip_ids.push(clip.id.clone());
+            continue;
+        };
+        clips.push(serde_json::json!({
+                "clipId": clip.id,
+                "trackId": clip.track_id,
+                "path": path,
+                "sourceSampleRate": clip.source_sample_rate,
+                "sourceStartFrame": clip.source_range.start,
+                "sourceEndFrame": clip.source_range.end,
+                "durationFrames": clip.timeline_duration.frames,
+                "durationSampleRate": clip.timeline_duration.sample_rate,
+                "startTick": clip.start_tick.0,
+                "fadeInFrames": clip.fade_in.frames,
+                "fadeOutFrames": clip.fade_out.frames,
+                "gainDb": clip.gain_db + track.gain_db,
+                "pan": (clip.pan + track.pan).clamp(-1.0, 1.0),
+                "loopEnabled": clip.loop_enabled,
+                "muted": clip.muted || track.muted || (has_solo && !track.solo),
+        }));
+    }
+    serde_json::json!({
+        "revision": arrangement.revision,
+        "timebase": arrangement.timebase,
+        "loopRange": arrangement.loop_range,
+        "tracks": arrangement.tracks,
+        "audioClips": clips,
+        "unavailableClipIds": unavailable_clip_ids,
+        "midiClips": [],
+        "automation": [],
+    })
+}
+
+fn sync_arrangement_best_effort(context: &SessionContext<'_>, session: &CreativeSession) {
+    if let Err(error) = context
+        .audio
+        .load_timeline_snapshot(runtime_timeline_snapshot(context, session))
+    {
+        tracing::warn!(revision = session.arrangement.revision, %error, "timeline runtime sync failed");
+    }
+}
+
+pub fn sync_arrangement_runtime(context: &SessionContext<'_>) -> Result<(), String> {
+    let session = context.session.lock().map_err(lock_error)?.clone();
+    context
+        .audio
+        .load_timeline_snapshot(runtime_timeline_snapshot(context, &session))
+}
+
+pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+    sync_arrangement_runtime(context)?;
+    context.audio.play_timeline()
+}
+
+pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+    context.audio.stop_timeline()
+}
+
+pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
+    context.audio.seek_timeline(tick.0)
 }
 
 /// Adds an audio clip referencing a canonical Asset to the arrangement, then
@@ -423,14 +510,28 @@ pub fn add_audio_clip(
     context: &SessionContext<'_>,
     asset_id: AssetId,
     name: String,
-    duration_ms: u64,
+    start_tick: Option<TimelineTick>,
     track_id: Option<String>,
 ) -> Result<CreativeSession, String> {
     if name.trim().is_empty() {
         return Err("Audio clip name must not be empty.".into());
     }
-    if duration_ms == 0 {
-        return Err("Audio clip duration must be greater than zero.".into());
+    let source_asset = asset::load(context.data_root, &asset_id)
+        .ok_or_else(|| format!("Audio Asset is not registered: {asset_id}"))?;
+    if source_asset.kind != AssetKind::Audio {
+        return Err(format!("Asset {asset_id} is not an audio Asset."));
+    }
+    let bytes = fs::read(&source_asset.content_location)
+        .map_err(|error| format!("Audio Asset could not be read: {error}"))?;
+    let wav = crate::analysis::parse_wav(&bytes)?;
+    let bytes_per_sample = usize::from(wav.bits_per_sample / 8);
+    let frame_bytes = bytes_per_sample.saturating_mul(usize::from(wav.channels));
+    if frame_bytes == 0 || wav.sample_rate == 0 {
+        return Err("Audio Asset has no usable frames.".into());
+    }
+    let source_frames = (wav.data_len / frame_bytes) as u64;
+    if source_frames == 0 {
+        return Err("Audio Asset has no usable frames.".into());
     }
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let track_id = track_id
@@ -439,39 +540,57 @@ pub fn add_audio_clip(
             session
                 .arrangement
                 .tracks
-                .first()
+                .iter()
+                .find(|track| track.kind == crate::session::TrackKind::Audio)
                 .map(|track| track.id.clone())
         })
-        .ok_or_else(|| "Arrangement has no track for the new audio clip.".to_string())?;
-    let position_ms = session
+        .unwrap_or_else(|| {
+            let id = format!("track:{}", now_ms());
+            session
+                .arrangement
+                .tracks
+                .push(Track::audio(id.clone(), "Audio 1".into()));
+            id
+        });
+    let target_track = session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if target_track.kind != crate::session::TrackKind::Audio {
+        return Err(format!("Track is not an Audio Track: {track_id}"));
+    }
+    let append_tick = session
         .arrangement
         .audio_clips
         .iter()
-        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
+        .map(|clip| {
+            let duration = session.arrangement.timebase.milliseconds_to_ticks(
+                clip.timeline_duration.frames as f64 * 1000.0
+                    / f64::from(clip.timeline_duration.sample_rate),
+            );
+            clip.start_tick.0.saturating_add(duration.0)
+        })
         .max()
         .unwrap_or(0);
-    let clip = crate::session::AudioClip {
-        id: format!("clip:{}:{}", asset_id.as_str(), now_ms()),
+    let clip = crate::session::AudioClip::full_source(
+        format!("clip:{}:{}", asset_id.as_str(), now_ms()),
         name,
         track_id,
         asset_id,
-        position_ms,
-        duration_ms,
-        source_start_ms: 0,
-        source_end_ms: 0,
-        gain_db: 0.0,
-        fade_in_ms: 0,
-        fade_out_ms: 0,
-        pan: 0.0,
-        loop_enabled: false,
-        muted: false,
-    };
+        start_tick.unwrap_or(TimelineTick(append_tick)),
+        wav.sample_rate,
+        source_frames,
+    );
     session
         .arrangement
         .add_audio_clip(clip, |id| asset::load(context.data_root, id).is_some())
         .map_err(|error| error.to_string())?;
     session.workspace = Workspace::Arrange;
-    commit_session(context, session)
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
 }
 
 /// Opens a canonical Asset in the Design workspace with the given tool. One
@@ -568,12 +687,16 @@ pub fn add_track(context: &SessionContext<'_>, name: String) -> Result<CreativeS
     session.arrangement.tracks.push(Track {
         id: format!("track:{}", now_ms()),
         name,
+        kind: TrackKind::Audio,
         gain_db: 0.0,
         pan: 0.0,
         muted: false,
         solo: false,
     });
-    commit_session(context, session)
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
 }
 
 pub fn update_track(
@@ -608,204 +731,10 @@ pub fn update_track(
     if let Some(value) = patch.solo {
         track.solo = value;
     }
-    commit_session(context, session)
-}
-
-fn midi_notes_from_events(events: Vec<crate::recording::MidiEvent>) -> Vec<MidiNote> {
-    use std::collections::HashMap;
-
-    let mut events = events;
-    events.sort_by(|left, right| left.time_ms.total_cmp(&right.time_ms));
-    let mut active: HashMap<(u8, u8), Vec<crate::recording::MidiEvent>> = HashMap::new();
-    let mut notes = Vec::new();
-    let mut finish = |start: crate::recording::MidiEvent, end_ms: f64| {
-        notes.push(MidiNote {
-            id: format!("midi-note:{}", notes.len()),
-            note: start.note,
-            start_ms: start.time_ms.max(0.0).round() as u64,
-            duration_ms: (end_ms - start.time_ms).round().max(1.0) as u64,
-            velocity: start.velocity.clamp(1, 127),
-            channel: start.channel.clamp(1, 16),
-        });
-    };
-    for event in &events {
-        let key = (event.channel, event.note);
-        let kind = event.status & 0xf0;
-        if kind == 0x90 && event.velocity > 0 {
-            active.entry(key).or_default().push(event.clone());
-        } else if matches!(kind, 0x80 | 0x90)
-            && let Some(stack) = active.get_mut(&key)
-        {
-            if let Some(start) = stack.pop() {
-                finish(start, event.time_ms);
-            }
-            if stack.is_empty() {
-                active.remove(&key);
-            }
-        }
-    }
-    let end_ms = events
-        .iter()
-        .map(|event| event.time_ms)
-        .fold(0.0_f64, f64::max)
-        + 100.0;
-    for stack in active.into_values() {
-        for start in stack {
-            finish(start, end_ms);
-        }
-    }
-    notes.sort_by_key(|note| (note.start_ms, note.note));
-    notes
-}
-
-pub fn import_midi_clip(
-    context: &SessionContext<'_>,
-    asset_id: AssetId,
-    name: String,
-) -> Result<CreativeSession, String> {
-    let asset = asset::load(context.data_root, &asset_id)
-        .ok_or_else(|| format!("MIDI Asset is not registered: {asset_id}"))?;
-    if asset.kind != AssetKind::Midi {
-        return Err(format!("Asset {asset_id} is not a MIDI Asset."));
-    }
-    let notes = midi_notes_from_events(crate::recording::read_midi_events(Path::new(
-        &asset.content_location,
-    ))?);
-    if notes.is_empty() {
-        return Err("No note-on/note-off pairs were found in that MIDI Asset.".into());
-    }
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let start_ms = session
-        .arrangement
-        .audio_clips
-        .iter()
-        .map(|clip| clip.position_ms.saturating_add(clip.duration_ms))
-        .chain(
-            session
-                .arrangement
-                .midi_clips
-                .iter()
-                .map(|clip| clip.start_ms.saturating_add(clip.duration_ms)),
-        )
-        .max()
-        .unwrap_or(0);
-    let duration_ms = notes
-        .iter()
-        .map(|note| note.start_ms.saturating_add(note.duration_ms))
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    let clip = MidiClip {
-        id: format!("midi:{}", asset_id.as_str()),
-        name,
-        start_ms,
-        duration_ms,
-        notes,
-        muted: false,
-    };
-    session
-        .arrangement
-        .midi_clips
-        .retain(|item| item.id != clip.id);
-    session.arrangement.midi_clips.push(clip);
-    session.workspace = Workspace::Arrange;
-    commit_session(context, session)
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiNotePatch {
-    pub note: Option<u8>,
-    pub start_ms: Option<u64>,
-    pub duration_ms: Option<u64>,
-    pub velocity: Option<u8>,
-    pub channel: Option<u8>,
-}
-
-pub fn update_midi_note(
-    context: &SessionContext<'_>,
-    clip_id: &str,
-    note_id: &str,
-    patch: MidiNotePatch,
-) -> Result<CreativeSession, String> {
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let clip = session
-        .arrangement
-        .midi_clips
-        .iter_mut()
-        .find(|clip| clip.id == clip_id)
-        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
-    let note = clip
-        .notes
-        .iter_mut()
-        .find(|note| note.id == note_id)
-        .ok_or_else(|| format!("MIDI note is not registered: {note_id}"))?;
-    if let Some(value) = patch.note {
-        note.note = value.min(127);
-    }
-    if let Some(value) = patch.start_ms {
-        note.start_ms = value;
-    }
-    if let Some(value) = patch.duration_ms {
-        note.duration_ms = value.max(1);
-    }
-    if let Some(value) = patch.velocity {
-        note.velocity = value.clamp(1, 127);
-    }
-    if let Some(value) = patch.channel {
-        note.channel = value.clamp(1, 16);
-    }
-    clip.duration_ms = clip
-        .notes
-        .iter()
-        .map(|note| note.start_ms.saturating_add(note.duration_ms))
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    commit_session(context, session)
-}
-
-pub fn remove_midi_note(
-    context: &SessionContext<'_>,
-    clip_id: &str,
-    note_id: &str,
-) -> Result<CreativeSession, String> {
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let clip = session
-        .arrangement
-        .midi_clips
-        .iter_mut()
-        .find(|clip| clip.id == clip_id)
-        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
-    let before = clip.notes.len();
-    clip.notes.retain(|note| note.id != note_id);
-    if clip.notes.len() == before {
-        return Err(format!("MIDI note is not registered: {note_id}"));
-    }
-    clip.duration_ms = clip
-        .notes
-        .iter()
-        .map(|note| note.start_ms.saturating_add(note.duration_ms))
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    commit_session(context, session)
-}
-
-pub fn remove_midi_clip(
-    context: &SessionContext<'_>,
-    clip_id: &str,
-) -> Result<CreativeSession, String> {
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let before = session.arrangement.midi_clips.len();
-    session
-        .arrangement
-        .midi_clips
-        .retain(|clip| clip.id != clip_id);
-    if session.arrangement.midi_clips.len() == before {
-        return Err(format!("MIDI clip is not registered: {clip_id}"));
-    }
-    commit_session(context, session)
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
 }
 
 pub fn apply_ai_suggestion(

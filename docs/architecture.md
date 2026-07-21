@@ -51,7 +51,7 @@ Riffraは、Play、Design、Arrangeの三領域を、共通のセッション、
 
 - **Play**は音声・MIDI入力、VST3、ラック、監視、録音を扱う
 - **Design**は信号生成、波形編集、音源化、分析、参照比較、音源分離を扱う
-- **Arrange**は時間軸、トラック、MIDI編集、ミキサー、書出しを扱う
+- **Arrange**はrevision付き音楽時間軸、トラック、Clip配置、リアルタイム再生、MIDI編集、ミキサー、書出しを扱う
 - **Home**は起動、最近の作業、機器状態、復旧、設定への入口を扱う
 
 制作領域は同じSessionを参照する。領域の切替によって録音、再生、ミュート、選択、履歴を作り直さない。
@@ -64,6 +64,8 @@ Riffraは、Play、Design、Arrangeの三領域を、共通のセッション、
 - **上部バー**は保存状態、音声状態、安全操作、検索、設定を表示する
 
 画面部品は音声処理、ファイル保存、子プロセス管理を直接実装しない。操作をアプリケーション層へ渡し、返された状態を表示する。
+
+ArrangeのplayheadはC++のEngine Clockを正本とする。Rustは保存済みArrangementからAssetIdを解決したRuntime Timeline Snapshotを構築し、C++の`TimelineEngine`へ渡す。C++はSourceのopen、read-ahead、Sample Rate補正、作業領域確保を非リアルタイムスレッドで行い、Audio Block境界でPrepared Timelineを交換する。Reactは20 Hzの`transport-status`を受け、描画フレーム間だけ表示位置を補間する。
 
 ## 4. 制作状態の調整
 

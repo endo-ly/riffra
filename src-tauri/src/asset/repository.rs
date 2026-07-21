@@ -725,22 +725,19 @@ mod tests {
         let root = root("validate-clip");
         let asset_id = mint_asset_id();
         let mut session = CreativeSession::new(1_000);
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:unknown".into(),
-            track_id: "main".into(),
+        session
+            .arrangement
+            .tracks
+            .push(crate::session::Track::audio("main".into(), "Main".into()));
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:unknown".into(),
+            "unknown".into(),
+            "main".into(),
             asset_id,
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "unknown".into(),
-        });
+            crate::session::TimelineTick(0),
+            48_000,
+            4_800,
+        ));
 
         let error = validate_session_references(&root, &session).unwrap_err();
         assert!(error.contains("arrangement audio clip 'clip:unknown'"));

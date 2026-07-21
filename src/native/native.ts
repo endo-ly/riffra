@@ -26,6 +26,8 @@ import type {
   SeparationResult,
   SessionAudioPair,
   Workspace,
+  TransportStatus,
+  AudioClipPatch,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
@@ -439,14 +441,64 @@ async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> 
 async function addAudioClipToArrangement(
   assetId: AssetId,
   name: string,
-  durationMs: number,
+  startTick?: number,
   trackId?: string,
 ): Promise<CreativeSession | null> {
   return invokeOrFallback<CreativeSession | null>(
     'add_audio_clip_to_arrangement',
-    { assetId, name, durationMs, trackId: trackId ?? null },
+    { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
     null,
   );
+}
+
+async function updateAudioClip(
+  clipId: string,
+  patch: AudioClipPatch,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
+}
+
+async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('remove_audio_clip', { clipId }, null);
+}
+
+async function addTrack(name: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_track', { name });
+}
+
+async function updateTrack(
+  trackId: string,
+  patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_track', { trackId, patch });
+}
+
+async function syncArrangementRuntime(): Promise<void> {
+  await invoke<void>('sync_arrangement_runtime');
+}
+
+async function playTimeline(): Promise<void> {
+  await invoke<void>('play_timeline');
+}
+
+async function stopTimeline(): Promise<void> {
+  await invoke<void>('stop_timeline');
+}
+
+async function seekTimeline(tick: number): Promise<void> {
+  await invoke<void>('seek_timeline', { tick });
+}
+
+async function updateTimelineLoopRange(
+  enabled: boolean,
+  startTick: number,
+  endTick: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_timeline_loop_range', {
+    enabled,
+    startTick,
+    endTick,
+  });
 }
 
 async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
@@ -546,6 +598,15 @@ function createNativeApi(): NativeApi {
     relinkMissingDependency,
     disableMissingPlugin,
     addAudioClipToArrangement,
+    updateAudioClip,
+    removeAudioClip,
+    addTrack,
+    updateTrack,
+    syncArrangementRuntime,
+    playTimeline,
+    stopTimeline,
+    seekTimeline,
+    updateTimelineLoopRange,
     openAssetInDesign,
     switchWorkspace,
     updateSessionSettings,
@@ -571,6 +632,21 @@ function createNativeApi(): NativeApi {
         if (cancelled) fn();
         else unlisten = fn;
       });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    onTransportStatus: (callback: (status: TransportStatus) => void) => {
+      if (!isNativeRuntime()) return () => undefined;
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<TransportStatus>('transport-status', (event) => callback(event.payload)).then(
+        (fn) => {
+          if (cancelled) fn();
+          else unlisten = fn;
+        },
+      );
       return () => {
         cancelled = true;
         unlisten?.();

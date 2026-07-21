@@ -13,6 +13,7 @@ interface TransportBarProps {
   transportPlaying: boolean;
   onPlay: () => void;
   onStop: () => void;
+  onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
   recordCountdown: number | null;
@@ -30,6 +31,7 @@ export function TransportBar(props: TransportBarProps) {
     transportPlaying,
     onPlay,
     onStop,
+    onGoToStart,
     recordingCommandPending,
     onToggleRecording,
     recordCountdown,
@@ -89,13 +91,37 @@ export function TransportBar(props: TransportBarProps) {
     <footer className="transport">
       <div className={styles.transportLeft}>
         <button
-          className={session.settings.loopEnabled ? 'active' : ''}
-          aria-label="Toggle loop"
-          onClick={() =>
-            void api
-              .updateSessionSettings({ loopEnabled: !session.settings.loopEnabled })
-              .then(setSession)
+          className={
+            (
+              session.workspace === 'arrange'
+                ? session.arrangement.loopRange.enabled
+                : session.settings.loopEnabled
+            )
+              ? 'active'
+              : ''
           }
+          aria-label="Toggle loop"
+          onClick={() => {
+            if (session.workspace === 'arrange') {
+              const range = session.arrangement.loopRange;
+              const barTicks =
+                (session.arrangement.timebase.ppq *
+                  4 *
+                  session.arrangement.timebase.timeSignatureNumerator) /
+                session.arrangement.timebase.timeSignatureDenominator;
+              void api
+                .updateTimelineLoopRange(
+                  !range.enabled,
+                  range.startTick,
+                  range.endTick > range.startTick ? range.endTick : barTicks * 4,
+                )
+                .then(setSession);
+            } else {
+              void api
+                .updateSessionSettings({ loopEnabled: !session.settings.loopEnabled })
+                .then(setSession);
+            }
+          }}
         >
           <Icon name="loop" />
         </button>
@@ -106,7 +132,7 @@ export function TransportBar(props: TransportBarProps) {
         >
           <Icon name={transportPlaying ? 'stop' : 'play'} />
         </button>
-        <button aria-label="Stop" onClick={() => void onStop()}>
+        <button aria-label="Stop and go to start" onClick={() => void onGoToStart()}>
           <Icon name="stop" />
         </button>
         <button

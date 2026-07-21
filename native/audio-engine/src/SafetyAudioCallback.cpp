@@ -14,6 +14,10 @@ void SafetyAudioCallback::setPluginRack(PluginRack* const rack) noexcept {
     pluginRack = rack;
 }
 
+void SafetyAudioCallback::setTimelineEngine(TimelineEngine* const engine) noexcept {
+    timelineEngine = engine;
+}
+
 bool SafetyAudioCallback::hasInstrumentPlugin() const noexcept {
     return pluginRack != nullptr && pluginRack->isInstrument();
 }
@@ -411,6 +415,11 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     }
 
     if (emergencyMuted.load(std::memory_order_acquire)) {
+        for (int channel = 0; channel < numOutputChannels; ++channel)
+            if (outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+        if (timelineEngine != nullptr)
+            timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
         silenceAndCommit(
             outputChannelData,
             numOutputChannels,
@@ -426,6 +435,11 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         emergencyMuted.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);
         allNotesOff();
+        for (int channel = 0; channel < numOutputChannels; ++channel)
+            if (outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
+        if (timelineEngine != nullptr)
+            timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
         silenceAndCommit(
             outputChannelData,
             numOutputChannels,
@@ -457,6 +471,9 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
                     juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
             }
     }
+
+    if (timelineEngine != nullptr)
+        timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
 
     const juce::ScopedTryLock previewTry(previewLock);
     if (previewTry.isLocked()) {
@@ -527,6 +544,8 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
         : 0);
     feedbackDetector.prepare(sampleRate);
     feedbackSuspected.store(false, std::memory_order_release);
+    if (timelineEngine != nullptr)
+        timelineEngine->audioDeviceStarted();
     if (pluginRack != nullptr)
         pluginRack->prepare(activeSampleRate.load(std::memory_order_acquire), silenceBuffer.getNumSamples());
 }

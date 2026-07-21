@@ -23,6 +23,7 @@ import {
   InspectorPanel,
   TransportBar,
   MissingDependencies,
+  WorkspaceArrange,
 } from '@/components';
 import styles from './App.module.css';
 
@@ -124,6 +125,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     stopSeparationPreview,
     playTransport,
     stopTransport,
+    goToStart,
     toggleRecording,
     api: nativeApi,
   } = useApp(api);
@@ -270,7 +272,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           />
         )}
         {session.workspace === 'arrange' && (
-          <div className="workspace-scroll arrange-workspace-stack" />
+          <WorkspaceArrange session={session} setSession={setSession} api={nativeApi} />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
           <>
@@ -359,6 +361,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         transportPlaying={transportPlaying}
         onPlay={playTransport}
         onStop={stopTransport}
+        onGoToStart={goToStart}
         recordingCommandPending={recordingCommandPending}
         onToggleRecording={toggleRecording}
         recordCountdown={recordCountdown}

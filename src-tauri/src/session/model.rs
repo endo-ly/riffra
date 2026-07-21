@@ -11,8 +11,76 @@ use crate::errors::DomainError;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use serde::{Deserialize, Serialize};
 
-/// Current v2 session format version.
-pub const CREATIVE_SESSION_FORMAT: u32 = 2;
+/// Current session format version.
+pub const CREATIVE_SESSION_FORMAT: u32 = 3;
+
+/// Pulses per quarter note used by every session timeline.
+pub const TIMELINE_PPQ: u32 = 960;
+
+/// An exact position in musical time.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TimelineTick(pub u64);
+
+/// A half-open range of source-audio frames.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+impl FrameRange {
+    fn len(self) -> u64 {
+        self.end.saturating_sub(self.start)
+    }
+}
+
+/// A real-time duration expressed against its source sample rate.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameDuration {
+    pub frames: u64,
+    pub sample_rate: u32,
+}
+
+/// Musical clock shared by the ruler, snapping, MIDI, and transport.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTimebase {
+    pub ppq: u32,
+    pub bpm: f64,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+}
+
+impl Default for ProjectTimebase {
+    fn default() -> Self {
+        Self {
+            ppq: TIMELINE_PPQ,
+            bpm: 120.0,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+        }
+    }
+}
+
+impl ProjectTimebase {
+    /// Converts a real-time millisecond offset to the nearest timeline tick.
+    pub(crate) fn milliseconds_to_ticks(self, milliseconds: f64) -> TimelineTick {
+        let ticks = milliseconds.max(0.0) * self.bpm * f64::from(self.ppq) / 60_000.0;
+        TimelineTick(ticks.round().max(0.0) as u64)
+    }
+}
+
+/// Persisted loop selection. Disabled ranges retain their endpoints.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineLoopRange {
+    pub enabled: bool,
+    pub start_tick: TimelineTick,
+    pub end_tick: TimelineTick,
+}
 
 /// The four fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
 /// workspaces; they are [`DesignTool`]s reached from [`Workspace::Design`].
@@ -52,12 +120,21 @@ impl Default for DesignContext {
     }
 }
 
+/// The production source hosted by a timeline track.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackKind {
+    Audio,
+    Instrument,
+}
+
 /// A timeline track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
     pub id: String,
     pub name: String,
+    pub kind: TrackKind,
     #[serde(default)]
     pub gain_db: f64,
     #[serde(default)]
@@ -69,11 +146,12 @@ pub struct Track {
 }
 
 impl Track {
-    /// The default "main" track every arrangement starts with.
-    pub fn main() -> Self {
+    /// Creates a neutral audio track.
+    pub fn audio(id: String, name: String) -> Self {
         Self {
-            id: "main".into(),
-            name: "Main".into(),
+            id,
+            name,
+            kind: TrackKind::Audio,
             gain_db: 0.0,
             pan: 0.0,
             muted: false,
@@ -88,8 +166,8 @@ impl Track {
 pub struct MidiNote {
     pub id: String,
     pub note: u8,
-    pub start_ms: u64,
-    pub duration_ms: u64,
+    pub start_tick: TimelineTick,
+    pub duration_ticks: u64,
     pub velocity: u8,
     pub channel: u8,
 }
@@ -100,8 +178,9 @@ pub struct MidiNote {
 pub struct MidiClip {
     pub id: String,
     pub name: String,
-    pub start_ms: u64,
-    pub duration_ms: u64,
+    pub track_id: String,
+    pub start_tick: TimelineTick,
+    pub duration_ticks: u64,
     #[serde(default)]
     pub notes: Vec<MidiNote>,
     #[serde(default)]
@@ -110,28 +189,67 @@ pub struct MidiClip {
 
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
-/// `source_end_ms == 0` means "to the end of the source asset", preserving the
-/// existing convention so existing sessions keep their meaning.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClip {
     pub id: String,
     pub track_id: String,
     pub asset_id: AssetId,
-    pub position_ms: u64,
-    pub duration_ms: u64,
-    pub source_start_ms: u64,
-    pub source_end_ms: u64,
+    pub start_tick: TimelineTick,
+    pub source_range: FrameRange,
+    pub source_sample_rate: u32,
+    pub timeline_duration: FrameDuration,
     pub gain_db: f64,
     pub pan: f64,
-    pub fade_in_ms: u64,
-    pub fade_out_ms: u64,
+    pub fade_in: FrameDuration,
+    pub fade_out: FrameDuration,
     pub loop_enabled: bool,
     pub muted: bool,
     pub name: String,
 }
 
 impl AudioClip {
+    /// Creates a clip that references an entire source at its native rate.
+    pub(crate) fn full_source(
+        id: String,
+        name: String,
+        track_id: String,
+        asset_id: AssetId,
+        start_tick: TimelineTick,
+        sample_rate: u32,
+        source_frames: u64,
+    ) -> Self {
+        let duration = FrameDuration {
+            frames: source_frames,
+            sample_rate,
+        };
+        Self {
+            id,
+            name,
+            track_id,
+            asset_id,
+            start_tick,
+            source_range: FrameRange {
+                start: 0,
+                end: source_frames,
+            },
+            source_sample_rate: sample_rate,
+            timeline_duration: duration,
+            gain_db: 0.0,
+            pan: 0.0,
+            fade_in: FrameDuration {
+                frames: 0,
+                sample_rate,
+            },
+            fade_out: FrameDuration {
+                frames: 0,
+                sample_rate,
+            },
+            loop_enabled: false,
+            muted: false,
+        }
+    }
+
     /// Clamps and normalizes the production-managed numeric fields in place.
     ///
     /// This is the single canonical place where clip gain, pan, and fade
@@ -146,8 +264,8 @@ impl AudioClip {
             self.pan = 0.0;
         }
         self.pan = self.pan.clamp(-1.0, 1.0);
-        self.fade_in_ms = self.fade_in_ms.min(self.duration_ms);
-        self.fade_out_ms = self.fade_out_ms.min(self.duration_ms);
+        self.fade_in.frames = self.fade_in.frames.min(self.timeline_duration.frames);
+        self.fade_out.frames = self.fade_out.frames.min(self.timeline_duration.frames);
     }
 }
 
@@ -164,21 +282,19 @@ pub struct AudioClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position_ms: Option<u64>,
+    pub start_tick: Option<TimelineTick>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
+    pub timeline_duration: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_start_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_end_ms: Option<u64>,
+    pub source_range: Option<FrameRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gain_db: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pan: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fade_in_ms: Option<u64>,
+    pub fade_in: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fade_out_ms: Option<u64>,
+    pub fade_out: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -189,6 +305,9 @@ pub struct AudioClipPatch {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Arrangement {
+    pub revision: u64,
+    pub timebase: ProjectTimebase,
+    pub loop_range: TimelineLoopRange,
     pub tracks: Vec<Track>,
     pub audio_clips: Vec<AudioClip>,
     pub midi_clips: Vec<MidiClip>,
@@ -197,7 +316,10 @@ pub struct Arrangement {
 impl Default for Arrangement {
     fn default() -> Self {
         Self {
-            tracks: vec![Track::main()],
+            revision: 0,
+            timebase: ProjectTimebase::default(),
+            loop_range: TimelineLoopRange::default(),
+            tracks: Vec::new(),
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
         }
@@ -205,9 +327,25 @@ impl Default for Arrangement {
 }
 
 impl Arrangement {
-    /// Returns true if a track with the given id exists.
-    pub fn has_track(&self, track_id: &str) -> bool {
-        self.tracks.iter().any(|track| track.id == track_id)
+    /// Replaces the transport loop selection and advances the arrangement revision.
+    pub fn update_loop_range(
+        &mut self,
+        enabled: bool,
+        start_tick: TimelineTick,
+        end_tick: TimelineTick,
+    ) -> Result<(), DomainError> {
+        if enabled && end_tick <= start_tick {
+            return Err(DomainError::InvalidClip(
+                "Enabled loop range must have a positive duration.".into(),
+            ));
+        }
+        self.loop_range = TimelineLoopRange {
+            enabled,
+            start_tick,
+            end_tick,
+        };
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
     }
 
     /// Validates the structural rules for an audio clip against the tracks,
@@ -218,12 +356,33 @@ impl Arrangement {
     /// exist, or [`DomainError::InvalidClip`] for a negative-equivalent or
     /// inverted source range.
     pub fn validate_audio_clip(&self, clip: &AudioClip) -> Result<(), DomainError> {
-        if !self.has_track(&clip.track_id) {
-            return Err(DomainError::UnknownTrack(clip.track_id.clone()));
+        let track = self
+            .tracks
+            .iter()
+            .find(|track| track.id == clip.track_id)
+            .ok_or_else(|| DomainError::UnknownTrack(clip.track_id.clone()))?;
+        if track.kind != TrackKind::Audio {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip '{}' requires an Audio Track.",
+                clip.id
+            )));
         }
-        if clip.source_end_ms > 0 && clip.source_end_ms <= clip.source_start_ms {
+        if clip.source_range.end <= clip.source_range.start {
             return Err(DomainError::InvalidClip(format!(
                 "Audio clip '{}' has an invalid source range.",
+                clip.id
+            )));
+        }
+        if clip.source_sample_rate == 0
+            || clip.timeline_duration.frames == 0
+            || clip.timeline_duration.sample_rate != clip.source_sample_rate
+            || clip.fade_in.sample_rate != clip.source_sample_rate
+            || clip.fade_out.sample_rate != clip.source_sample_rate
+            || (!clip.loop_enabled && clip.timeline_duration.frames != clip.source_range.len())
+            || (clip.loop_enabled && clip.timeline_duration.frames < clip.source_range.len())
+        {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip '{}' has inconsistent frame timing.",
                 clip.id
             )));
         }
@@ -252,6 +411,7 @@ impl Arrangement {
             )));
         }
         self.audio_clips.push(clip);
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
@@ -288,17 +448,14 @@ impl Arrangement {
         if let Some(track_id) = patch.track_id {
             clip.track_id = track_id;
         }
-        if let Some(position_ms) = patch.position_ms {
-            clip.position_ms = position_ms;
+        if let Some(start_tick) = patch.start_tick {
+            clip.start_tick = start_tick;
         }
-        if let Some(duration_ms) = patch.duration_ms {
-            clip.duration_ms = duration_ms;
+        if let Some(timeline_duration) = patch.timeline_duration {
+            clip.timeline_duration = timeline_duration;
         }
-        if let Some(source_start_ms) = patch.source_start_ms {
-            clip.source_start_ms = source_start_ms;
-        }
-        if let Some(source_end_ms) = patch.source_end_ms {
-            clip.source_end_ms = source_end_ms;
+        if let Some(source_range) = patch.source_range {
+            clip.source_range = source_range;
         }
         if let Some(gain_db) = patch.gain_db {
             clip.gain_db = gain_db;
@@ -306,11 +463,11 @@ impl Arrangement {
         if let Some(pan) = patch.pan {
             clip.pan = pan;
         }
-        if let Some(fade_in_ms) = patch.fade_in_ms {
-            clip.fade_in_ms = fade_in_ms;
+        if let Some(fade_in) = patch.fade_in {
+            clip.fade_in = fade_in;
         }
-        if let Some(fade_out_ms) = patch.fade_out_ms {
-            clip.fade_out_ms = fade_out_ms;
+        if let Some(fade_out) = patch.fade_out {
+            clip.fade_out = fade_out;
         }
         if let Some(loop_enabled) = patch.loop_enabled {
             clip.loop_enabled = loop_enabled;
@@ -328,7 +485,7 @@ impl Arrangement {
                 clip.id
             )));
         }
-        if clip.duration_ms == 0 {
+        if clip.timeline_duration.frames == 0 {
             return Err(DomainError::InvalidClip(format!(
                 "Audio clip '{}' must have a positive duration.",
                 clip.id
@@ -337,127 +494,7 @@ impl Arrangement {
         clip.normalize_fields();
         self.validate_audio_clip(&clip)?;
         self.audio_clips[index] = clip;
-        Ok(())
-    }
-
-    /// Creates a copy of an existing clip with a fresh `new_id`, sharing the
-    /// source [`AssetId`]. The duplicate is placed on the same track, right
-    /// after the original clip, with identical parameters.
-    ///
-    /// # Errors
-    /// Returns [`DomainError::InvalidClip`] when the source clip cannot be
-    /// found or `new_id` is already in use.
-    pub fn duplicate_audio_clip(
-        &mut self,
-        clip_id: &str,
-        new_id: String,
-    ) -> Result<(), DomainError> {
-        if new_id.trim().is_empty() {
-            return Err(DomainError::InvalidClip(
-                "Duplicate clip id must not be empty.".into(),
-            ));
-        }
-        if self.audio_clips.iter().any(|clip| clip.id == new_id) {
-            return Err(DomainError::InvalidClip(format!(
-                "Audio clip id '{new_id}' is already in use."
-            )));
-        }
-        let index = self
-            .audio_clips
-            .iter()
-            .position(|clip| clip.id == clip_id)
-            .ok_or_else(|| {
-                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
-            })?;
-        let mut copy = self.audio_clips[index].clone();
-        copy.id = new_id;
-        copy.name = format!("{} copy", copy.name);
-        copy.position_ms = copy.position_ms.saturating_add(copy.duration_ms);
-        copy.normalize_fields();
-        self.audio_clips.insert(index + 1, copy);
-        Ok(())
-    }
-
-    /// Splits an existing clip into two pieces at `at_offset_ms` (relative to
-    /// the clip's `position_ms`). The original clip becomes the first piece; a
-    /// new clip with `new_clip_id` is inserted as the second piece, on the same
-    /// track, sharing the source [`AssetId`].
-    ///
-    /// The split point must satisfy `0 < at_offset_ms < duration_ms`. Source
-    /// ranges are adjusted so the two pieces reference contiguous regions of
-    /// the same source; `loop_enabled` clips keep their original source window
-    /// on both pieces because the loop repeats the same source material.
-    ///
-    /// # Errors
-    /// Returns [`DomainError::InvalidClip`] when the source clip cannot be
-    /// found, `at_offset_ms` is outside the clip's duration, or `new_clip_id`
-    /// is empty or already in use.
-    pub fn split_audio_clip(
-        &mut self,
-        clip_id: &str,
-        at_offset_ms: u64,
-        new_clip_id: String,
-    ) -> Result<(), DomainError> {
-        if new_clip_id.trim().is_empty() {
-            return Err(DomainError::InvalidClip(
-                "Split clip id must not be empty.".into(),
-            ));
-        }
-        if self.audio_clips.iter().any(|clip| clip.id == new_clip_id) {
-            return Err(DomainError::InvalidClip(format!(
-                "Audio clip id '{new_clip_id}' is already in use."
-            )));
-        }
-        let index = self
-            .audio_clips
-            .iter()
-            .position(|clip| clip.id == clip_id)
-            .ok_or_else(|| {
-                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
-            })?;
-        if at_offset_ms == 0 || at_offset_ms >= self.audio_clips[index].duration_ms {
-            return Err(DomainError::InvalidClip(format!(
-                "Split offset for clip '{clip_id}' must be inside its duration."
-            )));
-        }
-        let original = self.audio_clips[index].clone();
-        let loop_enabled = original.loop_enabled;
-        let first_duration = at_offset_ms;
-        let second_duration = original.duration_ms - at_offset_ms;
-        // Effective source end honours the `0 == to end of source` convention.
-        let effective_source_end = if original.source_end_ms > 0 {
-            original.source_end_ms
-        } else {
-            original
-                .source_start_ms
-                .saturating_add(original.duration_ms)
-        };
-        let source_split = effective_source_end.min(original.source_start_ms + first_duration);
-        let mut first = original.clone();
-        first.duration_ms = first_duration;
-        if !loop_enabled {
-            first.source_end_ms = source_split;
-        }
-        first.normalize_fields();
-
-        let mut second = original.clone();
-        second.id = new_clip_id;
-        second.name = format!("{} 2", original.name);
-        second.position_ms = original.position_ms + first_duration;
-        second.duration_ms = second_duration;
-        if !loop_enabled {
-            second.source_start_ms = source_split;
-            second.source_end_ms =
-                if original.source_end_ms > 0 && effective_source_end > source_split {
-                    original.source_end_ms
-                } else {
-                    0
-                };
-        }
-        second.normalize_fields();
-
-        self.audio_clips[index] = first;
-        self.audio_clips.insert(index + 1, second);
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
@@ -474,6 +511,7 @@ impl Arrangement {
                 DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
             })?;
         self.audio_clips.remove(index);
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 }
@@ -843,8 +881,19 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
     if arrangement.audio_clips.len() > 512 {
         return Err("An arrangement cannot contain more than 512 audio clips.".into());
     }
-    if arrangement.tracks.is_empty() {
-        arrangement.tracks = vec![Track::main()];
+    let timebase = &arrangement.timebase;
+    if timebase.ppq != TIMELINE_PPQ
+        || !timebase.bpm.is_finite()
+        || !(20.0..=400.0).contains(&timebase.bpm)
+        || timebase.time_signature_numerator == 0
+        || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
+    {
+        return Err("Arrangement timebase is invalid.".into());
+    }
+    if arrangement.loop_range.enabled
+        && arrangement.loop_range.end_tick <= arrangement.loop_range.start_tick
+    {
+        return Err("Enabled loop range must have a positive duration.".into());
     }
     if arrangement.tracks.len() > 128 {
         return Err("An arrangement cannot contain more than 128 tracks.".into());
@@ -877,6 +926,9 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         }
         clip.normalize_fields();
         let mut candidate = Arrangement {
+            revision: arrangement.revision,
+            timebase: arrangement.timebase,
+            loop_range: arrangement.loop_range,
             tracks: arrangement.tracks.clone(),
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
@@ -890,11 +942,20 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
     if arrangement.midi_clips.len() > 256 {
         return Err("An arrangement cannot contain more than 256 MIDI clips.".into());
     }
+    let track_ids = arrangement
+        .tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
     for clip in &mut arrangement.midi_clips {
-        if clip.id.trim().is_empty() || clip.name.trim().is_empty() {
+        if clip.id.trim().is_empty()
+            || clip.name.trim().is_empty()
+            || clip.track_id.trim().is_empty()
+            || !track_ids.contains(clip.track_id.as_str())
+        {
             return Err("MIDI clips require non-empty ids and names.".into());
         }
-        if clip.duration_ms == 0 {
+        if clip.duration_ticks == 0 {
             return Err(format!("MIDI clip '{}' must have a duration.", clip.name));
         }
         if clip.notes.len() > 200_000 {
@@ -909,7 +970,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
                 || note.velocity > 127
                 || note.channel == 0
                 || note.channel > 16
-                || note.duration_ms == 0
+                || note.duration_ticks == 0
             {
                 return Err(format!(
                     "MIDI clip '{}' contains an invalid note.",
@@ -952,22 +1013,15 @@ mod tests {
     use crate::asset::{Provenance, mint_asset_id};
 
     fn clip(track_id: &str, asset_id: AssetId) -> AudioClip {
-        AudioClip {
-            id: "clip:1".into(),
-            track_id: track_id.into(),
+        AudioClip::full_source(
+            "clip:1".into(),
+            "clip".into(),
+            track_id.into(),
             asset_id,
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "clip".into(),
-        }
+            TimelineTick(0),
+            1_000,
+            1_000,
+        )
     }
 
     #[test]
@@ -997,21 +1051,41 @@ mod tests {
     fn arrangement_cannot_add_a_clip_to_an_unknown_track() {
         let mut arrangement = Arrangement::default();
         let asset = mint_asset_id();
-        let mut clip = clip("missing", asset);
-        // Force a valid-looking source range so the track check is the only failure.
-        clip.source_start_ms = 0;
-        clip.source_end_ms = 50;
+        let clip = clip("missing", asset);
         let error = arrangement.add_audio_clip(clip, |_| true).unwrap_err();
         assert!(matches!(error, DomainError::UnknownTrack(_)));
     }
 
     #[test]
+    fn arrangement_cannot_add_an_audio_clip_to_an_instrument_track() {
+        let mut arrangement = Arrangement::default();
+        arrangement.tracks.push(Track {
+            id: "instrument".into(),
+            name: "Instrument".into(),
+            kind: TrackKind::Instrument,
+            gain_db: 0.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+        });
+        let error = arrangement
+            .add_audio_clip(clip("instrument", mint_asset_id()), |_| true)
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+
+    #[test]
     fn arrangement_rejects_inverted_source_range() {
         let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
         let asset = mint_asset_id();
         let mut clip = clip("main", asset);
-        clip.source_start_ms = 80;
-        clip.source_end_ms = 50;
+        clip.source_range = FrameRange {
+            start: 800,
+            end: 500,
+        };
         let error = arrangement.add_audio_clip(clip, |_| true).unwrap_err();
         assert!(matches!(error, DomainError::InvalidClip(_)));
     }
@@ -1019,9 +1093,11 @@ mod tests {
     #[test]
     fn arrangement_rejects_clip_with_unknown_asset() {
         let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
         let asset = mint_asset_id();
-        let mut clip = clip("main", asset);
-        clip.source_end_ms = 50;
+        let clip = clip("main", asset);
         let error = arrangement.add_audio_clip(clip, |_| false).unwrap_err();
         assert!(matches!(error, DomainError::InvalidClip(_)));
     }
@@ -1029,9 +1105,11 @@ mod tests {
     #[test]
     fn arrangement_accepts_a_valid_clip_and_carries_asset_id() {
         let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
         let asset = mint_asset_id();
-        let mut clip = clip("main", asset.clone());
-        clip.source_end_ms = 50;
+        let clip = clip("main", asset.clone());
         arrangement
             .add_audio_clip(clip.clone(), |id| id == &asset)
             .unwrap();
@@ -1041,11 +1119,15 @@ mod tests {
 
     fn arrangement_with_clip(asset: AssetId) -> Arrangement {
         let mut arrangement = Arrangement {
+            revision: 0,
+            timebase: ProjectTimebase::default(),
+            loop_range: TimelineLoopRange::default(),
             tracks: vec![
-                Track::main(),
+                Track::audio("main".into(), "Main".into()),
                 Track {
                     id: "extra".into(),
                     name: "Extra".into(),
+                    kind: TrackKind::Audio,
                     gain_db: 0.0,
                     pan: 0.0,
                     muted: false,
@@ -1057,10 +1139,7 @@ mod tests {
         };
         let mut clip = clip("main", asset);
         clip.id = "clip:1".into();
-        clip.position_ms = 1_000;
-        clip.duration_ms = 1_000;
-        clip.source_start_ms = 0;
-        clip.source_end_ms = 0;
+        clip.start_tick = TimelineTick(1_920);
         arrangement
             .add_audio_clip(clip, |_| true)
             .expect("seed clip is valid");
@@ -1076,7 +1155,10 @@ mod tests {
                 AudioClipPatch {
                     gain_db: Some(999.0),
                     pan: Some(-5.0),
-                    fade_in_ms: Some(10_000),
+                    fade_in: Some(FrameDuration {
+                        frames: 10_000,
+                        sample_rate: 1_000,
+                    }),
                     ..Default::default()
                 },
             )
@@ -1088,10 +1170,9 @@ mod tests {
             .expect("clip remains");
         assert_eq!(updated.gain_db, 24.0);
         assert_eq!(updated.pan, -1.0);
-        // Fades are clamped against the clip's 1000 ms duration, not the requested 10_000.
-        assert_eq!(updated.fade_in_ms, 1_000);
+        assert_eq!(updated.fade_in.frames, 1_000);
         // Untouched fields are preserved.
-        assert_eq!(updated.position_ms, 1_000);
+        assert_eq!(updated.start_tick, TimelineTick(1_920));
     }
 
     #[test]
@@ -1118,8 +1199,10 @@ mod tests {
             .update_audio_clip(
                 "clip:1",
                 AudioClipPatch {
-                    source_start_ms: Some(800),
-                    source_end_ms: Some(100),
+                    source_range: Some(FrameRange {
+                        start: 800,
+                        end: 100,
+                    }),
                     ..Default::default()
                 },
             )
@@ -1143,128 +1226,14 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_audio_clip_creates_new_id_and_shares_asset_at_adjacent_position() {
-        let asset = mint_asset_id();
-        let mut arrangement = arrangement_with_clip(asset.clone());
-        arrangement
-            .duplicate_audio_clip("clip:1", "clip:1:copy:1".into())
-            .unwrap();
-        assert_eq!(arrangement.audio_clips.len(), 2);
-        let original = &arrangement.audio_clips[0];
-        let copy = &arrangement.audio_clips[1];
-        assert_eq!(original.id, "clip:1");
-        assert_eq!(copy.id, "clip:1:copy:1");
-        // Asset is shared; only the position differs.
-        assert_eq!(copy.asset_id, original.asset_id);
-        assert_eq!(copy.asset_id, asset);
-        assert_eq!(
-            copy.position_ms,
-            original.position_ms + original.duration_ms
-        );
-        assert_eq!(copy.track_id, original.track_id);
-    }
-
-    #[test]
-    fn duplicate_audio_clip_rejects_reused_id_and_missing_source() {
+    fn remove_audio_clip_drops_the_target_and_advances_revision() {
         let mut arrangement = arrangement_with_clip(mint_asset_id());
-        assert!(matches!(
-            arrangement
-                .duplicate_audio_clip("clip:1", "clip:1".into())
-                .unwrap_err(),
-            DomainError::InvalidClip(_)
-        ));
-        assert!(matches!(
-            arrangement
-                .duplicate_audio_clip("missing", "clip:1:copy:1".into())
-                .unwrap_err(),
-            DomainError::InvalidClip(_)
-        ));
-        assert_eq!(arrangement.audio_clips.len(), 1);
-    }
+        let previous_revision = arrangement.revision;
 
-    #[test]
-    fn split_audio_clip_produces_contiguous_pieces_sharing_asset_and_track() {
-        let asset = mint_asset_id();
-        let mut arrangement = arrangement_with_clip(asset.clone());
-        let original = arrangement.audio_clips[0].clone();
-        arrangement
-            .split_audio_clip("clip:1", 400, "clip:1:split:1".into())
-            .unwrap();
-        assert_eq!(arrangement.audio_clips.len(), 2);
-        let first = &arrangement.audio_clips[0];
-        let second = &arrangement.audio_clips[1];
-        assert_eq!(first.id, "clip:1");
-        assert_eq!(second.id, "clip:1:split:1");
-        assert_eq!(first.asset_id, asset);
-        assert_eq!(second.asset_id, asset);
-        assert_eq!(first.track_id, original.track_id);
-        assert_eq!(second.track_id, original.track_id);
-        assert_eq!(first.duration_ms, 400);
-        assert_eq!(second.duration_ms, 600);
-        assert_eq!(second.position_ms, original.position_ms + 400);
-        // source_end_ms == 0 means "to end of source"; splitting that clip
-        // leaves the second half continuing to the end of the source.
-        assert_eq!(first.source_end_ms, original.source_start_ms + 400);
-        assert_eq!(second.source_end_ms, 0);
-        assert_eq!(second.source_start_ms, original.source_start_ms + 400);
-    }
-
-    #[test]
-    fn split_audio_clip_keeps_loop_source_window_on_both_pieces() {
-        let asset = mint_asset_id();
-        let mut arrangement = arrangement_with_clip(asset);
-        arrangement
-            .update_audio_clip(
-                "clip:1",
-                AudioClipPatch {
-                    loop_enabled: Some(true),
-                    source_end_ms: Some(500),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        arrangement
-            .split_audio_clip("clip:1", 400, "clip:1:split:1".into())
-            .unwrap();
-        let first = &arrangement.audio_clips[0];
-        let second = &arrangement.audio_clips[1];
-        assert!(first.loop_enabled);
-        assert!(second.loop_enabled);
-        // Loop clips keep the same source window on both halves.
-        assert_eq!(first.source_start_ms, 0);
-        assert_eq!(first.source_end_ms, 500);
-        assert_eq!(second.source_start_ms, 0);
-        assert_eq!(second.source_end_ms, 500);
-    }
-
-    #[test]
-    fn split_audio_clip_rejects_out_of_range_offset() {
-        let mut arrangement = arrangement_with_clip(mint_asset_id());
-        assert!(matches!(
-            arrangement
-                .split_audio_clip("clip:1", 0, "clip:1:split:1".into())
-                .unwrap_err(),
-            DomainError::InvalidClip(_)
-        ));
-        assert!(matches!(
-            arrangement
-                .split_audio_clip("clip:1", 1_000, "clip:1:split:1".into())
-                .unwrap_err(),
-            DomainError::InvalidClip(_)
-        ));
-        assert_eq!(arrangement.audio_clips.len(), 1);
-    }
-
-    #[test]
-    fn remove_audio_clip_drops_only_the_target() {
-        let asset = mint_asset_id();
-        let mut arrangement = arrangement_with_clip(asset);
-        arrangement
-            .duplicate_audio_clip("clip:1", "clip:1:copy:1".into())
-            .unwrap();
         arrangement.remove_audio_clip("clip:1").unwrap();
-        assert_eq!(arrangement.audio_clips.len(), 1);
-        assert_eq!(arrangement.audio_clips[0].id, "clip:1:copy:1");
+
+        assert!(arrangement.audio_clips.is_empty());
+        assert_eq!(arrangement.revision, previous_revision + 1);
     }
 
     #[test]
@@ -1279,8 +1248,7 @@ mod tests {
     #[test]
     fn new_session_has_arrangement_tracks_and_default_rack() {
         let session = CreativeSession::new(0);
-        assert_eq!(session.arrangement.tracks.len(), 1);
-        assert_eq!(session.arrangement.tracks[0].id, "main");
+        assert!(session.arrangement.tracks.is_empty());
         assert_eq!(session.rack.devices.len(), 3);
         assert_eq!(
             session.play_state.sample_instrument.pads,

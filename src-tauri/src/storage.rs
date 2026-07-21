@@ -394,6 +394,29 @@ mod tests {
         std::fs::write(path, b"RIFF\0\0\0\0WAVE").unwrap();
     }
 
+    fn push_audio_clip(
+        session: &mut CreativeSession,
+        id: &str,
+        name: &str,
+        asset_id: crate::asset::AssetId,
+    ) {
+        if session.arrangement.tracks.is_empty() {
+            session
+                .arrangement
+                .tracks
+                .push(crate::session::Track::audio("main".into(), "Main".into()));
+        }
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            id.into(),
+            name.into(),
+            "main".into(),
+            asset_id,
+            crate::session::TimelineTick(0),
+            48_000,
+            4_800,
+        ));
+    }
+
     #[test]
     fn keeps_last_valid_generation_when_current_is_corrupt() {
         let root = test_root("recovery");
@@ -453,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_and_round_trips_a_v2_session() {
+    fn loads_and_round_trips_a_v3_session() {
         let root = test_root("v2-roundtrip");
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
@@ -472,22 +495,7 @@ mod tests {
         let root = test_root("save-unknown-asset");
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:unknown".into(),
-            track_id: "main".into(),
-            asset_id: mint_asset_id(),
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "unknown".into(),
-        });
+        push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
 
         let error = store.save(&session).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
@@ -503,22 +511,7 @@ mod tests {
         let current = root.join("scratch/current.json");
 
         let mut session = CreativeSession::new(now_ms());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:unknown".into(),
-            track_id: "main".into(),
-            asset_id: mint_asset_id(),
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "unknown".into(),
-        });
+        push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
         let payload = serde_json::to_vec_pretty(&session).unwrap();
         fs::write(&current, &payload).unwrap();
         let original = fs::read(&current).unwrap();
@@ -554,22 +547,7 @@ mod tests {
         // Current session references an unknown asset and must be rejected.
         let current = root.join("scratch/current.json");
         let mut session = CreativeSession::new(now_ms());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:unknown".into(),
-            track_id: "main".into(),
-            asset_id: mint_asset_id(),
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "unknown".into(),
-        });
+        push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
         fs::write(&current, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
 
         let loaded = store.load_or_create().unwrap();
@@ -594,22 +572,7 @@ mod tests {
         std::fs::remove_file(&wav).unwrap();
 
         let mut session = CreativeSession::new(now_ms());
-        session.arrangement.audio_clips.push(AudioClip {
-            id: "clip:asset-backed".into(),
-            track_id: "main".into(),
-            asset_id,
-            position_ms: 0,
-            duration_ms: 100,
-            source_start_ms: 0,
-            source_end_ms: 0,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in_ms: 0,
-            fade_out_ms: 0,
-            loop_enabled: false,
-            muted: false,
-            name: "asset-backed".into(),
-        });
+        push_audio_clip(&mut session, "clip:asset-backed", "asset-backed", asset_id);
         SessionStore::new(&root).save(&session).unwrap();
         assert!(root.join("scratch/current.json").is_file());
         let _ = fs::remove_dir_all(root);
@@ -625,7 +588,7 @@ mod tests {
         let session = CreativeSession::new(now_ms())
             .validate_and_normalize()
             .unwrap();
-        assert_eq!(session.arrangement.tracks.len(), 1);
+        assert!(session.arrangement.tracks.is_empty());
         assert_eq!(session.rack.devices.len(), 3);
         assert_eq!(session.rack.devices[0].kind, DeviceKind::Input);
     }

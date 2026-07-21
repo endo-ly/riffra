@@ -4,6 +4,7 @@
 #include "AudioSafetyDsp.h"
 #include "RecordingSession.h"
 #include "PluginRack.h"
+#include "TimelineEngine.h"
 
 #include <atomic>
 #include <array>
@@ -40,6 +41,7 @@ public:
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
+    void setTimelineEngine(TimelineEngine* engine) noexcept;
     [[nodiscard]] bool hasInstrumentPlugin() const noexcept;
     void enqueuePluginMidi(const juce::MidiMessage& message) noexcept;
 
@@ -145,6 +147,7 @@ private:
     static constexpr std::size_t kSynthVoiceCount = 16;
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;
     PluginRack* pluginRack = nullptr;
+    TimelineEngine* timelineEngine = nullptr;
 
     juce::CriticalSection errorLock;
     juce::String lastDeviceError;

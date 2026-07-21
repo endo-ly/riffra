@@ -11,11 +11,10 @@ use tauri::State;
 
 use crate::AppState;
 use crate::asset::AssetId;
-use crate::errors::DomainError;
 use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
-use crate::session::{AudioClipPatch, CreativeSession, DesignTool, Workspace};
+use crate::session::{AudioClipPatch, CreativeSession, DesignTool, TimelineTick, Workspace};
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
     SessionContext {
@@ -84,130 +83,67 @@ pub fn remove_sample_pad(
 pub fn add_audio_clip_to_arrangement(
     asset_id: String,
     name: String,
-    duration_ms: u64,
+    start_tick: Option<TimelineTick>,
     track_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    application::add_audio_clip(&context(&state), asset_id, name, duration_ms, track_id)
+    application::add_audio_clip(&context(&state), asset_id, name, start_tick, track_id)
 }
 
-// #[tauri::command]
-// pub fn update_audio_clip(
-//     clip_id: String,
-//     patch: AudioClipPatch,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         arrangement.update_audio_clip(&clip_id, patch)
-//     })
-// }
+#[tauri::command]
+pub fn update_audio_clip(
+    clip_id: String,
+    patch: AudioClipPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.update_audio_clip(&clip_id, patch)
+    })
+}
 
-// #[tauri::command]
-// pub fn move_audio_clip_to_track(
-//     clip_id: String,
-//     track_id: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     if track_id.trim().is_empty() {
-//         return Err("Target track id must not be empty.".into());
-//     }
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         if !arrangement.has_track(&track_id) {
-//             return Err(DomainError::UnknownTrack(track_id.clone()));
-//         }
-//         arrangement.update_audio_clip(
-//             &clip_id,
-//             AudioClipPatch {
-//                 track_id: Some(track_id),
-//                 ..Default::default()
-//             },
-//         )
-//     })
-// }
+#[tauri::command]
+pub fn remove_audio_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.remove_audio_clip(&clip_id)
+    })
+}
 
-// #[tauri::command]
-// pub fn set_audio_clip_muted(
-//     clip_id: String,
-//     muted: bool,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         arrangement.update_audio_clip(
-//             &clip_id,
-//             AudioClipPatch {
-//                 muted: Some(muted),
-//                 ..Default::default()
-//             },
-//         )
-//     })
-// }
+#[tauri::command]
+pub fn sync_arrangement_runtime(state: State<'_, AppState>) -> Result<(), String> {
+    application::sync_arrangement_runtime(&context(&state))
+}
 
-// #[tauri::command]
-// pub fn set_audio_clip_loop(
-//     clip_id: String,
-//     loop_enabled: bool,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         arrangement.update_audio_clip(
-//             &clip_id,
-//             AudioClipPatch {
-//                 loop_enabled: Some(loop_enabled),
-//                 ..Default::default()
-//             },
-//         )
-//     })
-// }
+#[tauri::command]
+pub fn play_timeline(state: State<'_, AppState>) -> Result<(), String> {
+    application::play_timeline(&context(&state))
+}
 
-// #[tauri::command]
-// pub fn duplicate_audio_clip(
-//     clip_id: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     let new_id = format!("{clip_id}:copy:{}", crate::storage::now_ms());
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         arrangement.duplicate_audio_clip(&clip_id, new_id)
-//     })
-// }
+#[tauri::command]
+pub fn stop_timeline(state: State<'_, AppState>) -> Result<(), String> {
+    application::stop_timeline(&context(&state))
+}
 
-// #[tauri::command]
-// pub fn split_audio_clip(
-//     clip_id: String,
-//     at_offset_ms: Option<u64>,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     let new_id = format!("{clip_id}:split:{}", crate::storage::now_ms());
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         let offset = match at_offset_ms {
-//             Some(value) => value,
-//             None => {
-//                 let Some(clip) = arrangement
-//                     .audio_clips
-//                     .iter()
-//                     .find(|clip| clip.id == clip_id)
-//                 else {
-//                     return Err(DomainError::InvalidClip(format!(
-//                         "Audio clip '{clip_id}' not found."
-//                     )));
-//                 };
-//                 clip.duration_ms / 2
-//             }
-//         };
-//         arrangement.split_audio_clip(&clip_id, offset, new_id)
-//     })
-// }
+#[tauri::command]
+pub fn seek_timeline(tick: TimelineTick, state: State<'_, AppState>) -> Result<(), String> {
+    application::seek_timeline(&context(&state), tick)
+}
 
-// #[tauri::command]
-// pub fn remove_audio_clip(
-//     clip_id: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::apply_arrangement_edit(&context(&state), |arrangement| {
-//         arrangement.remove_audio_clip(&clip_id)
-//     })
-// }
+#[tauri::command]
+pub fn update_timeline_loop_range(
+    enabled: bool,
+    start_tick: TimelineTick,
+    end_tick: TimelineTick,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.update_loop_range(enabled, start_tick, end_tick)
+    })
+}
 
 #[tauri::command]
 pub fn open_asset_in_design(
@@ -236,57 +172,19 @@ pub fn update_session_settings(
     application::update_session_settings(&context(&state), patch)
 }
 
-// #[tauri::command]
-// pub fn add_track(name: String, state: State<'_, AppState>) -> Result<CreativeSession, String> {
-//     application::add_track(&context(&state), name)
-// }
+#[tauri::command]
+pub fn add_track(name: String, state: State<'_, AppState>) -> Result<CreativeSession, String> {
+    application::add_track(&context(&state), name)
+}
 
-// #[tauri::command]
-// pub fn update_track(
-//     track_id: String,
-//     patch: application::TrackPatch,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::update_track(&context(&state), &track_id, patch)
-// }
-
-// #[tauri::command]
-// pub fn import_midi_clip(
-//     asset_id: String,
-//     name: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     let asset_id = AssetId::from_normalized(asset_id)
-//         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-//     application::import_midi_clip(&context(&state), asset_id, name)
-// }
-
-// #[tauri::command]
-// pub fn update_midi_note(
-//     clip_id: String,
-//     note_id: String,
-//     patch: application::MidiNotePatch,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::update_midi_note(&context(&state), &clip_id, &note_id, patch)
-// }
-
-// #[tauri::command]
-// pub fn remove_midi_note(
-//     clip_id: String,
-//     note_id: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::remove_midi_note(&context(&state), &clip_id, &note_id)
-// }
-
-// #[tauri::command]
-// pub fn remove_midi_clip(
-//     clip_id: String,
-//     state: State<'_, AppState>,
-// ) -> Result<CreativeSession, String> {
-//     application::remove_midi_clip(&context(&state), &clip_id)
-// }
+#[tauri::command]
+pub fn update_track(
+    track_id: String,
+    patch: application::TrackPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_track(&context(&state), &track_id, patch)
+}
 
 #[tauri::command]
 pub fn apply_ai_suggestion(

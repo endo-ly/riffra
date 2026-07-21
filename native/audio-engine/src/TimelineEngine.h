@@ -1,0 +1,92 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace riffra {
+
+class TimelineEngine final {
+public:
+    TimelineEngine();
+    ~TimelineEngine();
+
+    TimelineEngine(const TimelineEngine&) = delete;
+    TimelineEngine& operator=(const TimelineEngine&) = delete;
+
+    bool loadSnapshot(
+        const juce::var& snapshot,
+        juce::AudioFormatManager& formats,
+        double outputSampleRate,
+        int maximumBlockSize,
+        juce::String& error);
+    void play() noexcept;
+    void stop() noexcept;
+    void audioDeviceStarted() noexcept;
+    void seekToTick(std::uint64_t tick) noexcept;
+    void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
+    [[nodiscard]] juce::var status() const;
+
+private:
+    enum class State { stopped, playing, faulted };
+
+    struct Clip final {
+        juce::String id;
+        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+        juce::AudioTransportSource transport;
+        juce::AudioBuffer<float> scratch;
+        std::int64_t startSample = 0;
+        std::int64_t sourceStartFrame = 0;
+        std::int64_t sourceEndFrame = 0;
+        std::int64_t durationSamples = 0;
+        std::int64_t expectedSourceFrame = -1;
+        double sourceSampleRate = 0.0;
+        float gain = 1.0f;
+        float pan = 0.0f;
+        std::int64_t fadeInSamples = 0;
+        std::int64_t fadeOutSamples = 0;
+        bool loop = false;
+        bool muted = false;
+    };
+
+    struct PreparedTimeline final {
+        std::uint64_t revision = 0;
+        std::uint32_t ppq = 960;
+        double bpm = 120.0;
+        double outputSampleRate = 0.0;
+        bool loopEnabled = false;
+        std::int64_t loopStartSample = 0;
+        std::int64_t loopEndSample = 0;
+        std::vector<std::unique_ptr<Clip>> clips;
+    };
+
+    static std::int64_t tickToSample(
+        std::uint64_t tick,
+        std::uint32_t ppq,
+        double bpm,
+        double sampleRate) noexcept;
+    void mixRange(
+        PreparedTimeline& timeline,
+        std::int64_t rangeStart,
+        float* const* outputChannels,
+        int channelCount,
+        int destinationStart,
+        int sampleCount) noexcept;
+
+    juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
+    mutable juce::SpinLock timelineLock;
+    std::unique_ptr<PreparedTimeline> timeline;
+    std::atomic<State> state { State::stopped };
+    std::atomic<std::int64_t> timelineSample { 0 };
+    std::atomic<std::uint64_t> audioClockSample { 0 };
+    mutable std::atomic<std::uint64_t> sequence { 0 };
+    std::atomic<std::uint64_t> clockGeneration { 0 };
+    std::atomic<std::uint64_t> discontinuity { 1 };
+};
+
+[[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);
+
+} // namespace riffra
