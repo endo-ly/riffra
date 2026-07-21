@@ -1,4 +1,4 @@
-import type { AudioChannelInfo, AudioDeviceProbe } from '@/lib/domain';
+import type { AudioChannelInfo, AudioDeviceProbe, AudioDriverConfig } from '@/lib/domain';
 import { chooseInitialDriverRoute, includeEffectiveOption } from '@/lib/audio-settings';
 
 export function AudioDriverPicker({
@@ -20,14 +20,7 @@ export function AudioDriverPicker({
   outputDevice: string | null;
   sampleRate: number | null;
   bufferSize: number | null;
-  onSelect: (
-    driver: string,
-    inputDevice: string | null,
-    inputChannel: number,
-    outputDevice: string | null,
-    sampleRate: number,
-    bufferSize: number,
-  ) => void;
+  onSelect: (config: AudioDriverConfig) => void;
 }) {
   if (!probe.drivers.length) return null;
   const activeDriver = current ?? probe.drivers[0].name;
@@ -52,7 +45,15 @@ export function AudioDriverPicker({
     nextOutput: string | null,
     rate = selectedRate,
     buffer = selectedBuffer,
-  ) => onSelect(driver, nextInput, nextInputChannel, nextOutput, rate, buffer);
+  ) =>
+    onSelect({
+      driver,
+      inputDevice: nextInput,
+      inputChannel: nextInputChannel,
+      outputDevice: nextOutput,
+      sampleRate: rate,
+      bufferSize: buffer,
+    });
   return (
     <section className="section-card audio-driver-picker">
       <header>

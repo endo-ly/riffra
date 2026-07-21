@@ -1,7 +1,9 @@
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
+  AudioDriverConfig,
   AudioStatus,
+  AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
   AssetId,
@@ -15,10 +17,15 @@ import type {
   RecordingAsset,
   RenderOptions,
   RenderResult,
+  RenderJobStatus,
+  RenderStemsJobStatus,
+  ScanJobStatus,
   ScanReport,
+  SeparationJobStatus,
+  SeparationResult,
   CreativeSession,
   DesignTool,
-  SeparationResult,
+  SessionAudioPair,
   Workspace,
 } from '@/lib/domain';
 
@@ -41,11 +48,11 @@ export interface NativeApi {
   importSession(path: string): Promise<CreativeSession | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
-  startAnalysisJob(assetId: AssetId): Promise<BackgroundJobStatus>;
-  startSeparationJob(assetId: AssetId): Promise<BackgroundJobStatus>;
-  startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
-  startRenderStemsJob(options: RenderOptions): Promise<BackgroundJobStatus>;
-  startScanJob(path?: string): Promise<BackgroundJobStatus>;
+  startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus>;
+  startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus>;
+  startRenderJob(options: RenderOptions): Promise<RenderJobStatus>;
+  startRenderStemsJob(options: RenderOptions): Promise<RenderStemsJobStatus>;
+  startScanJob(path?: string): Promise<ScanJobStatus>;
   getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   listRecordings(query?: string): Promise<RecordingAsset[]>;
@@ -83,28 +90,17 @@ export interface NativeApi {
     parameterValues: number[],
     bypassed: boolean,
     stateData: string | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  ): Promise<SessionAudioPair>;
   /** Clears the plugin from the rack (runtime + session) as one operation. */
-  clearPluginFromRack(): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  clearPluginFromRack(): Promise<SessionAudioPair>;
   /** Opens the native editor for the plugin instance currently processing the rack. */
   openPluginEditor(): Promise<AudioStatus>;
   /** Sets the rack plugin bypass flag across the runtime and session. */
-  setRackPluginBypassed(
-    bypassed: boolean,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  setRackPluginBypassed(bypassed: boolean): Promise<SessionAudioPair>;
   /** Sets a single rack plugin parameter across the runtime and session. */
-  setRackPluginParameter(
-    index: number,
-    value: number,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
-  setRackMacroValue(
-    macroId: string,
-    value: number,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
-  mapRackMacro(
-    macroId: string,
-    parameterIndex: number | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  setRackPluginParameter(index: number, value: number): Promise<SessionAudioPair>;
+  setRackMacroValue(macroId: string, value: number): Promise<SessionAudioPair>;
+  mapRackMacro(macroId: string, parameterIndex: number | null): Promise<SessionAudioPair>;
   /**
    * Synchronizes the current session rack into the Audio Runtime at startup.
    * The session is already canonical, so a normal restore does not rewrite it.
@@ -117,8 +113,8 @@ export interface NativeApi {
    * and master gain to the canonical session. React never re-derives the rack
    * or sequences low-level runtime calls itself.
    */
-  recallSnapshot(slot: 'A' | 'B'): Promise<{ session: CreativeSession; audio: AudioStatus }>;
-  captureSnapshot(slot: 'A' | 'B'): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  recallSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair>;
+  captureSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair>;
   /**
    * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
    * content-location resolution, file-existence checks, and the Audio Runtime
@@ -141,17 +137,10 @@ export interface NativeApi {
    * into the canonical session settings. One Rust Application Operation
    * coordinates the runtime and persistence; React never re-derives settings.
    */
-  setMasterGainDb(gainDb: number): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  setMasterGainDb(gainDb: number): Promise<SessionAudioPair>;
   recoverAudioDevice(): Promise<AudioStatus>;
   /** Sets and persists the application-wide audio-device preference. */
-  setAudioDriver(
-    driver: string,
-    inputDevice?: string | null,
-    inputChannel?: number,
-    outputDevice?: string | null,
-    sampleRate?: number | null,
-    bufferSize?: number | null,
-  ): Promise<AudioStatus>;
+  setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus>;
   /**
    * Enables the audio runtime to listen on every detected MIDI input device
    * at once. Hot-plug is handled inside the runtime so newly connected devices
@@ -173,10 +162,7 @@ export interface NativeApi {
    * returned session and audio status directly and does not build the pad or
    * sync the runtime itself.
    */
-  createSamplePad(
-    assetId: AssetId,
-    name: string,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  createSamplePad(assetId: AssetId, name: string): Promise<SessionAudioPair>;
   updateSamplePad(
     padId: string,
     patch: {
@@ -185,8 +171,8 @@ export interface NativeApi {
       gainDb?: number;
       loopEnabled?: boolean;
     },
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }>;
-  removeSamplePad(padId: string): Promise<{ session: CreativeSession; audio: AudioStatus }>;
+  ): Promise<SessionAudioPair>;
+  removeSamplePad(padId: string): Promise<SessionAudioPair>;
   addAudioClipToArrangement(
     assetId: AssetId,
     name: string,
@@ -195,9 +181,9 @@ export interface NativeApi {
   ): Promise<CreativeSession | null>;
 
   /**
-   * Opens a canonical Asset in the Design workspace with the given tool. One
-   * user intent updates workspace, active tool, and target asset together in
-   * Rust instead of React assembling the DesignContext itself.
+   * Opens a canonical Asset in a Design workspace. One user intent updates
+   * workspace and target asset together in Rust instead of React assembling
+   * the DesignContext itself.
    */
   openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<CreativeSession | null>;
   /**
@@ -259,9 +245,7 @@ export interface NativeApi {
    * the asset is missing, unsupported by the current runtime, or the runtime
    * rejects the change.
    */
-  loadRackDefinitionAsset(
-    assetId: AssetId,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus } | null>;
+  loadRackDefinitionAsset(assetId: AssetId): Promise<SessionAudioPair | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
   /**

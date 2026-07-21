@@ -1,13 +1,16 @@
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
+  AudioDriverConfig,
   AudioStatus,
+  AnalysisJobStatus,
   AssetId,
   AssetPreviewOptions,
   AudioClip,
   AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
+  JobKind,
   LibraryAsset,
   MissingDependency,
   MidiExportResult,
@@ -16,16 +19,21 @@ import type {
   ProjectExport,
   RecordingAsset,
   RecordingStatus,
+  RenderJobStatus,
   RenderOptions,
   RenderResult,
+  RenderStemsJobStatus,
+  ScanJobStatus,
   ScanReport,
   CreativeSession,
+  SeparationJobStatus,
   SeparationResult,
   RackInstance,
   DesignTool,
+  SessionAudioPair,
   Workspace,
 } from '@/lib/domain';
-import { defaultSession } from '@/lib/domain';
+import { defaultSession, toAssetId } from '@/lib/domain';
 import type { NativeApi } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -196,18 +204,18 @@ export class FakeNativeApi implements NativeApi {
     return { root, startedAtMs: 1, finishedAtMs: 2, plugins: this.plugins, issues: [] };
   };
 
-  startAnalysisJob = async (assetId: AssetId): Promise<BackgroundJobStatus> => {
+  startAnalysisJob = async (assetId: AssetId): Promise<AnalysisJobStatus> => {
     this.calls.push('startAnalysisJob');
     return this.completeFakeJob('analysis', await this.analyzeAsset(assetId));
   };
 
-  startSeparationJob = async (assetId: AssetId): Promise<BackgroundJobStatus> => {
+  startSeparationJob = async (assetId: AssetId): Promise<SeparationJobStatus> => {
     this.calls.push('startSeparationJob');
     const result: SeparationResult = {
       id: `sep:${++this.renderCounter}`,
       sourceAssetId: assetId,
-      leftAssetId: `asset:fake-left-${this.renderCounter}`,
-      rightAssetId: `asset:fake-right-${this.renderCounter}`,
+      leftAssetId: toAssetId(`asset:fake-left-${this.renderCounter}`),
+      rightAssetId: toAssetId(`asset:fake-right-${this.renderCounter}`),
       durationMs: 1_000,
       state: 'completed',
       createdAtMs: 1,
@@ -217,17 +225,17 @@ export class FakeNativeApi implements NativeApi {
     return this.completeFakeJob('separation', result);
   };
 
-  startRenderJob = async (options: RenderOptions): Promise<BackgroundJobStatus> => {
+  startRenderJob = async (options: RenderOptions): Promise<RenderJobStatus> => {
     this.calls.push('startRenderJob');
     return this.completeFakeJob('render', await this.renderTimeline(options));
   };
 
-  startRenderStemsJob = async (options: RenderOptions): Promise<BackgroundJobStatus> => {
+  startRenderStemsJob = async (options: RenderOptions): Promise<RenderStemsJobStatus> => {
     this.calls.push('startRenderStemsJob');
     return this.completeFakeJob('renderStems', await this.renderTimelineStems(options));
   };
 
-  startScanJob = async (path?: string): Promise<BackgroundJobStatus> => {
+  startScanJob = async (path?: string): Promise<ScanJobStatus> => {
     this.calls.push('startScanJob');
     return this.completeFakeJob('scan', await this.scanVst3Folder(path));
   };
@@ -246,7 +254,7 @@ export class FakeNativeApi implements NativeApi {
         state: 'cancelled',
         message: 'Fake job cancelled.',
         result: null,
-      };
+      } as typeof job;
       this.jobs.set(id, cancelled);
       return cancelled;
     }
@@ -265,7 +273,7 @@ export class FakeNativeApi implements NativeApi {
     if (!query.trim()) return [];
     return [
       {
-        id: 'asset:fake',
+        id: toAssetId('asset:fake'),
         name: `Fake ${query}`,
         kind: 'recording',
         path: null,
@@ -285,7 +293,7 @@ export class FakeNativeApi implements NativeApi {
   ): Promise<LibraryAsset | null> => {
     this.calls.push('updateLibraryAsset');
     return {
-      id,
+      id: toAssetId(id),
       name: 'Fake asset',
       kind: 'recording',
       path: null,
@@ -358,7 +366,7 @@ export class FakeNativeApi implements NativeApi {
     const recording = this.recordings.find((item) => item.id === id);
     if (!recording) throw new Error('Recording take was not found.');
     return {
-      id: id.startsWith('recording:') ? id : `recording:${id}`,
+      id: toAssetId(id.startsWith('recording:') ? id : `recording:${id}`),
       name: recording.name,
       kind: 'recording',
       path: recording.processedPath ?? recording.rawPath ?? null,
@@ -442,7 +450,7 @@ export class FakeNativeApi implements NativeApi {
   renderTimeline = async (options: RenderOptions): Promise<RenderResult | null> => {
     this.calls.push('renderTimeline');
     return {
-      assetId: `asset:fake-render-${++this.renderCounter}`,
+      assetId: toAssetId(`asset:fake-render-${++this.renderCounter}`),
       path: 'fake://render.wav',
       sampleRate: 48_000,
       frames: 48_000,
@@ -477,7 +485,7 @@ export class FakeNativeApi implements NativeApi {
 
   private commitSessionRack = (
     project: (session: CreativeSession) => CreativeSession,
-  ): { session: CreativeSession; audio: AudioStatus } => {
+  ): SessionAudioPair => {
     this.assertPersistence();
     const next = project(this.bootstrapState.session);
     this.bootstrapState = { ...this.bootstrapState, session: next };
@@ -504,7 +512,7 @@ export class FakeNativeApi implements NativeApi {
     parameterValues: number[],
     bypassed: boolean,
     stateData: string | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  ): Promise<SessionAudioPair> => {
     this.calls.push('loadPluginIntoRack');
     if (this.unsupportedRuntimeState) {
       throw new Error('Plugin loading is unsupported by the fake runtime.');
@@ -573,7 +581,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  clearPluginFromRack = async (): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  clearPluginFromRack = async (): Promise<SessionAudioPair> => {
     this.calls.push('clearPluginFromRack');
     this.audio = { ...this.audio, plugin: null, message: 'Plugin removed from the rack.' };
     return this.commitSessionRack((current) => ({
@@ -592,9 +600,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setRackPluginBypassed = async (
-    bypassed: boolean,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  setRackPluginBypassed = async (bypassed: boolean): Promise<SessionAudioPair> => {
     this.calls.push('setRackPluginBypassed');
     if (this.audio.plugin)
       this.audio = { ...this.audio, plugin: { ...this.audio.plugin, bypassed } };
@@ -610,10 +616,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  setRackPluginParameter = async (
-    index: number,
-    value: number,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  setRackPluginParameter = async (index: number, value: number): Promise<SessionAudioPair> => {
     this.calls.push('setRackPluginParameter');
     if (this.audio.plugin) {
       const parameters = this.audio.plugin.parameters.some((p) => p.index === index)
@@ -649,10 +652,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  setRackMacroValue = async (
-    macroId: string,
-    value: number,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  setRackMacroValue = async (macroId: string, value: number): Promise<SessionAudioPair> => {
     this.calls.push('setRackMacroValue');
     const macro = this.bootstrapState.session.rack.macros.find((item) => item.id === macroId);
     if (!macro) throw new Error(`Rack macro is not registered: ${macroId}`);
@@ -675,7 +675,7 @@ export class FakeNativeApi implements NativeApi {
   mapRackMacro = async (
     macroId: string,
     parameterIndex: number | null,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  ): Promise<SessionAudioPair> => {
     this.calls.push('mapRackMacro');
     if (!this.bootstrapState.session.rack.macros.some((item) => item.id === macroId)) {
       throw new Error(`Rack macro is not registered: ${macroId}`);
@@ -727,9 +727,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  recallSnapshot = async (
-    slot: 'A' | 'B',
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  recallSnapshot = async (slot: 'A' | 'B'): Promise<SessionAudioPair> => {
     this.calls.push('recallSnapshot');
     const session = this.bootstrapState.session;
     const snapshot = session.snapshots.find((item) => item.id === `snapshot:${slot}`);
@@ -781,9 +779,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  captureSnapshot = async (
-    slot: 'A' | 'B',
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  captureSnapshot = async (slot: 'A' | 'B'): Promise<SessionAudioPair> => {
     this.calls.push('captureSnapshot');
     const id = `snapshot:${slot}`;
     return this.commitSessionRack((current) => ({
@@ -914,8 +910,8 @@ export class FakeNativeApi implements NativeApi {
         processedFile: `${id}-processed.wav`,
         rawPath: `fake://${id}-raw.wav`,
         processedPath: `fake://${id}-processed.wav`,
-        rawAssetId: `asset:${id}-raw`,
-        processedAssetId: `asset:${id}-processed`,
+        rawAssetId: toAssetId(`asset:${id}-raw`),
+        processedAssetId: toAssetId(`asset:${id}-processed`),
         midiAssetId: null,
         midiFile: null,
         sampleRate: 48_000,
@@ -931,9 +927,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setMasterGainDb = async (
-    gainDb: number,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  setMasterGainDb = async (gainDb: number): Promise<SessionAudioPair> => {
     this.calls.push('setMasterGainDb');
     const clamped = Math.max(-90, Math.min(0, Number.isFinite(gainDb) ? gainDb : 0));
     this.audio = { ...this.audio, message: `Master gain set to ${clamped.toFixed(1)} dB.` };
@@ -962,25 +956,26 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  setAudioDriver = async (
-    driver: string,
-    inputDevice?: string | null,
-    inputChannel = 0,
-    outputDevice?: string | null,
-    sampleRate?: number | null,
-    bufferSize?: number | null,
-  ): Promise<AudioStatus> => {
+  setAudioDriver = async (config: AudioDriverConfig): Promise<AudioStatus> => {
     this.calls.push('setAudioDriver');
+    const {
+      driver,
+      inputDevice = null,
+      inputChannel = 0,
+      outputDevice = null,
+      sampleRate = null,
+      bufferSize = null,
+    } = config;
     this.audio = {
       ...this.audio,
       state: 'muted',
       driver,
-      inputDevice: inputDevice ?? null,
+      inputDevice,
       inputChannel,
       inputChannels: inputDevice
         ? [{ index: inputChannel, name: `Input ${inputChannel + 1}` }]
         : [],
-      outputDevice: outputDevice ?? null,
+      outputDevice,
       outputChannels: outputDevice
         ? [
             { index: 0, name: 'Output 1' },
@@ -1041,10 +1036,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  createSamplePad = async (
-    assetId: AssetId,
-    name: string,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  createSamplePad = async (assetId: AssetId, name: string): Promise<SessionAudioPair> => {
     this.calls.push('createSamplePad');
     this.assertAsset(assetId);
     const session = this.bootstrapState.session;
@@ -1077,7 +1069,7 @@ export class FakeNativeApi implements NativeApi {
       ...current,
       updatedAtMs: Date.now(),
       workspace: 'design',
-      designContext: { ...current.designContext, activeTool: 'sample', targetAssetId: assetId },
+      designContext: { activeTool: 'sample', targetAssetId: assetId },
       playState: {
         ...current.playState,
         sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
@@ -1088,7 +1080,7 @@ export class FakeNativeApi implements NativeApi {
   updateSamplePad = async (
     padId: string,
     patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  ): Promise<SessionAudioPair> => {
     this.calls.push('updateSamplePad');
     const session = this.bootstrapState.session;
     const pads = session.playState.sampleInstrument.pads;
@@ -1129,9 +1121,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  removeSamplePad = async (
-    padId: string,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus }> => {
+  removeSamplePad = async (padId: string): Promise<SessionAudioPair> => {
     this.calls.push('removeSamplePad');
     const session = this.bootstrapState.session;
     const pads = session.playState.sampleInstrument.pads;
@@ -1167,7 +1157,7 @@ export class FakeNativeApi implements NativeApi {
   ): Promise<CreativeSession> => {
     this.calls.push('relinkMissingDependency');
     const session = this.bootstrapState.session;
-    const replacement = `asset:fake-relinked-${++this.renderCounter}`;
+    const replacement = toAssetId(`asset:fake-relinked-${++this.renderCounter}`);
     const next: CreativeSession = {
       ...session,
       arrangement: {
@@ -1420,7 +1410,6 @@ export class FakeNativeApi implements NativeApi {
       updatedAtMs: Date.now(),
       workspace: 'design',
       designContext: {
-        ...this.bootstrapState.session.designContext,
         activeTool: tool,
         targetAssetId: assetId,
       },
@@ -1678,7 +1667,7 @@ export class FakeNativeApi implements NativeApi {
 
   saveRackDefinition = async (name: string, path: string): Promise<AssetId | null> => {
     this.calls.push('saveRackDefinition');
-    const assetId = `asset:fake-rack-${++this.renderCounter}`;
+    const assetId = toAssetId(`asset:fake-rack-${++this.renderCounter}`);
     this.rackDefinitions.push({
       assetId,
       name,
@@ -1703,9 +1692,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  loadRackDefinitionAsset = async (
-    assetId: AssetId,
-  ): Promise<{ session: CreativeSession; audio: AudioStatus } | null> => {
+  loadRackDefinitionAsset = async (assetId: AssetId): Promise<SessionAudioPair | null> => {
     this.calls.push('loadRackDefinitionAsset');
     if (this.unsupportedRuntimeState) {
       throw new Error('Rack definitions are unsupported by the fake runtime.');
@@ -1723,16 +1710,19 @@ export class FakeNativeApi implements NativeApi {
     return { session: next, audio: this.audio };
   };
 
-  private completeFakeJob(kind: BackgroundJobStatus['kind'], result: unknown): BackgroundJobStatus {
+  private completeFakeJob<K extends JobKind>(
+    kind: K,
+    result: Extract<BackgroundJobStatus, { kind: K }>['result'],
+  ): Extract<BackgroundJobStatus, { kind: K }> {
     const id = `fake-job:${kind}:${++this.jobCounter}`;
-    const job: BackgroundJobStatus = {
+    const job = {
       id,
       kind,
       state: 'completed',
       progress: 1,
       message: `Fake ${kind} job completed.`,
       result,
-    };
+    } as Extract<BackgroundJobStatus, { kind: K }>;
     this.jobs.set(id, job);
     return job;
   }

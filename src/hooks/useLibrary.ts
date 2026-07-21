@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AudioStatus, LibraryAsset } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
+import { logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
@@ -57,9 +58,11 @@ export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLib
         active = false;
       };
     }
-    void searchLibrary(query).then((results) => {
-      if (active) setLibraryResults(results);
-    });
+    void searchLibrary(query)
+      .then((results) => {
+        if (active) setLibraryResults(results);
+      })
+      .catch(logNativeError('searchLibrary'));
     return () => {
       active = false;
     };

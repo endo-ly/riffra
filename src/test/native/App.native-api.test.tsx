@@ -5,7 +5,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultSession } from '@/lib/domain';
-import type { BackgroundJobStatus, PluginEntry, RenderResult } from '@/lib/domain';
+import type { PluginEntry, RenderJobStatus, RenderResult } from '@/lib/domain';
+import { toAssetId } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import App from '@/App';
 
@@ -100,7 +101,7 @@ describe('App driven by FakeNativeApi', () => {
     session.arrangement.audioClips = [
       {
         id: 'clip:render',
-        assetId: 'asset:source',
+        assetId: toAssetId('asset:source'),
         name: 'Render source',
         trackId: 'main',
         positionMs: 0,
@@ -116,7 +117,7 @@ describe('App driven by FakeNativeApi', () => {
       },
     ];
     const fake = new FakeNativeApi({ bootstrapState: { session } });
-    let status: BackgroundJobStatus = {
+    let status: RenderJobStatus = {
       id: 'job:render:cancel',
       kind: 'render',
       state: 'queued',
@@ -125,7 +126,7 @@ describe('App driven by FakeNativeApi', () => {
       result: null,
     };
     const completed: RenderResult = {
-      assetId: 'asset:render-retry',
+      assetId: toAssetId('asset:render-retry'),
       path: 'fake://retry.wav',
       sampleRate: 48_000,
       frames: 48_000,
@@ -143,14 +144,14 @@ describe('App driven by FakeNativeApi', () => {
       starts += 1;
       return starts === 1
         ? status
-        : {
+        : ({
             ...status,
             id: 'job:render:retry',
             state: 'completed',
             progress: 1,
             message: 'Retry completed.',
             result: completed,
-          };
+          } as RenderJobStatus);
     });
     fake.getBackgroundJob = vi.fn(async () => status);
     fake.cancelBackgroundJob = vi.fn(async () => {

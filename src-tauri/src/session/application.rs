@@ -28,7 +28,7 @@ use std::sync::Mutex;
 
 use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
-use crate::model::{AudioState, AudioStatus};
+use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::session::{
     AiChangeSet, Arrangement, CreativeSession, DesignTool, MidiClip, MidiNote, SamplePad, Track,
@@ -96,7 +96,7 @@ pub fn create_sample_pad(
     context: &SessionContext<'_>,
     asset_id: AssetId,
     name: String,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     if name.trim().is_empty() {
         return Err("Sample pad name must not be empty.".into());
     }
@@ -153,7 +153,10 @@ pub fn create_sample_pad(
         if !audio_command_succeeded(&status) {
             // The runtime rejected the new pad set. Leave the session untouched
             // and report the faulted status.
-            return Ok((previous_session, status));
+            return Ok(SessionAudioPair {
+                session: previous_session,
+                audio: status,
+            });
         }
         Some(status)
     };
@@ -192,7 +195,10 @@ pub fn create_sample_pad(
         Some(status) => status,
         None => context.audio.refresh_status()?,
     };
-    Ok((committed, status))
+    Ok(SessionAudioPair {
+        session: committed,
+        audio: status,
+    })
 }
 
 /// A partial update to an existing SamplePad. Only supplied fields are applied;
@@ -212,7 +218,7 @@ fn commit_pad_set(
     context: &SessionContext<'_>,
     previous_session: CreativeSession,
     mut session: CreativeSession,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     let runtime_status = if context.safe_mode {
         None
     } else {
@@ -222,7 +228,10 @@ fn commit_pad_set(
         )?;
         let status = context.audio.configure_sample_pads(&native_pads)?;
         if !audio_command_succeeded(&status) {
-            return Ok((previous_session, status));
+            return Ok(SessionAudioPair {
+                session: previous_session,
+                audio: status,
+            });
         }
         Some(status)
     };
@@ -256,7 +265,10 @@ fn commit_pad_set(
         Some(status) => status,
         None => context.audio.refresh_status()?,
     };
-    Ok((committed, status))
+    Ok(SessionAudioPair {
+        session: committed,
+        audio: status,
+    })
 }
 
 /// Updates one SamplePad's slice range, gain, or loop flag through the canonical
@@ -265,7 +277,7 @@ pub fn update_sample_pad(
     context: &SessionContext<'_>,
     pad_id: &str,
     patch: &SamplePadPatch,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let mut session = previous_session.clone();
     let pad = session
@@ -313,7 +325,7 @@ pub fn update_sample_pad(
 pub fn remove_sample_pad(
     context: &SessionContext<'_>,
     pad_id: &str,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     if !previous_session
         .play_state
@@ -848,7 +860,7 @@ pub fn apply_ai_suggestion(
 pub fn set_master_gain_db(
     context: &SessionContext<'_>,
     gain_db: f64,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }
@@ -856,7 +868,10 @@ pub fn set_master_gain_db(
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     session.settings.master_db = gain_db.clamp(-90.0, 0.0);
     let committed = commit_session(context, session)?;
-    Ok((committed, audio))
+    Ok(SessionAudioPair {
+        session: committed,
+        audio,
+    })
 }
 
 // Missing-dependency recovery operations.

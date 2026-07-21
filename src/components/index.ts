@@ -1,5 +1,4 @@
 export { Icon } from './shared/ui';
-export { EmptyWorkspace } from './shared/EmptyWorkspace';
 
 export { GlobalBar } from './layout/GlobalBar';
 export { InspectorPanel } from './layout/InspectorPanel';

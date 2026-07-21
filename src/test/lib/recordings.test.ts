@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecordingAsset } from '@/lib/domain';
+import { toAssetId } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 
 const completedRecording = (): RecordingAsset => ({
@@ -14,8 +15,8 @@ const completedRecording = (): RecordingAsset => ({
   processedFile: 'processed.wav',
   rawPath: 'C:\\data\\take-1\\raw.wav',
   processedPath: 'C:\\data\\take-1\\processed.wav',
-  rawAssetId: 'asset:take-1-raw',
-  processedAssetId: 'asset:take-1-processed',
+  rawAssetId: toAssetId('asset:take-1-raw'),
+  processedAssetId: toAssetId('asset:take-1-processed'),
   midiFile: null,
   sampleRate: 48_000,
   samplesWritten: 96_000,

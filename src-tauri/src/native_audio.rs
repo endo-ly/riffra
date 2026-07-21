@@ -646,25 +646,20 @@ impl AudioSupervisor {
     pub fn set_audio_driver<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        driver: &str,
-        input_device: Option<&str>,
-        input_channel: u32,
-        output_device: Option<&str>,
-        sample_rate: Option<u32>,
-        buffer_size: Option<u32>,
+        config: &crate::audio_preferences::AudioDriverConfig,
     ) -> Result<AudioStatus, String> {
-        let mut command = serde_json::json!({"type": "setAudioDriver", "driver": driver});
-        if let Some(input_device) = input_device {
+        let mut command = serde_json::json!({"type": "setAudioDriver", "driver": config.driver});
+        if let Some(input_device) = config.input_device.as_deref() {
             command["inputDevice"] = serde_json::json!(input_device);
         }
-        command["inputChannel"] = serde_json::json!(input_channel);
-        if let Some(output_device) = output_device {
+        command["inputChannel"] = serde_json::json!(config.input_channel);
+        if let Some(output_device) = config.output_device.as_deref() {
             command["outputDevice"] = serde_json::json!(output_device);
         }
-        if let Some(sample_rate) = sample_rate {
+        if let Some(sample_rate) = config.sample_rate {
             command["sampleRate"] = serde_json::json!(sample_rate);
         }
-        if let Some(buffer_size) = buffer_size {
+        if let Some(buffer_size) = config.buffer_size {
             command["bufferSize"] = serde_json::json!(buffer_size);
         }
         match self.send_command(

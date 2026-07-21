@@ -792,10 +792,10 @@ fn normalize_rack(rack: &mut RackInstance) -> Result<(), String> {
                 0.0
             };
         }
-        if let Some(state) = device.state_data.as_ref() {
-            if state.len() > 4_000_000 {
-                device.state_data = Some(state.chars().take(4_000_000).collect());
-            }
+        if let Some(state) = device.state_data.as_ref()
+            && state.len() > 4_000_000
+        {
+            device.state_data = Some(state.chars().take(4_000_000).collect());
         }
     }
     for macro_control in &mut rack.macros {

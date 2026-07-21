@@ -3,6 +3,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useInbox } from '@/hooks/useInbox';
+import { toAssetId } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import type { RecordingAsset } from '@/lib/domain';
 
@@ -19,8 +20,8 @@ function recording(id: string, name: string): RecordingAsset {
     processedFile: 'processed.wav',
     rawPath: `C:\\inbox\\${name}\\raw.wav`,
     processedPath: `C:\\inbox\\${name}\\processed.wav`,
-    rawAssetId: `asset:${name}-raw`,
-    processedAssetId: `asset:${name}-processed`,
+    rawAssetId: toAssetId(`asset:${name}-raw`),
+    processedAssetId: toAssetId(`asset:${name}-processed`),
     midiAssetId: null,
     midiFile: null,
     sampleRate: 44_100,

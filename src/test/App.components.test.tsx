@@ -81,7 +81,14 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: '64 samples' }));
 
-    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 0, 'Speakers', 48_000, 64);
+    expect(onSelect).toHaveBeenCalledWith({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannel: 0,
+      outputDevice: 'Speakers',
+      sampleRate: 48_000,
+      bufferSize: 64,
+    });
   });
 
   it('switches drivers without replacing the effective format with a display default', async () => {
@@ -103,14 +110,14 @@ describe('AudioDriverPicker', () => {
 
     await user.click(screen.getByRole('button', { name: /ASIO/ }));
 
-    expect(onSelect).toHaveBeenCalledWith(
-      'ASIO',
-      'Focusrite USB ASIO',
-      0,
-      'Focusrite USB ASIO',
-      48_000,
-      480,
-    );
+    expect(onSelect).toHaveBeenCalledWith({
+      driver: 'ASIO',
+      inputDevice: 'Focusrite USB ASIO',
+      inputChannel: 0,
+      outputDevice: 'Focusrite USB ASIO',
+      sampleRate: 48_000,
+      bufferSize: 480,
+    });
   });
 
   it('shows whether the selected backend shares the Windows audio device', () => {
@@ -153,6 +160,13 @@ describe('AudioDriverPicker', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Input channel' }), '1');
 
-    expect(onSelect).toHaveBeenCalledWith('Windows Audio', 'Mic', 1, 'Speakers', 48_000, 480);
+    expect(onSelect).toHaveBeenCalledWith({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannel: 1,
+      outputDevice: 'Speakers',
+      sampleRate: 48_000,
+      bufferSize: 480,
+    });
   });
 });

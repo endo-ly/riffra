@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
+import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
 import { Icon } from '../shared/ui';
@@ -21,7 +21,7 @@ interface LibraryPanelProps {
     onPreviewAsset: () => void;
     onEditAsset: () => void;
     onOpenInDesign: (asset: LibraryAsset) => void;
-    onLoadRackDefinition: (assetId: string) => void;
+    onLoadRackDefinition: (assetId: AssetId) => void;
   };
   rack: {
     plugins: PluginEntry[];

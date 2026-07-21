@@ -29,6 +29,38 @@ pub struct AudioPreferences {
     pub buffer_size: Option<u32>,
 }
 
+/// Request payload for a driver/device change. Carries the user-facing knobs
+/// that the Audio Runtime and the persisted preferences share, without the
+/// `format_version` metadata that belongs to `AudioPreferences` itself. The
+/// Tauri command, the `apply_audio_preferences` workflow, and the
+/// `AudioSupervisor` runtime call all take this so the parameter list stays
+/// narrow enough for the runtime call sites to read at a glance.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDriverConfig {
+    pub driver: String,
+    pub input_device: Option<String>,
+    pub input_channel: u32,
+    pub output_device: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub buffer_size: Option<u32>,
+}
+
+impl AudioPreferences {
+    /// Projects the persisted preferences into the runtime-call shape. Used
+    /// when rolling a failed driver change back to the previous preferences.
+    pub fn as_driver_config(&self) -> AudioDriverConfig {
+        AudioDriverConfig {
+            driver: self.driver.clone(),
+            input_device: self.input_device.clone(),
+            input_channel: self.input_channel,
+            output_device: self.output_device.clone(),
+            sample_rate: self.sample_rate,
+            buffer_size: self.buffer_size,
+        }
+    }
+}
+
 impl Default for AudioPreferences {
     fn default() -> Self {
         Self {
@@ -151,12 +183,7 @@ pub fn load_or_default(data_root: &Path) -> Result<AudioPreferences, String> {
 
 fn apply_audio_preferences(
     context: &AudioPreferencesContext<'_>,
-    driver: String,
-    input_device: Option<String>,
-    input_channel: u32,
-    output_device: Option<String>,
-    sample_rate: Option<u32>,
-    buffer_size: Option<u32>,
+    config: AudioDriverConfig,
 ) -> Result<AudioStatus, String> {
     if context.safe_mode {
         return Err(
@@ -166,35 +193,23 @@ fn apply_audio_preferences(
     }
     let requested = AudioPreferences {
         format_version: AUDIO_PREFERENCES_FORMAT,
-        driver,
-        input_device,
-        input_channel,
-        output_device,
-        sample_rate,
-        buffer_size,
+        driver: config.driver,
+        input_device: config.input_device,
+        input_channel: config.input_channel,
+        output_device: config.output_device,
+        sample_rate: config.sample_rate,
+        buffer_size: config.buffer_size,
     }
     .validate_and_normalize()?;
     let previous = context.preferences.lock().map_err(lock_error)?.clone();
-    let mut audio = context.audio.set_audio_driver(
-        context.app,
-        &requested.driver,
-        requested.input_device.as_deref(),
-        requested.input_channel,
-        requested.output_device.as_deref(),
-        requested.sample_rate,
-        requested.buffer_size,
-    )?;
+    let mut audio = context
+        .audio
+        .set_audio_driver(context.app, &requested.as_driver_config())?;
     let effective = AudioPreferences::from_effective_status(&audio)?;
     if let Err(error) = AudioPreferencesStore::new(context.data_root).save(&effective) {
-        let rollback = context.audio.set_audio_driver(
-            context.app,
-            &previous.driver,
-            previous.input_device.as_deref(),
-            previous.input_channel,
-            previous.output_device.as_deref(),
-            previous.sample_rate,
-            previous.buffer_size,
-        );
+        let rollback = context
+            .audio
+            .set_audio_driver(context.app, &previous.as_driver_config());
         return Err(match rollback {
             Ok(_) => format!(
                 "Audio preferences could not be saved; the previous audio device was restored: {error}"
@@ -224,12 +239,7 @@ fn apply_audio_preferences(
 #[tauri::command]
 pub async fn set_audio_driver(
     app: AppHandle,
-    driver: String,
-    input_device: Option<String>,
-    input_channel: u32,
-    output_device: Option<String>,
-    sample_rate: Option<u32>,
-    buffer_size: Option<u32>,
+    config: AudioDriverConfig,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
     apply_audio_preferences(
@@ -240,12 +250,7 @@ pub async fn set_audio_driver(
             preferences: &state.audio_preferences,
             safe_mode: state.safe_mode,
         },
-        driver,
-        input_device,
-        input_channel,
-        output_device,
-        sample_rate,
-        buffer_size,
+        config,
     )
 }
 

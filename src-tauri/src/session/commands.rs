@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::asset::AssetId;
 use crate::errors::DomainError;
 use crate::missing::MissingDependency;
-use crate::model::AudioStatus;
+use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{AudioClipPatch, CreativeSession, DesignTool, Workspace};
 
@@ -57,7 +57,7 @@ pub fn create_sample_pad(
     asset_id: String,
     name: String,
     state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     application::create_sample_pad(&context(&state), asset_id, name)
@@ -68,7 +68,7 @@ pub fn update_sample_pad(
     pad_id: String,
     patch: application::SamplePadPatch,
     state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     application::update_sample_pad(&context(&state), &pad_id, &patch)
 }
 
@@ -76,7 +76,7 @@ pub fn update_sample_pad(
 pub fn remove_sample_pad(
     pad_id: String,
     state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     application::remove_sample_pad(&context(&state), &pad_id)
 }
 
@@ -301,7 +301,7 @@ pub fn apply_ai_suggestion(
 pub fn set_master_gain_db(
     gain_db: f64,
     state: State<'_, AppState>,
-) -> Result<(CreativeSession, AudioStatus), String> {
+) -> Result<SessionAudioPair, String> {
     application::set_master_gain_db(&context(&state), gain_db)
 }
 

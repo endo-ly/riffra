@@ -19,7 +19,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::model::{AudioState, AudioStatus};
+use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::AudioSupervisor;
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
@@ -34,11 +34,6 @@ pub struct RackContext<'a> {
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
 }
-
-/// The committed result of a Rack Application Operation: the updated session and
-/// the runtime status after the change. React applies both directly instead of
-/// re-deriving the rack.
-pub type RackOutcome = (CreativeSession, AudioStatus);
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("An internal state lock was poisoned: {error}")
@@ -85,11 +80,14 @@ fn persist(
 fn commit_session_only(
     context: &RackContext<'_>,
     session: CreativeSession,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     let saved = persist(context, session)?;
     crate::queue_session_index(context.data_root, &saved);
     *context.session.lock().map_err(lock_error)? = saved.clone();
-    Ok((saved, context.audio.refresh_status()?))
+    Ok(SessionAudioPair {
+        session: saved,
+        audio: context.audio.refresh_status()?,
+    })
 }
 
 /// Pushes a single plugin device's full state into the runtime, assuming any
@@ -194,12 +192,15 @@ fn commit_with_rollback(
     session: CreativeSession,
     previous_plugin: Option<RackDevice>,
     runtime_status: AudioStatus,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     match persist(context, session) {
         Ok(saved) => {
             crate::queue_session_index(context.data_root, &saved);
             *context.session.lock().map_err(lock_error)? = saved.clone();
-            Ok((saved, runtime_status))
+            Ok(SessionAudioPair {
+                session: saved,
+                audio: runtime_status,
+            })
         }
         Err(error) => match restore_previous_plugin(context.audio, previous_plugin.as_ref()) {
             Ok(()) => Err(format!(
@@ -223,7 +224,7 @@ pub fn load_plugin_into_rack(
     parameter_values: &[f32],
     bypassed: bool,
     state_data: Option<&str>,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     if context.safe_mode {
         return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to reconnect external plugins.".into());
     }
@@ -243,7 +244,10 @@ pub fn load_plugin_into_rack(
     if !audio_command_succeeded(&status) {
         // The runtime rejected the new plugin. Leave the session untouched and
         // report the faulted status so React does not project a phantom device.
-        return Ok((previous_session, status));
+        return Ok(SessionAudioPair {
+            session: previous_session,
+            audio: status,
+        });
     }
 
     let mut session = previous_session.clone();
@@ -281,12 +285,15 @@ pub fn load_plugin_into_rack(
 
 /// Clears the plugin from the rack: clears the runtime, removes the plugin
 /// device from the session, and persists.
-pub fn clear_plugin_from_rack(context: &RackContext<'_>) -> Result<RackOutcome, String> {
+pub fn clear_plugin_from_rack(context: &RackContext<'_>) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let previous_plugin = active_plugin_device(&previous_session);
     let status = context.audio.clear_plugin()?;
     if !audio_command_succeeded(&status) {
-        return Ok((previous_session, status));
+        return Ok(SessionAudioPair {
+            session: previous_session,
+            audio: status,
+        });
     }
     let mut session = previous_session.clone();
     session
@@ -309,12 +316,15 @@ pub fn open_plugin_editor(context: &RackContext<'_>) -> Result<AudioStatus, Stri
 pub fn set_rack_plugin_bypassed(
     context: &RackContext<'_>,
     bypassed: bool,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let previous_plugin = active_plugin_device(&previous_session);
     let status = context.audio.set_plugin_bypassed(bypassed)?;
     if !audio_command_succeeded(&status) {
-        return Ok((previous_session, status));
+        return Ok(SessionAudioPair {
+            session: previous_session,
+            audio: status,
+        });
     }
     let mut session = previous_session.clone();
     for device in session.rack.devices.iter_mut() {
@@ -331,7 +341,7 @@ pub fn set_rack_plugin_parameter(
     context: &RackContext<'_>,
     index: u32,
     value: f32,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     if context.safe_mode {
         return Err("Safe Mode blocks external VST3 parameter changes.".into());
     }
@@ -339,7 +349,10 @@ pub fn set_rack_plugin_parameter(
     let previous_plugin = active_plugin_device(&previous_session);
     let status = context.audio.set_plugin_parameter(index, value)?;
     if !audio_command_succeeded(&status) {
-        return Ok((previous_session, status));
+        return Ok(SessionAudioPair {
+            session: previous_session,
+            audio: status,
+        });
     }
     let status = context.audio.plugin_parameter_status()?;
     let mut session = previous_session.clone();
@@ -414,7 +427,7 @@ pub fn set_rack_macro_value(
     context: &RackContext<'_>,
     macro_id: &str,
     value: f32,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let previous_plugin = active_plugin_device(&previous_session);
     let value = if value.is_finite() {
@@ -474,7 +487,7 @@ pub fn map_rack_macro(
     context: &RackContext<'_>,
     macro_id: &str,
     parameter_index: Option<u32>,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let item = session
         .rack
@@ -486,7 +499,7 @@ pub fn map_rack_macro(
     commit_session_only(context, session)
 }
 
-pub fn capture_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOutcome, String> {
+pub fn capture_snapshot(context: &RackContext<'_>, slot: &str) -> Result<SessionAudioPair, String> {
     if !matches!(slot, "A" | "B") {
         return Err("Snapshot slot must be A or B.".into());
     }
@@ -514,7 +527,7 @@ pub fn capture_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOut
 /// is restored as a unit (state blob supersedes individual parameters) so
 /// React never re-derives the rack or sequences the low-level runtime calls
 /// itself. Persistence failure rolls the runtime back to the previous plugin.
-pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOutcome, String> {
+pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<SessionAudioPair, String> {
     let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let snapshot_id = format!("snapshot:{slot}");
     let snapshot = previous_session
@@ -528,7 +541,10 @@ pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOutc
     let cleared = context.audio.clear_plugin()?;
     if !audio_command_succeeded(&cleared) {
         // Runtime could not clear; surface the status and do not touch session.
-        return Ok((previous_session, cleared));
+        return Ok(SessionAudioPair {
+            session: previous_session,
+            audio: cleared,
+        });
     }
 
     let new_plugin = snapshot
@@ -539,7 +555,10 @@ pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOutc
     let final_status = match new_plugin.as_ref() {
         Some(device) => {
             let Some(path) = device.path.as_deref() else {
-                return Ok((previous_session, cleared));
+                return Ok(SessionAudioPair {
+                    session: previous_session,
+                    audio: cleared,
+                });
             };
             let status = apply_plugin_to_runtime(
                 context.audio,
@@ -549,7 +568,10 @@ pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<RackOutc
                 device.state_data.as_deref(),
             )?;
             if !audio_command_succeeded(&status) {
-                return Ok((previous_session, status));
+                return Ok(SessionAudioPair {
+                    session: previous_session,
+                    audio: status,
+                });
             }
             status
         }
@@ -617,7 +639,7 @@ pub fn save_rack_definition(
 pub fn load_rack_definition_asset(
     context: &RackContext<'_>,
     asset_id: crate::asset::AssetId,
-) -> Result<RackOutcome, String> {
+) -> Result<SessionAudioPair, String> {
     if context.safe_mode {
         return Err(
             "Safe Mode blocks rack application; restart normally to apply a saved rack.".into(),

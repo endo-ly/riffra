@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
+import type { AudioDriverConfig, AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { reconcileAudioSettings } from '@/lib/audio-settings';
 import { audioCommandSucceeded, isOutputMuted } from '@/lib/audio-safety';
 import { decideRecordingToggle } from '@/lib/recording';
@@ -36,30 +36,20 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
     setAudio(await recoverAudioDevice());
   }, []);
 
-  const selectAudioDriver = useCallback(
-    async (
-      driver: string,
-      inputDevice: string | null,
-      inputChannel: number,
-      outputDevice: string | null,
-      sampleRate: number,
-      bufferSize: number,
-    ) => {
-      const nextAudio = await setAudioDriver(
-        driver,
-        inputDevice,
-        inputChannel,
-        outputDevice,
-        sampleRate,
-        bufferSize,
-      );
-      setAudio(nextAudio);
-      if (!audioCommandSucceeded(nextAudio)) return;
-      const effective = reconcileAudioSettings({ driver, sampleRate, bufferSize }, nextAudio);
-      setAudioPreferenceMessage(effective.message);
-    },
-    [],
-  );
+  const selectAudioDriver = useCallback(async (config: AudioDriverConfig) => {
+    const nextAudio = await setAudioDriver(config);
+    setAudio(nextAudio);
+    if (!audioCommandSucceeded(nextAudio)) return;
+    const effective = reconcileAudioSettings(
+      {
+        driver: config.driver,
+        sampleRate: config.sampleRate ?? nextAudio.sampleRate ?? 48_000,
+        bufferSize: config.bufferSize ?? nextAudio.bufferSize ?? 256,
+      },
+      nextAudio,
+    );
+    setAudioPreferenceMessage(effective.message);
+  }, []);
 
   const enableMidi = useCallback(async () => {
     setAudio(await enableMidiListening());

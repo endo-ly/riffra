@@ -1,5 +1,5 @@
-import type { Workspace } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
+import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
 import { workspaces } from '@/constants';
@@ -10,7 +10,6 @@ import {
   WorkspaceHome,
   AudioDevices,
   WorkspacePlay,
-  EmptyWorkspace,
   WorkspaceAnalyze,
   WorkspaceArrange,
   WorkspaceSample,
@@ -251,7 +250,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
             <AudioDevices
               probe={deviceProbe}
-              onRefresh={() => void nativeApi.probeAudioDevices().then(setDeviceProbe)}
+              onRefresh={() =>
+                void nativeApi
+                  .probeAudioDevices()
+                  .then(setDeviceProbe)
+                  .catch(logNativeError('probeAudioDevices'))
+              }
             />
             <AudioDriverPicker
               probe={deviceProbe}
@@ -262,16 +266,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               outputDevice={audio.outputDevice}
               sampleRate={audio.sampleRate}
               bufferSize={audio.bufferSize}
-              onSelect={(driver, inputDevice, inputChannel, outputDevice, sampleRate, bufferSize) =>
-                void selectAudioDriver(
-                  driver,
-                  inputDevice,
-                  inputChannel,
-                  outputDevice,
-                  sampleRate,
-                  bufferSize,
-                )
-              }
+              onSelect={(config) => void selectAudioDriver(config)}
             />
           </div>
         )}
@@ -343,7 +338,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
             <MidiDevices
               probe={midi}
-              onRefresh={() => void nativeApi.probeMidiDevices().then(setMidi)}
+              onRefresh={() =>
+                void nativeApi
+                  .probeMidiDevices()
+                  .then(setMidi)
+                  .catch(logNativeError('probeMidiDevices'))
+              }
             />
             <MidiMonitor probe={midi} audio={audio} onPanic={() => void stopPreview()} />
           </>
@@ -384,9 +384,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               void addSeparationToTimeline(assetId, name, durationMs)
             }
           />
-        )}
-        {!(['home', 'play', 'design', 'arrange'] as Workspace[]).includes(session.workspace) && (
-          <EmptyWorkspace workspace={session.workspace} />
         )}
       </section>
 

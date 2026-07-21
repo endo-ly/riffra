@@ -69,6 +69,17 @@ private:
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
+    /// Sine lookup table size. Power-of-two keeps the index wrap cheap; the
+    /// stored table has one extra element duplicating index 0 so linear
+    /// interpolation can read `lut[i0 + 1]` without a separate wrap branch.
+    static constexpr int kSineLUTSize = 2048;
+    static constexpr double kTwoPi = 6.2831853071795864769;
+    /// Looks up `sin(phase)` from the precomputed table with linear
+    /// interpolation. `phase` must already be wrapped into `[0, 2π)`. Replaces
+    /// per-sample `std::sin` in the realtime synth path so libm never runs on
+    /// the audio thread.
+    static float lookupSine(float phase) noexcept;
+
 
     static constexpr float kMaximumGainDb = 0.0f;
     static constexpr float kLimiterCeiling = 0.98f;
@@ -110,6 +121,9 @@ private:
     std::uint64_t previewSequence = 0;
     struct SynthVoice {
         int note = -1;
+        /// Cached frequency (Hz) computed from `note` at voice start so the
+        /// per-sample path never calls libm on the realtime thread.
+        float frequency = 0.0f;
         float phase = 0.0f;
         float level = 0.0f;
         float targetLevel = 0.0f;

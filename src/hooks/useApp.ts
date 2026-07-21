@@ -8,6 +8,7 @@ import type {
   BootstrapState,
   CreativeSession,
   DesignTool,
+  JobState,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -15,12 +16,13 @@ import type {
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  ScanReport,
   SeparationResult,
   Workspace,
 } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { audioCommandSucceeded } from '@/lib/audio-safety';
+import { startingAudioStatus } from '@/lib/audio-defaults';
+import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { workspaces } from '@/constants';
@@ -28,6 +30,8 @@ import { useLibrary } from './useLibrary';
 import { useInbox } from './useInbox';
 import { useSession } from './useSession';
 import { useAudio } from './useAudio';
+
+const terminalJobStates: readonly JobState[] = ['completed', 'failed', 'cancelled'];
 
 export function useApp(api: NativeApi = defaultNativeApi) {
   const {
@@ -72,43 +76,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     sendMidiToPlugin,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
-  const [audio, setAudio] = useState<AudioStatus>({
-    state: 'starting',
-    driver: null,
-    inputDevice: null,
-    inputChannel: null,
-    inputChannels: [],
-    outputDevice: null,
-    outputChannels: [],
-    sampleRate: null,
-    bufferSize: null,
-    roundTripMs: null,
-    recording: {
-      active: false,
-      directory: null,
-      sampleRate: null,
-      rawChannels: null,
-      processedChannels: null,
-      samplesWritten: 0,
-      droppedBlocks: 0,
-      missingSamples: 0,
-      dropoutStartSample: null,
-      dropoutEndSample: null,
-      recoveryStatus: 'clean',
-    },
-    midiInputs: [],
-    midiOutputs: [],
-    midiInputActive: false,
-    midiMessages: 0,
-    lastMidiNote: null,
-    midiPadMappings: 0,
-    midiPadTriggers: 0,
-    inputPeak: 0,
-    outputPeak: 0,
-    invalidSamples: 0,
-    feedbackSuspected: false,
-    message: 'Audio supervisor is starting.',
-  });
+  const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
   const [missingDependencies, setMissingDependencies] = useState<MissingDependency[]>([]);
@@ -327,13 +295,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   );
 
   const runBackgroundJob = useCallback(
-    async (
-      start: () => Promise<BackgroundJobStatus>,
-      onCompleted: (result: unknown) => void,
+    async <J extends BackgroundJobStatus>(
+      start: () => Promise<J>,
+      onCompleted: (result: NonNullable<J['result']>) => void,
       onFailed: (message: string) => void,
     ): Promise<boolean> => {
       if (activeJobId.current) return false;
-      let started: BackgroundJobStatus;
+      let started: J;
       try {
         started = await start();
       } catch (error) {
@@ -342,20 +310,27 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       }
       activeJobId.current = started.id;
       setBackgroundJob(started);
-      let latest = started;
+      let latest: J = started;
       try {
-        while (!['completed', 'failed', 'cancelled'].includes(latest.state)) {
+        while (!terminalJobStates.includes(latest.state)) {
           await new Promise((resolve) => window.setTimeout(resolve, 75));
           const next = await getBackgroundJob(started.id);
           if (!next) {
             onFailed('Background job disappeared before it reported a result.');
             return false;
           }
-          latest = next;
+          // The job id encodes its kind, so the polled status is the same
+          // variant as `started`. Cast once here so callers receive a typed
+          // result without re-asserting at every use site.
+          latest = next as J;
           setBackgroundJob(next);
         }
         if (latest.state !== 'completed') {
           onFailed(latest.message);
+          return false;
+        }
+        if (latest.result == null) {
+          onFailed('Background job completed without a result.');
           return false;
         }
         onCompleted(latest.result);
@@ -390,8 +365,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       await runBackgroundJob(
         () => startAnalysisJob(assetId),
         (result) => {
-          if (!result || typeof result !== 'object') return;
-          setAnalysis(result as AudioAnalysis);
+          setAnalysis(result);
           void openAssetInDesign(assetId, 'analyze');
         },
         () => setAnalysis(null),
@@ -433,7 +407,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const [rackDefinitions, setRackDefinitions] = useState<LibraryAsset[]>([]);
   useEffect(() => {
-    void listRackDefinitions().then(setRackDefinitions);
+    void listRackDefinitions()
+      .then(setRackDefinitions)
+      .catch(logNativeError('listRackDefinitions'));
   }, [listRackDefinitions, saveRackDefinition]);
 
   const selectReference = useCallback(
@@ -501,8 +477,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setSeparationMessage('Writing Left / Right WAV assets…');
       await runBackgroundJob(
         () => startSeparationJob(assetId),
-        (value) => {
-          const result = value as SeparationResult;
+        (result) => {
           setSeparations((current) => [result, ...current.filter((item) => item.id !== result.id)]);
           setSeparationMessage(result.message);
         },
@@ -546,8 +521,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setRenderMessage('Rendering a new stereo WAV…');
       await runBackgroundJob(
         () => startRenderJob(options),
-        (value) => {
-          const result = value as RenderResult;
+        (result) => {
           setRenderResult(result);
           setRenderMessage(result.message);
         },
@@ -565,8 +539,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       setRenderMessage('Rendering independent track stems…');
       await runBackgroundJob(
         () => startRenderStemsJob(options),
-        (value) => {
-          const results = Array.isArray(value) ? (value as RenderResult[]) : [];
+        (results) => {
           if (!results.length) {
             setRenderMessage(
               'Stem render returned no completed result; source clips remain unchanged.',
@@ -721,57 +694,60 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   );
 
   useEffect(() => {
-    void bootstrap().then((state) => {
-      setBoot(state);
-      setSession(state.session);
-      void getMissingDependencies().then(setMissingDependencies);
-      if (!state.safeMode)
-        void (async () => {
-          const result = await setMasterGainDb(state.session.settings.masterDb);
-          setAudio(result.audio);
-          setSession(result.session);
-          let startupAudio = result.audio;
-          try {
-            startupAudio = await restoreCurrentRack();
-            setAudio(startupAudio);
-          } catch (error) {
-            setScanMessage(
-              `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
+    void bootstrap()
+      .then((state) => {
+        setBoot(state);
+        setSession(state.session);
+        void getMissingDependencies()
+          .then(setMissingDependencies)
+          .catch(logNativeError('getMissingDependencies'));
+        if (!state.safeMode)
+          void (async () => {
+            const result = await setMasterGainDb(state.session.settings.masterDb);
+            setAudio(result.audio);
+            setSession(result.session);
+            let startupAudio = result.audio;
+            try {
+              startupAudio = await restoreCurrentRack();
+              setAudio(startupAudio);
+            } catch (error) {
+              setScanMessage(
+                `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            if (audioCommandSucceeded(startupAudio) && !startupAudio.feedbackSuspected) {
+              setAudio(await setEmergencyMute(false));
+            }
+          })().catch(logNativeError('startup rack restore'));
+        void runBackgroundJob(
+          () => startScanJob(state.vst3Root),
+          (report) => {
+            setPlugins(report.plugins);
+            setMissingPluginPaths(
+              state.session.rack.devices
+                .filter((device) => device.kind === 'plugin' && device.path)
+                .filter(
+                  (device) =>
+                    !report.plugins.some(
+                      (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
+                    ),
+                )
+                .map((device) => device.path as string),
             );
-          }
-          if (audioCommandSucceeded(startupAudio) && !startupAudio.feedbackSuspected) {
-            setAudio(await setEmergencyMute(false));
-          }
-        })();
-      void runBackgroundJob(
-        () => startScanJob(state.vst3Root),
-        (value) => {
-          const report = value as ScanReport;
-          setPlugins(report.plugins);
-          setMissingPluginPaths(
-            state.session.rack.devices
-              .filter((device) => device.kind === 'plugin' && device.path)
-              .filter(
-                (device) =>
-                  !report.plugins.some(
-                    (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
-                  ),
-              )
-              .map((device) => device.path as string),
-          );
-          setScanMessage(
-            report.issues.length
-              ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-              : `${report.plugins.length}件を検出`,
-          );
-        },
-        (message) => setScanMessage(`VST3 scan failed: ${message}`),
-      );
-    });
-    void listRecordings().then(setRecordings);
-    void listSeparations().then(setSeparations);
-    void probeMidiDevices().then(setMidi);
-    void probeAudioDevices().then(setDeviceProbe);
+            setScanMessage(
+              report.issues.length
+                ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+                : `${report.plugins.length}件を検出`,
+            );
+          },
+          (message) => setScanMessage(`VST3 scan failed: ${message}`),
+        );
+      })
+      .catch(logNativeError('bootstrap'));
+    void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
+    void listSeparations().then(setSeparations).catch(logNativeError('listSeparations'));
+    void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
+    void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
     void enableMidi();
     let cancelled = false;
     let audioPoll: number | null = null;
@@ -779,6 +755,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       try {
         const nextAudio = await getAudioStatus();
         if (!cancelled) setAudio(nextAudio);
+      } catch (error) {
+        logNativeError('getAudioStatus')(error);
       } finally {
         if (!cancelled) audioPoll = window.setTimeout(refreshAudio, 200);
       }

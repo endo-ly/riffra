@@ -249,6 +249,7 @@ void SafetyAudioCallback::startSynthNote(const int note, const float velocity) n
     if (target == nullptr)
         target = &synthVoices.front();
     target->note = note;
+    target->frequency = 440.0f * std::pow(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f);
     target->phase = 0.0f;
     target->level = 0.0f;
     target->targetLevel = juce::jlimit(0.02f, 0.18f, velocity) * 0.8f;
@@ -316,12 +317,11 @@ void SafetyAudioCallback::mixSynth(
     const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
     if (sampleRate <= 0.0 || numOutputChannels <= 0)
         return;
-    constexpr float twoPi = 6.2831853071795864769f;
+    constexpr float twoPi = static_cast<float>(kTwoPi);
     for (auto& voice : synthVoices) {
         if (!voice.active)
             continue;
-        const auto frequency = 440.0 * std::pow(2.0, (static_cast<double>(voice.note) - 69.0) / 12.0);
-        const auto phaseStep = static_cast<float>(twoPi * frequency / sampleRate);
+        const auto phaseStep = static_cast<float>(twoPi * voice.frequency / sampleRate);
         for (int sample = 0; sample < numSamples && voice.active; ++sample) {
             if (voice.releasing) {
                 voice.level *= 0.995f;
@@ -332,7 +332,7 @@ void SafetyAudioCallback::mixSynth(
             } else {
                 voice.level = std::min(voice.targetLevel, voice.level + 0.004f);
             }
-            const auto value = std::sin(voice.phase) * voice.level;
+            const auto value = lookupSine(voice.phase) * voice.level;
             voice.phase += phaseStep;
             if (voice.phase >= twoPi)
                 voice.phase -= twoPi;
@@ -493,6 +493,9 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
 }
 
 void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const device) {
+    // Touch the sine LUT on the main thread so its lazy initialization cannot
+    // land inside the realtime audio callback.
+    lookupSine(0.0f);
     const auto sampleRate = device != nullptr ? device->getCurrentSampleRate() : 0.0;
     activeSampleRate.store(sampleRate, std::memory_order_release);
     currentGainLinear = 0.0f;
@@ -547,6 +550,23 @@ void SafetyAudioCallback::audioDeviceError(const juce::String& errorMessage) {
 juce::String SafetyAudioCallback::takeLastDeviceError() {
     const juce::ScopedLock lock(errorLock);
     return std::exchange(lastDeviceError, {});
+}
+
+float SafetyAudioCallback::lookupSine(float phase) noexcept {
+    static const std::array<float, kSineLUTSize + 1> lut = []() {
+        std::array<float, kSineLUTSize + 1> values;
+        for (int i = 0; i <= kSineLUTSize; ++i) {
+            const double p = kTwoPi * static_cast<double>(i) / static_cast<double>(kSineLUTSize);
+            values[i] = static_cast<float>(std::sin(p));
+        }
+        return values;
+    }();
+    // voice.phase is wrapped into [0, 2π) by the caller; the modulo guards the
+    // last ULP so the interpolation read can never run past the table.
+    const auto scaled = phase * static_cast<float>(kSineLUTSize / kTwoPi);
+    const int i0 = static_cast<int>(scaled) % kSineLUTSize;
+    const auto frac = scaled - std::floor(scaled);
+    return lut[i0] + (lut[i0 + 1] - lut[i0]) * frac;
 }
 
 } // namespace riffra

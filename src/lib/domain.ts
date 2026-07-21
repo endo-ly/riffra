@@ -1,6 +1,23 @@
 export type Workspace = 'home' | 'play' | 'design' | 'arrange';
 export type DesignTool = 'sample' | 'analyze' | 'separate';
-export type AssetId = string;
+
+/**
+ * Branded handle for a canonical Asset reference. The brand stops the compiler
+ * from silently accepting any string (file paths, recording ids, free-form
+ * labels) where an AssetId is required.
+ */
+export type AssetId = string & { readonly __brand: 'AssetId' };
+
+/**
+ * Constructs an AssetId from a raw string. Reserved for trust boundaries —
+ * NativeApi results (where Rust owns the canonical id), fake builders, and
+ * tests — where the value's identity as an AssetId is asserted by construction.
+ * Application code passes existing AssetId values through and does not mint
+ * new ids from arbitrary strings.
+ */
+export function toAssetId(value: string): AssetId {
+  return value as AssetId;
+}
 
 interface RackDevice {
   id: string;
@@ -195,14 +212,63 @@ export interface ScanReport {
   issues: ScanIssue[];
 }
 
-export interface BackgroundJobStatus {
+export type JobState = 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed';
+export type JobKind = 'analysis' | 'separation' | 'render' | 'renderStems' | 'scan';
+
+/**
+ * Request payload for an audio-driver / device change. Mirrors the Rust
+ * `AudioDriverConfig` so one Tauri invoke argument carries the whole request
+ * instead of a six-argument positional list.
+ */
+export interface AudioDriverConfig {
+  driver: string;
+  inputDevice: string | null;
+  inputChannel: number;
+  outputDevice: string | null;
+  sampleRate: number | null;
+  bufferSize: number | null;
+}
+
+interface JobStatusBase {
   id: string;
-  kind: 'analysis' | 'separation' | 'render' | 'renderStems' | 'scan' | string;
-  state: 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | string;
+  state: JobState;
   progress: number;
   message: string;
-  result: unknown | null;
 }
+
+export interface AnalysisJobStatus extends JobStatusBase {
+  kind: 'analysis';
+  result: AudioAnalysis | null;
+}
+
+export interface SeparationJobStatus extends JobStatusBase {
+  kind: 'separation';
+  result: SeparationResult | null;
+}
+
+export interface RenderJobStatus extends JobStatusBase {
+  kind: 'render';
+  result: RenderResult | null;
+}
+
+export interface RenderStemsJobStatus extends JobStatusBase {
+  kind: 'renderStems';
+  result: RenderResult[] | null;
+}
+
+export interface ScanJobStatus extends JobStatusBase {
+  kind: 'scan';
+  result: ScanReport | null;
+}
+
+/**
+ * Discriminated union of every background job status. The `kind` field is the
+ * discriminator and fixes the shape of `result`. Each `startXxxJob` returns the
+ * narrowed variant so callers do not cast; `getBackgroundJob` returns the union
+ * because any kind may be polled by id.
+ */
+export type BackgroundJobStatus =
+  AnalysisJobStatus | SeparationJobStatus | RenderJobStatus | RenderStemsJobStatus | ScanJobStatus;
 
 export interface BootstrapState {
   session: CreativeSession;
@@ -399,6 +465,17 @@ export interface AudioStatus {
   message: string;
 }
 
+/**
+ * Paired session and audio status returned by Application Operations that
+ * change the Audio Runtime and the persisted CreativeSession in one atomic
+ * step. React applies both fields directly instead of re-deriving either side,
+ * so the runtime and the persisted session never diverge.
+ */
+export interface SessionAudioPair {
+  session: CreativeSession;
+  audio: AudioStatus;
+}
+
 export interface MidiProbe {
   inputs: string[];
   outputs: string[];
@@ -444,7 +521,7 @@ export interface ProjectExport {
 }
 
 export interface LibraryAsset {
-  id: string;
+  id: AssetId;
   name: string;
   kind: string;
   path: string | null;
