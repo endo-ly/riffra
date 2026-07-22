@@ -1,4 +1,5 @@
 import type {
+  AudioClipMove,
   AudioAnalysis,
   AudioDeviceProbe,
   AudioDriverConfig,
@@ -175,11 +176,25 @@ export interface NativeApi {
   ): Promise<CreativeSession | null>;
   updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
   removeAudioClip(clipId: string): Promise<CreativeSession | null>;
+  removeAudioClips(clipIds: string[]): Promise<CreativeSession | null>;
+  trimAudioClip(
+    clipId: string,
+    startTick: number,
+    sourceRange: { start: number; end: number },
+  ): Promise<CreativeSession | null>;
+  splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
+  duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
+  moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null>;
+  pasteAudioClips(clipIds: string[], startTick: number): Promise<CreativeSession | null>;
+  crossfadeAudioClips(firstId: string, secondId: string): Promise<CreativeSession | null>;
   addTrack(name: string): Promise<CreativeSession>;
   updateTrack(
     trackId: string,
-    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+    patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
   ): Promise<CreativeSession>;
+  removeTrack(trackId: string): Promise<CreativeSession>;
+  duplicateTrack(trackId: string): Promise<CreativeSession>;
+  reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
   syncArrangementRuntime(): Promise<void>;
   playTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;

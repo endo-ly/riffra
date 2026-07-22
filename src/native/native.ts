@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
+  AudioClipMove,
   AudioAnalysis,
   AudioDeviceProbe,
   AudioDriverConfig,
@@ -462,15 +463,77 @@ async function removeAudioClip(clipId: string): Promise<CreativeSession | null> 
   return invokeOrFallback<CreativeSession | null>('remove_audio_clip', { clipId }, null);
 }
 
+async function removeAudioClips(clipIds: string[]): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('remove_audio_clips', { clipIds }, null);
+}
+
+async function trimAudioClip(
+  clipId: string,
+  startTick: number,
+  sourceRange: { start: number; end: number },
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'trim_audio_clip',
+    { clipId, startTick, sourceRange },
+    null,
+  );
+}
+
+async function splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('split_audio_clip', { clipId, splitTick }, null);
+}
+
+async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('duplicate_audio_clip', { clipId }, null);
+}
+
+async function moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
+}
+
+async function pasteAudioClips(
+  clipIds: string[],
+  startTick: number,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'paste_audio_clips',
+    { clipIds, startTick },
+    null,
+  );
+}
+
+async function crossfadeAudioClips(
+  firstId: string,
+  secondId: string,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'crossfade_audio_clips',
+    { firstId, secondId },
+    null,
+  );
+}
+
 async function addTrack(name: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('add_track', { name });
 }
 
 async function updateTrack(
   trackId: string,
-  patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+  patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_track', { trackId, patch });
+}
+
+async function removeTrack(trackId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_track', { trackId });
+}
+
+async function duplicateTrack(trackId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('duplicate_track', { trackId });
+}
+
+async function reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('reorder_track', { trackId, targetIndex });
 }
 
 async function syncArrangementRuntime(): Promise<void> {
@@ -600,8 +663,18 @@ function createNativeApi(): NativeApi {
     addAudioClipToArrangement,
     updateAudioClip,
     removeAudioClip,
+    removeAudioClips,
+    trimAudioClip,
+    splitAudioClip,
+    duplicateAudioClip,
+    moveAudioClips,
+    pasteAudioClips,
+    crossfadeAudioClips,
     addTrack,
     updateTrack,
+    removeTrack,
+    duplicateTrack,
+    reorderTrack,
     syncArrangementRuntime,
     playTimeline,
     stopTimeline,

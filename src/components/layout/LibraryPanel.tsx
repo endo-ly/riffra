@@ -230,6 +230,17 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   inbox.duplicateIds.has(recording.id) && ['duplicate', styles.duplicate],
                 )}
                 key={recording.id}
+                draggable={Boolean(recording.processedAssetId ?? recording.rawAssetId)}
+                title={recording.error ?? undefined}
+                onDragStart={(event) => {
+                  const assetId = recording.processedAssetId ?? recording.rawAssetId;
+                  if (!assetId) return;
+                  event.dataTransfer.effectAllowed = 'copy';
+                  event.dataTransfer.setData(
+                    'application/x-riffra-asset',
+                    JSON.stringify({ id: assetId, name: recording.name, kind: 'audio' }),
+                  );
+                }}
               >
                 <button
                   className={styles.recordingSelect}
@@ -250,6 +261,11 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                         }${recording.midiAssetId ? ' · MIDI' : ''}`}
                     </small>
                   </div>
+                  {(recording.processedAssetId ?? recording.rawAssetId) && (
+                    <b className={styles.assetGrip} aria-hidden="true">
+                      ⠿
+                    </b>
+                  )}
                   <i
                     className={clsx(
                       styles.stability,

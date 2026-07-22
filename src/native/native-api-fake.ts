@@ -7,6 +7,7 @@ import type {
   AssetId,
   AssetPreviewOptions,
   AudioClip,
+  AudioClipMove,
   AudioClipPatch,
   BackgroundJobStatus,
   BootstrapState,
@@ -1356,6 +1357,180 @@ export class FakeNativeApi implements NativeApi {
     });
   };
 
+  removeAudioClips = async (clipIds: string[]): Promise<CreativeSession | null> => {
+    this.calls.push('removeAudioClips');
+    return this.commitArrangementEdit((clips) => {
+      if (!clipIds.length || clipIds.some((id) => !clips.some((clip) => clip.id === id)))
+        return null;
+      return clips.filter((clip) => !clipIds.includes(clip.id));
+    });
+  };
+
+  trimAudioClip = async (
+    clipId: string,
+    startTick: number,
+    sourceRange: { start: number; end: number },
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('trimAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      const clip = clips.find((candidate) => candidate.id === clipId);
+      if (!clip || sourceRange.end <= sourceRange.start) return null;
+      return this.replaceClip(clips, clipId, {
+        startTick,
+        sourceRange,
+        timelineDuration: {
+          frames: sourceRange.end - sourceRange.start,
+          sampleRate: clip.sourceSampleRate,
+        },
+      });
+    });
+  };
+
+  splitAudioClip = async (clipId: string, splitTick: number): Promise<CreativeSession | null> => {
+    this.calls.push('splitAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      const index = clips.findIndex((clip) => clip.id === clipId);
+      if (index < 0) return null;
+      const clip = clips[index];
+      const timebase = this.bootstrapState.session.arrangement.timebase;
+      const durationTicks =
+        (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
+        (timebase.bpm / 60) *
+        timebase.ppq;
+      const ratio = (splitTick - clip.startTick) / durationTicks;
+      if (ratio <= 0 || ratio >= 1) return null;
+      const frameOffset = Math.round(clip.timelineDuration.frames * ratio);
+      const left: AudioClip = {
+        ...clip,
+        sourceRange: { ...clip.sourceRange, end: clip.sourceRange.start + frameOffset },
+        timelineDuration: { ...clip.timelineDuration, frames: frameOffset },
+        fadeOut: { ...clip.fadeOut, frames: 0 },
+      };
+      const right: AudioClip = {
+        ...clip,
+        id: `${clip.id}:split:${clips.length}`,
+        name: `${clip.name} split`,
+        startTick: splitTick,
+        sourceRange: { ...clip.sourceRange, start: clip.sourceRange.start + frameOffset },
+        timelineDuration: {
+          ...clip.timelineDuration,
+          frames: clip.timelineDuration.frames - frameOffset,
+        },
+        fadeIn: { ...clip.fadeIn, frames: 0 },
+      };
+      const next = clips.slice();
+      next.splice(index, 1, left, right);
+      return next;
+    });
+  };
+
+  duplicateAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
+    this.calls.push('duplicateAudioClip');
+    return this.commitArrangementEdit((clips) => {
+      const clip = clips.find((candidate) => candidate.id === clipId);
+      if (!clip) return null;
+      const timebase = this.bootstrapState.session.arrangement.timebase;
+      const durationTicks = Math.round(
+        (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
+          (timebase.bpm / 60) *
+          timebase.ppq,
+      );
+      return [
+        ...clips,
+        {
+          ...clip,
+          id: `${clip.id}:copy:${clips.length}`,
+          name: `${clip.name} copy`,
+          startTick: clip.startTick + durationTicks,
+        },
+      ];
+    });
+  };
+
+  moveAudioClips = async (moves: AudioClipMove[]): Promise<CreativeSession | null> => {
+    this.calls.push('moveAudioClips');
+    return this.commitArrangementEdit((clips) => {
+      if (moves.some((move) => !clips.some((clip) => clip.id === move.clipId))) return null;
+      const byId = new Map(moves.map((move) => [move.clipId, move]));
+      return clips.map((clip) => {
+        const move = byId.get(clip.id);
+        return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
+      });
+    });
+  };
+
+  pasteAudioClips = async (
+    clipIds: string[],
+    startTick: number,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('pasteAudioClips');
+    return this.commitArrangementEdit((clips) => {
+      const sources = clipIds.map((id) => clips.find((clip) => clip.id === id));
+      if (!sources.length || sources.some((clip) => !clip)) return null;
+      const selected = sources as AudioClip[];
+      const anchor = Math.min(...selected.map((clip) => clip.startTick));
+      return [
+        ...clips,
+        ...selected.map((clip, index) => ({
+          ...clip,
+          id: `${clip.id}:paste:${clips.length}:${index}`,
+          name: `${clip.name} copy`,
+          startTick: startTick + clip.startTick - anchor,
+        })),
+      ];
+    });
+  };
+
+  crossfadeAudioClips = async (
+    firstId: string,
+    secondId: string,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('crossfadeAudioClips');
+    return this.commitArrangementEdit((clips) => {
+      const first = clips.find((clip) => clip.id === firstId);
+      const second = clips.find((clip) => clip.id === secondId);
+      if (!first || !second || first.trackId !== second.trackId) return null;
+      const timebase = this.bootstrapState.session.arrangement.timebase;
+      const ticks = (clip: AudioClip) =>
+        Math.round(
+          (clip.timelineDuration.frames / clip.sourceSampleRate) *
+            (timebase.bpm / 60) *
+            timebase.ppq,
+        );
+      const overlap =
+        Math.min(first.startTick + ticks(first), second.startTick + ticks(second)) -
+        Math.max(first.startTick, second.startTick);
+      if (overlap <= 0) return null;
+      const left = first.startTick <= second.startTick ? first : second;
+      const right = left === first ? second : first;
+      return clips.map((clip) => {
+        if (clip.id === left.id) {
+          return {
+            ...clip,
+            fadeOut: {
+              frames: Math.round(
+                (overlap * clip.sourceSampleRate * 60) / (timebase.bpm * timebase.ppq),
+              ),
+              sampleRate: clip.sourceSampleRate,
+            },
+          };
+        }
+        if (clip.id === right.id) {
+          return {
+            ...clip,
+            fadeIn: {
+              frames: Math.round(
+                (overlap * clip.sourceSampleRate * 60) / (timebase.bpm * timebase.ppq),
+              ),
+              sampleRate: clip.sourceSampleRate,
+            },
+          };
+        }
+        return clip;
+      });
+    });
+  };
+
   syncArrangementRuntime = async (): Promise<void> => {
     this.calls.push('syncArrangementRuntime');
   };
@@ -1486,7 +1661,7 @@ export class FakeNativeApi implements NativeApi {
 
   updateTrack = async (
     trackId: string,
-    patch: { gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+    patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
   ): Promise<CreativeSession> => {
     this.calls.push('updateTrack');
     if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
@@ -1502,6 +1677,7 @@ export class FakeNativeApi implements NativeApi {
           track.id === trackId
             ? {
                 ...track,
+                name: patch.name?.trim() || track.name,
                 gainDb:
                   patch.gainDb === undefined
                     ? track.gainDb
@@ -1514,6 +1690,93 @@ export class FakeNativeApi implements NativeApi {
         ),
       },
     }));
+  };
+
+  removeTrack = async (trackId: string): Promise<CreativeSession> => {
+    this.calls.push('removeTrack');
+    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
+      throw new Error(`Track is not registered: ${trackId}`);
+    }
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        tracks: current.arrangement.tracks.filter((track) => track.id !== trackId),
+        audioClips: current.arrangement.audioClips.filter((clip) => clip.trackId !== trackId),
+        midiClips: current.arrangement.midiClips.filter((clip) => clip.trackId !== trackId),
+      },
+    }));
+  };
+
+  duplicateTrack = async (trackId: string): Promise<CreativeSession> => {
+    this.calls.push('duplicateTrack');
+    const sourceIndex = this.bootstrapState.session.arrangement.tracks.findIndex(
+      (track) => track.id === trackId,
+    );
+    if (sourceIndex < 0) throw new Error(`Track is not registered: ${trackId}`);
+    return this.commitSession((current) => {
+      const source = current.arrangement.tracks[sourceIndex];
+      const duplicateId = `track:${Date.now()}`;
+      const tracks = [...current.arrangement.tracks];
+      tracks.splice(sourceIndex + 1, 0, {
+        ...source,
+        id: duplicateId,
+        name: `${source.name} copy`,
+      });
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          tracks,
+          audioClips: [
+            ...current.arrangement.audioClips,
+            ...current.arrangement.audioClips
+              .filter((clip) => clip.trackId === trackId)
+              .map((clip, index) => ({
+                ...clip,
+                id: `clip:${Date.now()}:${index}`,
+                trackId: duplicateId,
+              })),
+          ],
+          midiClips: [
+            ...current.arrangement.midiClips,
+            ...current.arrangement.midiClips
+              .filter((clip) => clip.trackId === trackId)
+              .map((clip, index) => ({
+                ...clip,
+                id: `midi-clip:${Date.now()}:${index}`,
+                trackId: duplicateId,
+              })),
+          ],
+        },
+      };
+    });
+  };
+
+  reorderTrack = async (trackId: string, targetIndex: number): Promise<CreativeSession> => {
+    this.calls.push('reorderTrack');
+    const sourceIndex = this.bootstrapState.session.arrangement.tracks.findIndex(
+      (track) => track.id === trackId,
+    );
+    if (sourceIndex < 0) throw new Error(`Track is not registered: ${trackId}`);
+    return this.commitSession((current) => {
+      const tracks = [...current.arrangement.tracks];
+      const [track] = tracks.splice(sourceIndex, 1);
+      tracks.splice(Math.min(Math.max(0, targetIndex), tracks.length), 0, track);
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          tracks,
+        },
+      };
+    });
   };
 
   applyAiSuggestion = async (clipId: string, proposedGainDb: number): Promise<CreativeSession> => {

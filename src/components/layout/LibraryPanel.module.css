@@ -55,6 +55,11 @@
 .librarySearchRow:hover {
   background: rgba(85, 217, 232, 0.08);
 }
+.librarySearchRow[draggable='true'],
+.recordingRow[draggable='true'],
+.recordingRow[draggable='true'] .recordingSelect {
+  cursor: grab;
+}
 .librarySearchRow:first-of-type {
   margin-top: 6px;
 }
@@ -226,6 +231,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.assetGrip {
+  flex: 0 0 auto;
+  color: #53616d;
+  font-size: 10px;
+  font-weight: 400;
 }
 .recordingSelect strong {
   color: #cbd3dc;

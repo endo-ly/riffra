@@ -1,4 +1,5 @@
 import type { NativeApi } from '@/native/native-api';
+import { useState } from 'react';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
@@ -28,6 +29,7 @@ import {
 import styles from './App.module.css';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
+  const [arrangeSelection, setArrangeSelection] = useState<string[]>([]);
   const {
     boot,
     session,
@@ -272,7 +274,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           />
         )}
         {session.workspace === 'arrange' && (
-          <WorkspaceArrange session={session} setSession={setSession} api={nativeApi} />
+          <WorkspaceArrange
+            session={session}
+            setSession={setSession}
+            selectedClipIds={arrangeSelection}
+            setSelectedClipIds={setArrangeSelection}
+            api={nativeApi}
+          />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
           <>
@@ -351,6 +359,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         setFocusMode={setFocusMode}
         selectedPluginName={selectedPluginName}
         selectedPluginVendor={selectedPluginVendor}
+        session={session}
+        setSession={setSession}
+        arrangeSelection={arrangeSelection}
+        setArrangeSelection={setArrangeSelection}
+        api={nativeApi}
       />
 
       <TransportBar

@@ -67,6 +67,8 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 | AudioClip / AudioClipPatch     | AssetId、開始Tick、Source Frame範囲、実時間長を持つ非破壊編集        | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `native/audio-engine/src/TimelineEngine.h` |
 | MidiClip / MidiNote            | Tickだけで位置と長さを保持するMIDIクリップとノート                   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                          |
 
+Track削除は、そのTrackに属するClip参照をArrangementから同時に削除する。Clipが参照していたAsset本体は削除しない。Trackの並べ替えではClipのTrack所有関係を変更しない。
+
 ### 2.3 ラック
 
 | エンティティ   | 役割                                                                  | TS                            | Rust                          | C++                                    |
@@ -229,6 +231,8 @@ Completing → Failed
 - AudioClipの開始位置は`start_tick`、Source範囲はFrame、再生長とFadeはSample Rate付きFrame数で保存する
 - 非Loop AudioClipの再生長はSource範囲長と一致し、Loop AudioClipの再生長はSource範囲長以上とする
 - AudioClipのフェード長は再生長を超えない（クランプ）
+- TrimはAsset本体を変更せず、Source範囲と開始Tickを一つの編集として更新する
+- Split後の両ClipとDuplicateは同じAssetIdを参照し、Source Assetを複製しない
 - Arrangement編集が確定するたびにrevisionを単調増加させる
 - スナップショットの `master_db` は -90..0 にクランプ（セッション master と異なり 24 dB 上限なし）
 - MIDIノートの`duration_ticks`は最低1
@@ -242,13 +246,13 @@ Completing → Failed
 
 ---
 
-## 5. スキーマ進化
+## 5. スキーマ変更
 
-### 5.1 現在の形式
+### 5.1 方針
 
-- `CreativeSession.format_version` は `2`（`CREATIVE_SESSION_FORMAT` 定数）
 - `validate_and_normalize()` が現在の正準スキーマを強制する
-- 後方互換のためのフォールバック・旧形式読替は作らない（`AGENT.md` 規約）
+- セッションにバージョン番号を持たせず、保存・読込は常に現在のスキーマだけを扱う
+- 後方互換のためのフォールバック・旧形式読替・退避は作らない（`AGENT.md` 規約）
 - AssetId のみ: 旧形式（`asset:<millis>-<counter>`）も `from_normalized` で拒否される
 
 ### 5.2 変更時の手順
@@ -257,15 +261,14 @@ Completing → Failed
 
 1. 本書 §2 のカタログを更新（エンティティ・定義場所・不変条件）
 2. 3言語すべての該当ファイルを更新する
-3. シリアライズ形式に影響する変更の場合、`CREATIVE_SESSION_FORMAT` を上げる
-4. `validate_and_normalize()` に新しい不変条件を追加し、単体テストで検証する
+3. `validate_and_normalize()` に新しい不変条件を追加し、単体テストで検証する
 
 ### 5.3 拡張ポイント
 
-前方互換性を保つ範囲で以下を許容する:
+現在のスキーマとして以下を許容する:
 
 - 新しい `AssetKind` バリアントの追加
 - 新しい `ProvenanceOperation` バリアントの追加
 - 既存必須フィールドのoptional化（既定値付き）
 
-後方互換（旧形式の読替）は作らない。新形式への移行はマイグレーションではなく、`validate_and_normalize()` による強制移行とする。
+旧形式の読替・マイグレーションは作らない。スキーマ変更後は現在の構造だけを正とする。

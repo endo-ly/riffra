@@ -504,6 +504,42 @@ pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result
     context.audio.seek_timeline(tick.0)
 }
 
+pub fn trim_audio_clip(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    start_tick: TimelineTick,
+    source_range: crate::session::FrameRange,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("Audio clip '{clip_id}' not found."))?;
+    let source_asset = asset::load(context.data_root, &clip.asset_id)
+        .ok_or_else(|| format!("Audio Asset is not registered: {}", clip.asset_id))?;
+    let bytes = fs::read(&source_asset.content_location)
+        .map_err(|error| format!("Audio Asset could not be read: {error}"))?;
+    let wav = crate::analysis::parse_wav(&bytes)?;
+    let frame_bytes = usize::from(wav.bits_per_sample / 8) * usize::from(wav.channels);
+    if frame_bytes == 0 {
+        return Err("Audio Asset has no usable frames.".into());
+    }
+    session
+        .arrangement
+        .trim_audio_clip(
+            clip_id,
+            start_tick,
+            source_range,
+            (wav.data_len / frame_bytes) as u64,
+        )
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
 /// Adds an audio clip referencing a canonical Asset to the arrangement, then
 /// commits the session and switches to the Arrange workspace.
 pub fn add_audio_clip(
@@ -672,6 +708,7 @@ pub fn update_session_settings(
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackPatch {
+    pub name: Option<String>,
     pub gain_db: Option<f64>,
     pub pan: Option<f64>,
     pub muted: Option<bool>,
@@ -711,6 +748,13 @@ pub fn update_track(
         .iter_mut()
         .find(|track| track.id == track_id)
         .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if let Some(value) = patch.name {
+        let name = value.trim().chars().take(80).collect::<String>();
+        if name.is_empty() {
+            return Err("Track name must not be empty.".into());
+        }
+        track.name = name;
+    }
     if let Some(value) = patch.gain_db {
         track.gain_db = if value.is_finite() {
             value.clamp(-90.0, 24.0)
@@ -732,6 +776,93 @@ pub fn update_track(
         track.solo = value;
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+/// Removes a Track and its Clips without deleting any referenced Asset.
+pub fn remove_track(
+    context: &SessionContext<'_>,
+    track_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .remove_track(track_id)
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+/// Duplicates a Track and its non-destructive Clip references.
+pub fn duplicate_track(
+    context: &SessionContext<'_>,
+    track_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let source_index = session
+        .arrangement
+        .tracks
+        .iter()
+        .position(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    let operation_id = now_ms();
+    let mut duplicate = session.arrangement.tracks[source_index].clone();
+    duplicate.id = format!("track:{operation_id}");
+    duplicate.name = format!("{} copy", duplicate.name);
+    let duplicate_id = duplicate.id.clone();
+    session
+        .arrangement
+        .tracks
+        .insert(source_index + 1, duplicate);
+
+    let clips = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .filter(|clip| clip.track_id == track_id)
+        .cloned()
+        .enumerate()
+        .map(|(index, mut clip)| {
+            clip.id = format!("clip:{operation_id}:{index}");
+            clip.track_id = duplicate_id.clone();
+            clip
+        })
+        .collect::<Vec<_>>();
+    session.arrangement.audio_clips.extend(clips);
+    let midi_clips = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| clip.track_id == track_id)
+        .cloned()
+        .enumerate()
+        .map(|(index, mut clip)| {
+            clip.id = format!("midi-clip:{operation_id}:{index}");
+            clip.track_id = duplicate_id.clone();
+            clip
+        })
+        .collect::<Vec<_>>();
+    session.arrangement.midi_clips.extend(midi_clips);
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+/// Moves a Track to a zero-based position while preserving Clip ownership.
+pub fn reorder_track(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    target_index: usize,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .reorder_track(track_id, target_index)
+        .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
     sync_arrangement_best_effort(context, &committed);
     Ok(committed)

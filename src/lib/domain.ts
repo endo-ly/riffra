@@ -86,6 +86,12 @@ export interface AudioClipPatch {
   muted?: boolean;
 }
 
+export interface AudioClipMove {
+  clipId: string;
+  startTick: number;
+  trackId: string;
+}
+
 export interface FrameRange {
   start: number;
   end: number;
@@ -214,7 +220,6 @@ export interface RackInstance {
 }
 
 export interface CreativeSession {
-  formatVersion: number;
   sessionId: string;
   updatedAtMs: number;
   projectName: string | null;
@@ -624,7 +629,6 @@ export interface MidiExportResult {
 }
 
 export const defaultSession = (): CreativeSession => ({
-  formatVersion: 3,
   sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),
   projectName: null,

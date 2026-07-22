@@ -14,7 +14,9 @@ use crate::asset::AssetId;
 use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
-use crate::session::{AudioClipPatch, CreativeSession, DesignTool, TimelineTick, Workspace};
+use crate::session::{
+    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, TimelineTick, Workspace,
+};
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
     SessionContext {
@@ -114,6 +116,89 @@ pub fn remove_audio_clip(
 }
 
 #[tauri::command]
+pub fn remove_audio_clips(
+    clip_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.remove_audio_clips(&clip_ids)
+    })
+}
+
+#[tauri::command]
+pub fn trim_audio_clip(
+    clip_id: String,
+    start_tick: TimelineTick,
+    source_range: FrameRange,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::trim_audio_clip(&context(&state), &clip_id, start_tick, source_range)
+}
+
+#[tauri::command]
+pub fn split_audio_clip(
+    clip_id: String,
+    split_tick: TimelineTick,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let stamp = crate::storage::now_ms();
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        let id = format!("clip:split:{stamp}:{}", arrangement.revision + 1);
+        arrangement.split_audio_clip(&clip_id, split_tick, id)
+    })
+}
+
+#[tauri::command]
+pub fn duplicate_audio_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let stamp = crate::storage::now_ms();
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        let id = format!("clip:duplicate:{stamp}:{}", arrangement.revision + 1);
+        arrangement.duplicate_audio_clip(&clip_id, id)
+    })
+}
+
+#[tauri::command]
+pub fn move_audio_clips(
+    moves: Vec<AudioClipMove>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.move_audio_clips(moves)
+    })
+}
+
+#[tauri::command]
+pub fn paste_audio_clips(
+    clip_ids: Vec<String>,
+    start_tick: TimelineTick,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let stamp = crate::storage::now_ms();
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        let ids = clip_ids
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("clip:paste:{stamp}:{}:{index}", arrangement.revision + 1))
+            .collect::<Vec<_>>();
+        arrangement.paste_audio_clips(&clip_ids, &ids, start_tick)
+    })
+}
+
+#[tauri::command]
+pub fn crossfade_audio_clips(
+    first_id: String,
+    second_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.crossfade_audio_clips(&first_id, &second_id)
+    })
+}
+
+#[tauri::command]
 pub fn sync_arrangement_runtime(state: State<'_, AppState>) -> Result<(), String> {
     application::sync_arrangement_runtime(&context(&state))
 }
@@ -184,6 +269,31 @@ pub fn update_track(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::update_track(&context(&state), &track_id, patch)
+}
+
+#[tauri::command]
+pub fn remove_track(
+    track_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_track(&context(&state), &track_id)
+}
+
+#[tauri::command]
+pub fn duplicate_track(
+    track_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::duplicate_track(&context(&state), &track_id)
+}
+
+#[tauri::command]
+pub fn reorder_track(
+    track_id: String,
+    target_index: usize,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::reorder_track(&context(&state), &track_id, target_index)
 }
 
 #[tauri::command]

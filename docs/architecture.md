@@ -67,6 +67,8 @@ Riffraは、Play、Design、Arrangeの三領域を、共通のセッション、
 
 ArrangeのplayheadはC++のEngine Clockを正本とする。Rustは保存済みArrangementからAssetIdを解決したRuntime Timeline Snapshotを構築し、C++の`TimelineEngine`へ渡す。C++はSourceのopen、read-ahead、Sample Rate補正、作業領域確保を非リアルタイムスレッドで行い、Audio Block境界でPrepared Timelineを交換する。Reactは20 Hzの`transport-status`を受け、描画フレーム間だけ表示位置を補間する。
 
+Arrangeの波形はAsset分析結果から派生する表示状態であり、Sessionへ重複保存しない。Trim、Split、Duplicate、Gain、Pan、Fadeの確定操作はRustのArrangement編集へ渡し、返された正準Sessionで表示とRuntimeを収束させる。
+
 ## 4. 制作状態の調整
 
 制作状態の調整層は、利用者の操作を一貫した状態変更へ変換する。

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LibraryPanel } from '@/components';
@@ -187,5 +187,31 @@ describe('Inbox preservation zone (LIB-003)', () => {
     );
     expect(screen.getByRole('alert')).toHaveTextContent('The audio engine is offline.');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('exposes completed Audio as a draggable Arrange Asset', () => {
+    const recording = {
+      ...recordingA,
+      processedAssetId:
+        'asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a' as RecordingAsset['processedAssetId'],
+    };
+    const setData = vi.fn();
+    render(
+      <LibraryPanel
+        library={libraryStub}
+        rack={rackStub}
+        recordings={{ ...recordingsStub, visibleRecordings: [recording] }}
+        inbox={makeInbox()}
+      />,
+    );
+
+    const row = screen.getByLabelText(`Select ${recording.name}`).closest('.recording-row')!;
+    expect(row).toHaveAttribute('draggable', 'true');
+    fireEvent.dragStart(row, { dataTransfer: { effectAllowed: '', setData } });
+
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-riffra-asset',
+      expect.stringContaining(recording.processedAssetId!),
+    );
   });
 });

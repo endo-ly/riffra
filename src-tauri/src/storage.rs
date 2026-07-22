@@ -1,4 +1,4 @@
-use crate::session::{CREATIVE_SESSION_FORMAT, CreativeSession};
+use crate::session::CreativeSession;
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -98,18 +98,11 @@ impl SessionStore {
         })
     }
 
-    /// Reads the active session file. Only the current v2 format is accepted;
-    /// any other shape is reported as corrupt without touching the original.
+    /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
         let session: CreativeSession = serde_json::from_slice(&payload)
-            .map_err(|error| corrupt_io_error(&format!("v2 session is invalid: {error}")))?;
-        if session.format_version != CREATIVE_SESSION_FORMAT {
-            return Err(corrupt_io_error(&format!(
-                "session format {} is not supported (expected {})",
-                session.format_version, CREATIVE_SESSION_FORMAT
-            )));
-        }
+            .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
         let session = session
             .validate_and_normalize()
             .map_err(|error| corrupt_io_error(&error))?;
@@ -127,17 +120,11 @@ impl SessionStore {
         Ok(None)
     }
 
-    /// Reads a generation file as a v2 session. Recovery never offers a session
-    /// the app cannot open.
+    /// Reads a generation using the current schema. Recovery never offers a
+    /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
         let session: CreativeSession = serde_json::from_slice(&payload)?;
-        if session.format_version != CREATIVE_SESSION_FORMAT {
-            return Err(corrupt_io_error(&format!(
-                "generation format {} is not supported (expected {})",
-                session.format_version, CREATIVE_SESSION_FORMAT
-            )));
-        }
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;
@@ -451,23 +438,6 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_load_an_unsupported_format_without_touching_the_original() {
-        let root = test_root("unsupported");
-        let store = SessionStore::new(&root);
-        store.ensure_layout().unwrap();
-        let current = root.join("scratch/current.json");
-        let payload = br#"{"formatVersion":99,"sessionId":"future","updatedAtMs":1}"#;
-        fs::write(&current, payload).unwrap();
-
-        let error = store.load_or_create().unwrap_err();
-        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
-        // Unsupported format must surface as a load error and never overwrite
-        // the original file.
-        assert_eq!(fs::read(&current).unwrap(), payload);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn clamps_unsafe_master_gain_before_persisting() {
         let mut session = CreativeSession::new(now_ms());
         session.settings.master_db = 12.0;
@@ -476,15 +446,14 @@ mod tests {
     }
 
     #[test]
-    fn loads_and_round_trips_a_v3_session() {
-        let root = test_root("v2-roundtrip");
+    fn loads_and_round_trips_a_session() {
+        let root = test_root("roundtrip");
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
         session.workspace = crate::session::Workspace::Arrange;
         store.save(&session).unwrap();
         let loaded = store.load_or_create().unwrap();
-        assert_eq!(loaded.session.format_version, CREATIVE_SESSION_FORMAT);
         assert_eq!(loaded.session.workspace, crate::session::Workspace::Arrange);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let _ = fs::remove_dir_all(root);

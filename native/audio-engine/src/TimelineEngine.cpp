@@ -271,22 +271,30 @@ void TimelineEngine::mixRange(
             for (int sample = 0; sample < chunk; ++sample) {
                 const auto position = localSample + sample;
                 auto envelope = 1.0f;
-                if (clip.fadeInSamples > 0 && position < clip.fadeInSamples)
+                if (clip.fadeInSamples > 0 && position < clip.fadeInSamples) {
+                    const auto progress = static_cast<float>(position) /
+                        static_cast<float>(clip.fadeInSamples);
                     envelope = std::min(
                         envelope,
-                        static_cast<float>(position) / static_cast<float>(clip.fadeInSamples));
+                        std::sin(juce::MathConstants<float>::halfPi * progress));
+                }
                 const auto remainingClip = clip.durationSamples - position - 1;
-                if (clip.fadeOutSamples > 0 && remainingClip < clip.fadeOutSamples)
+                if (clip.fadeOutSamples > 0 && remainingClip < clip.fadeOutSamples) {
+                    const auto progress = static_cast<float>(
+                        std::max<std::int64_t>(0, remainingClip)) /
+                        static_cast<float>(clip.fadeOutSamples);
                     envelope = std::min(
                         envelope,
-                        static_cast<float>(std::max<std::int64_t>(0, remainingClip)) /
-                            static_cast<float>(clip.fadeOutSamples));
+                        std::sin(juce::MathConstants<float>::halfPi * progress));
+                }
                 for (int channel = 0; channel < channelCount; ++channel) {
                     if (outputChannels[channel] == nullptr) continue;
                     const auto sourceChannel = std::min(channel, clip.scratch.getNumChannels() - 1);
+                    const auto panAngle = (clip.pan + 1.0f) *
+                        juce::MathConstants<float>::pi * 0.25f;
                     const auto panGain = channel == 0
-                        ? (1.0f - clip.pan)
-                        : (1.0f + clip.pan);
+                        ? std::cos(panAngle)
+                        : std::sin(panAngle);
                     outputChannels[channel][outputOffset + sample] +=
                         clip.scratch.getSample(sourceChannel, sample) * clip.gain * envelope * panGain;
                 }

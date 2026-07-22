@@ -1,326 +1,242 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetId, CreativeSession, TransportStatus } from '@/lib/domain';
+import { useMemo, useRef, useState } from 'react';
+import type { CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
+import { ArrangeRuler } from './ArrangeRuler';
+import { ArrangeToolbar } from './ArrangeToolbar';
+import { ArrangeTrack } from './ArrangeTrack';
+import {
+  BASE_PIXELS_PER_QUARTER,
+  clipDurationTicks,
+  formatClock,
+  formatMusicalPosition,
+  ticksPerBar,
+  TRACK_HEADER_WIDTH,
+  type ArrangeTool,
+  type SnapGrid,
+  type TrackSize,
+} from '@/lib/arrange-timeline';
+import { useArrangeEditor } from '@/hooks/arrange/useArrangeEditor';
+import { useArrangeTransport } from '@/hooks/arrange/useArrangeTransport';
+import { useWaveformAnalyses } from '@/hooks/arrange/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
-
-const HEADER_WIDTH = 172;
-const PIXELS_PER_QUARTER = 92;
-const ASSET_MIME = 'application/x-riffra-asset';
 
 interface WorkspaceArrangeProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
+  selectedClipIds: string[];
+  setSelectedClipIds: (ids: string[]) => void;
   api: NativeApi;
 }
 
-function clipDurationTicks(
-  clip: CreativeSession['arrangement']['audioClips'][number],
-  session: CreativeSession,
-) {
-  return Math.max(
-    1,
-    Math.round(
-      (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-        (session.arrangement.timebase.bpm / 60) *
-        session.arrangement.timebase.ppq,
-    ),
-  );
-}
-
-export function WorkspaceArrange({ session, setSession, api }: WorkspaceArrangeProps) {
-  const { arrangement } = session;
+export function WorkspaceArrange(props: WorkspaceArrangeProps) {
+  const { arrangement } = props.session;
   const { timebase } = arrangement;
-  const [transport, setTransport] = useState<TransportStatus | null>(null);
-  const [displayTick, setDisplayTick] = useState(0);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [message, setMessage] = useState('Drop an audio Asset to place it on the timeline.');
-  const anchor = useRef<{ tick: number; at: number; playing: boolean }>({
-    tick: 0,
-    at: performance.now(),
-    playing: false,
-  });
-
-  useEffect(
-    () =>
-      api.onTransportStatus((status) => {
-        setTransport(status);
-        anchor.current = {
-          tick: status.timelineTick,
-          at: performance.now(),
-          playing: status.state === 'playing',
-        };
-        setDisplayTick(status.timelineTick);
-      }),
-    [api],
-  );
-
-  useEffect(() => {
-    let frame = 0;
-    const update = () => {
-      const current = anchor.current;
-      const elapsed = current.playing ? performance.now() - current.at : 0;
-      setDisplayTick(current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60_000);
-      frame = requestAnimationFrame(update);
-    };
-    frame = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(frame);
-  }, [timebase.bpm, timebase.ppq]);
-
-  const pixelsPerTick = PIXELS_PER_QUARTER / timebase.ppq;
-  const barTicks =
-    (timebase.ppq * 4 * timebase.timeSignatureNumerator) / timebase.timeSignatureDenominator;
+  const [tool, setTool] = useState<ArrangeTool>('select');
+  const [snap, setSnap] = useState<SnapGrid>('1/16');
+  const [zoom, setZoom] = useState(1);
+  const [trackSize, setTrackSize] = useState<TrackSize>('normal');
+  const [trackSizes, setTrackSizes] = useState<Record<string, TrackSize>>({});
+  const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
+  const analyses = useWaveformAnalyses(props.api, arrangement.audioClips);
+  const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
+  const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
     const contentEnd = arrangement.audioClips.reduce(
-      (end, clip) => Math.max(end, clip.startTick + clipDurationTicks(clip, session)),
+      (end, clip) => Math.max(end, clip.startTick + clipDurationTicks(clip, timebase)),
       0,
     );
     return Math.max(barTicks * 16, contentEnd + barTicks * 2);
-  }, [arrangement.audioClips, barTicks, session]);
+  }, [arrangement.audioClips, barTicks, timebase]);
   const timelineWidth = timelineTicks * pixelsPerTick;
-  const bars = Array.from({ length: Math.ceil(timelineTicks / barTicks) }, (_, index) => index);
+  const editor = useArrangeEditor({
+    ...props,
+    tool,
+    snap,
+    pixelsPerTick,
+    displayTick,
+    analyses,
+  });
 
-  const commit = async (operation: Promise<CreativeSession | null>, success: string) => {
-    try {
-      const next = await operation;
-      if (next) setSession(next);
-      setMessage(success);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    }
+  const applyZoom = (next: number, clientX?: number) => {
+    const bounded = Math.min(4, Math.max(0.35, next));
+    const scroller = scrollerRef.current;
+    if (!scroller) return setZoom(bounded);
+    const bounds = scroller.getBoundingClientRect();
+    const cursor = (clientX ?? bounds.left + bounds.width / 2) - bounds.left;
+    const tick = Math.max(0, (scroller.scrollLeft + cursor - TRACK_HEADER_WIDTH) / pixelsPerTick);
+    setZoom(bounded);
+    requestAnimationFrame(() => {
+      const nextPixels = (BASE_PIXELS_PER_QUARTER * bounded) / timebase.ppq;
+      scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + tick * nextPixels - cursor);
+    });
   };
 
-  const dropAsset = async (event: React.DragEvent, trackId?: string) => {
-    event.preventDefault();
-    const raw = event.dataTransfer.getData(ASSET_MIME);
-    if (!raw) return;
-    try {
-      const asset = JSON.parse(raw) as { id: string; name: string; kind: string };
-      if (asset.kind !== 'audio') {
-        setMessage('Only audio Assets can be placed on an Audio Track.');
-        return;
-      }
-      const timeline = event.currentTarget.closest(`.${styles.timeline}`);
-      const bounds =
-        timeline?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
-      const tick = Math.max(
-        0,
-        Math.round((event.clientX - bounds.left - HEADER_WIDTH) / pixelsPerTick),
-      );
-      await commit(
-        api.addAudioClipToArrangement(asset.id as AssetId, asset.name, tick, trackId),
-        `${asset.name} placed at tick ${tick.toLocaleString()}.`,
-      );
-    } catch {
-      setMessage('The dragged Library item is not a valid audio Asset.');
-    }
-  };
-
-  const seekFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+  const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const tick = Math.max(0, Math.round((event.clientX - bounds.left) / pixelsPerTick));
-    anchor.current = { tick, at: performance.now(), playing: transport?.state === 'playing' };
-    setDisplayTick(tick);
-    void api.seekTimeline(tick).catch((error) => setMessage(String(error)));
+    const tick = editor.snapTick((event.clientX - bounds.left) / pixelsPerTick, event.altKey);
+    seekLocally(tick);
+    void props.api.seekTimeline(tick).catch((error) => editor.setMessage(String(error)));
   };
 
-  const positionLabel = (() => {
-    const bar = Math.floor(displayTick / barTicks) + 1;
-    const tickInBar = displayTick % barTicks;
-    const beatTicks = (timebase.ppq * 4) / timebase.timeSignatureDenominator;
-    const beat = Math.floor(tickInBar / beatTicks) + 1;
-    return `${bar}.${beat}`;
-  })();
+  const deleteTrack = async (trackId: string, name: string, clipCount: number) => {
+    const detail = clipCount
+      ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
+      : '';
+    if (!window.confirm(`Delete ${name}?${detail}\n\nSource Audio Assets will be kept.`)) return;
+    const next = await editor.commit(props.api.removeTrack(trackId), `${name} deleted.`);
+    if (next) {
+      const remaining = new Set(next.arrangement.audioClips.map((clip) => clip.id));
+      props.setSelectedClipIds(props.selectedClipIds.filter((id) => remaining.has(id)));
+    }
+  };
+
+  const cycleTrackSize = (trackId: string) => {
+    const sizes: TrackSize[] = ['compact', 'normal', 'large'];
+    const current = trackSizes[trackId] ?? trackSize;
+    setTrackSizes((value) => ({
+      ...value,
+      [trackId]: sizes[(sizes.indexOf(current) + 1) % sizes.length],
+    }));
+  };
 
   return (
     <section className={styles.workspace} aria-label="Arrange timeline">
-      <header className={styles.toolbar}>
-        <div>
-          <strong>ARRANGE</strong>
-          <span>REV {arrangement.revision}</span>
-        </div>
-        <div className={styles.clock}>
-          <strong>{positionLabel}</strong>
-          <span>{Math.round(displayTick).toLocaleString()} ticks</span>
-        </div>
-        <div className={styles.timebase}>
-          <span>{timebase.bpm.toFixed(1)} BPM</span>
-          <span>
-            {timebase.timeSignatureNumerator}/{timebase.timeSignatureDenominator}
-          </span>
-          <span>{transport?.state ?? 'stopped'}</span>
-        </div>
-        <button
-          onClick={() =>
-            void commit(
-              api.addTrack(`Audio ${arrangement.tracks.length + 1}`),
-              'Audio Track added.',
-            )
-          }
-        >
-          + Audio Track
-        </button>
-      </header>
+      <ArrangeToolbar
+        tool={tool}
+        snap={snap}
+        zoom={zoom}
+        trackSize={trackSize}
+        rulerMode={rulerMode}
+        position={formatMusicalPosition(displayTick, timebase)}
+        clock={formatClock(displayTick, timebase)}
+        bpm={timebase.bpm}
+        signature={`${timebase.timeSignatureNumerator}/${timebase.timeSignatureDenominator}`}
+        onTool={setTool}
+        onSnap={setSnap}
+        onZoom={applyZoom}
+        onTrackSize={setTrackSize}
+        onRulerMode={setRulerMode}
+        onAddTrack={() =>
+          void editor.commit(
+            props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`),
+            'Audio Track added.',
+          )
+        }
+      />
 
-      <div className={styles.scroller}>
-        <div className={styles.timeline} style={{ width: HEADER_WIDTH + timelineWidth }}>
-          <div className={styles.rulerCorner}>TRACKS</div>
-          <div
-            className={styles.ruler}
-            aria-label="Timeline ruler"
-            style={{ left: HEADER_WIDTH, width: timelineWidth }}
-            onPointerDown={seekFromPointer}
-          >
-            {bars.map((bar) => (
-              <span key={bar} style={{ left: bar * barTicks * pixelsPerTick }}>
-                {bar + 1}
-              </span>
-            ))}
-          </div>
+      <div
+        ref={scrollerRef}
+        className={styles.scroller}
+        onWheel={(event) => {
+          if (!event.ctrlKey) return;
+          event.preventDefault();
+          applyZoom(zoom * (event.deltaY > 0 ? 0.9 : 1.1), event.clientX);
+        }}
+      >
+        <div
+          data-arrange-timeline
+          className={styles.timeline}
+          style={{ width: TRACK_HEADER_WIDTH + timelineWidth }}
+          onPointerDown={editor.beginMarquee}
+        >
+          <ArrangeRuler
+            timebase={timebase}
+            timelineTicks={timelineTicks}
+            timelineWidth={timelineWidth}
+            pixelsPerTick={pixelsPerTick}
+            mode={rulerMode}
+            loopRange={arrangement.loopRange}
+            onPointerDown={seekFromRuler}
+          />
           <div
             className={styles.playhead}
-            style={{ left: HEADER_WIDTH + displayTick * pixelsPerTick }}
-          />
+            style={{ left: TRACK_HEADER_WIDTH + displayTick * pixelsPerTick }}
+          >
+            <span />
+          </div>
+          {editor.snapGuide != null && (
+            <div
+              className={styles.snapGuide}
+              style={{ left: TRACK_HEADER_WIDTH + editor.snapGuide * pixelsPerTick }}
+            />
+          )}
+          {editor.marquee && <div className={styles.marquee} style={editor.marquee} />}
 
           {arrangement.tracks.length === 0 ? (
             <div
               className={styles.empty}
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => void dropAsset(event)}
+              onDrop={(event) => void editor.dropAsset(event)}
             >
-              <strong>Drop audio here</strong>
-              <span>The first Audio Track is created automatically.</span>
+              <span className={styles.emptyIcon}>≋</span>
+              <strong>Start arranging</strong>
+              <button
+                onClick={() =>
+                  void editor.commit(props.api.addTrack('Audio 1'), 'Audio Track added.')
+                }
+              >
+                ＋ Add Audio Track
+              </button>
             </div>
           ) : (
-            arrangement.tracks.map((track) => (
-              <div
-                className={styles.trackRow}
+            arrangement.tracks.map((track, trackIndex) => (
+              <ArrangeTrack
                 key={track.id}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => void dropAsset(event, track.id)}
-              >
-                <aside className={styles.trackHeader}>
-                  <strong>{track.name}</strong>
-                  <span>{track.kind}</span>
-                  <div>
-                    <button
-                      className={track.muted ? styles.active : ''}
-                      aria-label={`Mute ${track.name}`}
-                      onClick={() =>
-                        void commit(
-                          api.updateTrack(track.id, { muted: !track.muted }),
-                          `${track.name} mute updated.`,
-                        )
-                      }
-                    >
-                      M
-                    </button>
-                    <button
-                      className={track.solo ? styles.active : ''}
-                      aria-label={`Solo ${track.name}`}
-                      onClick={() =>
-                        void commit(
-                          api.updateTrack(track.id, { solo: !track.solo }),
-                          `${track.name} solo updated.`,
-                        )
-                      }
-                    >
-                      S
-                    </button>
-                  </div>
-                  <input
-                    className={styles.trackGain}
-                    aria-label={`${track.name} gain`}
-                    type="range"
-                    min="-60"
-                    max="12"
-                    step="0.5"
-                    defaultValue={track.gainDb}
-                    onPointerUp={(event) =>
-                      void commit(
-                        api.updateTrack(track.id, { gainDb: Number(event.currentTarget.value) }),
-                        `${track.name} gain updated.`,
-                      )
-                    }
-                  />
-                </aside>
-                <div className={styles.lane} style={{ width: timelineWidth }}>
-                  {bars.map((bar) => (
-                    <i key={bar} style={{ left: bar * barTicks * pixelsPerTick }} />
-                  ))}
-                  {arrangement.audioClips
-                    .filter((clip) => clip.trackId === track.id)
-                    .map((clip) => {
-                      const duration = clipDurationTicks(clip, session);
-                      return (
-                        <button
-                          key={clip.id}
-                          className={`${styles.clip} ${selectedClipId === clip.id ? styles.selected : ''}`}
-                          style={{
-                            left: clip.startTick * pixelsPerTick,
-                            width: Math.max(18, duration * pixelsPerTick),
-                            opacity: clip.muted ? 0.45 : 1,
-                          }}
-                          onClick={() => setSelectedClipId(clip.id)}
-                          onPointerDown={(event) => {
-                            const originX = event.clientX;
-                            const originTick = clip.startTick;
-                            event.currentTarget.setPointerCapture(event.pointerId);
-                            const target = event.currentTarget;
-                            const onMove = (move: PointerEvent) => {
-                              const next = Math.max(
-                                0,
-                                Math.round(originTick + (move.clientX - originX) / pixelsPerTick),
-                              );
-                              target.style.left = `${next * pixelsPerTick}px`;
-                              target.dataset.pendingTick = String(next);
-                            };
-                            const onUp = () => {
-                              target.removeEventListener('pointermove', onMove);
-                              target.removeEventListener('pointerup', onUp);
-                              const next = Number(target.dataset.pendingTick ?? originTick);
-                              delete target.dataset.pendingTick;
-                              if (next !== originTick)
-                                void commit(
-                                  api.updateAudioClip(clip.id, { startTick: next }),
-                                  `${clip.name} moved.`,
-                                );
-                            };
-                            target.addEventListener('pointermove', onMove);
-                            target.addEventListener('pointerup', onUp);
-                          }}
-                        >
-                          <strong>{clip.name}</strong>
-                          <span>
-                            {(
-                              clip.timelineDuration.frames / clip.timelineDuration.sampleRate
-                            ).toFixed(2)}
-                            s
-                          </span>
-                        </button>
-                      );
-                    })}
-                </div>
-              </div>
+                track={track}
+                clips={arrangement.audioClips.filter((clip) => clip.trackId === track.id)}
+                session={props.session}
+                analyses={analyses}
+                selectedClipIds={props.selectedClipIds}
+                timelineWidth={timelineWidth}
+                timelineTicks={timelineTicks}
+                pixelsPerTick={pixelsPerTick}
+                trackSize={trackSizes[track.id] ?? trackSize}
+                api={props.api}
+                onCommit={editor.commit}
+                onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
+                onMove={editor.beginMove}
+                onSelect={editor.selectClip}
+                onTrim={editor.beginTrim}
+                onFade={editor.beginFade}
+                onRename={(name) =>
+                  void editor.commit(
+                    props.api.updateTrack(track.id, { name }),
+                    `Track renamed to ${name}.`,
+                  )
+                }
+                onDuplicate={() =>
+                  void editor.commit(
+                    props.api.duplicateTrack(track.id),
+                    `${track.name} duplicated.`,
+                  )
+                }
+                onDelete={() =>
+                  void deleteTrack(
+                    track.id,
+                    track.name,
+                    arrangement.audioClips.filter((clip) => clip.trackId === track.id).length,
+                  )
+                }
+                onReorder={(sourceTrackId) =>
+                  void editor.commit(
+                    props.api.reorderTrack(sourceTrackId, trackIndex),
+                    'Track order updated.',
+                  )
+                }
+                onResize={() => cycleTrackSize(track.id)}
+              />
             ))
           )}
         </div>
       </div>
-      <footer className={styles.status}>
-        <span>{message}</span>
-        {selectedClipId && (
-          <button
-            onClick={() =>
-              void commit(api.removeAudioClip(selectedClipId), 'Clip removed.').then(() =>
-                setSelectedClipId(null),
-              )
-            }
-          >
-            Remove selected clip
-          </button>
-        )}
-      </footer>
+
+      <div className={styles.statusToast} role="status">
+        <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
+        {editor.message}
+        <small>REV {arrangement.revision}</small>
+      </div>
     </section>
   );
 }
-
-export { ASSET_MIME };

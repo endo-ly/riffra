@@ -14,13 +14,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
-const AUDIO_PREFERENCES_FORMAT: u32 = 2;
 const DEFAULT_SHARED_DRIVER: &str = "Windows Audio (Low Latency Mode)";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioPreferences {
-    pub format_version: u32,
     pub driver: String,
     pub input_device: Option<String>,
     pub input_channel: u32,
@@ -30,11 +28,9 @@ pub struct AudioPreferences {
 }
 
 /// Request payload for a driver/device change. Carries the user-facing knobs
-/// that the Audio Runtime and the persisted preferences share, without the
-/// `format_version` metadata that belongs to `AudioPreferences` itself. The
-/// Tauri command, the `apply_audio_preferences` workflow, and the
-/// `AudioSupervisor` runtime call all take this so the parameter list stays
-/// narrow enough for the runtime call sites to read at a glance.
+/// that the Audio Runtime and persisted preferences share. The Tauri command,
+/// workflow, and runtime call all take this so their parameter list stays
+/// narrow enough for the call sites to read at a glance.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDriverConfig {
@@ -64,7 +60,6 @@ impl AudioPreferences {
 impl Default for AudioPreferences {
     fn default() -> Self {
         Self {
-            format_version: AUDIO_PREFERENCES_FORMAT,
             driver: DEFAULT_SHARED_DRIVER.into(),
             input_device: None,
             input_channel: 0,
@@ -77,12 +72,6 @@ impl Default for AudioPreferences {
 
 impl AudioPreferences {
     pub fn validate_and_normalize(mut self) -> Result<Self, String> {
-        if self.format_version != AUDIO_PREFERENCES_FORMAT {
-            return Err(format!(
-                "Audio preferences format {} is unsupported; expected {}.",
-                self.format_version, AUDIO_PREFERENCES_FORMAT
-            ));
-        }
         self.driver = normalize_required_text(&self.driver, "Audio driver")?;
         self.input_device = normalize_optional_text(self.input_device, "Audio input device")?;
         self.output_device = normalize_optional_text(self.output_device, "Audio output device")?;
@@ -96,13 +85,11 @@ impl AudioPreferences {
         {
             return Err("Audio buffer preference is outside 16-8192 samples.".into());
         }
-        self.format_version = AUDIO_PREFERENCES_FORMAT;
         Ok(self)
     }
 
     pub fn from_effective_status(status: &AudioStatus) -> Result<Self, String> {
         Self {
-            format_version: AUDIO_PREFERENCES_FORMAT,
             driver: status
                 .driver
                 .clone()
@@ -192,7 +179,6 @@ fn apply_audio_preferences(
         );
     }
     let requested = AudioPreferences {
-        format_version: AUDIO_PREFERENCES_FORMAT,
         driver: config.driver,
         input_device: config.input_device,
         input_channel: config.input_channel,
@@ -337,27 +323,6 @@ mod tests {
         };
         AudioPreferencesStore::new(&root).save(&existing).unwrap();
         assert_eq!(load_or_default(&root).unwrap(), existing);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn replaces_previous_preference_format_with_current_defaults() {
-        let root = root("old-format");
-        let _ = fs::remove_dir_all(&root);
-        let path = root.join("settings").join("audio.json");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            path,
-            br#"{"formatVersion":1,"driver":"Windows Audio","inputDevice":null,"outputDevice":null,"sampleRate":48000,"bufferSize":480}"#,
-        )
-        .unwrap();
-
-        let preferences = load_or_default(&root).unwrap();
-        assert_eq!(preferences, AudioPreferences::default());
-        assert_eq!(
-            AudioPreferencesStore::new(&root).load().unwrap(),
-            Some(AudioPreferences::default())
-        );
         let _ = fs::remove_dir_all(root);
     }
 

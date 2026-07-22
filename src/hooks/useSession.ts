@@ -18,6 +18,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     importSession: importSessionApi,
     restoreRecoveryGeneration,
     recallSnapshot: recallSnapshotApi,
+    syncArrangementRuntime,
   } = api;
   const { setBoot, setAudio, setMissingPluginPaths } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
@@ -35,6 +36,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     const previous = undoStack[undoStack.length - 1];
     try {
       const canonical = await saveSession(previous);
+      await syncArrangementRuntime();
       historySkip.current = true;
       setUndoStack(undoStack.slice(0, -1));
       setRedoStack([...redoStack, session].slice(-40));
@@ -43,13 +45,14 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [redoStack, saveSession, session, undoStack]);
+  }, [redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
 
   const redo = useCallback(async () => {
     if (!session || redoStack.length === 0) return;
     const next = redoStack[redoStack.length - 1];
     try {
       const canonical = await saveSession(next);
+      await syncArrangementRuntime();
       historySkip.current = true;
       setRedoStack(redoStack.slice(0, -1));
       setUndoStack([...undoStack, session].slice(-40));
@@ -58,7 +61,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [redoStack, saveSession, session, undoStack]);
+  }, [redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
 
   const captureSnapshot = useCallback(
     async (slot: 'A' | 'B') => {

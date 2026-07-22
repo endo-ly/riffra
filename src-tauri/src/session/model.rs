@@ -11,9 +11,6 @@ use crate::errors::DomainError;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use serde::{Deserialize, Serialize};
 
-/// Current session format version.
-pub const CREATIVE_SESSION_FORMAT: u32 = 3;
-
 /// Pulses per quarter note used by every session timeline.
 pub const TIMELINE_PPQ: u32 = 960;
 
@@ -70,6 +67,16 @@ impl ProjectTimebase {
     pub(crate) fn milliseconds_to_ticks(self, milliseconds: f64) -> TimelineTick {
         let ticks = milliseconds.max(0.0) * self.bpm * f64::from(self.ppq) / 60_000.0;
         TimelineTick(ticks.round().max(0.0) as u64)
+    }
+
+    pub(crate) fn frames_to_ticks(self, frames: u64, sample_rate: u32) -> TimelineTick {
+        self.milliseconds_to_ticks(frames as f64 * 1000.0 / f64::from(sample_rate))
+    }
+
+    fn ticks_to_frames(self, ticks: u64, sample_rate: u32) -> u64 {
+        (ticks as f64 * f64::from(sample_rate) * 60.0 / (self.bpm * f64::from(self.ppq)))
+            .round()
+            .max(0.0) as u64
     }
 }
 
@@ -301,6 +308,14 @@ pub struct AudioClipPatch {
     pub muted: Option<bool>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioClipMove {
+    pub clip_id: String,
+    pub start_tick: TimelineTick,
+    pub track_id: String,
+}
+
 /// The Arrange workspace's production state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -327,6 +342,46 @@ impl Default for Arrangement {
 }
 
 impl Arrangement {
+    /// Removes a track and every timeline object hosted by it.
+    ///
+    /// Source Assets are not touched; only arrangement references are removed.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::UnknownTrack`] when `track_id` is not registered.
+    pub fn remove_track(&mut self, track_id: &str) -> Result<(), DomainError> {
+        let index = self
+            .tracks
+            .iter()
+            .position(|track| track.id == track_id)
+            .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
+        self.tracks.remove(index);
+        self.audio_clips.retain(|clip| clip.track_id != track_id);
+        self.midi_clips.retain(|clip| clip.track_id != track_id);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Moves a track to a zero-based position in the arrangement.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::UnknownTrack`] when `track_id` is not registered.
+    pub fn reorder_track(
+        &mut self,
+        track_id: &str,
+        target_index: usize,
+    ) -> Result<(), DomainError> {
+        let index = self
+            .tracks
+            .iter()
+            .position(|track| track.id == track_id)
+            .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
+        let track = self.tracks.remove(index);
+        self.tracks
+            .insert(target_index.min(self.tracks.len()), track);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
     /// Replaces the transport loop selection and advances the arrangement revision.
     pub fn update_loop_range(
         &mut self,
@@ -514,6 +569,294 @@ impl Arrangement {
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
+
+    pub fn remove_audio_clips(&mut self, clip_ids: &[String]) -> Result<(), DomainError> {
+        if clip_ids.is_empty()
+            || clip_ids
+                .iter()
+                .any(|id| !self.audio_clips.iter().any(|clip| clip.id == *id))
+        {
+            return Err(DomainError::InvalidClip(
+                "One or more selected audio clips were not found.".into(),
+            ));
+        }
+        self.audio_clips
+            .retain(|clip| !clip_ids.iter().any(|id| id == &clip.id));
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn trim_audio_clip(
+        &mut self,
+        clip_id: &str,
+        start_tick: TimelineTick,
+        source_range: FrameRange,
+        source_frames: u64,
+    ) -> Result<(), DomainError> {
+        if source_range.end > source_frames || source_range.end <= source_range.start {
+            return Err(DomainError::InvalidClip(
+                "Trim range must stay inside the source Asset.".into(),
+            ));
+        }
+        let clip = self
+            .audio_clips
+            .iter_mut()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        if clip.loop_enabled {
+            return Err(DomainError::InvalidClip(
+                "Disable Clip Loop before trimming the source range.".into(),
+            ));
+        }
+        clip.start_tick = start_tick;
+        clip.source_range = source_range;
+        clip.timeline_duration.frames = source_range.len();
+        clip.fade_in.frames = clip.fade_in.frames.min(clip.timeline_duration.frames);
+        clip.fade_out.frames = clip.fade_out.frames.min(clip.timeline_duration.frames);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn split_audio_clip(
+        &mut self,
+        clip_id: &str,
+        split_tick: TimelineTick,
+        right_id: String,
+    ) -> Result<(), DomainError> {
+        if self.audio_clips.iter().any(|clip| clip.id == right_id) {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip id already exists: {right_id}"
+            )));
+        }
+        let index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        let mut left = self.audio_clips[index].clone();
+        if left.loop_enabled {
+            return Err(DomainError::InvalidClip(
+                "Disable Clip Loop before splitting the clip.".into(),
+            ));
+        }
+        let tick_offset = split_tick
+            .0
+            .checked_sub(left.start_tick.0)
+            .ok_or_else(|| DomainError::InvalidClip("Split must be inside the clip.".into()))?;
+        let frame_offset = self
+            .timebase
+            .ticks_to_frames(tick_offset, left.source_sample_rate);
+        if frame_offset == 0 || frame_offset >= left.timeline_duration.frames {
+            return Err(DomainError::InvalidClip(
+                "Split must leave audio on both sides.".into(),
+            ));
+        }
+        let mut right = left.clone();
+        left.source_range.end = left.source_range.start + frame_offset;
+        left.timeline_duration.frames = frame_offset;
+        left.fade_out.frames = 0;
+        left.fade_in.frames = left.fade_in.frames.min(frame_offset);
+        right.id = right_id;
+        right.name = format!("{} split", right.name);
+        right.start_tick = split_tick;
+        right.source_range.start += frame_offset;
+        right.timeline_duration.frames -= frame_offset;
+        right.fade_in.frames = 0;
+        right.fade_out.frames = right.fade_out.frames.min(right.timeline_duration.frames);
+        self.audio_clips[index] = left;
+        self.audio_clips.insert(index + 1, right);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn duplicate_audio_clip(
+        &mut self,
+        clip_id: &str,
+        duplicate_id: String,
+    ) -> Result<(), DomainError> {
+        if self.audio_clips.iter().any(|clip| clip.id == duplicate_id) {
+            return Err(DomainError::InvalidClip(format!(
+                "Audio clip id already exists: {duplicate_id}"
+            )));
+        }
+        let mut duplicate = self
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == clip_id)
+            .cloned()
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
+            })?;
+        duplicate.id = duplicate_id;
+        duplicate.name = format!("{} copy", duplicate.name);
+        duplicate.start_tick = TimelineTick(
+            duplicate.start_tick.0.saturating_add(
+                self.timebase
+                    .frames_to_ticks(
+                        duplicate.timeline_duration.frames,
+                        duplicate.timeline_duration.sample_rate,
+                    )
+                    .0,
+            ),
+        );
+        self.audio_clips.push(duplicate);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Moves a selection as one edit so relative timing and revision stay coherent.
+    pub fn move_audio_clips(&mut self, moves: Vec<AudioClipMove>) -> Result<(), DomainError> {
+        if moves.is_empty() {
+            return Err(DomainError::InvalidClip(
+                "No clips were selected to move.".into(),
+            ));
+        }
+        let mut next = self.audio_clips.clone();
+        for movement in moves {
+            let clip = next
+                .iter_mut()
+                .find(|clip| clip.id == movement.clip_id)
+                .ok_or_else(|| {
+                    DomainError::InvalidClip(format!(
+                        "Audio clip '{}' not found.",
+                        movement.clip_id
+                    ))
+                })?;
+            clip.start_tick = movement.start_tick;
+            clip.track_id = movement.track_id;
+        }
+        for clip in &next {
+            self.validate_audio_clip(clip)?;
+        }
+        self.audio_clips = next;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Copies clips to a new anchor while preserving their relative offsets.
+    pub fn paste_audio_clips(
+        &mut self,
+        clip_ids: &[String],
+        ids: &[String],
+        start_tick: TimelineTick,
+    ) -> Result<(), DomainError> {
+        if clip_ids.is_empty() || clip_ids.len() != ids.len() {
+            return Err(DomainError::InvalidClip(
+                "Clipboard selection is invalid.".into(),
+            ));
+        }
+        let sources = clip_ids
+            .iter()
+            .map(|id| {
+                self.audio_clips
+                    .iter()
+                    .find(|clip| clip.id == *id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        DomainError::InvalidClip(format!("Audio clip '{id}' not found."))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let anchor = sources
+            .iter()
+            .map(|clip| clip.start_tick.0)
+            .min()
+            .unwrap_or_default();
+        let mut copies = Vec::with_capacity(sources.len());
+        for (mut copy, id) in sources.into_iter().zip(ids) {
+            if self.audio_clips.iter().any(|clip| clip.id == *id)
+                || copies.iter().any(|clip: &AudioClip| clip.id == *id)
+            {
+                return Err(DomainError::InvalidClip(format!(
+                    "Audio clip id already exists: {id}"
+                )));
+            }
+            copy.id = id.clone();
+            copy.name = format!("{} copy", copy.name);
+            copy.start_tick = TimelineTick(
+                start_tick
+                    .0
+                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
+            );
+            copies.push(copy);
+        }
+        self.audio_clips.extend(copies);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Applies an explicit equal-power crossfade to two overlapping clips.
+    pub fn crossfade_audio_clips(
+        &mut self,
+        first_id: &str,
+        second_id: &str,
+    ) -> Result<(), DomainError> {
+        if first_id == second_id {
+            return Err(DomainError::InvalidClip(
+                "Crossfade requires two different clips.".into(),
+            ));
+        }
+        let first_index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == first_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{first_id}' not found."))
+            })?;
+        let second_index = self
+            .audio_clips
+            .iter()
+            .position(|clip| clip.id == second_id)
+            .ok_or_else(|| {
+                DomainError::InvalidClip(format!("Audio clip '{second_id}' not found."))
+            })?;
+        let first = &self.audio_clips[first_index];
+        let second = &self.audio_clips[second_index];
+        if first.track_id != second.track_id {
+            return Err(DomainError::InvalidClip(
+                "Crossfade clips must be on the same track.".into(),
+            ));
+        }
+        let first_end = first.start_tick.0.saturating_add(
+            self.timebase
+                .frames_to_ticks(first.timeline_duration.frames, first.source_sample_rate)
+                .0,
+        );
+        let second_end = second.start_tick.0.saturating_add(
+            self.timebase
+                .frames_to_ticks(second.timeline_duration.frames, second.source_sample_rate)
+                .0,
+        );
+        let overlap_start = first.start_tick.0.max(second.start_tick.0);
+        let overlap_end = first_end.min(second_end);
+        if overlap_end <= overlap_start {
+            return Err(DomainError::InvalidClip(
+                "Crossfade clips must overlap in time.".into(),
+            ));
+        }
+        let (left_index, right_index) = if first.start_tick <= second.start_tick {
+            (first_index, second_index)
+        } else {
+            (second_index, first_index)
+        };
+        let overlap_ticks = overlap_end - overlap_start;
+        let left_rate = self.audio_clips[left_index].source_sample_rate;
+        let right_rate = self.audio_clips[right_index].source_sample_rate;
+        self.audio_clips[left_index].fade_out = FrameDuration {
+            frames: self.timebase.ticks_to_frames(overlap_ticks, left_rate),
+            sample_rate: left_rate,
+        };
+        self.audio_clips[right_index].fade_in = FrameDuration {
+            frames: self.timebase.ticks_to_frames(overlap_ticks, right_rate),
+            sample_rate: right_rate,
+        };
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
 }
 
 /// A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
@@ -615,7 +958,6 @@ fn default_ai_context() -> Vec<String> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreativeSession {
-    pub format_version: u32,
     pub session_id: String,
     pub updated_at_ms: u64,
     #[serde(default)]
@@ -692,7 +1034,6 @@ impl CreativeSession {
     /// arrangement, and safe (muted) settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
-            format_version: CREATIVE_SESSION_FORMAT,
             session_id: format!("scratch-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
@@ -720,12 +1061,6 @@ impl CreativeSession {
     /// # Errors
     /// Returns a description of the first violated rule.
     pub fn validate_and_normalize(mut self) -> Result<Self, String> {
-        if self.format_version != CREATIVE_SESSION_FORMAT {
-            return Err(format!(
-                "Unsupported session format {} (expected {}).",
-                self.format_version, CREATIVE_SESSION_FORMAT
-            ));
-        }
         if self.session_id.trim().is_empty() {
             return Err("Session id must not be empty.".into());
         }
@@ -1147,6 +1482,36 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_track_removes_its_clips_but_keeps_other_tracks() {
+        // Arrange
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+
+        // Act
+        arrangement.remove_track("main").unwrap();
+
+        // Assert
+        assert_eq!(arrangement.tracks.len(), 1);
+        assert_eq!(arrangement.tracks[0].id, "extra");
+        assert!(arrangement.audio_clips.is_empty());
+        assert_eq!(arrangement.revision, 2);
+    }
+
+    #[test]
+    fn reordering_a_track_keeps_clip_ownership_unchanged() {
+        // Arrange
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+
+        // Act
+        arrangement.reorder_track("extra", 0).unwrap();
+
+        // Assert
+        assert_eq!(arrangement.tracks[0].id, "extra");
+        assert_eq!(arrangement.tracks[1].id, "main");
+        assert_eq!(arrangement.audio_clips[0].track_id, "main");
+        assert_eq!(arrangement.revision, 2);
+    }
+
+    #[test]
     fn update_audio_clip_applies_canonical_clamps_and_keeps_other_fields() {
         let mut arrangement = arrangement_with_clip(mint_asset_id());
         arrangement
@@ -1243,6 +1608,137 @@ mod tests {
             arrangement.remove_audio_clip("missing").unwrap_err(),
             DomainError::InvalidClip(_)
         ));
+    }
+
+    #[test]
+    fn split_preserves_the_asset_and_partitions_the_source_range() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .split_audio_clip("clip:1", TimelineTick(2_880), "clip:right".into())
+            .unwrap();
+
+        assert_eq!(arrangement.audio_clips.len(), 2);
+        assert_eq!(
+            arrangement.audio_clips[0].source_range,
+            FrameRange { start: 0, end: 500 }
+        );
+        assert_eq!(
+            arrangement.audio_clips[1].source_range,
+            FrameRange {
+                start: 500,
+                end: 1_000
+            }
+        );
+        assert_eq!(arrangement.audio_clips[1].start_tick, TimelineTick(2_880));
+        assert_eq!(
+            arrangement.audio_clips[0].asset_id,
+            arrangement.audio_clips[1].asset_id
+        );
+    }
+
+    #[test]
+    fn trim_and_duplicate_are_non_destructive_arrangement_edits() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .trim_audio_clip(
+                "clip:1",
+                TimelineTick(2_400),
+                FrameRange {
+                    start: 250,
+                    end: 750,
+                },
+                1_000,
+            )
+            .unwrap();
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:copy".into())
+            .unwrap();
+
+        assert_eq!(
+            arrangement.audio_clips[0].source_range,
+            FrameRange {
+                start: 250,
+                end: 750
+            }
+        );
+        assert_eq!(arrangement.audio_clips[0].timeline_duration.frames, 500);
+        assert_eq!(arrangement.audio_clips[1].id, "clip:copy");
+        assert_eq!(arrangement.audio_clips[1].start_tick, TimelineTick(3_360));
+    }
+
+    #[test]
+    fn moving_multiple_clips_preserves_one_edit_revision() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:2".into())
+            .unwrap();
+        let revision = arrangement.revision;
+        arrangement
+            .move_audio_clips(vec![
+                AudioClipMove {
+                    clip_id: "clip:1".into(),
+                    start_tick: TimelineTick(0),
+                    track_id: "extra".into(),
+                },
+                AudioClipMove {
+                    clip_id: "clip:2".into(),
+                    start_tick: TimelineTick(1_920),
+                    track_id: "extra".into(),
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(arrangement.revision, revision + 1);
+        assert!(
+            arrangement
+                .audio_clips
+                .iter()
+                .all(|clip| clip.track_id == "extra")
+        );
+        assert_eq!(
+            arrangement.audio_clips[1].start_tick.0 - arrangement.audio_clips[0].start_tick.0,
+            1_920
+        );
+    }
+
+    #[test]
+    fn paste_preserves_relative_timing_and_asset_references() {
+        let asset = mint_asset_id();
+        let mut arrangement = arrangement_with_clip(asset.clone());
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:2".into())
+            .unwrap();
+        arrangement
+            .paste_audio_clips(
+                &["clip:1".into(), "clip:2".into()],
+                &["clip:3".into(), "clip:4".into()],
+                TimelineTick(9_600),
+            )
+            .unwrap();
+
+        assert_eq!(arrangement.audio_clips[2].start_tick, TimelineTick(9_600));
+        assert_eq!(arrangement.audio_clips[3].start_tick, TimelineTick(11_520));
+        assert!(
+            arrangement.audio_clips[2..]
+                .iter()
+                .all(|clip| clip.asset_id == asset)
+        );
+    }
+
+    #[test]
+    fn explicit_crossfade_uses_the_overlap_on_both_clips() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .duplicate_audio_clip("clip:1", "clip:2".into())
+            .unwrap();
+        arrangement.audio_clips[1].start_tick = TimelineTick(2_880);
+
+        arrangement
+            .crossfade_audio_clips("clip:1", "clip:2")
+            .unwrap();
+
+        assert_eq!(arrangement.audio_clips[0].fade_out.frames, 500);
+        assert_eq!(arrangement.audio_clips[1].fade_in.frames, 500);
     }
 
     #[test]
