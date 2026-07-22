@@ -36,8 +36,8 @@ use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::session::{
-    AiChangeSet, Arrangement, CreativeSession, DesignTool, SamplePad, TimelineTick, Track,
-    TrackKind, Workspace,
+    AiChangeSet, Arrangement, CreativeSession, DesignTool, Marker, MidiNote, MonitoringState,
+    SamplePad, TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -669,6 +669,7 @@ pub struct SessionSettingsPatch {
     pub project_name: Option<Option<String>>,
     pub loop_enabled: Option<bool>,
     pub count_in_beats: Option<u8>,
+    pub metronome_enabled: Option<bool>,
     pub note: Option<String>,
     pub ai_permission: Option<String>,
     pub ai_context: Option<Vec<String>>,
@@ -689,6 +690,9 @@ pub fn update_session_settings(
     }
     if let Some(count_in_beats) = patch.count_in_beats {
         session.settings.count_in_beats = count_in_beats.min(8);
+    }
+    if let Some(metronome_enabled) = patch.metronome_enabled {
+        session.settings.metronome_enabled = metronome_enabled;
     }
     if let Some(note) = patch.note {
         session.settings.note = note.chars().take(16_384).collect();
@@ -713,9 +717,15 @@ pub struct TrackPatch {
     pub pan: Option<f64>,
     pub muted: Option<bool>,
     pub solo: Option<bool>,
+    pub armed: Option<bool>,
+    pub monitoring: Option<MonitoringState>,
 }
 
-pub fn add_track(context: &SessionContext<'_>, name: String) -> Result<CreativeSession, String> {
+pub fn add_track(
+    context: &SessionContext<'_>,
+    name: String,
+    kind: TrackKind,
+) -> Result<CreativeSession, String> {
     let name = name.trim().chars().take(80).collect::<String>();
     if name.is_empty() {
         return Err("Track name must not be empty.".into());
@@ -724,11 +734,13 @@ pub fn add_track(context: &SessionContext<'_>, name: String) -> Result<CreativeS
     session.arrangement.tracks.push(Track {
         id: format!("track:{}", now_ms()),
         name,
-        kind: TrackKind::Audio,
+        kind,
         gain_db: 0.0,
         pan: 0.0,
         muted: false,
         solo: false,
+        armed: false,
+        monitoring: MonitoringState::Off,
     });
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
@@ -774,6 +786,12 @@ pub fn update_track(
     }
     if let Some(value) = patch.solo {
         track.solo = value;
+    }
+    if let Some(value) = patch.armed {
+        track.armed = value;
+    }
+    if let Some(value) = patch.monitoring {
+        track.monitoring = value;
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
@@ -866,6 +884,160 @@ pub fn reorder_track(
     let committed = commit_session(context, session)?;
     sync_arrangement_best_effort(context, &committed);
     Ok(committed)
+}
+
+// Marker operations. Markers are timeline authoring metadata with no audio
+// runtime impact, so they skip the audio sync and go straight through
+// `commit_session`.
+
+pub fn add_marker(
+    context: &SessionContext<'_>,
+    tick: TimelineTick,
+    name: String,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let trimmed: String = name.trim().chars().take(80).collect();
+    session.arrangement.markers.push(Marker {
+        id: format!("marker:{}", now_ms()),
+        name: if trimmed.is_empty() { "Marker".into() } else { trimmed },
+        tick: tick.0,
+    });
+    commit_session(context, session)
+}
+
+pub fn update_marker(
+    context: &SessionContext<'_>,
+    marker_id: &str,
+    name: Option<String>,
+    tick: Option<TimelineTick>,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let marker = session
+        .arrangement
+        .markers
+        .iter_mut()
+        .find(|marker| marker.id == marker_id)
+        .ok_or_else(|| format!("Marker is not registered: {marker_id}"))?;
+    if let Some(name) = name {
+        let trimmed: String = name.trim().chars().take(80).collect();
+        marker.name = if trimmed.is_empty() { marker.name.clone() } else { trimmed };
+    }
+    if let Some(tick) = tick {
+        marker.tick = tick.0;
+    }
+    commit_session(context, session)
+}
+
+pub fn remove_marker(
+    context: &SessionContext<'_>,
+    marker_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session.arrangement.markers.retain(|marker| marker.id != marker_id);
+    commit_session(context, session)
+}
+
+/// Adds a single MIDI note to an existing MIDI clip. The note id is minted by
+/// the Application layer so the React side never invents identity.
+pub fn add_midi_note(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    start_tick: TimelineTick,
+    pitch: u8,
+    duration_ticks: u64,
+    velocity: u8,
+    channel: u8,
+) -> Result<CreativeSession, String> {
+    if pitch > 127 {
+        return Err("MIDI pitch must be between 0 and 127.".into());
+    }
+    if velocity > 127 {
+        return Err("MIDI velocity must be between 0 and 127.".into());
+    }
+    if channel == 0 || channel > 16 {
+        return Err("MIDI channel must be between 1 and 16.".into());
+    }
+    let duration_ticks = duration_ticks.max(1);
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
+    clip.notes.push(MidiNote {
+        id: format!("note:{}", now_ms()),
+        note: pitch,
+        start_tick,
+        duration_ticks,
+        velocity,
+        channel,
+    });
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn update_midi_note(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_id: &str,
+    patch: MidiNotePatch,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
+    let note = clip
+        .notes
+        .iter_mut()
+        .find(|note| note.id == note_id)
+        .ok_or_else(|| format!("MIDI note is not registered: {note_id}"))?;
+    if let Some(pitch) = patch.note {
+        note.note = pitch.min(127);
+    }
+    if let Some(start_tick) = patch.start_tick {
+        note.start_tick = start_tick;
+    }
+    if let Some(duration) = patch.duration_ticks {
+        note.duration_ticks = duration.max(1);
+    }
+    if let Some(velocity) = patch.velocity {
+        note.velocity = velocity.min(127);
+    }
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn remove_midi_note(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let clip = session
+        .arrangement
+        .midi_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
+    clip.notes.retain(|note| note.id != note_id);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiNotePatch {
+    pub note: Option<u8>,
+    pub start_tick: Option<TimelineTick>,
+    pub duration_ticks: Option<u64>,
+    pub velocity: Option<u8>,
 }
 
 pub fn apply_ai_suggestion(

@@ -1,6 +1,7 @@
-import type { CreativeSession } from '@/lib/domain';
+import { useEffect, useState } from 'react';
+import type { AudioClip, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
-import { formatMusicalPosition } from '@/lib/arrange-timeline';
+import { clipDurationTicks, formatMusicalPosition } from '@/lib/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
 
 interface ArrangeClipInspectorProps {
@@ -9,6 +10,29 @@ interface ArrangeClipInspectorProps {
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
   api: NativeApi;
+  onSetLoopToClip?: (clip: AudioClip) => void;
+}
+
+interface Drafts {
+  name: string;
+  startTick: string;
+  gainDb: string;
+  pan: string;
+  fadeInMs: string;
+  fadeOutMs: string;
+}
+
+function buildDrafts(clip: AudioClip): Drafts {
+  const fadeInMs = (clip.fadeIn.frames * 1000) / clip.sourceSampleRate;
+  const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
+  return {
+    name: clip.name,
+    startTick: String(clip.startTick),
+    gainDb: clip.gainDb.toFixed(1),
+    pan: clip.pan.toFixed(2),
+    fadeInMs: String(Math.round(fadeInMs)),
+    fadeOutMs: String(Math.round(fadeOutMs)),
+  };
 }
 
 export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
@@ -16,12 +40,33 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
     props.selectedClipIds.includes(clip.id),
   );
   const clip = selected.at(-1) ?? null;
-  const commit = async (operation: Promise<CreativeSession | null>) => {
-    const session = await operation;
-    if (session) props.setSession(session);
+  const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  // Re-seed drafts when the selected clip identity changes. We do NOT reseed
+  // on every value change, so the user can finish typing before a blur fires
+  // even if the canonical session updates from another source.
+  useEffect(() => {
+    setMessage(null);
+    if (clip) setDrafts(buildDrafts(clip));
+    else setDrafts(null);
+  }, [clip?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = async (operation: Promise<CreativeSession | null>, label: string) => {
+    try {
+      const next = await operation;
+      if (next) {
+        props.setSession(next);
+        setMessage(`${label} applied.`);
+      } else {
+        setMessage(`${label} was not applied.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
   };
 
-  if (!clip) {
+  if (!clip || !drafts) {
     return (
       <div className={styles.empty}>
         <span className={styles.emptyGlyph}>⌁</span>
@@ -32,8 +77,24 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   }
 
   const seconds = clip.timelineDuration.frames / clip.timelineDuration.sampleRate;
-  const fadeInMs = (clip.fadeIn.frames * 1000) / clip.sourceSampleRate;
-  const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
+  const patch = (fields: Record<string, unknown>, label: string) =>
+    void commit(props.api.updateAudioClip(clip.id, fields), label);
+
+  const duplicateSelection = () => {
+    // Keep Duplicate consistent with Delete and Ctrl+D: operate on the full
+    // selection rather than just the last-focused clip.
+    const clips = selected;
+    const target = Math.max(
+      ...clips.map(
+        (item) => item.startTick + clipDurationTicks(item, props.session.arrangement.timebase),
+      ),
+    );
+    void commit(
+      props.api.pasteAudioClips(props.selectedClipIds, target),
+      `${selected.length} clip${selected.length === 1 ? '' : 's'} duplicated.`,
+    );
+  };
+
   return (
     <div className={styles.inspector}>
       <section className={styles.identity}>
@@ -44,12 +105,11 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           </span>
           <input
             aria-label="Clip name"
-            defaultValue={clip.name}
-            key={`${clip.id}:${clip.name}`}
-            onBlur={(event) => {
-              const name = event.currentTarget.value.trim();
-              if (name && name !== clip.name)
-                void commit(props.api.updateAudioClip(clip.id, { name }));
+            value={drafts.name}
+            onChange={(event) => setDrafts({ ...drafts, name: event.currentTarget.value })}
+            onBlur={() => {
+              const name = drafts.name.trim();
+              if (name && name !== clip.name) patch({ name }, 'Rename');
             }}
           />
           <small>{clip.assetId}</small>
@@ -66,15 +126,13 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           <input
             type="number"
             min="0"
-            defaultValue={clip.startTick}
-            key={`${clip.id}:start:${clip.startTick}`}
-            onBlur={(event) =>
-              void commit(
-                props.api.updateAudioClip(clip.id, {
-                  startTick: Number(event.currentTarget.value),
-                }),
-              )
-            }
+            value={drafts.startTick}
+            onChange={(event) => setDrafts({ ...drafts, startTick: event.currentTarget.value })}
+            onBlur={() => {
+              const next = Number(drafts.startTick);
+              if (Number.isFinite(next) && next >= 0 && next !== clip.startTick)
+                patch({ startTick: next }, 'Start tick');
+            }}
           />
         </label>
         <div className={styles.readout}>
@@ -102,15 +160,14 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             min="-60"
             max="24"
             step="0.5"
-            defaultValue={clip.gainDb}
-            key={`${clip.id}:gain:${clip.gainDb}`}
-            onPointerUp={(event) =>
-              void commit(
-                props.api.updateAudioClip(clip.id, { gainDb: Number(event.currentTarget.value) }),
-              )
-            }
+            value={drafts.gainDb}
+            onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
+            onPointerUp={() => {
+              const next = Number(drafts.gainDb);
+              if (Number.isFinite(next) && next !== clip.gainDb) patch({ gainDb: next }, 'Gain');
+            }}
           />
-          <output>{clip.gainDb.toFixed(1)} dB</output>
+          <output>{Number(drafts.gainDb).toFixed(1)} dB</output>
         </label>
         <label>
           <span>Pan</span>
@@ -120,18 +177,17 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             min="-1"
             max="1"
             step="0.05"
-            defaultValue={clip.pan}
-            key={`${clip.id}:pan:${clip.pan}`}
-            onPointerUp={(event) =>
-              void commit(
-                props.api.updateAudioClip(clip.id, { pan: Number(event.currentTarget.value) }),
-              )
-            }
+            value={drafts.pan}
+            onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
+            onPointerUp={() => {
+              const next = Number(drafts.pan);
+              if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
+            }}
           />
           <output>
-            {Math.abs(clip.pan) < 0.01
+            {Math.abs(Number(drafts.pan)) < 0.01
               ? 'Center'
-              : `${clip.pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(clip.pan) * 100)}`}
+              : `${Number(drafts.pan) < 0 ? 'L' : 'R'} ${Math.round(Math.abs(Number(drafts.pan)) * 100)}`}
           </output>
         </label>
       </section>
@@ -148,20 +204,15 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             min="0"
             max={seconds * 1000}
             step="1"
-            defaultValue={Math.round(fadeInMs)}
-            key={`${clip.id}:fadeIn:${clip.fadeIn.frames}`}
-            onBlur={(event) =>
-              void commit(
-                props.api.updateAudioClip(clip.id, {
-                  fadeIn: {
-                    frames: Math.round(
-                      (Number(event.currentTarget.value) * clip.sourceSampleRate) / 1000,
-                    ),
-                    sampleRate: clip.sourceSampleRate,
-                  },
-                }),
-              )
-            }
+            value={drafts.fadeInMs}
+            onChange={(event) => setDrafts({ ...drafts, fadeInMs: event.currentTarget.value })}
+            onBlur={() => {
+              const ms = Number(drafts.fadeInMs);
+              if (!Number.isFinite(ms) || ms < 0) return;
+              const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+              if (frames !== clip.fadeIn.frames)
+                patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade in');
+            }}
           />
           <output>ms</output>
         </label>
@@ -172,20 +223,15 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             min="0"
             max={seconds * 1000}
             step="1"
-            defaultValue={Math.round(fadeOutMs)}
-            key={`${clip.id}:fadeOut:${clip.fadeOut.frames}`}
-            onBlur={(event) =>
-              void commit(
-                props.api.updateAudioClip(clip.id, {
-                  fadeOut: {
-                    frames: Math.round(
-                      (Number(event.currentTarget.value) * clip.sourceSampleRate) / 1000,
-                    ),
-                    sampleRate: clip.sourceSampleRate,
-                  },
-                }),
-              )
-            }
+            value={drafts.fadeOutMs}
+            onChange={(event) => setDrafts({ ...drafts, fadeOutMs: event.currentTarget.value })}
+            onBlur={() => {
+              const ms = Number(drafts.fadeOutMs);
+              if (!Number.isFinite(ms) || ms < 0) return;
+              const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+              if (frames !== clip.fadeOut.frames)
+                patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade out');
+            }}
           />
           <output>ms</output>
         </label>
@@ -194,14 +240,19 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       <div className={styles.toggles}>
         <button
           className={clip.muted ? styles.active : ''}
-          onClick={() => void commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }))}
+          onClick={() =>
+            void commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
+          }
         >
           Mute
         </button>
         <button
           className={clip.loopEnabled ? styles.active : ''}
           onClick={() =>
-            void commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }))
+            void commit(
+              props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
+              'Loop',
+            )
           }
         >
           Loop
@@ -213,26 +264,34 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           <button
             className={styles.primary}
             onClick={() =>
-              void commit(props.api.crossfadeAudioClips(selected[0].id, selected[1].id))
+              void commit(
+                props.api.crossfadeAudioClips(selected[0].id, selected[1].id),
+                'Crossfade',
+              )
             }
           >
             Create crossfade
           </button>
         )}
-        <button onClick={() => void commit(props.api.duplicateAudioClip(clip.id))}>
-          Duplicate
+        {props.onSetLoopToClip && selected.length === 1 && (
+          <button onClick={() => props.onSetLoopToClip?.(clip)}>Set Loop to Clip</button>
+        )}
+        <button onClick={duplicateSelection}>
+          Duplicate{selected.length > 1 ? ` (${selected.length})` : ''}
         </button>
         <button
           className={styles.danger}
           onClick={() =>
-            void commit(props.api.removeAudioClips(props.selectedClipIds)).then(() =>
+            void commit(props.api.removeAudioClips(props.selectedClipIds), 'Delete').then(() =>
               props.setSelectedClipIds([]),
             )
           }
         >
-          Delete
+          Delete{selected.length > 1 ? ` (${selected.length})` : ''}
         </button>
       </div>
+
+      {message && <p className={styles.message}>{message}</p>}
     </div>
   );
 }

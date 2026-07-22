@@ -8,6 +8,7 @@ interface ArrangeToolbarProps {
   zoom: number;
   trackSize: TrackSize;
   rulerMode: 'bars' | 'time';
+  follow: boolean;
   position: string;
   clock: string;
   bpm: number;
@@ -17,6 +18,7 @@ interface ArrangeToolbarProps {
   onZoom: (zoom: number) => void;
   onTrackSize: (size: TrackSize) => void;
   onRulerMode: (mode: 'bars' | 'time') => void;
+  onFollow: (follow: boolean) => void;
   onAddTrack: () => void;
 }
 
@@ -68,6 +70,15 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           <strong>{props.signature}</strong>
         </div>
       </div>
+
+      <button
+        className={`${styles.toggleButton} ${props.follow ? styles.active : ''}`}
+        aria-pressed={props.follow}
+        title="Keep the playhead in view during playback"
+        onClick={() => props.onFollow(!props.follow)}
+      >
+        Follow
+      </button>
 
       <div className={styles.toolbarRight}>
         <div className={styles.segmented} aria-label="Ruler display">

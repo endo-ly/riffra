@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
-import type { AudioAnalysis, AudioClip, CreativeSession, Track } from '@/lib/domain';
+import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, Track } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
+import { MidiClipView } from './MidiClipView';
 import {
   layoutClipLanes,
   ticksPerBar,
@@ -13,6 +14,7 @@ import styles from './WorkspaceArrange.module.css';
 interface ArrangeTrackProps {
   track: Track;
   clips: AudioClip[];
+  midiClips: MidiClip[];
   session: CreativeSession;
   analyses: Record<string, AudioAnalysis | null>;
   selectedClipIds: string[];
@@ -34,6 +36,7 @@ interface ArrangeTrackProps {
     side: 'left' | 'right',
   ) => void;
   onFade: (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'in' | 'out') => void;
+  onOpenMidiEditor?: (clip: MidiClip) => void;
   onRename: (name: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -43,6 +46,14 @@ interface ArrangeTrackProps {
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
   const layout = layoutClipLanes(props.clips, props.session.arrangement.timebase);
+  const midiLayout = layoutClipLanes(
+    props.midiClips.map((clip) => ({
+      ...clip,
+      timelineDuration: { frames: clip.durationTicks, sampleRate: 1 },
+    })) as never,
+    props.session.arrangement.timebase,
+  );
+  const laneCount = Math.max(layout.count, midiLayout.count);
   const laneHeight = trackLaneHeight(props.trackSize);
   const barTicks = ticksPerBar(props.session.arrangement.timebase);
   const bars = Array.from(
@@ -52,7 +63,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   return (
     <div
       className={styles.trackRow}
-      style={{ '--track-height': `${layout.count * laneHeight}px` } as CSSProperties}
+      style={{ '--track-height': `${laneCount * laneHeight}px` } as CSSProperties}
       data-arrange-track
       data-track-id={props.track.id}
       onDragOver={(event) => event.preventDefault()}
@@ -90,7 +101,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             <strong>{props.track.name}</strong>
           </div>
           <small>
-            AUDIO · {props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}
+            {props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO'} ·{' '}
+            {props.clips.length + props.midiClips.length} CLIP
+            {props.clips.length + props.midiClips.length === 1 ? '' : 'S'}
           </small>
         </div>
         <div className={styles.trackSwitches}>
@@ -117,6 +130,43 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             }
           >
             S
+          </button>
+          <button
+            className={`${styles.armButton} ${props.track.armed ? styles.active : ''}`}
+            aria-pressed={props.track.armed}
+            aria-label={`${props.track.armed ? 'Disarm' : 'Arm'} ${props.track.name} for recording`}
+            title={props.track.armed ? 'Disarm for recording' : 'Arm for recording'}
+            onClick={() =>
+              void props.onCommit(
+                props.api.updateTrack(props.track.id, { armed: !props.track.armed }),
+                `${props.track.name} ${props.track.armed ? 'disarmed' : 'armed'}.`,
+              )
+            }
+          >
+            ●
+          </button>
+          <button
+            className={props.track.monitoring !== 'off' ? styles.active : ''}
+            aria-label={`Cycle input monitoring for ${props.track.name}`}
+            title={`Input monitoring: ${props.track.monitoring.toUpperCase()}`}
+            onClick={() => {
+              const next =
+                props.track.monitoring === 'off'
+                  ? 'auto'
+                  : props.track.monitoring === 'auto'
+                    ? 'on'
+                    : 'off';
+              void props.onCommit(
+                props.api.updateTrack(props.track.id, { monitoring: next }),
+                `${props.track.name} monitoring set to ${next.toUpperCase()}.`,
+              );
+            }}
+          >
+            {props.track.monitoring === 'off'
+              ? 'M-IN'
+              : props.track.monitoring === 'auto'
+                ? 'A-IN'
+                : 'ON'}
           </button>
         </div>
         <details className={styles.trackMenu}>
@@ -215,6 +265,18 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             onMove={props.onMove}
             onTrim={props.onTrim}
             onFade={props.onFade}
+          />
+        ))}
+        {props.midiClips.map((clip) => (
+          <MidiClipView
+            key={clip.id}
+            clip={clip}
+            pixelsPerTick={props.pixelsPerTick}
+            lane={midiLayout.lanes.get(clip.id) ?? 0}
+            laneHeight={laneHeight}
+            selected={props.selectedClipIds.includes(clip.id)}
+            onSelect={props.onSelect}
+            onOpenEditor={props.onOpenMidiEditor}
           />
         ))}
       </div>

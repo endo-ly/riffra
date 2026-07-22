@@ -24,6 +24,8 @@ import type {
   CreativeSession,
   DesignTool,
   SessionAudioPair,
+  MonitoringState,
+  TrackKind,
   Workspace,
   TransportStatus,
 } from '@/lib/domain';
@@ -187,14 +189,39 @@ export interface NativeApi {
   moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null>;
   pasteAudioClips(clipIds: string[], startTick: number): Promise<CreativeSession | null>;
   crossfadeAudioClips(firstId: string, secondId: string): Promise<CreativeSession | null>;
-  addTrack(name: string): Promise<CreativeSession>;
+  addTrack(name: string, kind: TrackKind): Promise<CreativeSession>;
   updateTrack(
     trackId: string,
-    patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+    patch: {
+      name?: string;
+      gainDb?: number;
+      pan?: number;
+      muted?: boolean;
+      solo?: boolean;
+      armed?: boolean;
+      monitoring?: MonitoringState;
+    },
   ): Promise<CreativeSession>;
   removeTrack(trackId: string): Promise<CreativeSession>;
   duplicateTrack(trackId: string): Promise<CreativeSession>;
   reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
+  addMarker(tick: number, name: string): Promise<CreativeSession>;
+  updateMarker(markerId: string, patch: { name?: string; tick?: number }): Promise<CreativeSession>;
+  removeMarker(markerId: string): Promise<CreativeSession>;
+  addMidiNote(
+    clipId: string,
+    startTick: number,
+    pitch: number,
+    durationTicks: number,
+    velocity: number,
+    channel: number,
+  ): Promise<CreativeSession>;
+  updateMidiNote(
+    clipId: string,
+    noteId: string,
+    patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
+  ): Promise<CreativeSession>;
+  removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
   syncArrangementRuntime(): Promise<void>;
   playTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;
@@ -220,6 +247,7 @@ export interface NativeApi {
     projectName?: string | null;
     loopEnabled?: boolean;
     countInBeats?: number;
+    metronomeEnabled?: boolean;
     note?: string;
     aiPermission?: string;
     aiContext?: string[];

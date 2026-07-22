@@ -226,10 +226,13 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
           ...clips.map((clip) => clip.startTick + clipDurationTicks(clip, timebase)),
         );
         void commit(api.pasteAudioClips(selectedClipIds, target), 'Clip selection duplicated.');
-      } else if (selectedClip && event.ctrlKey && key === 'e') {
+      } else if (selectedClipIds.length && event.ctrlKey && key === 'e') {
         event.preventDefault();
-        void clipInteractions.splitClip(selectedClip, displayTick);
-      } else if (selectedClip && event.key === 'Delete') {
+        const targets = arrangement.audioClips.filter((clip) => selectedClipIds.includes(clip.id));
+        for (const clip of targets) {
+          void clipInteractions.splitClip(clip, displayTick);
+        }
+      } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(api.removeAudioClips(selectedClipIds), 'Clip selection removed.').then(() =>
           setSelectedClipIds([]),

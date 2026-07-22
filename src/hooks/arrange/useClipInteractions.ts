@@ -76,6 +76,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     let pendingTick = originTick;
     let pendingTrack = clip.trackId;
     let duplicate = event.altKey;
+    // Cache track rows once per drag instead of querying the DOM on every
+    // pointermove. The set of tracks doesn't change mid-drag.
+    const trackRows = Array.from(document.querySelectorAll<HTMLElement>('[data-arrange-track]'));
     element.setPointerCapture?.(event.pointerId);
     const move = (pointer: PointerEvent) => {
       pendingTick = options.snapTick(
@@ -85,7 +88,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       duplicate = pointer.altKey;
       element.style.left = `${pendingTick * options.pixelsPerTick}px`;
       options.setSnapGuide(pendingTick);
-      for (const row of document.querySelectorAll<HTMLElement>('[data-arrange-track]')) {
+      for (const row of trackRows) {
         const bounds = row.getBoundingClientRect();
         if (pointer.clientY >= bounds.top && pointer.clientY <= bounds.bottom) {
           pendingTrack = row.dataset.trackId ?? clip.trackId;

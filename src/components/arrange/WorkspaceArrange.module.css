@@ -3,7 +3,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr);
+  grid-template-rows: 58px minmax(0, 1fr) auto;
   overflow: hidden;
   background: #090c10;
   --header-width: 184px;
@@ -173,6 +173,25 @@
   width: 12px;
 }
 
+.toggleButton {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  color: #98a3ae;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+.toggleButton svg {
+  width: 11px;
+}
+.toggleButton.active {
+  color: #dfffff;
+  background: #21333b;
+  border-color: rgba(85, 217, 232, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(85, 217, 232, 0.22);
+}
+
 .scroller {
   min-height: 0;
   overflow: auto;
@@ -282,6 +301,17 @@
 .loopRange::after {
   right: 0;
 }
+.timeSelection {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  background: rgba(85, 217, 232, 0.13);
+  border-left: 1px solid rgba(85, 217, 232, 0.5);
+  border-right: 1px solid rgba(85, 217, 232, 0.5);
+}
+
 .loopRange span {
   position: absolute;
   top: 7px;
@@ -289,6 +319,68 @@
   color: #c39b56;
   font-size: 6px;
   letter-spacing: 0.1em;
+}
+
+.loopHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(231, 181, 93, 0.7);
+}
+.loopHandleStart {
+  left: -3px;
+}
+.loopHandleEnd {
+  right: -3px;
+}
+.loopHandle:hover {
+  background: #f0c067;
+}
+
+.marker {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 140px;
+  height: 16px;
+  padding: 0 6px 0 12px;
+  color: #e7d8b3;
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #6e5323, #4f3b18);
+  border: 1px solid #8e6e2e;
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  transform: translateX(-50%);
+  cursor: grab;
+  user-select: none;
+}
+.marker::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 6px;
+  background: rgba(231, 216, 179, 0.55);
+  transform: translateX(-50%);
+}
+.marker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.markerSelected {
+  background: linear-gradient(180deg, #b98e3a, #7a5921);
+  border-color: #f0c067;
+  color: #fff6dc;
+  box-shadow: 0 2px 8px rgba(240, 192, 103, 0.3);
 }
 
 .trackRow {
@@ -450,6 +542,15 @@
   border: 1px solid #29323b;
   border-radius: 3px;
 }
+.trackSwitches .armButton {
+  color: #d56359;
+}
+.trackSwitches .armButton.active {
+  color: #ffeae6;
+  background: #c43a30;
+  border-color: #e15044;
+  box-shadow: 0 0 8px rgba(231, 84, 76, 0.5);
+}
 .trackSwitches .active {
   color: #071216;
   background: var(--amber);
@@ -533,6 +634,22 @@
 }
 .clip.looped {
   background: linear-gradient(180deg, #2b6370, #204a55 46%, #173941);
+}
+.clip.midiClip {
+  background: linear-gradient(180deg, #3a2f6a 0, #2a2150 42%, #1f1840 100%);
+  border-color: #4a3e80;
+}
+.clip.midiClip.selected {
+  border-color: #b59aef;
+  box-shadow:
+    0 0 0 1px #b59aef,
+    0 5px 16px rgba(0, 0, 0, 0.4);
+}
+.clip.midiClip .waveform path {
+  stroke: none;
+}
+.clip.midiClip .waveform rect {
+  fill: #b9a4f0;
 }
 
 .clipHeader {
@@ -747,6 +864,21 @@
   border: 1px solid rgba(85, 217, 232, 0.32);
   border-radius: 5px;
 }
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 4px;
+}
+.emptyActions button {
+  margin-top: 0;
+}
+.emptyRecord {
+  color: #ffc4bf !important;
+  background: rgba(231, 96, 88, 0.12) !important;
+  border-color: rgba(231, 96, 88, 0.45) !important;
+}
 
 .statusToast {
   position: absolute;
@@ -782,6 +914,37 @@
     6px 'DM Mono',
     Consolas,
     monospace;
+}
+
+.selectionActions {
+  position: absolute;
+  z-index: 15;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  color: #aeb9c3;
+  font-size: 8px;
+  background: rgba(12, 16, 20, 0.92);
+  border: 1px solid #2a343d;
+  border-radius: 5px;
+}
+.selectionActions span {
+  color: #8a96a0;
+  font:
+    7px 'DM Mono',
+    Consolas,
+    monospace;
+}
+.selectionActions button {
+  padding: 4px 8px;
+  color: #c6f5f3;
+  font-size: 8px;
+  background: rgba(85, 217, 232, 0.1);
+  border: 1px solid rgba(85, 217, 232, 0.3);
+  border-radius: 3px;
 }
 
 @media (max-width: 1180px) {

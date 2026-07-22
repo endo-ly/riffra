@@ -170,3 +170,11 @@
   color: #e89191;
   margin-left: auto;
 }
+.message {
+  margin: 0;
+  padding: 9px 12px 12px;
+  color: #8a96a0;
+  font-size: 8px;
+  line-height: 1.5;
+  word-break: break-word;
+}

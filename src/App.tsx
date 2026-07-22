@@ -280,6 +280,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             selectedClipIds={arrangeSelection}
             setSelectedClipIds={setArrangeSelection}
             api={nativeApi}
+            onRecord={() => void toggleRecording()}
           />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (

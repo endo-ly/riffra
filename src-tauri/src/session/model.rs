@@ -150,6 +150,21 @@ pub struct Track {
     pub muted: bool,
     #[serde(default)]
     pub solo: bool,
+    #[serde(default)]
+    pub armed: bool,
+    #[serde(default)]
+    pub monitoring: MonitoringState,
+}
+
+/// Audio Track input monitoring state. `Auto` monitors only while the track is
+/// armed; `On` always monitors; `Off` never monitors.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitoringState {
+    #[default]
+    Off,
+    Auto,
+    On,
 }
 
 impl Track {
@@ -163,6 +178,8 @@ impl Track {
             pan: 0.0,
             muted: false,
             solo: false,
+            armed: false,
+            monitoring: MonitoringState::Off,
         }
     }
 }
@@ -326,6 +343,18 @@ pub struct Arrangement {
     pub tracks: Vec<Track>,
     pub audio_clips: Vec<AudioClip>,
     pub midi_clips: Vec<MidiClip>,
+    #[serde(default)]
+    pub markers: Vec<Marker>,
+}
+
+/// A named timeline marker. Markers hold no audio processing impact; they are
+/// authoring metadata rendered on the Time Ruler.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Marker {
+    pub id: String,
+    pub name: String,
+    pub tick: u64,
 }
 
 impl Default for Arrangement {
@@ -337,6 +366,7 @@ impl Default for Arrangement {
             tracks: Vec::new(),
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
+            markers: Vec::new(),
         }
     }
 }
@@ -937,6 +967,8 @@ pub struct SessionSettings {
     #[serde(default)]
     pub count_in_beats: u8,
     #[serde(default)]
+    pub metronome_enabled: bool,
+    #[serde(default)]
     pub note: String,
     #[serde(default = "default_ai_permission")]
     pub ai_permission: String,
@@ -1047,6 +1079,7 @@ impl CreativeSession {
                 master_db: -18.0,
                 loop_enabled: false,
                 count_in_beats: 0,
+                metronome_enabled: false,
                 note: String::new(),
                 ai_permission: default_ai_permission(),
                 ai_context: default_ai_context(),
@@ -1267,6 +1300,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             tracks: arrangement.tracks.clone(),
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
+            markers: Vec::new(),
         };
         candidate
             .add_audio_clip(clip, |_| true)
@@ -1313,6 +1347,19 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
                 ));
             }
         }
+    }
+    if arrangement.markers.len() > 256 {
+        return Err("An arrangement cannot contain more than 256 markers.".into());
+    }
+    arrangement.markers.sort_by_key(|marker| marker.tick);
+    arrangement.markers.retain(|marker| !marker.id.trim().is_empty());
+    for marker in &mut arrangement.markers {
+        let normalized_name: String = marker.name.trim().chars().take(80).collect();
+        marker.name = if normalized_name.is_empty() {
+            "Marker".into()
+        } else {
+            normalized_name
+        };
     }
     Ok(())
 }
@@ -1402,6 +1449,8 @@ mod tests {
             pan: 0.0,
             muted: false,
             solo: false,
+            armed: false,
+            monitoring: MonitoringState::Off,
         });
         let error = arrangement
             .add_audio_clip(clip("instrument", mint_asset_id()), |_| true)
@@ -1467,10 +1516,13 @@ mod tests {
                     pan: 0.0,
                     muted: false,
                     solo: false,
+                    armed: false,
+                    monitoring: MonitoringState::Off,
                 },
             ],
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
+            markers: Vec::new(),
         };
         let mut clip = clip("main", asset);
         clip.id = "clip:1".into();

@@ -115,14 +115,20 @@ export interface TimelineLoopRange {
   endTick: number;
 }
 
+export type TrackKind = 'audio' | 'instrument';
+
+export type MonitoringState = 'off' | 'auto' | 'on';
+
 export interface Track {
   id: string;
   name: string;
-  kind: 'audio' | 'instrument';
+  kind: TrackKind;
   gainDb: number;
   pan: number;
   muted: boolean;
   solo: boolean;
+  armed: boolean;
+  monitoring: MonitoringState;
 }
 
 export interface MidiNote {
@@ -134,7 +140,7 @@ export interface MidiNote {
   channel: number;
 }
 
-interface MidiClip {
+export interface MidiClip {
   id: string;
   name: string;
   trackId: string;
@@ -174,6 +180,12 @@ interface DesignContextDto {
   targetAssetId: AssetId | null;
 }
 
+export interface Marker {
+  id: string;
+  name: string;
+  tick: number;
+}
+
 export interface Arrangement {
   revision: number;
   timebase: ProjectTimebase;
@@ -181,6 +193,7 @@ export interface Arrangement {
   tracks: Track[];
   audioClips: AudioClip[];
   midiClips: MidiClip[];
+  markers: Marker[];
 }
 
 export interface TransportStatus {
@@ -208,6 +221,7 @@ interface SessionSettings {
   masterDb: number;
   loopEnabled: boolean;
   countInBeats: number;
+  metronomeEnabled: boolean;
   note: string;
   aiPermission: 'Explain' | 'Suggest' | 'Apply';
   aiContext: string[];
@@ -647,6 +661,7 @@ export const defaultSession = (): CreativeSession => ({
     tracks: [],
     audioClips: [],
     midiClips: [],
+    markers: [],
   },
   rack: {
     devices: [
@@ -690,6 +705,7 @@ export const defaultSession = (): CreativeSession => ({
     masterDb: -18,
     loopEnabled: false,
     countInBeats: 0,
+    metronomeEnabled: false,
     note: '',
     aiPermission: 'Suggest',
     aiContext: ['analysis', 'selectedClip'],

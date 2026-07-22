@@ -32,6 +32,8 @@ import type {
   RackInstance,
   DesignTool,
   SessionAudioPair,
+  MonitoringState,
+  TrackKind,
   Workspace,
   TransportStatus,
 } from '@/lib/domain';
@@ -1234,6 +1236,8 @@ export class FakeNativeApi implements NativeApi {
             pan: 0,
             muted: false,
             solo: false,
+            armed: false,
+            monitoring: 'off' as const,
           },
         ];
     const appendTick = session.arrangement.audioClips.reduce(
@@ -1609,6 +1613,7 @@ export class FakeNativeApi implements NativeApi {
     projectName?: string | null;
     loopEnabled?: boolean;
     countInBeats?: number;
+    metronomeEnabled?: boolean;
     note?: string;
     aiPermission?: string;
     aiContext?: string[];
@@ -1622,6 +1627,7 @@ export class FakeNativeApi implements NativeApi {
         ...current.settings,
         loopEnabled: patch.loopEnabled ?? current.settings.loopEnabled,
         countInBeats: patch.countInBeats ?? current.settings.countInBeats,
+        metronomeEnabled: patch.metronomeEnabled ?? current.settings.metronomeEnabled,
         note: patch.note ?? current.settings.note,
         aiPermission:
           patch.aiPermission === 'Explain' ||
@@ -1634,7 +1640,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  addTrack = async (name: string): Promise<CreativeSession> => {
+  addTrack = async (name: string, kind: TrackKind): Promise<CreativeSession> => {
     this.calls.push('addTrack');
     if (!name.trim()) throw new Error('Track name must not be empty.');
     return this.commitSession((current) => ({
@@ -1648,11 +1654,13 @@ export class FakeNativeApi implements NativeApi {
           {
             id: `track:${Date.now()}`,
             name: name.trim().slice(0, 80),
-            kind: 'audio',
+            kind,
             gainDb: 0,
             pan: 0,
             muted: false,
             solo: false,
+            armed: false,
+            monitoring: 'off' as const,
           },
         ],
       },
@@ -1661,7 +1669,15 @@ export class FakeNativeApi implements NativeApi {
 
   updateTrack = async (
     trackId: string,
-    patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+    patch: {
+      name?: string;
+      gainDb?: number;
+      pan?: number;
+      muted?: boolean;
+      solo?: boolean;
+      armed?: boolean;
+      monitoring?: MonitoringState;
+    },
   ): Promise<CreativeSession> => {
     this.calls.push('updateTrack');
     if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
@@ -1685,6 +1701,8 @@ export class FakeNativeApi implements NativeApi {
                 pan: patch.pan === undefined ? track.pan : Math.max(-1, Math.min(1, patch.pan)),
                 muted: patch.muted ?? track.muted,
                 solo: patch.solo ?? track.solo,
+                armed: patch.armed ?? track.armed,
+                monitoring: patch.monitoring ?? track.monitoring,
               }
             : track,
         ),
@@ -1777,6 +1795,170 @@ export class FakeNativeApi implements NativeApi {
         },
       };
     });
+  };
+
+  addMarker = async (tick: number, name: string): Promise<CreativeSession> => {
+    this.calls.push('addMarker');
+    const trimmed = name.trim().slice(0, 80);
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        markers: [
+          ...current.arrangement.markers,
+          {
+            id: `marker:${Date.now()}`,
+            name: trimmed || 'Marker',
+            tick: Math.max(0, Math.round(tick)),
+          },
+        ],
+      },
+    }));
+  };
+
+  updateMarker = async (
+    markerId: string,
+    patch: { name?: string; tick?: number },
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateMarker');
+    if (!this.bootstrapState.session.arrangement.markers.some((m) => m.id === markerId)) {
+      throw new Error(`Marker is not registered: ${markerId}`);
+    }
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        markers: current.arrangement.markers.map((marker) =>
+          marker.id === markerId
+            ? {
+                ...marker,
+                name:
+                  patch.name !== undefined
+                    ? patch.name.trim().slice(0, 80) || marker.name
+                    : marker.name,
+                tick: patch.tick !== undefined ? Math.max(0, Math.round(patch.tick)) : marker.tick,
+              }
+            : marker,
+        ),
+      },
+    }));
+  };
+
+  removeMarker = async (markerId: string): Promise<CreativeSession> => {
+    this.calls.push('removeMarker');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        markers: current.arrangement.markers.filter((marker) => marker.id !== markerId),
+      },
+    }));
+  };
+
+  addMidiNote = async (
+    clipId: string,
+    startTick: number,
+    pitch: number,
+    durationTicks: number,
+    velocity: number,
+    channel: number,
+  ): Promise<CreativeSession> => {
+    this.calls.push('addMidiNote');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: [
+                  ...clip.notes,
+                  {
+                    id: `note:${Date.now()}`,
+                    note: Math.max(0, Math.min(127, pitch)),
+                    startTick: Math.max(0, Math.round(startTick)),
+                    durationTicks: Math.max(1, Math.round(durationTicks)),
+                    velocity: Math.max(0, Math.min(127, velocity)),
+                    channel,
+                  },
+                ],
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  updateMidiNote = async (
+    clipId: string,
+    noteId: string,
+    patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateMidiNote');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: clip.notes.map((note) =>
+                  note.id === noteId
+                    ? {
+                        ...note,
+                        note:
+                          patch.note !== undefined
+                            ? Math.max(0, Math.min(127, patch.note))
+                            : note.note,
+                        startTick:
+                          patch.startTick !== undefined
+                            ? Math.max(0, Math.round(patch.startTick))
+                            : note.startTick,
+                        durationTicks:
+                          patch.durationTicks !== undefined
+                            ? Math.max(1, Math.round(patch.durationTicks))
+                            : note.durationTicks,
+                        velocity:
+                          patch.velocity !== undefined
+                            ? Math.max(0, Math.min(127, patch.velocity))
+                            : note.velocity,
+                      }
+                    : note,
+                ),
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  removeMidiNote = async (clipId: string, noteId: string): Promise<CreativeSession> => {
+    this.calls.push('removeMidiNote');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) }
+            : clip,
+        ),
+      },
+    }));
   };
 
   applyAiSuggestion = async (clipId: string, proposedGainDb: number): Promise<CreativeSession> => {

@@ -15,7 +15,8 @@ use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{
-    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, TimelineTick, Workspace,
+    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, TimelineTick,
+    TrackKind, Workspace,
 };
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
@@ -258,8 +259,12 @@ pub fn update_session_settings(
 }
 
 #[tauri::command]
-pub fn add_track(name: String, state: State<'_, AppState>) -> Result<CreativeSession, String> {
-    application::add_track(&context(&state), name)
+pub fn add_track(
+    name: String,
+    kind: TrackKind,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::add_track(&context(&state), name, kind)
 }
 
 #[tauri::command]
@@ -294,6 +299,73 @@ pub fn reorder_track(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::reorder_track(&context(&state), &track_id, target_index)
+}
+
+#[tauri::command]
+pub fn add_marker(
+    tick: TimelineTick,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::add_marker(&context(&state), tick, name)
+}
+
+#[tauri::command]
+pub fn update_marker(
+    marker_id: String,
+    name: Option<String>,
+    tick: Option<TimelineTick>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_marker(&context(&state), &marker_id, name, tick)
+}
+
+#[tauri::command]
+pub fn remove_marker(
+    marker_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_marker(&context(&state), &marker_id)
+}
+
+#[tauri::command]
+pub fn add_midi_note(
+    clip_id: String,
+    start_tick: TimelineTick,
+    pitch: u8,
+    duration_ticks: u64,
+    velocity: u8,
+    channel: u8,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::add_midi_note(
+        &context(&state),
+        &clip_id,
+        start_tick,
+        pitch,
+        duration_ticks,
+        velocity,
+        channel,
+    )
+}
+
+#[tauri::command]
+pub fn update_midi_note(
+    clip_id: String,
+    note_id: String,
+    patch: application::MidiNotePatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_midi_note(&context(&state), &clip_id, &note_id, patch)
+}
+
+#[tauri::command]
+pub fn remove_midi_note(
+    clip_id: String,
+    note_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_midi_note(&context(&state), &clip_id, &note_id)
 }
 
 #[tauri::command]

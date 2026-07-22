@@ -26,6 +26,8 @@ import type {
   DesignTool,
   SeparationResult,
   SessionAudioPair,
+  MonitoringState,
+  TrackKind,
   Workspace,
   TransportStatus,
   AudioClipPatch,
@@ -513,13 +515,21 @@ async function crossfadeAudioClips(
   );
 }
 
-async function addTrack(name: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track', { name });
+async function addTrack(name: string, kind: TrackKind): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_track', { name, kind });
 }
 
 async function updateTrack(
   trackId: string,
-  patch: { name?: string; gainDb?: number; pan?: number; muted?: boolean; solo?: boolean },
+  patch: {
+    name?: string;
+    gainDb?: number;
+    pan?: number;
+    muted?: boolean;
+    solo?: boolean;
+    armed?: boolean;
+    monitoring?: MonitoringState;
+  },
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_track', { trackId, patch });
 }
@@ -534,6 +544,51 @@ async function duplicateTrack(trackId: string): Promise<CreativeSession> {
 
 async function reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession> {
   return await invoke<CreativeSession>('reorder_track', { trackId, targetIndex });
+}
+
+async function addMarker(tick: number, name: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_marker', { tick, name });
+}
+
+async function updateMarker(
+  markerId: string,
+  patch: { name?: string; tick?: number },
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_marker', { markerId, ...patch });
+}
+
+async function removeMarker(markerId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_marker', { markerId });
+}
+
+async function addMidiNote(
+  clipId: string,
+  startTick: number,
+  pitch: number,
+  durationTicks: number,
+  velocity: number,
+  channel: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_midi_note', {
+    clipId,
+    startTick,
+    pitch,
+    durationTicks,
+    velocity,
+    channel,
+  });
+}
+
+async function updateMidiNote(
+  clipId: string,
+  noteId: string,
+  patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
+}
+
+async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
 }
 
 async function syncArrangementRuntime(): Promise<void> {
@@ -591,6 +646,7 @@ async function updateSessionSettings(patch: {
   projectName?: string | null;
   loopEnabled?: boolean;
   countInBeats?: number;
+  metronomeEnabled?: boolean;
   note?: string;
   aiPermission?: string;
   aiContext?: string[];
@@ -675,6 +731,12 @@ function createNativeApi(): NativeApi {
     removeTrack,
     duplicateTrack,
     reorderTrack,
+    addMarker,
+    updateMarker,
+    removeMarker,
+    addMidiNote,
+    updateMidiNote,
+    removeMidiNote,
     syncArrangementRuntime,
     playTimeline,
     stopTimeline,

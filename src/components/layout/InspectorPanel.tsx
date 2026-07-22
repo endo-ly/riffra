@@ -32,6 +32,20 @@ export function InspectorPanel(props: InspectorPanelProps) {
           selectedClipIds={props.arrangeSelection}
           setSelectedClipIds={props.setArrangeSelection}
           api={props.api}
+          onSetLoopToClip={(clip) => {
+            const timebase = props.session.arrangement.timebase;
+            const endTicks = Math.max(
+              1,
+              Math.round(
+                (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
+                  (timebase.bpm / 60) *
+                  timebase.ppq,
+              ),
+            );
+            void props.api
+              .updateTimelineLoopRange(true, clip.startTick, clip.startTick + endTicks)
+              .then(props.setSession);
+          }}
         />
       ) : (
         <>

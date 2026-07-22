@@ -149,6 +149,33 @@ export function TransportBar(props: TransportBarProps) {
         >
           <Icon name="record" />
         </button>
+        <button
+          className={session.settings.metronomeEnabled ? 'active' : ''}
+          aria-pressed={session.settings.metronomeEnabled}
+          aria-label="Toggle metronome"
+          title="Metronome"
+          onClick={() =>
+            void api
+              .updateSessionSettings({
+                metronomeEnabled: !session.settings.metronomeEnabled,
+              })
+              .then(setSession)
+          }
+        >
+          <Icon name="metronome" />
+        </button>
+        <button
+          className={session.settings.countInBeats > 0 ? 'active' : ''}
+          aria-label={`Count-in: ${describeCountIn(session)}`}
+          title={`Count-in: ${describeCountIn(session)}`}
+          onClick={() =>
+            void api
+              .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
+              .then(setSession)
+          }
+        >
+          {describeCountIn(session)}
+        </button>
       </div>
       <div className={styles.transportMeter}>
         <span>IN</span>
@@ -200,4 +227,23 @@ export function TransportBar(props: TransportBarProps) {
       </div>
     </footer>
   );
+}
+
+function describeCountIn(session: CreativeSession): string {
+  const beats = session.settings.countInBeats;
+  if (!beats) return 'Count-in: Off';
+  const beatsPerBar =
+    session.workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+  if (beats >= beatsPerBar * 2) return 'Count-in: 2 Bars';
+  if (beats >= beatsPerBar) return 'Count-in: 1 Bar';
+  return `Count-in: ${beats}`;
+}
+
+function nextCountInBeats(session: CreativeSession): number {
+  const beatsPerBar =
+    session.workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+  const current = session.settings.countInBeats;
+  if (current === 0) return beatsPerBar;
+  if (current < beatsPerBar * 2) return beatsPerBar * 2;
+  return 0;
 }
