@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Split-Path -Parent $PSScriptRoot)).Path
 $ArtifactsRoot = Join-Path $Root '.artifacts\verify'
+$env:CARGO_TARGET_DIR = Join-Path $ArtifactsRoot 'cargo'
 
 function Invoke-Checked {
     param(
@@ -38,19 +39,28 @@ try {
         Invoke-Checked 'Native sidecar build' { & '.\scripts\build-native.ps1' -Configuration Debug }
 
         $RecordingTestDirectory = Join-Path $ArtifactsRoot 'recording-self-test'
+        $TimelineTestDirectory = Join-Path $ArtifactsRoot 'timeline-self-test'
         $ResolvedArtifactsRoot = [System.IO.Path]::GetFullPath($ArtifactsRoot)
         $ResolvedRecordingTestDirectory = [System.IO.Path]::GetFullPath($RecordingTestDirectory)
-        if (-not $ResolvedRecordingTestDirectory.StartsWith($ResolvedArtifactsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw 'The recording self-test directory escaped the repository artifact directory.'
+        $ResolvedTimelineTestDirectory = [System.IO.Path]::GetFullPath($TimelineTestDirectory)
+        foreach ($TestDirectory in @($ResolvedRecordingTestDirectory, $ResolvedTimelineTestDirectory)) {
+            if (-not $TestDirectory.StartsWith($ResolvedArtifactsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "The Native self-test directory escaped the repository artifact directory: $TestDirectory"
+            }
         }
-        if (Test-Path -LiteralPath $ResolvedRecordingTestDirectory) {
-            Remove-Item -LiteralPath $ResolvedRecordingTestDirectory -Recurse -Force
+        foreach ($TestDirectory in @($ResolvedRecordingTestDirectory, $ResolvedTimelineTestDirectory)) {
+            if (Test-Path -LiteralPath $TestDirectory) {
+                Remove-Item -LiteralPath $TestDirectory -Recurse -Force
+            }
         }
         New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
 
         $AudioSidecar = Join-Path $Root 'src-tauri\binaries\riffra-audio-x86_64-pc-windows-msvc.exe'
         Invoke-Checked 'Native safety self-test' {
             & $AudioSidecar --safety-self-test
+        }
+        Invoke-Checked 'Native Timeline self-test' {
+            & $AudioSidecar --timeline-self-test $ResolvedTimelineTestDirectory
         }
         Invoke-Checked 'Native recording self-test' {
             & $AudioSidecar --recording-self-test $ResolvedRecordingTestDirectory

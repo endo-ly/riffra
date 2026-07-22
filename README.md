@@ -1,6 +1,6 @@
 # Riffra
 
-Riffra is a Windows-first music production workbench built around a short creative loop: hear, shape, capture, compare, and reuse. The product contract is defined in [CONCEPT.md](./docs/CONCEPT.md).
+Riffra is a music production workbench built around a short creative loop: hear, shape, capture, compare, and reuse. The product contract is defined in [CONCEPT.md](./docs/CONCEPT.md).
 
 ## Architecture
 
@@ -10,7 +10,13 @@ Riffra is a Windows-first music production workbench built around a short creati
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
 
-The detailed boundaries, behavior requirements, verification work queue, and test policy are in [docs/architecture.md](./docs/architecture.md), [docs/behavior-requirements.md](./docs/behavior-requirements.md), [docs/behavior-verification.md](./docs/behavior-verification.md), and [docs/test-strategy.md](./docs/test-strategy.md).
+Reference documentation under `docs/`:
+
+- [architecture.md](./docs/architecture.md) — overall structure and layer responsibility boundaries
+- [data-model.md](./docs/data-model.md) — session, project, and asset data model
+- [ipc.md](./docs/ipc.md) — IPC contracts across Tauri, Native, and plugins
+- [ui-ux-design/ui-ux-design.md](./docs/ui-ux-design/ui-ux-design.md) — UI/UX design (see also, [arrange-screen.md](./docs/ui-ux-design/arrange-screen.md))
+- [test-strategy.md](./docs/test-strategy.md) — test strategy and quality policy
 
 ## Prerequisites
 
@@ -27,9 +33,15 @@ The target VST3 folder defaults to `C:\Program Files\Common Files\VST3` and is u
 ```powershell
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 npm install
-.\scripts\build-native.ps1 -Configuration Debug
-npm run tauri dev
+npm run dev:tauri
 ```
+
+`npm run dev:tauri` is the standard Tauri development entry point. It builds the
+Debug Native sidecars before starting Tauri and uses a dedicated Cargo target
+directory at `.artifacts/cargo-tauri-dev`.
+
+Do not use `npm run tauri dev` for normal development after changing Native
+code: it bypasses the sidecar build wrapper and can run an older sidecar.
 
 To open a project in recovery-oriented Safe Mode, pass the explicit flag (or set
 `RIFFRA_SAFE_MODE=1`). Safe Mode keeps VST3 discovery, MIDI input, driver
@@ -38,7 +50,7 @@ allowing project open, library access, offline analysis/render, and manifest
 export/import:
 
 ```powershell
-npm run tauri dev -- --safe-mode
+npm run dev:tauri -- --safe-mode
 ```
 
 Run the non-GUI checks with:
@@ -47,11 +59,20 @@ Run the non-GUI checks with:
 npm run verify
 ```
 
-Run the same checks plus a Native sidecar build and recording self-test at the end of a Native verification batch:
+The verification script uses `.artifacts/verify/cargo` as its Cargo target
+directory. This is intentionally separate from the Tauri development target,
+so Rust tests and Clippy can run while `npm run dev:tauri` is active without
+competing for Cargo's build lock.
+
+Run the same checks plus a Native sidecar build and Native self-tests:
 
 ```powershell
 npm run verify:native
 ```
+
+`npm run verify:native` also runs the Native Timeline self-test. It is the
+standard verification entry point for changes that affect the audio engine;
+run it instead of invoking a generated Native executable directly.
 
 `build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
 
