@@ -1,4 +1,4 @@
-import type { AudioClip, ProjectTimebase } from '@/lib/domain';
+import type { AudioClip, MidiClip, ProjectTimebase } from '@/lib/domain';
 
 export const TRACK_HEADER_WIDTH = 184;
 export const BASE_PIXELS_PER_QUARTER = 96;
@@ -16,6 +16,17 @@ export function clipDurationTicks(clip: AudioClip, timebase: ProjectTimebase) {
         (timebase.bpm / 60) *
         timebase.ppq,
     ),
+  );
+}
+
+export function midiClipDurationTicks(clip: MidiClip) {
+  return Math.max(1, Math.round(clip.durationTicks));
+}
+
+export function timelineObjectEndTick(clip: AudioClip | MidiClip, timebase: ProjectTimebase) {
+  return (
+    clip.startTick +
+    ('durationTicks' in clip ? midiClipDurationTicks(clip) : clipDurationTicks(clip, timebase))
   );
 }
 
@@ -66,11 +77,11 @@ export function formatClock(tick: number, timebase: ProjectTimebase) {
   return `${minutes}:${(seconds % 60).toFixed(2).padStart(5, '0')}`;
 }
 
-export function layoutClipLanes(clips: AudioClip[], timebase: ProjectTimebase) {
+export function layoutClipLanes(clips: { id: string; startTick: number; endTick: number }[]) {
   const laneEnds: number[] = [];
   const lanes = new Map<string, number>();
   for (const clip of [...clips].sort((left, right) => left.startTick - right.startTick)) {
-    const end = clip.startTick + clipDurationTicks(clip, timebase);
+    const end = clip.endTick;
     const openLane = laneEnds.findIndex((laneEnd) => laneEnd <= clip.startTick);
     const lane = openLane < 0 ? laneEnds.length : openLane;
     laneEnds[lane] = end;

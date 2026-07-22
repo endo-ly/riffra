@@ -90,7 +90,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       ),
     );
     void commit(
-      props.api.pasteAudioClips(props.selectedClipIds, target),
+      props.api.pasteTimelineClips(props.selectedClipIds, [], target),
       `${selected.length} clip${selected.length === 1 ? '' : 's'} duplicated.`,
     );
   };
@@ -282,8 +282,8 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
         <button
           className={styles.danger}
           onClick={() =>
-            void commit(props.api.removeAudioClips(props.selectedClipIds), 'Delete').then(() =>
-              props.setSelectedClipIds([]),
+            void commit(props.api.removeTimelineClips(props.selectedClipIds, []), 'Delete').then(
+              () => props.setSelectedClipIds([]),
             )
           }
         >

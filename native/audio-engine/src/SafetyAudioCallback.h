@@ -65,7 +65,7 @@ private:
     void writeRecording(
         const float* const* inputChannelData,
         int numInputChannels,
-        float* const* outputChannelData,
+        const float* const* outputChannelData,
         int numOutputChannels,
         int numSamples) noexcept;
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
@@ -118,6 +118,7 @@ private:
     std::atomic<unsigned int> recordingReaders { 0 };
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<RecordingSession> recording;
+    juce::AudioBuffer<float> recordingMixBuffer;
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {
         juce::AudioBuffer<float> buffer;

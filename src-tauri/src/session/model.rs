@@ -154,6 +154,7 @@ pub struct Track {
     pub armed: bool,
     #[serde(default)]
     pub monitoring: MonitoringState,
+    pub rack: RackInstance,
 }
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
@@ -165,6 +166,13 @@ pub enum MonitoringState {
     Off,
     Auto,
     On,
+}
+
+fn empty_track_rack() -> RackInstance {
+    RackInstance {
+        devices: Vec::new(),
+        macros: Vec::new(),
+    }
 }
 
 impl Track {
@@ -180,6 +188,7 @@ impl Track {
             solo: false,
             armed: false,
             monitoring: MonitoringState::Off,
+            rack: empty_track_rack(),
         }
     }
 }
@@ -334,7 +343,7 @@ pub struct AudioClipMove {
 }
 
 /// The Arrange workspace's production state.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Arrangement {
     pub revision: u64,
@@ -357,21 +366,26 @@ pub struct Marker {
     pub tick: u64,
 }
 
-impl Default for Arrangement {
-    fn default() -> Self {
-        Self {
-            revision: 0,
-            timebase: ProjectTimebase::default(),
-            loop_range: TimelineLoopRange::default(),
-            tracks: Vec::new(),
-            audio_clips: Vec::new(),
-            midi_clips: Vec::new(),
-            markers: Vec::new(),
-        }
-    }
-}
-
 impl Arrangement {
+    /// Replaces the project-wide musical clock used by the ruler and runtime.
+    /// Audio clip frame durations remain unchanged; only their musical display
+    /// positions are recalculated by consumers of the timebase.
+    pub fn update_timebase(&mut self, timebase: ProjectTimebase) -> Result<(), DomainError> {
+        if timebase.ppq != TIMELINE_PPQ
+            || !timebase.bpm.is_finite()
+            || !(20.0..=400.0).contains(&timebase.bpm)
+            || timebase.time_signature_numerator == 0
+            || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
+        {
+            return Err(DomainError::InvalidClip(
+                "Arrangement timebase is invalid.".into(),
+            ));
+        }
+        self.timebase = timebase;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
     /// Removes a track and every timeline object hosted by it.
     ///
     /// Source Assets are not touched; only arrangement references are removed.
@@ -583,35 +597,122 @@ impl Arrangement {
         Ok(())
     }
 
-    /// Removes the audio clip with the given id.
-    ///
-    /// # Errors
-    /// Returns [`DomainError::InvalidClip`] when the clip cannot be found.
-    pub fn remove_audio_clip(&mut self, clip_id: &str) -> Result<(), DomainError> {
-        let index = self
-            .audio_clips
+    /// Removes Audio and MIDI clips as one typed timeline edit.
+    pub fn remove_timeline_clips(
+        &mut self,
+        audio_clip_ids: &[String],
+        midi_clip_ids: &[String],
+    ) -> Result<(), DomainError> {
+        if audio_clip_ids.is_empty() && midi_clip_ids.is_empty() {
+            return Err(DomainError::InvalidClip(
+                "No timeline clips were selected.".into(),
+            ));
+        }
+        if audio_clip_ids
             .iter()
-            .position(|clip| clip.id == clip_id)
-            .ok_or_else(|| {
-                DomainError::InvalidClip(format!("Audio clip '{clip_id}' not found."))
-            })?;
-        self.audio_clips.remove(index);
+            .any(|id| !self.audio_clips.iter().any(|clip| clip.id == *id))
+            || midi_clip_ids
+                .iter()
+                .any(|id| !self.midi_clips.iter().any(|clip| clip.id == *id))
+        {
+            return Err(DomainError::InvalidClip(
+                "One or more selected timeline clips were not found.".into(),
+            ));
+        }
+        self.audio_clips
+            .retain(|clip| !audio_clip_ids.iter().any(|id| id == &clip.id));
+        self.midi_clips
+            .retain(|clip| !midi_clip_ids.iter().any(|id| id == &clip.id));
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
-    pub fn remove_audio_clips(&mut self, clip_ids: &[String]) -> Result<(), DomainError> {
-        if clip_ids.is_empty()
-            || clip_ids
-                .iter()
-                .any(|id| !self.audio_clips.iter().any(|clip| clip.id == *id))
+    /// Pastes typed Audio and MIDI clip selections at one musical anchor.
+    pub fn paste_timeline_clips(
+        &mut self,
+        audio_clip_ids: &[String],
+        midi_clip_ids: &[String],
+        audio_ids: &[String],
+        midi_ids: &[String],
+        start_tick: TimelineTick,
+    ) -> Result<(), DomainError> {
+        if audio_clip_ids.len() != audio_ids.len()
+            || midi_clip_ids.len() != midi_ids.len()
+            || (audio_clip_ids.is_empty() && midi_clip_ids.is_empty())
         {
             return Err(DomainError::InvalidClip(
-                "One or more selected audio clips were not found.".into(),
+                "Clipboard selection is invalid.".into(),
             ));
         }
-        self.audio_clips
-            .retain(|clip| !clip_ids.iter().any(|id| id == &clip.id));
+        let audio_sources = audio_clip_ids
+            .iter()
+            .map(|id| {
+                self.audio_clips
+                    .iter()
+                    .find(|clip| clip.id == *id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        DomainError::InvalidClip(format!("Audio clip '{id}' not found."))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let midi_sources = midi_clip_ids
+            .iter()
+            .map(|id| {
+                self.midi_clips
+                    .iter()
+                    .find(|clip| clip.id == *id)
+                    .cloned()
+                    .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{id}' not found.")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let anchor = audio_sources
+            .iter()
+            .map(|clip| clip.start_tick.0)
+            .chain(midi_sources.iter().map(|clip| clip.start_tick.0))
+            .min()
+            .unwrap_or(start_tick.0);
+        let mut copies = Vec::with_capacity(audio_sources.len());
+        for (mut copy, id) in audio_sources.into_iter().zip(audio_ids) {
+            if self.audio_clips.iter().any(|clip| clip.id == *id)
+                || self.midi_clips.iter().any(|clip| clip.id == *id)
+                || copies.iter().any(|clip: &AudioClip| clip.id == *id)
+            {
+                return Err(DomainError::InvalidClip(format!(
+                    "Timeline clip id already exists: {id}"
+                )));
+            }
+            copy.id = id.clone();
+            copy.name = format!("{} copy", copy.name);
+            copy.start_tick = TimelineTick(
+                start_tick
+                    .0
+                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
+            );
+            copies.push(copy);
+        }
+        let mut midi_copies = Vec::with_capacity(midi_sources.len());
+        for (mut copy, id) in midi_sources.into_iter().zip(midi_ids) {
+            if self.audio_clips.iter().any(|clip| clip.id == *id)
+                || self.midi_clips.iter().any(|clip| clip.id == *id)
+                || copies.iter().any(|clip| clip.id == *id)
+                || midi_copies.iter().any(|clip: &MidiClip| clip.id == *id)
+            {
+                return Err(DomainError::InvalidClip(format!(
+                    "Timeline clip id already exists: {id}"
+                )));
+            }
+            copy.id = id.clone();
+            copy.name = format!("{} copy", copy.name);
+            copy.start_tick = TimelineTick(
+                start_tick
+                    .0
+                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
+            );
+            midi_copies.push(copy);
+        }
+        self.audio_clips.extend(copies);
+        self.midi_clips.extend(midi_copies);
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -763,58 +864,6 @@ impl Arrangement {
             self.validate_audio_clip(clip)?;
         }
         self.audio_clips = next;
-        self.revision = self.revision.saturating_add(1);
-        Ok(())
-    }
-
-    /// Copies clips to a new anchor while preserving their relative offsets.
-    pub fn paste_audio_clips(
-        &mut self,
-        clip_ids: &[String],
-        ids: &[String],
-        start_tick: TimelineTick,
-    ) -> Result<(), DomainError> {
-        if clip_ids.is_empty() || clip_ids.len() != ids.len() {
-            return Err(DomainError::InvalidClip(
-                "Clipboard selection is invalid.".into(),
-            ));
-        }
-        let sources = clip_ids
-            .iter()
-            .map(|id| {
-                self.audio_clips
-                    .iter()
-                    .find(|clip| clip.id == *id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        DomainError::InvalidClip(format!("Audio clip '{id}' not found."))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let anchor = sources
-            .iter()
-            .map(|clip| clip.start_tick.0)
-            .min()
-            .unwrap_or_default();
-        let mut copies = Vec::with_capacity(sources.len());
-        for (mut copy, id) in sources.into_iter().zip(ids) {
-            if self.audio_clips.iter().any(|clip| clip.id == *id)
-                || copies.iter().any(|clip: &AudioClip| clip.id == *id)
-            {
-                return Err(DomainError::InvalidClip(format!(
-                    "Audio clip id already exists: {id}"
-                )));
-            }
-            copy.id = id.clone();
-            copy.name = format!("{} copy", copy.name);
-            copy.start_tick = TimelineTick(
-                start_tick
-                    .0
-                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
-            );
-            copies.push(copy);
-        }
-        self.audio_clips.extend(copies);
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -1275,6 +1324,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         }
         track.gain_db = track.gain_db.clamp(-90.0, 24.0);
         track.pan = track.pan.clamp(-1.0, 1.0);
+        normalize_rack(&mut track.rack)?;
     }
     let audio_clips = std::mem::take(&mut arrangement.audio_clips);
     let mut normalized_clips = Vec::with_capacity(audio_clips.len());
@@ -1352,7 +1402,9 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         return Err("An arrangement cannot contain more than 256 markers.".into());
     }
     arrangement.markers.sort_by_key(|marker| marker.tick);
-    arrangement.markers.retain(|marker| !marker.id.trim().is_empty());
+    arrangement
+        .markers
+        .retain(|marker| !marker.id.trim().is_empty());
     for marker in &mut arrangement.markers {
         let normalized_name: String = marker.name.trim().chars().take(80).collect();
         marker.name = if normalized_name.is_empty() {
@@ -1451,6 +1503,7 @@ mod tests {
             solo: false,
             armed: false,
             monitoring: MonitoringState::Off,
+            rack: empty_track_rack(),
         });
         let error = arrangement
             .add_audio_clip(clip("instrument", mint_asset_id()), |_| true)
@@ -1501,6 +1554,32 @@ mod tests {
         assert_eq!(arrangement.audio_clips[0].asset_id, asset);
     }
 
+    #[test]
+    fn update_timebase_changes_the_project_clock_once() {
+        let mut arrangement = Arrangement::default();
+        let revision = arrangement.revision;
+        arrangement
+            .update_timebase(ProjectTimebase {
+                ppq: TIMELINE_PPQ,
+                bpm: 98.5,
+                time_signature_numerator: 7,
+                time_signature_denominator: 8,
+            })
+            .unwrap();
+
+        assert_eq!(arrangement.timebase.bpm, 98.5);
+        assert_eq!(arrangement.timebase.time_signature_numerator, 7);
+        assert_eq!(arrangement.revision, revision + 1);
+        assert!(
+            arrangement
+                .update_timebase(ProjectTimebase {
+                    bpm: 10.0,
+                    ..arrangement.timebase
+                })
+                .is_err()
+        );
+    }
+
     fn arrangement_with_clip(asset: AssetId) -> Arrangement {
         let mut arrangement = Arrangement {
             revision: 0,
@@ -1518,6 +1597,7 @@ mod tests {
                     solo: false,
                     armed: false,
                     monitoring: MonitoringState::Off,
+                    rack: empty_track_rack(),
                 },
             ],
             audio_clips: Vec::new(),
@@ -1643,21 +1723,25 @@ mod tests {
     }
 
     #[test]
-    fn remove_audio_clip_drops_the_target_and_advances_revision() {
+    fn remove_timeline_clip_drops_the_target_and_advances_revision() {
         let mut arrangement = arrangement_with_clip(mint_asset_id());
         let previous_revision = arrangement.revision;
 
-        arrangement.remove_audio_clip("clip:1").unwrap();
+        arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
 
         assert!(arrangement.audio_clips.is_empty());
         assert_eq!(arrangement.revision, previous_revision + 1);
     }
 
     #[test]
-    fn remove_audio_clip_reports_unknown_clip() {
+    fn remove_timeline_clip_reports_unknown_clip() {
         let mut arrangement = arrangement_with_clip(mint_asset_id());
         assert!(matches!(
-            arrangement.remove_audio_clip("missing").unwrap_err(),
+            arrangement
+                .remove_timeline_clips(&["missing".into()], &[])
+                .unwrap_err(),
             DomainError::InvalidClip(_)
         ));
     }
@@ -1760,10 +1844,21 @@ mod tests {
         arrangement
             .duplicate_audio_clip("clip:1", "clip:2".into())
             .unwrap();
+        arrangement.midi_clips.push(MidiClip {
+            id: "midi:1".into(),
+            name: "MIDI".into(),
+            track_id: "main".into(),
+            start_tick: TimelineTick(5_760),
+            duration_ticks: 960,
+            notes: Vec::new(),
+            muted: false,
+        });
         arrangement
-            .paste_audio_clips(
+            .paste_timeline_clips(
                 &["clip:1".into(), "clip:2".into()],
+                &["midi:1".into()],
                 &["clip:3".into(), "clip:4".into()],
+                &["midi:2".into()],
                 TimelineTick(9_600),
             )
             .unwrap();
@@ -1775,6 +1870,7 @@ mod tests {
                 .iter()
                 .all(|clip| clip.asset_id == asset)
         );
+        assert_eq!(arrangement.midi_clips[1].start_tick, TimelineTick(13_440));
     }
 
     #[test]

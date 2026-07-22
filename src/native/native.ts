@@ -23,10 +23,12 @@ import type {
   ScanReport,
   SeparationJobStatus,
   CreativeSession,
+  ProjectTimebase,
   DesignTool,
   SeparationResult,
   SessionAudioPair,
   MonitoringState,
+  RackInstance,
   TrackKind,
   Workspace,
   TransportStatus,
@@ -461,12 +463,15 @@ async function updateAudioClip(
   return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
 }
 
-async function removeAudioClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('remove_audio_clip', { clipId }, null);
-}
-
-async function removeAudioClips(clipIds: string[]): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('remove_audio_clips', { clipIds }, null);
+async function removeTimelineClips(
+  audioClipIds: string[],
+  midiClipIds: string[],
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'remove_timeline_clips',
+    { audioClipIds, midiClipIds },
+    null,
+  );
 }
 
 async function trimAudioClip(
@@ -493,13 +498,14 @@ async function moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession |
   return invokeOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
 }
 
-async function pasteAudioClips(
-  clipIds: string[],
+async function pasteTimelineClips(
+  audioClipIds: string[],
+  midiClipIds: string[],
   startTick: number,
 ): Promise<CreativeSession | null> {
   return invokeOrFallback<CreativeSession | null>(
-    'paste_audio_clips',
-    { clipIds, startTick },
+    'paste_timeline_clips',
+    { audioClipIds, midiClipIds, startTick },
     null,
   );
 }
@@ -529,6 +535,7 @@ async function updateTrack(
     solo?: boolean;
     armed?: boolean;
     monitoring?: MonitoringState;
+    rack?: RackInstance;
   },
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_track', { trackId, patch });
@@ -605,6 +612,10 @@ async function stopTimeline(): Promise<void> {
 
 async function seekTimeline(tick: number): Promise<void> {
   await invoke<void>('seek_timeline', { tick });
+}
+
+async function updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_arrangement_timebase', { timebase });
 }
 
 async function updateTimelineLoopRange(
@@ -718,13 +729,12 @@ function createNativeApi(): NativeApi {
     disableMissingPlugin,
     addAudioClipToArrangement,
     updateAudioClip,
-    removeAudioClip,
-    removeAudioClips,
+    removeTimelineClips,
     trimAudioClip,
     splitAudioClip,
     duplicateAudioClip,
     moveAudioClips,
-    pasteAudioClips,
+    pasteTimelineClips,
     crossfadeAudioClips,
     addTrack,
     updateTrack,
@@ -741,6 +751,7 @@ function createNativeApi(): NativeApi {
     playTimeline,
     stopTimeline,
     seekTimeline,
+    updateArrangementTimebase,
     updateTimelineLoopRange,
     openAssetInDesign,
     switchWorkspace,

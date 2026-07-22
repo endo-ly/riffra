@@ -7,7 +7,7 @@ import { ArrangeTrack } from './ArrangeTrack';
 import { MidiEditorPanel } from './MidiEditorPanel';
 import {
   BASE_PIXELS_PER_QUARTER,
-  clipDurationTicks,
+  timelineObjectEndTick,
   formatClock,
   formatMusicalPosition,
   ticksPerBar,
@@ -44,6 +44,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [timeSelection, setTimeSelection] = useState<{ startTick: number; endTick: number } | null>(
     null,
   );
+  const [loopPreview, setLoopPreview] = useState<{
+    enabled: boolean;
+    startTick: number;
+    endTick: number;
+  } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
@@ -54,12 +59,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
-    const contentEnd = arrangement.audioClips.reduce(
-      (end, clip) => Math.max(end, clip.startTick + clipDurationTicks(clip, timebase)),
+    const contentEnd = Math.max(
+      ...arrangement.audioClips.map((clip) => timelineObjectEndTick(clip, timebase)),
+      ...arrangement.midiClips.map((clip) => timelineObjectEndTick(clip, timebase)),
+      ...arrangement.markers.map((marker) => marker.tick),
+      arrangement.loopRange.startTick,
+      arrangement.loopRange.endTick,
       0,
     );
     return Math.max(barTicks * 16, contentEnd + barTicks * 2);
-  }, [arrangement.audioClips, barTicks, timebase]);
+  }, [
+    arrangement.audioClips,
+    arrangement.loopRange,
+    arrangement.markers,
+    arrangement.midiClips,
+    barTicks,
+    timebase,
+  ]);
   const timelineWidth = timelineTicks * pixelsPerTick;
   const editor = useArrangeEditor({
     ...props,
@@ -197,18 +213,30 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         origin + (pointer.clientX - originX) / pixelsPerTick,
         pointer.altKey,
       );
-      void props.api
-        .updateTimelineLoopRange(
-          range.enabled,
-          boundary === 'start' ? next : range.startTick,
-          boundary === 'end' ? next : range.endTick,
-        )
-        .then(props.setSession)
-        .catch((error) => editor.setMessage(String(error)));
+      setLoopPreview({
+        enabled: range.enabled,
+        startTick: boundary === 'start' ? next : range.startTick,
+        endTick: boundary === 'end' ? next : range.endTick,
+      });
     };
-    const finish = () => {
+    const finish = (pointer: PointerEvent) => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', finish);
+      const next = editor.snapTick(
+        origin + (pointer.clientX - originX) / pixelsPerTick,
+        pointer.altKey,
+      );
+      setLoopPreview(null);
+      if (next !== origin) {
+        void editor.commit(
+          props.api.updateTimelineLoopRange(
+            range.enabled,
+            boundary === 'start' ? next : range.startTick,
+            boundary === 'end' ? next : range.endTick,
+          ),
+          'Loop range updated.',
+        );
+      }
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', finish);
@@ -261,6 +289,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onTrackSize={setTrackSize}
         onRulerMode={setRulerMode}
         onFollow={setFollow}
+        onTimebase={(bpm, numerator, denominator) =>
+          void editor.commit(
+            props.api.updateArrangementTimebase({
+              ...timebase,
+              bpm,
+              timeSignatureNumerator: numerator,
+              timeSignatureDenominator: denominator,
+            }),
+            'Project timebase updated.',
+          )
+        }
         onAddTrack={() =>
           void editor.commit(
             props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`, 'audio'),
@@ -291,7 +330,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             pixelsPerTick={pixelsPerTick}
             mode={rulerMode}
             scrollTop={scrollTop}
-            loopRange={arrangement.loopRange}
+            loopRange={loopPreview ?? arrangement.loopRange}
             markers={arrangement.markers}
             selectedMarkerId={selectedMarkerId}
             timeSelection={timeSelection}

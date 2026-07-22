@@ -15,8 +15,8 @@ use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{
-    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, TimelineTick,
-    TrackKind, Workspace,
+    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, ProjectTimebase,
+    TimelineTick, TrackKind, Workspace,
 };
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
@@ -107,23 +107,12 @@ pub fn update_audio_clip(
 }
 
 #[tauri::command]
-pub fn remove_audio_clip(
-    clip_id: String,
+pub fn remove_timeline_clips(
+    audio_clip_ids: Vec<String>,
+    midi_clip_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
-    application::apply_arrangement_edit(&context(&state), |arrangement| {
-        arrangement.remove_audio_clip(&clip_id)
-    })
-}
-
-#[tauri::command]
-pub fn remove_audio_clips(
-    clip_ids: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<CreativeSession, String> {
-    application::apply_arrangement_edit(&context(&state), |arrangement| {
-        arrangement.remove_audio_clips(&clip_ids)
-    })
+    application::remove_timeline_clips(&context(&state), &audio_clip_ids, &midi_clip_ids)
 }
 
 #[tauri::command]
@@ -172,20 +161,18 @@ pub fn move_audio_clips(
 }
 
 #[tauri::command]
-pub fn paste_audio_clips(
-    clip_ids: Vec<String>,
+pub fn paste_timeline_clips(
+    audio_clip_ids: Vec<String>,
+    midi_clip_ids: Vec<String>,
     start_tick: TimelineTick,
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
-    let stamp = crate::storage::now_ms();
-    application::apply_arrangement_edit(&context(&state), |arrangement| {
-        let ids = clip_ids
-            .iter()
-            .enumerate()
-            .map(|(index, _)| format!("clip:paste:{stamp}:{}:{index}", arrangement.revision + 1))
-            .collect::<Vec<_>>();
-        arrangement.paste_audio_clips(&clip_ids, &ids, start_tick)
-    })
+    application::paste_timeline_clips(
+        &context(&state),
+        &audio_clip_ids,
+        &midi_clip_ids,
+        start_tick,
+    )
 }
 
 #[tauri::command]
@@ -217,6 +204,14 @@ pub fn stop_timeline(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn seek_timeline(tick: TimelineTick, state: State<'_, AppState>) -> Result<(), String> {
     application::seek_timeline(&context(&state), tick)
+}
+
+#[tauri::command]
+pub fn update_arrangement_timebase(
+    timebase: ProjectTimebase,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_timebase(&context(&state), timebase)
 }
 
 #[tauri::command]

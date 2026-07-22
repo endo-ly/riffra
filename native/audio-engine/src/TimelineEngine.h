@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "PluginRack.h"
 
 #include <atomic>
 #include <cstdint>
@@ -52,6 +53,23 @@ private:
         bool muted = false;
     };
 
+    struct Track final {
+        juce::String id;
+        std::vector<std::unique_ptr<Clip>> clips;
+        std::unique_ptr<PluginRack> rack;
+        juce::AudioBuffer<float> mixBuffer;
+        juce::AudioBuffer<float> processedBuffer;
+        juce::AudioBuffer<float> delayBuffer;
+        std::int64_t delayWritePosition = 0;
+        std::int64_t compensationDelaySamples = 0;
+        std::int64_t pluginDelaySamples = 0;
+        double outputSampleRate = 0.0;
+        float gain = 1.0f;
+        float pan = 0.0f;
+        bool muted = false;
+        bool solo = false;
+    };
+
     struct PreparedTimeline final {
         std::uint64_t revision = 0;
         std::uint32_t ppq = 960;
@@ -60,7 +78,7 @@ private:
         bool loopEnabled = false;
         std::int64_t loopStartSample = 0;
         std::int64_t loopEndSample = 0;
-        std::vector<std::unique_ptr<Clip>> clips;
+        std::vector<std::unique_ptr<Track>> tracks;
     };
 
     static std::int64_t tickToSample(
@@ -69,12 +87,17 @@ private:
         double bpm,
         double sampleRate) noexcept;
     void mixRange(
-        PreparedTimeline& timeline,
+        Track& track,
         std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
+    void processTracks(
+        PreparedTimeline& timeline,
         float* const* outputChannels,
         int channelCount,
         int destinationStart,
         int sampleCount) noexcept;
+    void resetTrackState(PreparedTimeline& timeline) noexcept;
 
     juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
     mutable juce::SpinLock timelineLock;

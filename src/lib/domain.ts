@@ -129,6 +129,7 @@ export interface Track {
   solo: boolean;
   armed: boolean;
   monitoring: MonitoringState;
+  rack: RackInstance;
 }
 
 export interface MidiNote {

@@ -104,7 +104,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       if (duplicate) {
         const anchor = Math.min(...selected.map((item) => item.startTick)) + deltaTick;
         void options.commit(
-          options.api.pasteAudioClips(movingIds, anchor),
+          options.api.pasteTimelineClips(movingIds, [], anchor),
           `${movingIds.length} clip${movingIds.length === 1 ? '' : 's'} duplicated.`,
         );
         return;

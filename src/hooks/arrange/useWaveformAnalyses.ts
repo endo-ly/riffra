@@ -8,7 +8,7 @@ export function useWaveformAnalyses(api: NativeApi, clips: AudioClip[]) {
 
   useEffect(() => {
     let active = true;
-    const present = new Set(clips.map((clip) => clip.assetId));
+    const present = new Set<string>(clips.map((clip) => clip.assetId));
 
     // Drop cache entries for assetIds that no longer have any clip referencing
     // them. Keeps the record bounded when the user removes many clips.
@@ -31,7 +31,7 @@ export function useWaveformAnalyses(api: NativeApi, clips: AudioClip[]) {
       if (requestedRef.current.has(assetId)) continue;
       requestedRef.current.add(assetId);
       void api
-        .analyzeAsset(assetId)
+        .analyzeAsset(assetId as AudioClip['assetId'])
         .then((analysis) => {
           if (active) setAnalyses((current) => ({ ...current, [assetId]: analysis }));
         })

@@ -56,11 +56,11 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(clip);
     expect(clip).toHaveAttribute('aria-pressed', 'true');
     fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
-    await waitFor(() => expect(api.calls).toContain('pasteAudioClips'));
+    await waitFor(() => expect(api.calls).toContain('pasteTimelineClips'));
     expect(await screen.findByText('Take copy')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
     fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
-    await waitFor(() => expect(api.calls).toContain('pasteAudioClips'));
+    await waitFor(() => expect(api.calls).toContain('pasteTimelineClips'));
   });
 
   it('seeks the native timeline from the musical ruler', () => {

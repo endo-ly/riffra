@@ -63,7 +63,9 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`src-tauri/src/lib.rs` 
 
 ### 2.3 Session Application Operations（`session/commands.rs`）
 
-`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `trim_audio_clip` / `split_audio_clip` / `duplicate_audio_clip` / `move_audio_clips` / `paste_audio_clips` / `crossfade_audio_clips` / `remove_audio_clip` / `remove_audio_clips` / `add_track` / `update_track` / `remove_track` / `duplicate_track` / `reorder_track` / `update_timeline_loop_range` / `sync_arrangement_runtime` / `play_timeline` / `stop_timeline` / `seek_timeline` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
+`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `trim_audio_clip` / `split_audio_clip` / `duplicate_audio_clip` / `move_audio_clips` / `paste_timeline_clips` / `remove_timeline_clips` / `crossfade_audio_clips` / `add_track` / `update_track` / `remove_track` / `duplicate_track` / `reorder_track` / `update_arrangement_timebase` / `update_timeline_loop_range` / `sync_arrangement_runtime` / `play_timeline` / `stop_timeline` / `seek_timeline` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
+
+Timelineの複数選択操作は `paste_timeline_clips` と `remove_timeline_clips` を使用する。AudioとMIDIのIDは別配列で渡し、Runtime SnapshotもTrack配下の `audioClips` / `midiClips` を正規形とする。
 
 ### 2.4 Audio Preferences（`audio_preferences.rs`）
 

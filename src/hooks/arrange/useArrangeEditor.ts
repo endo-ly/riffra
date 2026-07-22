@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetId, AudioAnalysis, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import {
-  clipDurationTicks,
+  timelineObjectEndTick,
   snapGridTicks,
   TRACK_HEADER_WIDTH,
   type ArrangeTool,
@@ -52,10 +52,10 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     width: number;
     height: number;
   } | null>(null);
-  const clipboardRef = useRef<string[]>([]);
-  const selectedClip =
-    arrangement.audioClips.find((clip) => clip.id === selectedClipIds.at(-1)) ?? null;
-
+  const clipboardRef = useRef<{ audioIds: string[]; midiIds: string[] }>({
+    audioIds: [],
+    midiIds: [],
+  });
   const commit = useCallback(
     async (operation: Promise<CreativeSession | null>, success: string) => {
       try {
@@ -75,12 +75,23 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     () => [
       ...arrangement.audioClips.flatMap((clip) => [
         clip.startTick,
-        clip.startTick + clipDurationTicks(clip, timebase),
+        timelineObjectEndTick(clip, timebase),
       ]),
+      ...arrangement.midiClips.flatMap((clip) => [
+        clip.startTick,
+        timelineObjectEndTick(clip, timebase),
+      ]),
+      ...arrangement.markers.map((marker) => marker.tick),
       arrangement.loopRange.startTick,
       arrangement.loopRange.endTick,
     ],
-    [arrangement.audioClips, arrangement.loopRange, timebase],
+    [
+      arrangement.audioClips,
+      arrangement.loopRange,
+      arrangement.markers,
+      arrangement.midiClips,
+      timebase,
+    ],
   );
 
   const snapTick = useCallback(
@@ -140,12 +151,20 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   });
 
   const selectClip = useCallback(
-    (clipId: string) => {
-      setSelectedClipIds([clipId]);
+    (clipId: string, append = false) => {
+      setSelectedClipIds(
+        append
+          ? selectedClipIds.includes(clipId)
+            ? selectedClipIds.filter((id) => id !== clipId)
+            : [...selectedClipIds, clipId]
+          : [clipId],
+      );
       const clip = arrangement.audioClips.find((item) => item.id === clipId);
-      if (clip) setMessage(`${clip.name} selected · Ctrl+click adds · Delete removes.`);
+      const midiClip = arrangement.midiClips.find((item) => item.id === clipId);
+      if (clip || midiClip)
+        setMessage(`${(clip ?? midiClip)!.name} selected · Ctrl+click adds · Delete removes.`);
     },
-    [arrangement.audioClips, setSelectedClipIds],
+    [arrangement.audioClips, arrangement.midiClips, selectedClipIds, setSelectedClipIds],
   );
 
   const beginMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -175,17 +194,16 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       const right = Math.max(originX, pointer.clientX);
       const top = Math.min(originY, pointer.clientY);
       const bottom = Math.max(originY, pointer.clientY);
-      setSelectedClipIds(
-        [...timeline.querySelectorAll<HTMLElement>('[data-clip-id]')]
-          .filter((element) => {
-            const rect = element.getBoundingClientRect();
-            return (
-              rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom
-            );
-          })
-          .map((element) => element.dataset.clipId!)
-          .filter(Boolean),
-      );
+      const nextIds = [...timeline.querySelectorAll<HTMLElement>('[data-clip-id]')]
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom
+          );
+        })
+        .map((element) => element.dataset.clipId!)
+        .filter(Boolean);
+      setSelectedClipIds(event.ctrlKey ? [...new Set([...selectedClipIds, ...nextIds])] : nextIds);
       setMarquee(null);
     };
     window.addEventListener('pointermove', move);
@@ -197,35 +215,68 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       const key = event.key.toLowerCase();
       if (event.ctrlKey && key === 'a') {
         event.preventDefault();
-        setSelectedClipIds(arrangement.audioClips.map((clip) => clip.id));
+        setSelectedClipIds([
+          ...arrangement.audioClips.map((clip) => clip.id),
+          ...arrangement.midiClips.map((clip) => clip.id),
+        ]);
       } else if (event.ctrlKey && key === 'c' && selectedClipIds.length) {
         event.preventDefault();
-        clipboardRef.current = selectedClipIds;
+        clipboardRef.current = {
+          audioIds: arrangement.audioClips
+            .filter((clip) => selectedClipIds.includes(clip.id))
+            .map((clip) => clip.id),
+          midiIds: arrangement.midiClips
+            .filter((clip) => selectedClipIds.includes(clip.id))
+            .map((clip) => clip.id),
+        };
         setMessage(
           `${selectedClipIds.length} clip${selectedClipIds.length === 1 ? '' : 's'} copied.`,
         );
-      } else if (event.ctrlKey && key === 'v' && clipboardRef.current.length) {
+      } else if (
+        event.ctrlKey &&
+        key === 'v' &&
+        (clipboardRef.current.audioIds.length || clipboardRef.current.midiIds.length)
+      ) {
         event.preventDefault();
-        const previous = new Set(arrangement.audioClips.map((clip) => clip.id));
+        const previous = new Set([
+          ...arrangement.audioClips.map((clip) => clip.id),
+          ...arrangement.midiClips.map((clip) => clip.id),
+        ]);
         void commit(
-          api.pasteAudioClips(clipboardRef.current, snapTick(displayTick)),
+          api.pasteTimelineClips(
+            clipboardRef.current.audioIds,
+            clipboardRef.current.midiIds,
+            snapTick(displayTick),
+          ),
           'Clip selection pasted.',
         ).then((next) => {
           if (next) {
             setSelectedClipIds(
-              next.arrangement.audioClips
-                .filter((clip) => !previous.has(clip.id))
-                .map((clip) => clip.id),
+              [
+                ...next.arrangement.audioClips.map((clip) => clip.id),
+                ...next.arrangement.midiClips.map((clip) => clip.id),
+              ].filter((id) => !previous.has(id)),
             );
           }
         });
       } else if (event.ctrlKey && key === 'd' && selectedClipIds.length) {
         event.preventDefault();
-        const clips = arrangement.audioClips.filter((clip) => selectedClipIds.includes(clip.id));
-        const target = Math.max(
-          ...clips.map((clip) => clip.startTick + clipDurationTicks(clip, timebase)),
+        const clips = [...arrangement.audioClips, ...arrangement.midiClips].filter((clip) =>
+          selectedClipIds.includes(clip.id),
         );
-        void commit(api.pasteAudioClips(selectedClipIds, target), 'Clip selection duplicated.');
+        const target = Math.max(...clips.map((clip) => timelineObjectEndTick(clip, timebase)));
+        void commit(
+          api.pasteTimelineClips(
+            arrangement.audioClips
+              .filter((clip) => selectedClipIds.includes(clip.id))
+              .map((clip) => clip.id),
+            arrangement.midiClips
+              .filter((clip) => selectedClipIds.includes(clip.id))
+              .map((clip) => clip.id),
+            target,
+          ),
+          'Clip selection duplicated.',
+        );
       } else if (selectedClipIds.length && event.ctrlKey && key === 'e') {
         event.preventDefault();
         const targets = arrangement.audioClips.filter((clip) => selectedClipIds.includes(clip.id));
@@ -234,9 +285,17 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         }
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
-        void commit(api.removeAudioClips(selectedClipIds), 'Clip selection removed.').then(() =>
-          setSelectedClipIds([]),
-        );
+        void commit(
+          api.removeTimelineClips(
+            arrangement.audioClips
+              .filter((clip) => selectedClipIds.includes(clip.id))
+              .map((clip) => clip.id),
+            arrangement.midiClips
+              .filter((clip) => selectedClipIds.includes(clip.id))
+              .map((clip) => clip.id),
+          ),
+          'Clip selection removed.',
+        ).then(() => setSelectedClipIds([]));
       }
     };
     window.addEventListener('keydown', keydown);
@@ -244,10 +303,11 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   }, [
     api,
     arrangement.audioClips,
+    arrangement.midiClips,
+    arrangement.markers,
     clipInteractions,
     commit,
     displayTick,
-    selectedClip,
     selectedClipIds,
     setSelectedClipIds,
     snapTick,

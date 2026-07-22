@@ -351,7 +351,7 @@ void SafetyAudioCallback::mixSynth(
 void SafetyAudioCallback::writeRecording(
     const float* const* inputChannelData,
     const int numInputChannels,
-    float* const* outputChannelData,
+    const float* const* outputChannelData,
     const int numOutputChannels,
     const int numSamples) noexcept {
     recordingReaders.fetch_add(1, std::memory_order_acq_rel);
@@ -475,6 +475,20 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     if (timelineEngine != nullptr)
         timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
 
+    const auto recordingActive = activeRecording.load(std::memory_order_acquire) != nullptr;
+    const auto recordingBusReady =
+        recordingActive && numSamples <= recordingMixBuffer.getNumSamples();
+    if (recordingBusReady) {
+        for (int channel = 0; channel < recordingMixBuffer.getNumChannels(); ++channel) {
+            auto* destination = recordingMixBuffer.getWritePointer(channel);
+            if (channel < numOutputChannels && outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::copy(
+                    destination, outputChannelData[channel], numSamples);
+            else
+                juce::FloatVectorOperations::clear(destination, numSamples);
+        }
+    }
+
     const juce::ScopedTryLock previewTry(previewLock);
     if (previewTry.isLocked()) {
         mixPreview(outputChannelData, numOutputChannels, numSamples);
@@ -501,6 +515,16 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             blockOutputPeak = std::max(blockOutputPeak, std::abs(value));
             if (outputChannelData[channel] != nullptr)
                 outputChannelData[channel][sample] = value;
+            if (recordingBusReady && channel < recordingMixBuffer.getNumChannels()) {
+                auto* recordedBuffer = recordingMixBuffer.getWritePointer(channel);
+                auto recordedValue = recordedBuffer[sample];
+                if (!std::isfinite(recordedValue)) {
+                    recordedValue = 0.0f;
+                    ++blockInvalidSamples;
+                }
+                recordedBuffer[sample] = juce::jlimit(
+                    -kLimiterCeiling, kLimiterCeiling, recordedValue * currentGainLinear);
+            }
         }
     }
 
@@ -508,12 +532,20 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     holdPeak(outputPeak, blockOutputPeak);
     if (blockInvalidSamples > 0)
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
-    writeRecording(
-        logicalInputs.data(),
-        numLogicalInputs,
-        outputChannelData,
-        numOutputChannels,
-        numSamples);
+    if (recordingBusReady) {
+        std::array<const float*, 32> processedWithoutAudition {};
+        for (int channel = 0;
+             channel < std::min(numOutputChannels, recordingMixBuffer.getNumChannels());
+             ++channel)
+            processedWithoutAudition[static_cast<std::size_t>(channel)] =
+                recordingMixBuffer.getReadPointer(channel);
+        writeRecording(
+            logicalInputs.data(),
+            numLogicalInputs,
+            processedWithoutAudition.data(),
+            recordingMixBuffer.getNumChannels(),
+            numSamples);
+    }
 }
 
 void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const device) {
@@ -539,6 +571,12 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
     outputPeak.store(0.0f, std::memory_order_release);
     silenceBuffer.setSize(1, device != nullptr ? juce::jmax(1, device->getCurrentBufferSizeSamples()) : 1);
     silenceBuffer.clear();
+    recordingMixBuffer.setSize(
+        device != nullptr
+            ? juce::jmax(1, static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits()))
+            : 1,
+        silenceBuffer.getNumSamples());
+    recordingMixBuffer.clear();
     dcBlocker.prepare(device != nullptr
         ? static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits())
         : 0);

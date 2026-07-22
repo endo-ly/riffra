@@ -22,9 +22,11 @@ import type {
   SeparationJobStatus,
   SeparationResult,
   CreativeSession,
+  ProjectTimebase,
   DesignTool,
   SessionAudioPair,
   MonitoringState,
+  RackInstance,
   TrackKind,
   Workspace,
   TransportStatus,
@@ -177,8 +179,10 @@ export interface NativeApi {
     trackId?: string,
   ): Promise<CreativeSession | null>;
   updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
-  removeAudioClip(clipId: string): Promise<CreativeSession | null>;
-  removeAudioClips(clipIds: string[]): Promise<CreativeSession | null>;
+  removeTimelineClips(
+    audioClipIds: string[],
+    midiClipIds: string[],
+  ): Promise<CreativeSession | null>;
   trimAudioClip(
     clipId: string,
     startTick: number,
@@ -187,7 +191,11 @@ export interface NativeApi {
   splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
   duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
   moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null>;
-  pasteAudioClips(clipIds: string[], startTick: number): Promise<CreativeSession | null>;
+  pasteTimelineClips(
+    audioClipIds: string[],
+    midiClipIds: string[],
+    startTick: number,
+  ): Promise<CreativeSession | null>;
   crossfadeAudioClips(firstId: string, secondId: string): Promise<CreativeSession | null>;
   addTrack(name: string, kind: TrackKind): Promise<CreativeSession>;
   updateTrack(
@@ -200,6 +208,7 @@ export interface NativeApi {
       solo?: boolean;
       armed?: boolean;
       monitoring?: MonitoringState;
+      rack?: RackInstance;
     },
   ): Promise<CreativeSession>;
   removeTrack(trackId: string): Promise<CreativeSession>;
@@ -226,6 +235,7 @@ export interface NativeApi {
   playTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;
+  updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession>;
   updateTimelineLoopRange(
     enabled: boolean,
     startTick: number,

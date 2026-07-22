@@ -1238,6 +1238,7 @@ export class FakeNativeApi implements NativeApi {
             solo: false,
             armed: false,
             monitoring: 'off' as const,
+            rack: { devices: [], macros: [] },
           },
         ];
     const appendTick = session.arrangement.audioClips.reduce(
@@ -1353,21 +1354,31 @@ export class FakeNativeApi implements NativeApi {
     return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, patch));
   };
 
-  removeAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
-    this.calls.push('removeAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      if (!clips.some((clip) => clip.id === clipId)) return null;
-      return clips.filter((clip) => clip.id !== clipId);
-    });
-  };
-
-  removeAudioClips = async (clipIds: string[]): Promise<CreativeSession | null> => {
-    this.calls.push('removeAudioClips');
-    return this.commitArrangementEdit((clips) => {
-      if (!clipIds.length || clipIds.some((id) => !clips.some((clip) => clip.id === id)))
-        return null;
-      return clips.filter((clip) => !clipIds.includes(clip.id));
-    });
+  removeTimelineClips = async (
+    audioClipIds: string[],
+    midiClipIds: string[],
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('removeTimelineClips');
+    this.assertPersistence();
+    const current = this.bootstrapState.session;
+    if (
+      (!audioClipIds.length && !midiClipIds.length) ||
+      audioClipIds.some((id) => !current.arrangement.audioClips.some((clip) => clip.id === id)) ||
+      midiClipIds.some((id) => !current.arrangement.midiClips.some((clip) => clip.id === id))
+    )
+      return null;
+    return this.commitSession((session) => ({
+      ...session,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...session.arrangement,
+        revision: session.arrangement.revision + 1,
+        audioClips: session.arrangement.audioClips.filter(
+          (clip) => !audioClipIds.includes(clip.id),
+        ),
+        midiClips: session.arrangement.midiClips.filter((clip) => !midiClipIds.includes(clip.id)),
+      },
+    }));
   };
 
   trimAudioClip = async (
@@ -1463,25 +1474,56 @@ export class FakeNativeApi implements NativeApi {
     });
   };
 
-  pasteAudioClips = async (
-    clipIds: string[],
+  pasteTimelineClips = async (
+    audioClipIds: string[],
+    midiClipIds: string[],
     startTick: number,
   ): Promise<CreativeSession | null> => {
-    this.calls.push('pasteAudioClips');
-    return this.commitArrangementEdit((clips) => {
-      const sources = clipIds.map((id) => clips.find((clip) => clip.id === id));
-      if (!sources.length || sources.some((clip) => !clip)) return null;
-      const selected = sources as AudioClip[];
-      const anchor = Math.min(...selected.map((clip) => clip.startTick));
-      return [
-        ...clips,
-        ...selected.map((clip, index) => ({
-          ...clip,
-          id: `${clip.id}:paste:${clips.length}:${index}`,
-          name: `${clip.name} copy`,
-          startTick: startTick + clip.startTick - anchor,
-        })),
-      ];
+    this.calls.push('pasteTimelineClips');
+    const current = this.bootstrapState.session;
+    const audio = audioClipIds
+      .map((id) => current.arrangement.audioClips.find((clip) => clip.id === id))
+      .filter((clip): clip is AudioClip => Boolean(clip));
+    const midi = midiClipIds
+      .map((id) => current.arrangement.midiClips.find((clip) => clip.id === id))
+      .filter((clip): clip is CreativeSession['arrangement']['midiClips'][number] => Boolean(clip));
+    if (
+      audio.length !== audioClipIds.length ||
+      midi.length !== midiClipIds.length ||
+      (!audio.length && !midi.length)
+    )
+      return null;
+    return this.commitSession((session) => {
+      const anchor = Math.min(
+        ...audio.map((clip) => clip.startTick),
+        ...midi.map((clip) => clip.startTick),
+      );
+      return {
+        ...session,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...session.arrangement,
+          revision: session.arrangement.revision + 1,
+          audioClips: [
+            ...session.arrangement.audioClips,
+            ...audio.map((clip, index) => ({
+              ...clip,
+              id: `${clip.id}:paste:${session.arrangement.revision}:${index}`,
+              name: `${clip.name} copy`,
+              startTick: startTick + clip.startTick - anchor,
+            })),
+          ],
+          midiClips: [
+            ...session.arrangement.midiClips,
+            ...midi.map((clip, index) => ({
+              ...clip,
+              id: `${clip.id}:paste:${session.arrangement.revision}:${index}`,
+              name: `${clip.name} copy`,
+              startTick: startTick + clip.startTick - anchor,
+            })),
+          ],
+        },
+      };
     });
   };
 
@@ -1549,6 +1591,21 @@ export class FakeNativeApi implements NativeApi {
 
   seekTimeline = async (_tick: number): Promise<void> => {
     this.calls.push('seekTimeline');
+  };
+
+  updateArrangementTimebase = async (
+    timebase: CreativeSession['arrangement']['timebase'],
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateArrangementTimebase');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        timebase,
+      },
+    }));
   };
 
   updateTimelineLoopRange = async (
@@ -1661,6 +1718,7 @@ export class FakeNativeApi implements NativeApi {
             solo: false,
             armed: false,
             monitoring: 'off' as const,
+            rack: { devices: [], macros: [] },
           },
         ],
       },
@@ -1677,6 +1735,7 @@ export class FakeNativeApi implements NativeApi {
       solo?: boolean;
       armed?: boolean;
       monitoring?: MonitoringState;
+      rack?: RackInstance;
     },
   ): Promise<CreativeSession> => {
     this.calls.push('updateTrack');
@@ -1703,6 +1762,7 @@ export class FakeNativeApi implements NativeApi {
                 solo: patch.solo ?? track.solo,
                 armed: patch.armed ?? track.armed,
                 monitoring: patch.monitoring ?? track.monitoring,
+                rack: patch.rack ?? track.rack,
               }
             : track,
         ),

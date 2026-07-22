@@ -288,6 +288,12 @@ bool PluginRack::isInstrument() const noexcept {
         && pluginInputChannels.load(std::memory_order_acquire) == 0;
 }
 
+int PluginRack::latencySamples() const noexcept {
+    const juce::SpinLock::ScopedTryLockType lock(pluginLock);
+    if (!lock.isLocked() || plugin == nullptr) return 0;
+    return std::max(0, plugin->getLatencySamples());
+}
+
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
                          const int numSamples) noexcept {

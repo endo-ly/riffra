@@ -7,7 +7,7 @@ interface MidiClipViewProps {
   lane: number;
   laneHeight: number;
   selected: boolean;
-  onSelect: (clipId: string) => void;
+  onSelect: (clipId: string, append?: boolean) => void;
   onOpenEditor?: (clip: MidiClip) => void;
 }
 
@@ -40,7 +40,11 @@ export function MidiClipView(props: MidiClipViewProps) {
         opacity: clip.muted ? 0.48 : 1,
       }}
       onClick={(event) => {
-        if (!event.ctrlKey && !props.selected) props.onSelect(clip.id);
+        if (event.ctrlKey) {
+          props.onSelect(clip.id, true);
+        } else if (!props.selected) {
+          props.onSelect(clip.id);
+        }
       }}
       onDoubleClick={() => props.onOpenEditor?.(clip)}
       title={`${clip.name} · ${clip.notes.length} notes · double-click to open MIDI editor`}

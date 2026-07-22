@@ -31,6 +31,7 @@ public:
     void enqueueMidi(const juce::MidiMessage& message) noexcept;
     [[nodiscard]] bool isLoaded() const noexcept;
     [[nodiscard]] bool isInstrument() const noexcept;
+    [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
 

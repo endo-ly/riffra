@@ -35,9 +35,10 @@ use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
+use crate::rack::{RackDefinition, RackInstance};
 use crate::session::{
     AiChangeSet, Arrangement, CreativeSession, DesignTool, Marker, MidiNote, MonitoringState,
-    SamplePad, TimelineTick, Track, TrackKind, Workspace,
+    ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -429,48 +430,67 @@ fn runtime_timeline_snapshot(
     session: &CreativeSession,
 ) -> serde_json::Value {
     let arrangement = &session.arrangement;
-    let has_solo = arrangement.tracks.iter().any(|track| track.solo);
-    let mut clips = Vec::with_capacity(arrangement.audio_clips.len());
     let mut unavailable_clip_ids = Vec::new();
-    for clip in &arrangement.audio_clips {
-        let Some(path) = asset::resolve_content_location(context.data_root, &clip.asset_id) else {
-            unavailable_clip_ids.push(clip.id.clone());
-            continue;
-        };
-        let Some(track) = arrangement
-            .tracks
-            .iter()
-            .find(|track| track.id == clip.track_id)
-        else {
-            unavailable_clip_ids.push(clip.id.clone());
-            continue;
-        };
-        clips.push(serde_json::json!({
-                "clipId": clip.id,
-                "trackId": clip.track_id,
-                "path": path,
-                "sourceSampleRate": clip.source_sample_rate,
-                "sourceStartFrame": clip.source_range.start,
-                "sourceEndFrame": clip.source_range.end,
-                "durationFrames": clip.timeline_duration.frames,
-                "durationSampleRate": clip.timeline_duration.sample_rate,
-                "startTick": clip.start_tick.0,
-                "fadeInFrames": clip.fade_in.frames,
-                "fadeOutFrames": clip.fade_out.frames,
-                "gainDb": clip.gain_db + track.gain_db,
-                "pan": (clip.pan + track.pan).clamp(-1.0, 1.0),
-                "loopEnabled": clip.loop_enabled,
-                "muted": clip.muted || track.muted || (has_solo && !track.solo),
-        }));
-    }
+    let tracks = arrangement
+        .tracks
+        .iter()
+        .map(|track| {
+            let audio_clips = arrangement
+                .audio_clips
+                .iter()
+                .filter(|clip| clip.track_id == track.id)
+                .filter_map(|clip| {
+                    let Some(path) =
+                        asset::resolve_content_location(context.data_root, &clip.asset_id)
+                    else {
+                        unavailable_clip_ids.push(clip.id.clone());
+                        return None;
+                    };
+                    Some(serde_json::json!({
+                        "clipId": clip.id,
+                        "path": path,
+                        "sourceSampleRate": clip.source_sample_rate,
+                        "sourceStartFrame": clip.source_range.start,
+                        "sourceEndFrame": clip.source_range.end,
+                        "durationFrames": clip.timeline_duration.frames,
+                        "durationSampleRate": clip.timeline_duration.sample_rate,
+                        "startTick": clip.start_tick.0,
+                        "fadeInFrames": clip.fade_in.frames,
+                        "fadeOutFrames": clip.fade_out.frames,
+                        "gainDb": clip.gain_db,
+                        "pan": clip.pan,
+                        "loopEnabled": clip.loop_enabled,
+                        "muted": clip.muted,
+                    }))
+                })
+                .collect::<Vec<_>>();
+            let midi_clips = arrangement
+                .midi_clips
+                .iter()
+                .filter(|clip| clip.track_id == track.id)
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "id": track.id,
+                "name": track.name,
+                "kind": track.kind,
+                "gainDb": track.gain_db,
+                "pan": track.pan,
+                "muted": track.muted,
+                "solo": track.solo,
+                "armed": track.armed,
+                "monitoring": track.monitoring,
+                "rack": track.rack,
+                "audioClips": audio_clips,
+                "midiClips": midi_clips,
+            })
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "revision": arrangement.revision,
         "timebase": arrangement.timebase,
         "loopRange": arrangement.loop_range,
-        "tracks": arrangement.tracks,
-        "audioClips": clips,
+        "tracks": tracks,
         "unavailableClipIds": unavailable_clip_ids,
-        "midiClips": [],
         "automation": [],
     })
 }
@@ -502,6 +522,75 @@ pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
 
 pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
     context.audio.seek_timeline(tick.0)
+}
+
+pub fn update_timebase(
+    context: &SessionContext<'_>,
+    timebase: ProjectTimebase,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .update_timebase(timebase)
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn remove_timeline_clips(
+    context: &SessionContext<'_>,
+    audio_clip_ids: &[String],
+    midi_clip_ids: &[String],
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .remove_timeline_clips(audio_clip_ids, midi_clip_ids)
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn paste_timeline_clips(
+    context: &SessionContext<'_>,
+    audio_clip_ids: &[String],
+    midi_clip_ids: &[String],
+    start_tick: TimelineTick,
+) -> Result<CreativeSession, String> {
+    let stamp = now_ms();
+    let revision = context
+        .session
+        .lock()
+        .map_err(lock_error)?
+        .arrangement
+        .revision
+        .saturating_add(1);
+    let audio_ids = audio_clip_ids
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("clip:paste:{stamp}:{revision}:{index}"))
+        .collect::<Vec<_>>();
+    let midi_ids = midi_clip_ids
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("midi-clip:paste:{stamp}:{revision}:{index}"))
+        .collect::<Vec<_>>();
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .paste_timeline_clips(
+            audio_clip_ids,
+            midi_clip_ids,
+            &audio_ids,
+            &midi_ids,
+            start_tick,
+        )
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
 }
 
 pub fn trim_audio_clip(
@@ -719,6 +808,7 @@ pub struct TrackPatch {
     pub solo: Option<bool>,
     pub armed: Option<bool>,
     pub monitoring: Option<MonitoringState>,
+    pub rack: Option<RackInstance>,
 }
 
 pub fn add_track(
@@ -741,6 +831,10 @@ pub fn add_track(
         solo: false,
         armed: false,
         monitoring: MonitoringState::Off,
+        rack: crate::rack::RackInstance {
+            devices: Vec::new(),
+            macros: Vec::new(),
+        },
     });
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
@@ -792,6 +886,10 @@ pub fn update_track(
     }
     if let Some(value) = patch.monitoring {
         track.monitoring = value;
+    }
+    if let Some(rack) = patch.rack {
+        RackDefinition::from_instance(&rack).runtime_supported()?;
+        track.rack = rack;
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
@@ -899,9 +997,14 @@ pub fn add_marker(
     let trimmed: String = name.trim().chars().take(80).collect();
     session.arrangement.markers.push(Marker {
         id: format!("marker:{}", now_ms()),
-        name: if trimmed.is_empty() { "Marker".into() } else { trimmed },
+        name: if trimmed.is_empty() {
+            "Marker".into()
+        } else {
+            trimmed
+        },
         tick: tick.0,
     });
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_session(context, session)
 }
 
@@ -920,11 +1023,16 @@ pub fn update_marker(
         .ok_or_else(|| format!("Marker is not registered: {marker_id}"))?;
     if let Some(name) = name {
         let trimmed: String = name.trim().chars().take(80).collect();
-        marker.name = if trimmed.is_empty() { marker.name.clone() } else { trimmed };
+        marker.name = if trimmed.is_empty() {
+            marker.name.clone()
+        } else {
+            trimmed
+        };
     }
     if let Some(tick) = tick {
         marker.tick = tick.0;
     }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_session(context, session)
 }
 
@@ -933,7 +1041,15 @@ pub fn remove_marker(
     marker_id: &str,
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    session.arrangement.markers.retain(|marker| marker.id != marker_id);
+    let before = session.arrangement.markers.len();
+    session
+        .arrangement
+        .markers
+        .retain(|marker| marker.id != marker_id);
+    if session.arrangement.markers.len() == before {
+        return Err(format!("Marker is not registered: {marker_id}"));
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_session(context, session)
 }
 

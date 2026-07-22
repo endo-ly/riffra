@@ -11,7 +11,7 @@ interface AudioClipViewProps {
   lane: number;
   laneHeight: number;
   selected: boolean;
-  onSelect: (clipId: string) => void;
+  onSelect: (clipId: string, append?: boolean) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
   onTrim: (
     event: React.PointerEvent<HTMLSpanElement>,

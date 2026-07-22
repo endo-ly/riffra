@@ -5,6 +5,7 @@ import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
   layoutClipLanes,
+  timelineObjectEndTick,
   ticksPerBar,
   trackLaneHeight,
   type TrackSize,
@@ -45,13 +46,19 @@ interface ArrangeTrackProps {
 }
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
-  const layout = layoutClipLanes(props.clips, props.session.arrangement.timebase);
+  const layout = layoutClipLanes(
+    props.clips.map((clip) => ({
+      id: clip.id,
+      startTick: clip.startTick,
+      endTick: timelineObjectEndTick(clip, props.session.arrangement.timebase),
+    })),
+  );
   const midiLayout = layoutClipLanes(
     props.midiClips.map((clip) => ({
-      ...clip,
-      timelineDuration: { frames: clip.durationTicks, sampleRate: 1 },
-    })) as never,
-    props.session.arrangement.timebase,
+      id: clip.id,
+      startTick: clip.startTick,
+      endTick: timelineObjectEndTick(clip, props.session.arrangement.timebase),
+    })),
   );
   const laneCount = Math.max(layout.count, midiLayout.count);
   const laneHeight = trackLaneHeight(props.trackSize);
@@ -188,6 +195,17 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               }}
             >
               Duplicate
+            </button>
+            <button
+              onClick={(event) => {
+                void props.onCommit(
+                  props.api.updateTrack(props.track.id, { rack: props.session.rack }),
+                  `${props.track.name} rack applied.`,
+                );
+                event.currentTarget.closest('details')?.removeAttribute('open');
+              }}
+            >
+              Apply current rack
             </button>
             <button
               onClick={(event) => {

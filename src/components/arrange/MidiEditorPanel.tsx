@@ -20,10 +20,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [dragging, setDragging] = useState<{
     noteId: string;
-    mode: 'move' | 'resize';
-    originX: number;
-    originTick: number;
-    originPitch: number;
+    preview: MidiNote;
   } | null>(null);
   const pixelsPerTick = 0.18;
   const rowHeight = 9;
@@ -57,18 +54,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   ) => {
     event.stopPropagation();
     const originX = event.clientX;
+    let preview = note;
     setDragging({
       noteId: note.id,
-      mode,
-      originX,
-      originTick: note.startTick,
-      originPitch: note.note,
+      preview: note,
     });
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const deltaTicks = (pointer.clientX - originX) / pixelsPerTick;
-      const row = handle.getBoundingClientRect();
       const parent = handle.parentElement!.getBoundingClientRect();
       const yInLane = pointer.clientY - parent.top;
       const pitchFromY = PITCH_HIGH - Math.floor(yInLane / rowHeight);
@@ -81,11 +75,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             : Math.round(note.startTick + deltaTicks),
         );
         const nextPitch = Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, pitchFromY));
-        props.onUpdateNote?.(props.clip!.id, {
+        preview = {
           ...note,
           startTick: nextTick,
           note: nextPitch,
-        });
+        };
       } else {
         const nextDur = Math.max(
           1,
@@ -94,12 +88,19 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 snapGridTicks(snap, props.timebase)
             : Math.round(note.durationTicks + deltaTicks),
         );
-        props.onUpdateNote?.(props.clip!.id, { ...note, durationTicks: nextDur });
+        preview = { ...note, durationTicks: nextDur };
       }
+      setDragging((current) => (current ? { ...current, preview } : current));
     };
     const finish = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
+      if (
+        preview.startTick !== note.startTick ||
+        preview.note !== note.note ||
+        preview.durationTicks !== note.durationTicks
+      )
+        props.onUpdateNote?.(props.clip!.id, preview);
       setDragging(null);
     };
     window.addEventListener('pointermove', move);
@@ -162,30 +163,33 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         ))}
         {notes
           .filter((note) => note.note >= PITCH_LOW && note.note < PITCH_HIGH)
-          .map((note) => (
-            <span
-              key={note.id}
-              data-note-id={note.id}
-              className={`${styles.note} ${dragging?.noteId === note.id ? styles.dragging : ''}`}
-              style={{
-                left: note.startTick * pixelsPerTick,
-                top: (PITCH_HIGH - note.note - 1) * rowHeight,
-                width: Math.max(4, note.durationTicks * pixelsPerTick),
-                height: rowHeight - 1,
-                opacity: 0.4 + (note.velocity / 127) * 0.6,
-              }}
-              onPointerDown={(event) => handlePointerDown(event, note, 'move')}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                props.onRemoveNote?.(props.clip!.id, note.id);
-              }}
-            >
-              <i
-                className={styles.resizeHandle}
-                onPointerDown={(event) => handlePointerDown(event, note, 'resize')}
-              />
-            </span>
-          ))}
+          .map((note) => {
+            const visibleNote = dragging?.noteId === note.id ? dragging.preview : note;
+            return (
+              <span
+                key={note.id}
+                data-note-id={note.id}
+                className={`${styles.note} ${dragging?.noteId === note.id ? styles.dragging : ''}`}
+                style={{
+                  left: visibleNote.startTick * pixelsPerTick,
+                  top: (PITCH_HIGH - visibleNote.note - 1) * rowHeight,
+                  width: Math.max(4, visibleNote.durationTicks * pixelsPerTick),
+                  height: rowHeight - 1,
+                  opacity: 0.4 + (note.velocity / 127) * 0.6,
+                }}
+                onPointerDown={(event) => handlePointerDown(event, note, 'move')}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  props.onRemoveNote?.(props.clip!.id, note.id);
+                }}
+              >
+                <i
+                  className={styles.resizeHandle}
+                  onPointerDown={(event) => handlePointerDown(event, note, 'resize')}
+                />
+              </span>
+            );
+          })}
       </div>
     </aside>
   );
