@@ -10,6 +10,7 @@ use crate::asset::AssetId;
 use crate::errors::DomainError;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Pulses per quarter note used by every session timeline.
 pub const TIMELINE_PPQ: u32 = 960;
@@ -20,7 +21,7 @@ pub const TIMELINE_PPQ: u32 = 960;
 pub struct TimelineTick(pub u64);
 
 /// A half-open range of source-audio frames.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameRange {
     pub start: u64,
@@ -34,7 +35,7 @@ impl FrameRange {
 }
 
 /// A real-time duration expressed against its source sample rate.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameDuration {
     pub frames: u64,
@@ -358,7 +359,7 @@ pub struct Arrangement {
 
 /// A named timeline marker. Markers hold no audio processing impact; they are
 /// authoring metadata rendered on the Time Ruler.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Marker {
     pub id: String,

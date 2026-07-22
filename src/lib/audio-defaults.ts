@@ -33,6 +33,7 @@ export function offlineAudioStatus(
       dropoutEndSample: null,
       recoveryStatus: 'clean',
     },
+    plugin: null,
     midiInputs: [],
     midiOutputs: [],
     midiInputActive: false,

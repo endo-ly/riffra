@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AudioStatus, LibraryAsset } from '@/lib/domain';
+import { toAssetId } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 
@@ -44,7 +45,7 @@ export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLib
     // an AssetId `previewAsset` can resolve; recordings are previewed from the
     // Inbox, which carries their Canonical Asset ids directly.
     if (!asset || asset.kind !== 'audio') return;
-    setAudio(await previewAsset(asset.id, {}));
+    setAudio(await previewAsset(toAssetId(asset.id), {}));
     setPreviewPadId(null);
   }, [previewAsset, selectedLibraryAsset]);
 

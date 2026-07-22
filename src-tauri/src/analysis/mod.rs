@@ -4,12 +4,13 @@ use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
+use ts_rs::TS;
 
 pub(crate) mod commands;
 
 const WAVEFORM_BINS: usize = 128;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioAnalysis {
     pub path: String,

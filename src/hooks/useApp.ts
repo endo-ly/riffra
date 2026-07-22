@@ -18,6 +18,7 @@ import type {
   SeparationResult,
   Workspace,
 } from '@/lib/domain';
+import { toAssetId } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { audioCommandSucceeded } from '@/lib/audio-safety';
 import { startingAudioStatus } from '@/lib/audio-defaults';
@@ -377,10 +378,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const openLibraryAssetAnalysis = useCallback(
     async (asset: LibraryAsset) => {
       if (asset.kind !== 'audio') return;
-      const result = await analyzeAsset(asset.id);
+      const result = await analyzeAsset(toAssetId(asset.id));
       if (!result) return;
       setAnalysis(result);
-      await openAssetInDesign(asset.id, 'analyze');
+      await openAssetInDesign(toAssetId(asset.id), 'analyze');
     },
     [analyzeAsset, openAssetInDesign],
   );

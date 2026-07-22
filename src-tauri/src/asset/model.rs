@@ -12,13 +12,15 @@
 
 use crate::errors::DomainError;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use uuid::Uuid;
 
 /// Stable, globally-unique identifier for an `Asset`.
 ///
 /// The only valid string form is `asset:<UUIDv7>`.
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(type = "string & { readonly __brand: 'AssetId' }")]
 pub struct AssetId(String);
 
 impl AssetId {

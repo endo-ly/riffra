@@ -1,12 +1,48 @@
+import type {
+  AssetId,
+  AudioAnalysis,
+  AudioStatus,
+  FrameDuration,
+  FrameRange,
+  Marker,
+  RecoveryCandidate,
+  RenderResult,
+  ScanReport,
+  SeparationResult,
+} from '@/lib/generated';
+
+export type {
+  AssetId,
+  AudioAccessMode,
+  AudioAnalysis,
+  AudioChannelInfo,
+  AudioDevicePairing,
+  AudioDeviceProbe,
+  AudioDriverConfig,
+  AudioDriverInfo,
+  AudioState,
+  AudioStatus,
+  FrameDuration,
+  FrameRange,
+  LibraryAsset,
+  Marker,
+  MidiProbe,
+  MissingDependency,
+  PluginEntry,
+  PluginParameter,
+  PluginStatus,
+  ProjectExport,
+  RecordingStatus,
+  RecoveryCandidate,
+  RenderOptions,
+  RenderResult,
+  ScanIssue,
+  ScanReport,
+  SeparationResult,
+} from '@/lib/generated';
+
 export type Workspace = 'home' | 'play' | 'design' | 'arrange';
 export type DesignTool = 'sample' | 'analyze' | 'separate';
-
-/**
- * Branded handle for a canonical Asset reference. The brand stops the compiler
- * from silently accepting any string (file paths, recording ids, free-form
- * labels) where an AssetId is required.
- */
-export type AssetId = string & { readonly __brand: 'AssetId' };
 
 /**
  * Constructs an AssetId from a raw string. Reserved for trust boundaries —
@@ -92,16 +128,6 @@ export interface AudioClipMove {
   trackId: string;
 }
 
-export interface FrameRange {
-  start: number;
-  end: number;
-}
-
-export interface FrameDuration {
-  frames: number;
-  sampleRate: number;
-}
-
 export interface ProjectTimebase {
   ppq: 960;
   bpm: number;
@@ -181,12 +207,6 @@ interface DesignContextDto {
   targetAssetId: AssetId | null;
 }
 
-export interface Marker {
-  id: string;
-  name: string;
-  tick: number;
-}
-
 export interface Arrangement {
   revision: number;
   timebase: ProjectTimebase;
@@ -247,47 +267,8 @@ export interface CreativeSession {
   settings: SessionSettings;
 }
 
-export interface PluginEntry {
-  id: string;
-  name: string;
-  vendor: string | null;
-  version: string | null;
-  format: 'VST3';
-  path: string;
-  bundle: boolean;
-  modifiedAtMs: number | null;
-  scanState: 'discovered' | 'validated' | 'failed' | 'quarantined';
-}
-
-interface ScanIssue {
-  path: string;
-  message: string;
-}
-
-export interface ScanReport {
-  root: string;
-  startedAtMs: number;
-  finishedAtMs: number;
-  plugins: PluginEntry[];
-  issues: ScanIssue[];
-}
-
 export type JobState = 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed';
 export type JobKind = 'analysis' | 'separation' | 'render' | 'renderStems' | 'scan';
-
-/**
- * Request payload for an audio-driver / device change. Mirrors the Rust
- * `AudioDriverConfig` so one Tauri invoke argument carries the whole request
- * instead of a six-argument positional list.
- */
-export interface AudioDriverConfig {
-  driver: string;
-  inputDevice: string | null;
-  inputChannel: number;
-  outputDevice: string | null;
-  sampleRate: number | null;
-  bufferSize: number | null;
-}
 
 interface JobStatusBase {
   id: string;
@@ -338,37 +319,6 @@ export interface BootstrapState {
   recoveryCandidates: RecoveryCandidate[];
   dataRoot: string;
   vst3Root: string;
-}
-
-export interface RecoveryCandidate {
-  fileName: string;
-  updatedAtMs: number;
-  sessionId: string;
-  projectName: string | null;
-  note: string;
-}
-
-export interface MissingDependency {
-  kind: 'file' | 'plugin' | string;
-  id: string;
-  name: string;
-  path: string;
-  assetId?: AssetId | null;
-  usedBy: string[];
-}
-
-export interface RecordingStatus {
-  active: boolean;
-  directory: string | null;
-  sampleRate: number | null;
-  rawChannels: number | null;
-  processedChannels: number | null;
-  samplesWritten: number;
-  droppedBlocks: number;
-  missingSamples?: number;
-  dropoutStartSample?: number | null;
-  dropoutEndSample?: number | null;
-  recoveryStatus?: 'clean' | 'partial' | string;
 }
 
 export interface RecordingAsset {
@@ -426,24 +376,6 @@ interface RecordingCaptureDto {
   };
 }
 
-export interface AudioAnalysis {
-  path: string;
-  sampleRate: number;
-  channels: number;
-  bitsPerSample: number;
-  samples: number;
-  durationMs: number;
-  peakDb: number;
-  truePeakDb: number;
-  rmsDb: number;
-  clippingSamples: number;
-  dynamicRangeDb: number;
-  zeroCrossings: number;
-  phaseCorrelation: number | null;
-  spectrumPeakHz: number | null;
-  waveform: number[];
-}
-
 export interface AnalysisComparison {
   rmsDeltaDb: number;
   peakDeltaDb: number;
@@ -468,63 +400,6 @@ export function compareAnalyses(
   };
 }
 
-interface PluginStatus {
-  loaded: boolean;
-  bypassed: boolean;
-  path: string | null;
-  name: string | null;
-  sampleRate: number | null;
-  blockSize: number | null;
-  inputChannels: number;
-  outputChannels: number;
-  bypassedBlocks: number;
-  processedBlocks: number;
-  contentionBlocks: number;
-  transitionBlocks: number;
-  parameters: PluginParameter[];
-  stateData: string | null;
-}
-
-export interface AudioChannelInfo {
-  index: number;
-  name: string;
-}
-
-export interface PluginParameter {
-  index: number;
-  name: string;
-  value: number;
-  defaultValue: number;
-  automatable: boolean;
-}
-
-export interface AudioStatus {
-  state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted';
-  driver: string | null;
-  inputDevice: string | null;
-  inputChannel: number | null;
-  inputChannels: AudioChannelInfo[];
-  outputDevice: string | null;
-  outputChannels: AudioChannelInfo[];
-  sampleRate: number | null;
-  bufferSize: number | null;
-  roundTripMs: number | null;
-  recording: RecordingStatus;
-  plugin?: PluginStatus | null;
-  midiInputs: string[];
-  midiOutputs: string[];
-  midiInputActive: boolean;
-  midiMessages: number;
-  lastMidiNote: number | null;
-  midiPadMappings: number;
-  midiPadTriggers: number;
-  inputPeak: number;
-  outputPeak: number;
-  invalidSamples: number;
-  feedbackSuspected: boolean;
-  message: string;
-}
-
 /**
  * Paired session and audio status returned by Application Operations that
  * change the Audio Runtime and the persisted CreativeSession in one atomic
@@ -534,77 +409,6 @@ export interface AudioStatus {
 export interface SessionAudioPair {
   session: CreativeSession;
   audio: AudioStatus;
-}
-
-export interface MidiProbe {
-  inputs: string[];
-  outputs: string[];
-  refreshedAtMs: number;
-  message: string;
-}
-
-export type AudioAccessMode = 'shared' | 'exclusive' | 'driverManaged';
-export type AudioDevicePairing = 'independent' | 'sameDevice';
-
-export interface AudioDriverInfo {
-  name: string;
-  accessMode: AudioAccessMode;
-  devicePairing: AudioDevicePairing;
-  inputs: string[];
-  outputs: string[];
-}
-
-export interface AudioDeviceProbe {
-  drivers: AudioDriverInfo[];
-  midiInputs: string[];
-  midiOutputs: string[];
-  refreshedAtMs: number;
-  message: string;
-}
-
-export interface SeparationResult {
-  id: string;
-  sourceAssetId: AssetId;
-  leftAssetId: AssetId;
-  rightAssetId: AssetId;
-  durationMs: number;
-  state: string;
-  createdAtMs: number;
-  message: string;
-}
-
-export interface ProjectExport {
-  path: string;
-  sessionId: string;
-  exportedAtMs: number;
-  assetCount: number;
-}
-
-export interface LibraryAsset {
-  id: AssetId;
-  name: string;
-  kind: string;
-  path: string | null;
-  tag: string | null;
-  note: string | null;
-  createdAtMs: number | null;
-  updatedAtMs: number | null;
-  stability: string;
-}
-
-export interface RenderResult {
-  assetId: AssetId;
-  path: string;
-  sampleRate: number;
-  frames: number;
-  durationMs: number;
-  clipCount: number;
-  rangeStartMs: number;
-  rangeEndMs: number;
-  normalized: boolean;
-  trackId: string | null;
-  state: string;
-  message: string;
 }
 
 /**
@@ -626,13 +430,6 @@ export interface AssetPreviewOptions {
  * caller to apply. Centralizes the flush + error contract for every session op.
  */
 export type SessionOpRunner = <T>(op: () => Promise<T | null>, label: string) => Promise<T | null>;
-
-export interface RenderOptions {
-  rangeStartMs: number;
-  rangeEndMs: number | null;
-  normalize: boolean;
-  trackId: string | null;
-}
 
 export interface MidiExportResult {
   id: string;

@@ -9,10 +9,11 @@ use std::{
     io::Read,
     path::{Component, Path},
 };
+use ts_rs::TS;
 
 const MANIFEST_VERSION: u32 = 2;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectExport {
     pub path: String,

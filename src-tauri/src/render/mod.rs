@@ -10,12 +10,13 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
+use ts_rs::TS;
 
 pub(crate) mod commands;
 
 const MAX_RENDER_MINUTES: u64 = 30;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderOptions {
     #[serde(default)]
@@ -28,10 +29,10 @@ pub struct RenderOptions {
     pub track_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
-    pub asset_id: String,
+    pub asset_id: asset::AssetId,
     pub path: String,
     pub sample_rate: u32,
     pub frames: u64,
@@ -347,7 +348,7 @@ pub fn render_timeline_with_options_cancel(
         ]),
     )?;
     let result = RenderResult {
-        asset_id: rendered_asset_id.to_string(),
+        asset_id: rendered_asset_id.clone(),
         path: path.to_string_lossy().into_owned(),
         sample_rate,
         frames: output_frames,

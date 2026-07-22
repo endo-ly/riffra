@@ -8,12 +8,13 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use ts_rs::TS;
 
 pub(crate) mod commands;
 
 const SEARCH_LIMIT: i64 = 200;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryAsset {
     pub id: String,

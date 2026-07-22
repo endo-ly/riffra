@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
+use ts_rs::TS;
 
 const DEFAULT_SHARED_DRIVER: &str = "Windows Audio (Low Latency Mode)";
 
@@ -31,7 +32,7 @@ pub struct AudioPreferences {
 /// that the Audio Runtime and persisted preferences share. The Tauri command,
 /// workflow, and runtime call all take this so their parameter list stays
 /// narrow enough for the call sites to read at a glance.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDriverConfig {
     pub driver: String,

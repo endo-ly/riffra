@@ -31,6 +31,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
       dropoutEndSample: null,
       recoveryStatus: 'clean',
     },
+    plugin: null,
     midiInputs: [],
     midiOutputs: [],
     midiInputActive: false,

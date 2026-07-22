@@ -4,8 +4,9 @@ use crate::rack::DeviceKind;
 use crate::session::CreativeSession;
 use serde::Serialize;
 use std::path::Path;
+use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MissingDependency {
     /// `file` for a missing audio asset, `plugin` for a missing VST3 binary.
@@ -16,6 +17,7 @@ pub struct MissingDependency {
     /// display only. Relink is driven by `asset_id`, not this path.
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub asset_id: Option<AssetId>,
     /// Where the missing dependency is referenced from, so the UI can point the
     /// user at the exact clip, pad, or rack slot.

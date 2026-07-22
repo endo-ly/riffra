@@ -4,3 +4,4 @@ node_modules
 .artifacts
 src-tauri/target
 native/audio-engine/build
+src/lib/generated

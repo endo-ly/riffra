@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // Shared production types live in feature modules; nothing is re-exported here
 // because this module no longer aggregates the removed mirror types.
@@ -14,7 +15,7 @@ pub struct SessionAudioPair {
     pub audio: AudioStatus,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryCandidate {
     pub file_name: String,
@@ -36,7 +37,7 @@ pub struct BootstrapState {
     pub vst3_root: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStatus {
     pub active: bool,
@@ -52,7 +53,7 @@ pub struct RecordingStatus {
     pub recovery_status: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginParameter {
     pub index: u32,
@@ -62,7 +63,7 @@ pub struct PluginParameter {
     pub automatable: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginStatus {
     pub loaded: bool,
@@ -81,14 +82,14 @@ pub struct PluginStatus {
     pub state_data: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioChannelInfo {
     pub index: u32,
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioStatus {
     pub state: AudioState,
@@ -117,7 +118,7 @@ pub struct AudioStatus {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiProbe {
     pub inputs: Vec<String>,
@@ -126,7 +127,7 @@ pub struct MidiProbe {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDriverInfo {
     pub name: String,
@@ -136,7 +137,7 @@ pub struct AudioDriverInfo {
     pub outputs: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum AudioDevicePairing {
     #[default]
@@ -144,7 +145,7 @@ pub enum AudioDevicePairing {
     SameDevice,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum AudioAccessMode {
     Shared,
@@ -153,7 +154,7 @@ pub enum AudioAccessMode {
     DriverManaged,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDeviceProbe {
     pub drivers: Vec<AudioDriverInfo>,
@@ -163,7 +164,7 @@ pub struct AudioDeviceProbe {
     pub message: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioState {
     Offline,

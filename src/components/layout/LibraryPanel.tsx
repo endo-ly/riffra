@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
+import { toAssetId } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
 import { Icon } from '../shared/ui';
@@ -183,7 +184,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               <button
                 className={styles.pluginRow}
                 key={rack.id}
-                onClick={() => library.onLoadRackDefinition(rack.id)}
+                onClick={() => library.onLoadRackDefinition(toAssetId(rack.id))}
                 title={`Load ${rack.name}`}
               >
                 <span>R</span>

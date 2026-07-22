@@ -15,6 +15,7 @@ export default tseslint.config(
       '.artifacts',
       'src-tauri',
       'native',
+      'src/lib/generated',
       '*.config.ts',
       'vite.config.ts',
     ],

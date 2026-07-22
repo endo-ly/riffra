@@ -6,12 +6,13 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+use ts_rs::TS;
 
 pub(crate) mod commands;
 
 const MAX_ENTRIES: usize = 100_000;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginEntry {
     pub id: String,
@@ -25,14 +26,14 @@ pub struct PluginEntry {
     pub scan_state: &'static str,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanIssue {
     pub path: String,
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanReport {
     pub root: String,

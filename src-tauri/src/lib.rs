@@ -41,6 +41,8 @@ mod render;
 mod separation;
 mod session;
 mod storage;
+#[cfg(test)]
+mod types;
 
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
