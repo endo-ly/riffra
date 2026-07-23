@@ -23,6 +23,7 @@ function recording(id: string, name: string): RecordingAsset {
     rawAssetId: toAssetId(`asset:${name}-raw`),
     processedAssetId: toAssetId(`asset:${name}-processed`),
     midiAssetId: null,
+    capture: null,
     midiFile: null,
     sampleRate: 44_100,
     samplesWritten: 44_100,

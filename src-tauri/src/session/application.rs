@@ -37,8 +37,8 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::rack::{RackDefinition, RackInstance};
 use crate::session::{
-    AiChangeSet, Arrangement, CreativeSession, DesignTool, Marker, MidiNote, MonitoringState,
-    ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
+    AiChangeSet, AiPermission, Arrangement, CreativeSession, DesignTool, Marker, MidiNote,
+    MonitoringState, ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -760,7 +760,7 @@ pub struct SessionSettingsPatch {
     pub count_in_beats: Option<u8>,
     pub metronome_enabled: Option<bool>,
     pub note: Option<String>,
-    pub ai_permission: Option<String>,
+    pub ai_permission: Option<AiPermission>,
     pub ai_context: Option<Vec<String>>,
 }
 
@@ -787,9 +787,6 @@ pub fn update_session_settings(
         session.settings.note = note.chars().take(16_384).collect();
     }
     if let Some(permission) = patch.ai_permission {
-        if !matches!(permission.as_str(), "Explain" | "Suggest" | "Apply") {
-            return Err(format!("Unsupported AI permission: {permission}"));
-        }
         session.settings.ai_permission = permission;
     }
     if let Some(context_items) = patch.ai_context {
@@ -1162,7 +1159,7 @@ pub fn apply_ai_suggestion(
     proposed_gain_db: f64,
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    if session.settings.ai_permission != "Apply" {
+    if session.settings.ai_permission != AiPermission::Apply {
         return Err("AI suggestion application requires Apply permission.".into());
     }
     let clip = session
@@ -1181,7 +1178,7 @@ pub fn apply_ai_suggestion(
     session.settings.ai_history.push(AiChangeSet {
         id: format!("ai:{}", now_ms()),
         created_at_ms: now_ms(),
-        permission: session.settings.ai_permission.clone(),
+        permission: session.settings.ai_permission,
         target: clip_id.to_owned(),
         current_gain_db,
         proposed_gain_db: applied_gain_db,

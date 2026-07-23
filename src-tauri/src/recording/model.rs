@@ -13,9 +13,10 @@ use crate::asset::AssetId;
 use crate::errors::DomainError;
 use crate::rack::RackDevice;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// The status of a [`RecordingCapture`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum RecordingCaptureStatus {
     Recording,
@@ -38,7 +39,7 @@ impl RecordingCaptureStatus {
 }
 
 /// Dropout/drop diagnostics captured during recording.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DropoutInformation {
     #[serde(default)]
@@ -54,7 +55,7 @@ pub struct DropoutInformation {
 }
 
 /// One recording event and the assets it produced.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingCapture {
     pub capture_id: String,
@@ -62,10 +63,13 @@ pub struct RecordingCapture {
     pub status: RecordingCaptureStatus,
     pub started_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub completed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub sample_rate: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub input_device: Option<String>,
     pub audio_driver: Option<String>,
     pub input_channel: Option<u32>,
@@ -73,20 +77,27 @@ pub struct RecordingCapture {
     pub buffer_size: Option<u32>,
     /// Session context captured at recording start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub workspace: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub master_db: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub count_in_beats: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source: Option<String>,
     #[serde(default)]
     pub rack_snapshot: Vec<RackDevice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub raw_audio_asset_id: Option<AssetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub processed_audio_asset_id: Option<AssetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub midi_asset_id: Option<AssetId>,
     #[serde(default)]
     pub dropout_information: DropoutInformation,

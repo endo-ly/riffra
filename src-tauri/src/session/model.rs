@@ -43,7 +43,7 @@ pub struct FrameDuration {
 }
 
 /// Musical clock shared by the ruler, snapping, MIDI, and transport.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTimebase {
     pub ppq: u32,
@@ -82,17 +82,19 @@ impl ProjectTimebase {
 }
 
 /// Persisted loop selection. Disabled ranges retain their endpoints.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineLoopRange {
     pub enabled: bool,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
+    #[ts(type = "number")]
     pub end_tick: TimelineTick,
 }
 
 /// The four fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
 /// workspaces; they are [`DesignTool`]s reached from [`Workspace::Design`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Workspace {
     Home,
@@ -102,7 +104,7 @@ pub enum Workspace {
 }
 
 /// A design surface reached from the Design workspace.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum DesignTool {
     Sample,
@@ -111,11 +113,12 @@ pub enum DesignTool {
 }
 
 /// What the Design workspace is currently aimed at.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DesignContext {
     pub active_tool: DesignTool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub target_asset_id: Option<AssetId>,
 }
 
@@ -129,7 +132,7 @@ impl Default for DesignContext {
 }
 
 /// The production source hosted by a timeline track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     Audio,
@@ -137,7 +140,7 @@ pub enum TrackKind {
 }
 
 /// A timeline track.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
     pub id: String,
@@ -160,7 +163,7 @@ pub struct Track {
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
 /// armed; `On` always monitors; `Off` never monitors.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitoringState {
     #[default]
@@ -195,11 +198,12 @@ impl Track {
 }
 
 /// A single MIDI note inside a [`MidiClip`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNote {
     pub id: String,
     pub note: u8,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub duration_ticks: u64,
     pub velocity: u8,
@@ -207,12 +211,13 @@ pub struct MidiNote {
 }
 
 /// A non-destructive MIDI clip on the arrangement.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiClip {
     pub id: String,
     pub name: String,
     pub track_id: String,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub duration_ticks: u64,
     #[serde(default)]
@@ -223,12 +228,13 @@ pub struct MidiClip {
 
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClip {
     pub id: String,
     pub track_id: String,
     pub asset_id: AssetId,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub source_range: FrameRange,
     pub source_sample_rate: u32,
@@ -308,43 +314,55 @@ impl AudioClip {
 /// Only the supplied fields are written; `None` fields keep the clip's current
 /// value. Numeric normalization (gain, pan, fade clamping) is applied by the
 /// domain, so callers may pass unclamped values.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub track_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub start_tick: Option<TimelineTick>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub timeline_duration: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source_range: Option<FrameRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub gain_db: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub pan: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub fade_in: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub fade_out: Option<FrameDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub loop_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub muted: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClipMove {
     pub clip_id: String,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub track_id: String,
 }
 
 /// The Arrange workspace's production state.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Arrangement {
     pub revision: u64,
@@ -942,7 +960,7 @@ impl Arrangement {
 /// A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
 /// live *playback* state on the Play side, distinct from a saved
 /// [`crate::asset::AssetKind::Sample`] asset.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SamplePad {
     pub id: String,
@@ -958,7 +976,7 @@ pub struct SamplePad {
 }
 
 /// The set of sample pads currently loaded for performance.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SampleInstrumentState {
     #[serde(default)]
@@ -966,7 +984,7 @@ pub struct SampleInstrumentState {
 }
 
 /// Play-side live state (instrument and performance configuration).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayState {
     #[serde(default)]
@@ -974,7 +992,7 @@ pub struct PlayState {
 }
 
 /// A captured A/B rack + master snapshot for quick comparison.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
     pub id: String,
@@ -989,13 +1007,23 @@ pub struct SessionSnapshot {
     pub macros: Vec<RackMacro>,
 }
 
+/// Permitted scope of AI-proposed changes applied to a session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "PascalCase")]
+pub enum AiPermission {
+    Explain,
+    #[default]
+    Suggest,
+    Apply,
+}
+
 /// A reversible AI-proposed change record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChangeSet {
     pub id: String,
     pub created_at_ms: u64,
-    pub permission: String,
+    pub permission: AiPermission,
     pub target: String,
     pub current_gain_db: f64,
     pub proposed_gain_db: f64,
@@ -1008,7 +1036,7 @@ pub struct AiChangeSet {
 }
 
 /// Session-wide settings that are not clip/track/rack structure.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSettings {
     pub master_db: f64,
@@ -1020,16 +1048,12 @@ pub struct SessionSettings {
     pub metronome_enabled: bool,
     #[serde(default)]
     pub note: String,
-    #[serde(default = "default_ai_permission")]
-    pub ai_permission: String,
+    #[serde(default)]
+    pub ai_permission: AiPermission,
     #[serde(default = "default_ai_context")]
     pub ai_context: Vec<String>,
     #[serde(default)]
     pub ai_history: Vec<AiChangeSet>,
-}
-
-fn default_ai_permission() -> String {
-    "Suggest".into()
 }
 
 fn default_ai_context() -> Vec<String> {
@@ -1037,7 +1061,7 @@ fn default_ai_context() -> Vec<String> {
 }
 
 /// The canonical production-state model.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CreativeSession {
     pub session_id: String,
@@ -1131,7 +1155,7 @@ impl CreativeSession {
                 count_in_beats: 0,
                 metronome_enabled: false,
                 note: String::new(),
-                ai_permission: default_ai_permission(),
+                ai_permission: AiPermission::default(),
                 ai_context: default_ai_context(),
                 ai_history: Vec::new(),
             },
@@ -1156,12 +1180,6 @@ impl CreativeSession {
             return Err("Count-in must be between 0 and 8 beats.".into());
         }
         settings.note.truncate(16_384);
-        if !matches!(
-            settings.ai_permission.as_str(),
-            "Explain" | "Suggest" | "Apply"
-        ) {
-            return Err("AI permission must be Explain, Suggest, or Apply.".into());
-        }
         settings.ai_context.truncate(16);
         settings.ai_context.retain(|item| {
             !item.trim().is_empty() && item.len() <= 64 && AI_CONTEXT_IDS.contains(&item.as_str())
@@ -1197,12 +1215,6 @@ const AI_CONTEXT_IDS: &[&str] = &[
 fn normalize_ai_change_set(change_set: &mut AiChangeSet) -> Result<(), String> {
     if change_set.id.trim().is_empty() || change_set.target.trim().is_empty() {
         return Err("AI ChangeSets require non-empty ids and targets.".into());
-    }
-    if !matches!(
-        change_set.permission.as_str(),
-        "Explain" | "Suggest" | "Apply"
-    ) {
-        return Err("AI ChangeSet permission is invalid.".into());
     }
     if !change_set.current_gain_db.is_finite() || !change_set.proposed_gain_db.is_finite() {
         return Err(format!(

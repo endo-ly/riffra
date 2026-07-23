@@ -17,6 +17,8 @@ const completedRecording = (): RecordingAsset => ({
   processedPath: 'C:\\data\\take-1\\processed.wav',
   rawAssetId: toAssetId('asset:take-1-raw'),
   processedAssetId: toAssetId('asset:take-1-processed'),
+  midiAssetId: null,
+  capture: null,
   midiFile: null,
   sampleRate: 48_000,
   samplesWritten: 96_000,

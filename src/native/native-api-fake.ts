@@ -588,7 +588,8 @@ export class FakeNativeApi implements NativeApi {
             bypassed,
             gainDb: 0,
             parameterValues: parameters,
-            stateData,
+            stateData: stateData ?? undefined,
+            disabledPlaceholder: false,
           },
         ],
       },
@@ -700,7 +701,7 @@ export class FakeNativeApi implements NativeApi {
       rack: {
         ...current.rack,
         macros: current.rack.macros.map((item) =>
-          item.id === macroId ? { ...item, parameterIndex } : item,
+          item.id === macroId ? { ...item, parameterIndex: parameterIndex ?? undefined } : item,
         ),
       },
     }));
@@ -734,7 +735,7 @@ export class FakeNativeApi implements NativeApi {
         contentionBlocks: 0,
         transitionBlocks: 0,
         parameters: this.pluginParameters,
-        stateData: device.stateData,
+        stateData: device.stateData ?? null,
       },
       message: `Rack restored: ${device.name} reconnected; output stays muted until enabled.`,
     };
@@ -775,7 +776,7 @@ export class FakeNativeApi implements NativeApi {
           contentionBlocks: 0,
           transitionBlocks: 0,
           parameters: this.pluginParameters,
-          stateData: plugin.stateData,
+          stateData: plugin.stateData ?? null,
         },
         message: `Snapshot ${slot} recalled; output stays muted until enabled.`,
       };
@@ -927,6 +928,7 @@ export class FakeNativeApi implements NativeApi {
         rawAssetId: toAssetId(`asset:${id}-raw`),
         processedAssetId: toAssetId(`asset:${id}-processed`),
         midiAssetId: null,
+        capture: null,
         midiFile: null,
         sampleRate: 48_000,
         samplesWritten: samples,

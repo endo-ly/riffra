@@ -138,7 +138,7 @@ export function ReferenceSuggestion({
         recordings={recordings}
         references={references}
         referenceId={referenceId}
-        targetAssetId={session.designContext.targetAssetId}
+        targetAssetId={session.designContext.targetAssetId ?? null}
         onSelect={onSelect}
         onPreview={onPreview}
         onStop={onStop}

@@ -8,7 +8,7 @@ use ts_rs::TS;
 /// change the Audio Runtime and the persisted `CreativeSession` in one atomic
 /// step. The caller applies both fields directly instead of re-deriving either
 /// side, so the runtime and the persisted session never diverge.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAudioPair {
     pub session: crate::session::CreativeSession,
@@ -25,7 +25,7 @@ pub struct RecoveryCandidate {
     pub note: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub session: crate::session::CreativeSession,

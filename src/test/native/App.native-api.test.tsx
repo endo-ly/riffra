@@ -339,7 +339,7 @@ describe('App driven by FakeNativeApi', () => {
             bypassed: false,
             gainDb: 0,
             parameterValues: [0.3, 0.7],
-            stateData: null,
+            disabledPlaceholder: false,
           },
         ],
       },
