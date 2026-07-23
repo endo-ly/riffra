@@ -8,7 +8,7 @@ use tauri::State;
 
 use crate::AppState;
 use crate::asset::{self, AssetId};
-use crate::jobs::{self, JobStatus};
+use crate::jobs::{self, BackgroundJobStatus, JobKind};
 use crate::separation::{self, SeparationResult};
 use crate::storage::now_ms;
 
@@ -16,12 +16,12 @@ use crate::storage::now_ms;
 pub fn start_separation_job(
     asset_id: String,
     state: State<'_, AppState>,
-) -> Result<JobStatus, String> {
+) -> Result<BackgroundJobStatus, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     asset::load(&state.data_root, &asset_id)
         .ok_or_else(|| format!("Source asset is not registered: {asset_id}"))?;
-    let (id, status) = state.jobs.start("separation");
+    let (id, status) = state.jobs.start(JobKind::Separation);
     let registry = state.jobs.clone();
     let data_root = state.data_root.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -43,7 +43,7 @@ pub fn start_separation_job(
             Err(message) => jobs::fail(&registry, &data_root, &id, message),
         }
     });
-    Ok(status)
+    jobs::to_background_status(status)
 }
 
 #[tauri::command]

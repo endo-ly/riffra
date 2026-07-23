@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::AppState;
-use crate::jobs::{self, JobStatus};
+use crate::jobs::{self, BackgroundJobStatus, JobKind};
 use crate::plugins::{self, ScanReport};
 use crate::{library, plugin_catalog, plugin_validation};
 
@@ -57,8 +57,8 @@ pub async fn start_scan_job(
     app: tauri::AppHandle,
     path: Option<String>,
     state: State<'_, AppState>,
-) -> Result<JobStatus, String> {
-    let (id, status) = state.jobs.start("scan");
+) -> Result<BackgroundJobStatus, String> {
+    let (id, status) = state.jobs.start(JobKind::Scan);
     let registry = state.jobs.clone();
     let data_root = state.data_root.clone();
     let root = PathBuf::from(path.unwrap_or_else(|| DEFAULT_VST3_ROOT.into()));
@@ -79,7 +79,7 @@ pub async fn start_scan_job(
             jobs::serialize_result(&report)?,
             "VST3 scan skipped in Safe Mode.",
         );
-        return Ok(status);
+        return jobs::to_background_status(status);
     }
     tauri::async_runtime::spawn(async move {
         registry.set_running(
@@ -144,7 +144,7 @@ pub async fn start_scan_job(
             Err(message) => jobs::fail(&registry, &data_root, &id, message),
         }
     });
-    Ok(status)
+    jobs::to_background_status(status)
 }
 
 /// Persists the validated scan report to the on-disk catalog and the Library

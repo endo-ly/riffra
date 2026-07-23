@@ -9,15 +9,15 @@ use tauri::State;
 use crate::AppState;
 use crate::analysis::{self, AudioAnalysis};
 use crate::asset;
-use crate::jobs::{self, JobStatus};
+use crate::jobs::{self, BackgroundJobStatus, JobKind};
 
 #[tauri::command]
 pub fn start_analysis_job(
     asset_id: String,
     state: State<'_, AppState>,
-) -> Result<JobStatus, String> {
+) -> Result<BackgroundJobStatus, String> {
     let path = asset::resolve_audio_path(&state.data_root, &asset_id)?;
-    let (id, status) = state.jobs.start("analysis");
+    let (id, status) = state.jobs.start(JobKind::Analysis);
     let registry = state.jobs.clone();
     let data_root = state.data_root.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -34,7 +34,7 @@ pub fn start_analysis_job(
             Err(message) => jobs::fail(&registry, &data_root, &id, message),
         }
     });
-    Ok(status)
+    jobs::to_background_status(status)
 }
 
 #[tauri::command]

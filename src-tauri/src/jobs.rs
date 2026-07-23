@@ -1,3 +1,6 @@
+use crate::analysis::AudioAnalysis;
+use crate::plugins::ScanReport;
+use crate::separation::SeparationResult;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -8,16 +11,131 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+use ts_rs::TS;
 
+/// Lifecycle state of a background job. Terminal states (`Cancelled`,
+/// `Completed`, `Failed`) cannot return to `Running`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    Queued,
+    Running,
+    Cancelling,
+    Cancelled,
+    Completed,
+    Failed,
+}
+
+/// Background job kind. Acts as the `kind` discriminator of
+/// [`BackgroundJobStatus`] and fixes the type of the result payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum JobKind {
+    Analysis,
+    Separation,
+    Scan,
+}
+
+impl JobKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Analysis => "analysis",
+            Self::Separation => "separation",
+            Self::Scan => "scan",
+        }
+    }
+}
+
+/// Internal record held by [`JobRegistry`]. The result is kept as an opaque
+/// JSON value because the registry is generic over job kinds; the typed
+/// [`BackgroundJobStatus`] is produced when a status crosses the IPC boundary.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobStatus {
     pub id: String,
-    pub kind: String,
-    pub state: String,
+    pub kind: JobKind,
+    pub state: JobState,
     pub progress: f32,
     pub message: String,
     pub result: Option<Value>,
+}
+
+/// Typed view of a background job, produced from [`JobStatus`] at the IPC
+/// boundary. `kind` is the discriminator and fixes the shape of `result`.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BackgroundJobStatus {
+    Analysis {
+        id: String,
+        state: JobState,
+        progress: f32,
+        message: String,
+        result: Option<AudioAnalysis>,
+    },
+    Separation {
+        id: String,
+        state: JobState,
+        progress: f32,
+        message: String,
+        result: Option<SeparationResult>,
+    },
+    Scan {
+        id: String,
+        state: JobState,
+        progress: f32,
+        message: String,
+        result: Option<ScanReport>,
+    },
+}
+
+/// Promotes an opaque [`JobStatus`] to a typed [`BackgroundJobStatus`]. The
+/// result value is decoded into the type fixed by `kind`; a mismatched payload
+/// is a worker encoding error and is surfaced as such.
+///
+/// # Errors
+/// Returns a description when the stored result cannot be decoded into the type
+/// the job kind demands.
+pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, String> {
+    let JobStatus {
+        id,
+        kind,
+        state,
+        progress,
+        message,
+        result,
+    } = status;
+    Ok(match kind {
+        JobKind::Analysis => BackgroundJobStatus::Analysis {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<AudioAnalysis>)
+                .transpose()
+                .map_err(|error| format!("analysis result could not be decoded: {error}"))?,
+        },
+        JobKind::Separation => BackgroundJobStatus::Separation {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<SeparationResult>)
+                .transpose()
+                .map_err(|error| format!("separation result could not be decoded: {error}"))?,
+        },
+        JobKind::Scan => BackgroundJobStatus::Scan {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<ScanReport>)
+                .transpose()
+                .map_err(|error| format!("scan result could not be decoded: {error}"))?,
+        },
+    })
 }
 
 struct JobRecord {
@@ -32,16 +150,17 @@ pub struct JobRegistry {
 }
 
 impl JobRegistry {
-    pub fn start(&self, kind: &str) -> (String, JobStatus) {
+    pub fn start(&self, kind: JobKind) -> (String, JobStatus) {
+        let label = kind.label();
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-        let id = format!("job:{kind}:{sequence}");
+        let id = format!("job:{label}:{sequence}");
         let record = Arc::new(JobRecord {
             status: Mutex::new(JobStatus {
                 id: id.clone(),
-                kind: kind.into(),
-                state: "queued".into(),
+                kind,
+                state: JobState::Queued,
                 progress: 0.0,
-                message: format!("{kind} job queued."),
+                message: format!("{label} job queued."),
                 result: None,
             }),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -76,7 +195,7 @@ impl JobRegistry {
 
     pub fn set_running(&self, id: &str, message: impl Into<String>) {
         self.update(id, |status, _| {
-            status.state = "running".into();
+            status.state = JobState::Running;
             status.message = message.into();
         });
     }
@@ -84,11 +203,11 @@ impl JobRegistry {
     pub fn complete(&self, id: &str, result: Value, message: impl Into<String>) {
         self.update(id, |status, record| {
             if record.cancelled.load(Ordering::Acquire) {
-                status.state = "cancelled".into();
+                status.state = JobState::Cancelled;
                 status.message = "Job cancelled; no partial result was promoted.".into();
                 status.result = None;
             } else {
-                status.state = "completed".into();
+                status.state = JobState::Completed;
                 status.progress = 1.0;
                 status.message = message.into();
                 status.result = Some(result);
@@ -99,10 +218,10 @@ impl JobRegistry {
     pub fn fail(&self, id: &str, message: impl Into<String>) {
         self.update(id, |status, record| {
             if record.cancelled.load(Ordering::Acquire) {
-                status.state = "cancelled".into();
+                status.state = JobState::Cancelled;
                 status.message = "Job cancelled; no partial result was promoted.".into();
             } else {
-                status.state = "failed".into();
+                status.state = JobState::Failed;
                 status.message = message.into();
             }
         });
@@ -116,9 +235,12 @@ impl JobRegistry {
     pub fn cancel(&self, id: &str) -> Option<JobStatus> {
         let record = self.records.lock().ok()?.get(id).cloned()?;
         if let Ok(mut status) = record.status.lock() {
-            if matches!(status.state.as_str(), "queued" | "running" | "cancelling") {
+            if matches!(
+                status.state,
+                JobState::Queued | JobState::Running | JobState::Cancelling
+            ) {
                 record.cancelled.store(true, Ordering::Release);
-                status.state = "cancelling".into();
+                status.state = JobState::Cancelling;
                 status.message =
                     "Cancellation requested; the worker is finishing its current block.".into();
             }
@@ -129,7 +251,7 @@ impl JobRegistry {
 
     pub fn mark_cancelled(&self, id: &str) {
         self.update(id, |status, _| {
-            status.state = "cancelled".into();
+            status.state = JobState::Cancelled;
             status.message = "Job cancelled; no partial result was promoted.".into();
             status.result = None;
         });
@@ -177,13 +299,13 @@ mod tests {
     #[test]
     fn cancellation_prevents_completion_from_promoting_a_result() {
         let registry = JobRegistry::default();
-        let (id, status) = registry.start("render");
-        assert_eq!(status.state, "queued");
+        let (id, status) = registry.start(JobKind::Analysis);
+        assert_eq!(status.state, JobState::Queued);
         registry.set_running(&id, "running");
         registry.cancel(&id).expect("job should exist");
         registry.complete(&id, serde_json::json!({"path":"output.wav"}), "done");
         let status = registry.status(&id).unwrap();
-        assert_eq!(status.state, "cancelled");
+        assert_eq!(status.state, JobState::Cancelled);
         assert!(status.result.is_none());
     }
 }

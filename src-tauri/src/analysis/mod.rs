@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::Path,
@@ -10,7 +10,7 @@ pub(crate) mod commands;
 
 const WAVEFORM_BINS: usize = 128;
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioAnalysis {
     pub path: String,

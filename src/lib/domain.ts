@@ -1,11 +1,4 @@
-import type {
-  AssetId,
-  AudioAnalysis,
-  CreativeSession,
-  RenderResult,
-  ScanReport,
-  SeparationResult,
-} from '@/lib/generated';
+import type { AssetId, AudioAnalysis, BackgroundJobStatus, CreativeSession } from '@/lib/generated';
 
 export type {
   AiChangeSet,
@@ -24,6 +17,7 @@ export type {
   AudioDriverInfo,
   AudioState,
   AudioStatus,
+  BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
   DesignContext,
@@ -32,6 +26,8 @@ export type {
   DropoutInformation,
   FrameDuration,
   FrameRange,
+  JobKind,
+  JobState,
   LibraryAsset,
   Marker,
   MidiClip,
@@ -98,52 +94,9 @@ export interface TransportStatus {
   discontinuity: number;
 }
 
-export type JobState = 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed';
-export type JobKind = 'analysis' | 'separation' | 'render' | 'renderStems' | 'scan';
-
-interface JobStatusBase {
-  id: string;
-  state: JobState;
-  progress: number;
-  message: string;
-}
-
-export interface AnalysisJobStatus extends JobStatusBase {
-  kind: 'analysis';
-  result: AudioAnalysis | null;
-}
-
-export interface SeparationJobStatus extends JobStatusBase {
-  kind: 'separation';
-  result: SeparationResult | null;
-}
-
-export interface RenderJobStatus extends JobStatusBase {
-  kind: 'render';
-  result: RenderResult | null;
-}
-
-export interface RenderStemsJobStatus extends JobStatusBase {
-  kind: 'renderStems';
-  result: RenderResult[] | null;
-}
-
-export interface ScanJobStatus extends JobStatusBase {
-  kind: 'scan';
-  result: ScanReport | null;
-}
-
-/**
- * Discriminated union of every background job status. The `kind` field is the
- * discriminator and fixes the shape of `result`. Each `startXxxJob` returns the
- * narrowed variant so callers do not cast; `getBackgroundJob` returns the union
- * because any kind may be polled by id.
- *
- * Hand-written: the Rust registry stores `result` as an opaque JSON value, so
- * generating from it would lose the per-variant narrowing this union provides.
- */
-export type BackgroundJobStatus =
-  AnalysisJobStatus | SeparationJobStatus | RenderJobStatus | RenderStemsJobStatus | ScanJobStatus;
+export type AnalysisJobStatus = Extract<BackgroundJobStatus, { kind: 'analysis' }>;
+export type SeparationJobStatus = Extract<BackgroundJobStatus, { kind: 'separation' }>;
+export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
 export interface AnalysisComparison {
   rmsDeltaDb: number;

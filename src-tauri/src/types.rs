@@ -9,6 +9,7 @@
 use crate::analysis::AudioAnalysis;
 use crate::asset::AssetId;
 use crate::audio_preferences::AudioDriverConfig;
+use crate::jobs::{BackgroundJobStatus, JobKind, JobState};
 use crate::library::LibraryAsset;
 use crate::missing::MissingDependency;
 use crate::model::{
@@ -16,7 +17,7 @@ use crate::model::{
     AudioState, AudioStatus, BootstrapState, MidiProbe, PluginParameter, PluginStatus,
     RecordingStatus, RecoveryCandidate, SessionAudioPair,
 };
-use crate::plugins::{PluginEntry, ScanIssue, ScanReport};
+use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use crate::recording::{
@@ -38,6 +39,9 @@ fn export_types() {
         .with_out_dir("../src/lib/generated")
         .with_large_int("number");
     AssetId::export_all(&cfg).expect("AssetId bindings");
+    BackgroundJobStatus::export_all(&cfg).expect("BackgroundJobStatus bindings");
+    JobKind::export_all(&cfg).expect("JobKind bindings");
+    JobState::export_all(&cfg).expect("JobState bindings");
     FrameRange::export_all(&cfg).expect("FrameRange bindings");
     FrameDuration::export_all(&cfg).expect("FrameDuration bindings");
     Marker::export_all(&cfg).expect("Marker bindings");
@@ -86,6 +90,8 @@ fn export_types() {
     LibraryAsset::export_all(&cfg).expect("LibraryAsset bindings");
     MissingDependency::export_all(&cfg).expect("MissingDependency bindings");
     PluginEntry::export_all(&cfg).expect("PluginEntry bindings");
+    PluginFormat::export_all(&cfg).expect("PluginFormat bindings");
+    PluginScanState::export_all(&cfg).expect("PluginScanState bindings");
     ProjectExport::export_all(&cfg).expect("ProjectExport bindings");
     RenderOptions::export_all(&cfg).expect("RenderOptions bindings");
     RenderResult::export_all(&cfg).expect("RenderResult bindings");

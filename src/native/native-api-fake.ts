@@ -20,10 +20,8 @@ import type {
   ProjectExport,
   RecordingAsset,
   RecordingStatus,
-  RenderJobStatus,
   RenderOptions,
   RenderResult,
-  RenderStemsJobStatus,
   ScanJobStatus,
   ScanReport,
   CreativeSession,
@@ -227,16 +225,6 @@ export class FakeNativeApi implements NativeApi {
     };
     this.separations = [result, ...this.separations.filter((item) => item.id !== result.id)];
     return this.completeFakeJob('separation', result);
-  };
-
-  startRenderJob = async (options: RenderOptions): Promise<RenderJobStatus> => {
-    this.calls.push('startRenderJob');
-    return this.completeFakeJob('render', await this.renderTimeline(options));
-  };
-
-  startRenderStemsJob = async (options: RenderOptions): Promise<RenderStemsJobStatus> => {
-    this.calls.push('startRenderStemsJob');
-    return this.completeFakeJob('renderStems', await this.renderTimelineStems(options));
   };
 
   startScanJob = async (path?: string): Promise<ScanJobStatus> => {
@@ -477,12 +465,6 @@ export class FakeNativeApi implements NativeApi {
       state: 'completed',
       message: 'Fake render completed.',
     };
-  };
-
-  renderTimelineStems = async (options: RenderOptions): Promise<RenderResult[]> => {
-    this.calls.push('renderTimelineStems');
-    const stem = await this.renderTimeline(options);
-    return stem ? [stem] : [];
   };
 
   exportMidi = async (): Promise<MidiExportResult | null> => {

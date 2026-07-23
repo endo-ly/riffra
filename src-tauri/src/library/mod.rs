@@ -184,7 +184,7 @@ pub fn sync_plugins(data_root: &Path, plugins: &[PluginEntry]) -> Result<(), Str
                 note: plugin.version.clone(),
                 created_at_ms: plugin.modified_at_ms,
                 updated_at_ms: plugin.modified_at_ms,
-                stability: plugin.scan_state.into(),
+                stability: plugin.scan_state.as_str().to_owned(),
             },
         )?;
     }

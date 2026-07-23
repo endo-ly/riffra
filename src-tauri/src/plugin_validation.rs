@@ -1,4 +1,4 @@
-use crate::plugins::{ScanIssue, ScanReport};
+use crate::plugins::{PluginScanState, ScanIssue, ScanReport};
 use serde::Deserialize;
 use std::{
     sync::{
@@ -114,14 +114,14 @@ pub async fn validate_report_with_cancel(
                 plugin.name = metadata.name;
                 plugin.vendor = metadata.vendor.filter(|value| !value.trim().is_empty());
                 plugin.version = metadata.version.filter(|value| !value.trim().is_empty());
-                plugin.scan_state = "validated";
+                plugin.scan_state = PluginScanState::Validated;
             }
             ValidationOutcome::Failed(message) => {
-                plugin.scan_state = "failed";
+                plugin.scan_state = PluginScanState::Failed;
                 report.issues.push(ScanIssue { path, message });
             }
             ValidationOutcome::Quarantined(message) => {
-                plugin.scan_state = "quarantined";
+                plugin.scan_state = PluginScanState::Quarantined;
                 report.issues.push(ScanIssue { path, message });
             }
             ValidationOutcome::Cancelled => {

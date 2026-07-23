@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs,
@@ -12,28 +12,57 @@ pub(crate) mod commands;
 
 const MAX_ENTRIES: usize = 100_000;
 
-#[derive(Clone, Debug, Serialize, TS)]
+/// Plugin container format. The runtime currently hosts VST3 only; the enum
+/// keeps the TS literal narrow and leaves room for future formats.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PluginFormat {
+    Vst3,
+}
+
+/// Outcome of a plugin scan/validate pass, used as the Library stability label.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginScanState {
+    Discovered,
+    Validated,
+    Failed,
+    Quarantined,
+}
+
+impl PluginScanState {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovered => "discovered",
+            Self::Validated => "validated",
+            Self::Failed => "failed",
+            Self::Quarantined => "quarantined",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginEntry {
     pub id: String,
     pub name: String,
     pub vendor: Option<String>,
     pub version: Option<String>,
-    pub format: &'static str,
+    pub format: PluginFormat,
     pub path: String,
     pub bundle: bool,
     pub modified_at_ms: Option<u64>,
-    pub scan_state: &'static str,
+    pub scan_state: PluginScanState,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanIssue {
     pub path: String,
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanReport {
     pub root: String,
@@ -161,7 +190,7 @@ fn plugin_entry(root: &Path, path: &Path, bundle: bool) -> PluginEntry {
         name,
         vendor,
         version: None,
-        format: "VST3",
+        format: PluginFormat::Vst3,
         path: path_string,
         bundle,
         modified_at_ms: path
@@ -169,7 +198,7 @@ fn plugin_entry(root: &Path, path: &Path, bundle: bool) -> PluginEntry {
             .ok()
             .and_then(|metadata| metadata.modified().ok())
             .map(epoch_ms),
-        scan_state: "discovered",
+        scan_state: PluginScanState::Discovered,
     }
 }
 

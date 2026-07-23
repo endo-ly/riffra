@@ -25,7 +25,7 @@ function Invoke-Checked {
 
 Push-Location $Root
 try {
-    Invoke-Checked 'Regenerate TypeScript bindings' { cargo test --manifest-path 'src-tauri\Cargo.toml' export_types }
+    Invoke-Checked 'Regenerate TypeScript bindings' { npm run gen:types }
     Invoke-Checked 'TypeScript bindings staleness' { git diff --exit-code HEAD -- src/lib/generated }
     Invoke-Checked 'TypeScript build and tests' { npm run check }
     Invoke-Checked 'ESLint' { npm run lint }

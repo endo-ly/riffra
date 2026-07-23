@@ -29,7 +29,7 @@ pub struct RenderOptions {
     pub track_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
     pub asset_id: asset::AssetId,

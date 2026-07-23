@@ -112,16 +112,24 @@ fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::Projec
 fn get_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<jobs::JobStatus>, String> {
-    Ok(state.jobs.status(&id))
+) -> Result<Option<jobs::BackgroundJobStatus>, String> {
+    state
+        .jobs
+        .status(&id)
+        .map(jobs::to_background_status)
+        .transpose()
 }
 
 #[tauri::command]
 fn cancel_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<jobs::JobStatus>, String> {
-    Ok(state.jobs.cancel(&id))
+) -> Result<Option<jobs::BackgroundJobStatus>, String> {
+    state
+        .jobs
+        .cancel(&id)
+        .map(jobs::to_background_status)
+        .transpose()
 }
 
 // App-level audio device discovery. The native sidecar owns the actual probe;

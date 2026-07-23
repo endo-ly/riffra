@@ -81,7 +81,7 @@ pub fn validated_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{PluginEntry, ScanReport};
+    use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanReport};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -106,11 +106,11 @@ mod tests {
                 name: "Test".into(),
                 vendor: None,
                 version: None,
-                format: "VST3",
+                format: PluginFormat::Vst3,
                 path: "C:\\VST3\\Test.vst3".into(),
                 bundle: true,
                 modified_at_ms: None,
-                scan_state: "validated",
+                scan_state: PluginScanState::Validated,
             }],
             issues: vec![],
         };
@@ -138,11 +138,11 @@ mod tests {
                 name: "Amp".into(),
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
-                format: "VST3",
+                format: PluginFormat::Vst3,
                 path: plugin_path.to_string_lossy().into_owned(),
                 bundle: true,
                 modified_at_ms: None,
-                scan_state: "validated",
+                scan_state: PluginScanState::Validated,
             }],
             issues: vec![],
         };
@@ -169,11 +169,11 @@ mod tests {
                 name: "Amp".into(),
                 vendor: None,
                 version: None,
-                format: "VST3",
+                format: PluginFormat::Vst3,
                 path: plugin_path.to_string_lossy().into_owned(),
                 bundle: true,
                 modified_at_ms: None,
-                scan_state: "quarantined",
+                scan_state: PluginScanState::Quarantined,
             }],
             issues: vec![],
         };
