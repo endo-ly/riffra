@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MidiClip, MidiNote, ProjectTimebase } from '@/lib/domain';
 import { snapGridTicks, ticksPerBar, ticksPerBeat } from '@/lib/arrange-timeline';
 import type { SnapGrid } from '@/lib/arrange-timeline';
@@ -9,6 +9,7 @@ interface MidiEditorPanelProps {
   timebase: ProjectTimebase;
   onClose: () => void;
   onUpdateNote?: (clipId: string, note: MidiNote) => void;
+  onUpdateNotes?: (clipId: string, updates: { noteId: string; patch: Partial<MidiNote> }[]) => void;
   onRemoveNote?: (clipId: string, noteId: string) => void;
   onAddNote?: (clipId: string, startTick: number, pitch: number) => void;
   onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => void;
@@ -19,13 +20,20 @@ const PITCH_HIGH = 96;
 const PITCH_LOW = 24;
 
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
+  const { clip, onRemoveNote } = props;
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [dragging, setDragging] = useState<{
     noteId: string;
     preview: MidiNote;
   } | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
-  const pixelsPerTick = 0.18;
+  const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
+  const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const rowHeight = 9;
   const visibleTicks = Math.max(props.clip?.durationTicks ?? 1920, 1920);
   const laneHeight = (PITCH_HIGH - PITCH_LOW) * rowHeight;
@@ -37,6 +45,17 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     () => Array.from({ length: PITCH_HIGH - PITCH_LOW }, (_, index) => PITCH_LOW + index).reverse(),
     [],
   );
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' || !clip || selectedNoteIds.length === 0) return;
+      event.preventDefault();
+      for (const noteId of selectedNoteIds) onRemoveNote?.(clip.id, noteId);
+      setSelectedNoteIds([]);
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [clip, onRemoveNote, selectedNoteIds]);
 
   if (!props.clip) {
     return (
@@ -103,7 +122,24 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         preview.note !== note.note ||
         preview.durationTicks !== note.durationTicks
       )
-        props.onUpdateNote?.(props.clip!.id, preview);
+        if (mode === 'move' && selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1) {
+          const tickDelta = preview.startTick - note.startTick;
+          const pitchDelta = preview.note - note.note;
+          props.onUpdateNotes?.(
+            props.clip!.id,
+            props
+              .clip!.notes.filter((candidate) => selectedNoteIds.includes(candidate.id))
+              .map((candidate) => ({
+                noteId: candidate.id,
+                patch: {
+                  startTick: Math.max(0, candidate.startTick + tickDelta),
+                  note: Math.max(0, Math.min(127, candidate.note + pitchDelta)),
+                },
+              })),
+          );
+        } else {
+          props.onUpdateNote?.(props.clip!.id, preview);
+        }
       setDragging(null);
     };
     window.addEventListener('pointermove', move);
@@ -120,13 +156,19 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         <label className={styles.snap}>
           SNAP
           <select value={snap} onChange={(event) => setSnap(event.target.value as SnapGrid)}>
-            {['1/4', '1/8', '1/16', '1/32', 'off'].map((value) => (
+            {['1/4', '1/8', '1/8t', '1/16', '1/16t', '1/32', 'off'].map((value) => (
               <option key={value} value={value}>
                 {value}
               </option>
             ))}
           </select>
         </label>
+        <button onClick={() => setPixelsPerTick((value) => Math.max(0.05, value / 1.25))}>
+          Zoom −
+        </button>
+        <button onClick={() => setPixelsPerTick((value) => Math.min(1, value * 1.25))}>
+          Zoom ＋
+        </button>
         <button
           disabled={!selectedNoteIds.length}
           onClick={() =>
@@ -160,16 +202,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             max="127"
             defaultValue="96"
             disabled={!selectedNoteIds.length}
-            onChange={(event) => {
-              for (const noteId of selectedNoteIds) {
-                const note = props.clip!.notes.find((item) => item.id === noteId);
-                if (note)
-                  props.onUpdateNote?.(props.clip!.id, {
-                    ...note,
-                    velocity: Number(event.target.value),
-                  });
-              }
-            }}
+            onPointerUp={(event) =>
+              props.onUpdateNotes?.(
+                props.clip!.id,
+                selectedNoteIds.map((noteId) => ({
+                  noteId,
+                  patch: { velocity: Number(event.currentTarget.value) },
+                })),
+              )
+            }
           />
         </label>
         <button onClick={props.onClose}>Close</button>
@@ -180,12 +221,53 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         onPointerDown={(event) => {
           if (event.target !== event.currentTarget) return;
           const bounds = event.currentTarget.getBoundingClientRect();
-          const tick = (event.clientX - bounds.left) / pixelsPerTick;
-          const pitch = PITCH_HIGH - Math.floor((event.clientY - bounds.top) / rowHeight);
-          if (pitch >= PITCH_LOW && pitch < PITCH_HIGH)
-            props.onAddNote?.(props.clip!.id, Math.max(0, tick), pitch);
+          const originX = event.clientX;
+          const originY = event.clientY;
+          const move = (pointer: PointerEvent) =>
+            setMarquee({
+              left: Math.min(originX, pointer.clientX) - bounds.left,
+              top: Math.min(originY, pointer.clientY) - bounds.top,
+              width: Math.abs(pointer.clientX - originX),
+              height: Math.abs(pointer.clientY - originY),
+            });
+          const finish = (pointer: PointerEvent) => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', finish);
+            const width = Math.abs(pointer.clientX - originX);
+            const height = Math.abs(pointer.clientY - originY);
+            if (width < 4 && height < 4) {
+              const tick = (originX - bounds.left) / pixelsPerTick;
+              const pitch = PITCH_HIGH - Math.floor((originY - bounds.top) / rowHeight);
+              if (pitch >= PITCH_LOW && pitch < PITCH_HIGH)
+                props.onAddNote?.(props.clip!.id, Math.max(0, tick), pitch);
+            } else {
+              const left = Math.min(originX, pointer.clientX);
+              const right = Math.max(originX, pointer.clientX);
+              const top = Math.min(originY, pointer.clientY);
+              const bottom = Math.max(originY, pointer.clientY);
+              const ids = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-note-id]')]
+                .filter((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return (
+                    rect.right >= left &&
+                    rect.left <= right &&
+                    rect.bottom >= top &&
+                    rect.top <= bottom
+                  );
+                })
+                .map((element) => element.dataset.noteId!)
+                .filter(Boolean);
+              setSelectedNoteIds(
+                event.ctrlKey || event.shiftKey ? [...new Set([...selectedNoteIds, ...ids])] : ids,
+              );
+            }
+            setMarquee(null);
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', finish);
         }}
       >
+        {marquee && <div className={styles.marquee} style={marquee} />}
         {Array.from({ length: Math.ceil(visibleTicks / barTicks) }, (_, bar) => (
           <i
             key={bar}
@@ -229,7 +311,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 onClick={(event) => {
                   event.stopPropagation();
                   setSelectedNoteIds((current) =>
-                    event.ctrlKey
+                    event.ctrlKey || event.shiftKey
                       ? current.includes(note.id)
                         ? current.filter((id) => id !== note.id)
                         : [...current, note.id]

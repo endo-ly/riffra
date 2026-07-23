@@ -16,7 +16,7 @@ import {
   type SnapGrid,
   type TrackSize,
 } from '@/lib/arrange-timeline';
-import { useArrangeEditor } from '@/hooks/arrange/useArrangeEditor';
+import { useArrangeEditor, type ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { useArrangeTransport } from '@/hooks/arrange/useArrangeTransport';
 import { useWaveformAnalyses } from '@/hooks/arrange/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
@@ -24,11 +24,10 @@ import styles from './WorkspaceArrange.module.css';
 interface WorkspaceArrangeProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
-  selectedClipIds: string[];
-  setSelectedClipIds: (ids: string[]) => void;
+  selection: ArrangeSelection;
+  setSelection: (selection: ArrangeSelection) => void;
   api: NativeApi;
   onRecord?: () => void;
-  onRecordAnotherTake?: (recordingSessionId: string) => void;
   recordingActive?: boolean;
 }
 
@@ -54,10 +53,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
-  const [recordingPreview, setRecordingPreview] = useState<{
-    startTick: number;
-    startedAtMs: number;
-  } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
@@ -87,19 +82,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     timebase,
   ]);
   const timelineWidth = timelineTicks * pixelsPerTick;
-  useEffect(() => {
-    if (props.recordingActive && recordingPreview === null) {
-      setRecordingPreview({ startTick: displayTick, startedAtMs: Date.now() });
-    } else if (!props.recordingActive && recordingPreview !== null) {
-      setRecordingPreview(null);
-    }
-  }, [displayTick, props.recordingActive, recordingPreview]);
-  const recordingPreviewTicks = recordingPreview
-    ? Math.max(
-        1,
-        ((Date.now() - recordingPreview.startedAtMs) / 60_000) * timebase.bpm * timebase.ppq,
-      )
-    : 0;
   const editor = useArrangeEditor({
     ...props,
     tool,
@@ -108,6 +90,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     displayTick,
     analyses,
   });
+  const playbackOutOfSync =
+    editor.runtimeOutOfSync ||
+    Boolean(
+      transport &&
+      (transport.revision !== arrangement.revision ||
+        (transport.unavailableClipIds?.length ?? 0) > 0 ||
+        (transport.missingDeviceIds?.length ?? 0) > 0),
+    );
+  const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
 
   const applyZoom = (next: number, clientX?: number) => {
     const bounded = Math.min(4, Math.max(0.35, next));
@@ -287,7 +278,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const next = await editor.commit(props.api.removeTrack(trackId), `${name} deleted.`);
     if (next) {
       const remaining = new Set(next.arrangement.audioClips.map((clip) => clip.id));
-      props.setSelectedClipIds(props.selectedClipIds.filter((id) => remaining.has(id)));
+      const clipIds = selectedClipIds.filter((id) => remaining.has(id));
+      props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
     }
   };
 
@@ -398,15 +390,24 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             }}
             onSelectMarker={setSelectedMarkerId}
           />
-          {recordingPreview && (
+          {transport && transport.recordingPhase !== 'idle' && (
             <div
               className={styles.recordingPreview}
               style={{
-                left: TRACK_HEADER_WIDTH + recordingPreview.startTick * pixelsPerTick,
-                width: recordingPreviewTicks * pixelsPerTick,
+                left: TRACK_HEADER_WIDTH + transport.recordingStartTick * pixelsPerTick,
+                width:
+                  Math.max(1, transport.recordingCurrentTick - transport.recordingStartTick) *
+                  pixelsPerTick,
               }}
             >
-              RECORDING
+              {transport.recordingPhase.toUpperCase()} ·{' '}
+              {transport.armedTrackIds
+                .map(
+                  (trackId) =>
+                    arrangement.tracks.find((track) => track.id === trackId)?.name ?? trackId,
+                )
+                .join(' · ')}{' '}
+              · PASS {transport.recordingPassOrdinal}
             </div>
           )}
           <div
@@ -470,7 +471,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 midiClips={arrangement.midiClips.filter((clip) => clip.trackId === track.id)}
                 session={props.session}
                 analyses={analyses}
-                selectedClipIds={props.selectedClipIds}
+                selectedClipIds={selectedClipIds}
+                selected={props.selection.kind === 'track' && props.selection.trackId === track.id}
+                onSelectTrack={() => props.setSelection({ kind: 'track', trackId: track.id })}
                 timelineWidth={timelineWidth}
                 timelineTicks={timelineTicks}
                 pixelsPerTick={pixelsPerTick}
@@ -522,7 +525,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
 
       <div className={styles.statusToast} role="status">
         <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
-        {editor.message}
+        {playbackOutOfSync ? 'Playback runtime is out of sync' : editor.message}
+        {playbackOutOfSync && <button onClick={() => void editor.retryRuntimeSync()}>Retry</button>}
         <small>REV {arrangement.revision}</small>
       </div>
 
@@ -553,107 +557,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         </div>
       )}
 
-      {arrangement.recordingSessions.length > 0 && (
-        <div className={styles.selectionActions} aria-label="Recording takes">
-          <span>TAKES</span>
-          {arrangement.recordingSessions.flatMap((recordingSession) => [
-            <span key={`${recordingSession.id}:actions`}>
-              {recordingSession.loopRecording ? 'LOOP SESSION' : 'RECORDING SESSION'}
-              {props.onRecordAnotherTake && (
-                <button onClick={() => props.onRecordAnotherTake?.(recordingSession.id)}>
-                  Record Another Take
-                </button>
-              )}
-            </span>,
-            ...recordingSession.takeIds
-              .map((takeId) => arrangement.takes.find((take) => take.id === takeId))
-              .filter((take): take is NonNullable<typeof take> => Boolean(take))
-              .map((take) => (
-                <span key={take.id}>
-                  {take.id} {take.active ? '· ACTIVE' : ''}
-                  {(take.rawAudioAssetId || take.processedAudioAssetId) && (
-                    <button
-                      onClick={() => {
-                        const assetId =
-                          take.activeVariant === 'raw'
-                            ? (take.rawAudioAssetId ?? take.processedAudioAssetId)
-                            : (take.processedAudioAssetId ?? take.rawAudioAssetId);
-                        if (assetId) void props.api.previewAsset(assetId, { looped: false });
-                      }}
-                    >
-                      Preview
-                    </button>
-                  )}
-                  {take.rawAudioAssetId && take.processedAudioAssetId && (
-                    <button
-                      onClick={() =>
-                        void Promise.all([
-                          props.api.previewAsset(take.rawAudioAssetId!, {
-                            looped: false,
-                            voiceKey: 1,
-                          }),
-                          props.api.previewAsset(take.processedAudioAssetId!, {
-                            looped: false,
-                            voiceKey: 2,
-                          }),
-                        ])
-                      }
-                    >
-                      Compare
-                    </button>
-                  )}
-                  {take.clipId && (
-                    <button
-                      onClick={() =>
-                        void editor.commit(
-                          props.api.placeTakeAsSeparateClip(take.id),
-                          'Take placed as a separate clip.',
-                        )
-                      }
-                    >
-                      Place
-                    </button>
-                  )}
-                  <button
-                    onClick={() =>
-                      void editor.commit(
-                        props.api.activateTake(recordingSession.id, take.id),
-                        'Take activated.',
-                      )
-                    }
-                  >
-                    Activate
-                  </button>
-                  {take.rawAudioAssetId && (
-                    <button
-                      onClick={() =>
-                        void editor.commit(
-                          props.api.setTakeVariant(take.id, 'raw'),
-                          'Raw variant selected.',
-                        )
-                      }
-                    >
-                      Raw
-                    </button>
-                  )}
-                  {take.processedAudioAssetId && (
-                    <button
-                      onClick={() =>
-                        void editor.commit(
-                          props.api.setTakeVariant(take.id, 'processed'),
-                          'Processed variant selected.',
-                        )
-                      }
-                    >
-                      Processed
-                    </button>
-                  )}
-                </span>
-              )),
-          ])}
-        </div>
-      )}
-
       {midiEditorOpen && (
         <MidiEditorPanel
           clip={arrangement.midiClips.find((clip) => clip.id === activeMidiClipId) ?? null}
@@ -677,6 +580,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 velocity: note.velocity,
               }),
               'Note updated.',
+            )
+          }
+          onUpdateNotes={(clipId, updates) =>
+            void editor.commit(
+              props.api.updateMidiNotes(
+                clipId,
+                updates.map((update) => ({
+                  noteId: update.noteId,
+                  patch: {
+                    note: update.patch.note,
+                    startTick: update.patch.startTick,
+                    durationTicks: update.patch.durationTicks,
+                    velocity: update.patch.velocity,
+                  },
+                })),
+              ),
+              'MIDI notes updated.',
             )
           }
           onRemoveNote={(clipId, noteId) =>

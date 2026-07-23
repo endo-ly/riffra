@@ -16,10 +16,10 @@ export function MidiDevices({ probe, onRefresh }: { probe: MidiProbe; onRefresh:
         <div>
           <span className="eyebrow">INPUTS</span>
           {probe.inputs.length ? (
-            probe.inputs.map((name) => (
-              <div className="midi-port" key={`in:${name}`}>
+            probe.inputs.map((device) => (
+              <div className="midi-port" key={device.id}>
                 <i className="midi-led" />
-                <strong>{name}</strong>
+                <strong>{device.name}</strong>
               </div>
             ))
           ) : (
@@ -29,10 +29,10 @@ export function MidiDevices({ probe, onRefresh }: { probe: MidiProbe; onRefresh:
         <div>
           <span className="eyebrow">OUTPUTS</span>
           {probe.outputs.length ? (
-            probe.outputs.map((name) => (
-              <div className="midi-port" key={`out:${name}`}>
+            probe.outputs.map((device) => (
+              <div className="midi-port" key={device.id}>
                 <i className="midi-led output" />
-                <strong>{name}</strong>
+                <strong>{device.name}</strong>
               </div>
             ))
           ) : (

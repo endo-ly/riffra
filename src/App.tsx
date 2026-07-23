@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
+import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { workspaces } from '@/constants';
 import { isOutputMuted } from '@/lib/audio-safety';
 import {
@@ -29,7 +30,7 @@ import {
 import styles from './App.module.css';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
-  const [arrangeSelection, setArrangeSelection] = useState<string[]>([]);
+  const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const {
     boot,
     session,
@@ -128,7 +129,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     playTransport,
     stopTransport,
     goToStart,
-    startRecordingNow,
     toggleRecording,
     api: nativeApi,
   } = useApp(api);
@@ -278,11 +278,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           <WorkspaceArrange
             session={session}
             setSession={setSession}
-            selectedClipIds={arrangeSelection}
-            setSelectedClipIds={setArrangeSelection}
+            selection={arrangeSelection}
+            setSelection={setArrangeSelection}
             api={nativeApi}
             onRecord={() => void toggleRecording()}
-            onRecordAnotherTake={(recordingSessionId) => void startRecordingNow(recordingSessionId)}
             recordingActive={audio.recording.active}
           />
         )}

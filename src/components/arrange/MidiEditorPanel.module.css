@@ -61,8 +61,16 @@
 }
 .lane {
   position: relative;
+  max-width: 100%;
   overflow: auto;
   background: #090c10;
+}
+.marquee {
+  position: absolute;
+  z-index: 4;
+  border: 1px solid #5fd2c4;
+  background: rgba(95, 210, 196, 0.14);
+  pointer-events: none;
 }
 .pitchRow {
   position: absolute;

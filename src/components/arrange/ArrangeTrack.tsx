@@ -19,6 +19,7 @@ interface ArrangeTrackProps {
   session: CreativeSession;
   analyses: Record<string, AudioAnalysis | null>;
   selectedClipIds: string[];
+  selected: boolean;
   timelineWidth: number;
   timelineTicks: number;
   pixelsPerTick: number;
@@ -37,6 +38,7 @@ interface ArrangeTrackProps {
     side: 'left' | 'right',
   ) => void;
   onSelect: (clipId: string) => void;
+  onSelectTrack: () => void;
   onTrim: (
     event: React.PointerEvent<HTMLSpanElement>,
     clip: AudioClip,
@@ -79,11 +81,17 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       style={{ '--track-height': `${laneCount * laneHeight}px` } as CSSProperties}
       data-arrange-track
       data-track-id={props.track.id}
+      data-selected={props.selected || undefined}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => props.onDrop(event, props.track.id)}
     >
       <aside
         className={styles.trackHeader}
+        onClick={(event) => {
+          if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
+            props.onSelectTrack();
+          }
+        }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes('application/x-riffra-track')) {
             event.preventDefault();
@@ -201,17 +209,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               }}
             >
               Duplicate
-            </button>
-            <button
-              onClick={(event) => {
-                void props.onCommit(
-                  props.api.updateTrack(props.track.id, { rack: props.session.rack }),
-                  `${props.track.name} rack applied.`,
-                );
-                event.currentTarget.closest('details')?.removeAttribute('open');
-              }}
-            >
-              Apply current rack
             </button>
             <button
               onClick={(event) => {

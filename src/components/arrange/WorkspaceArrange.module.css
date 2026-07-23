@@ -420,6 +420,11 @@
   border-bottom: 1px solid #212932;
 }
 
+.trackRow[data-selected='true'] .trackHeader {
+  box-shadow: inset 3px 0 0 var(--accent, #f2a33a);
+  background: color-mix(in srgb, var(--surface-raised) 88%, var(--accent, #f2a33a));
+}
+
 .trackHeader {
   position: sticky;
   z-index: 5;

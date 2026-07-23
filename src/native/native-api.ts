@@ -28,8 +28,8 @@ import type {
   DesignTool,
   SessionAudioPair,
   MonitoringState,
+  MidiInputRoute,
   AudioTakeVariant,
-  RackInstance,
   TrackKind,
   Workspace,
   TransportStatus,
@@ -133,8 +133,10 @@ export interface NativeApi {
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   startRecording(): Promise<AudioStatus>;
+  startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
   stopRecording(): Promise<AudioStatus>;
+  stopArrangeRecording(): Promise<AudioStatus>;
   /**
    * Sets the master gain on the Audio Runtime and persists the clamped value
    * into the canonical session settings. One Rust Application Operation
@@ -227,9 +229,27 @@ export interface NativeApi {
       solo?: boolean;
       armed?: boolean;
       monitoring?: MonitoringState;
-      rack?: RackInstance;
     },
   ): Promise<CreativeSession>;
+  setTrackAudioInput(trackId: string, channelIndex: number | null): Promise<CreativeSession>;
+  setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<CreativeSession>;
+  setTrackInstrument(trackId: string, pluginPath: string): Promise<CreativeSession>;
+  clearTrackInstrument(trackId: string): Promise<CreativeSession>;
+  addTrackEffect(trackId: string, pluginPath: string): Promise<CreativeSession>;
+  removeTrackEffect(trackId: string, deviceId: string): Promise<CreativeSession>;
+  reorderTrackEffects(trackId: string, orderedDeviceIds: string[]): Promise<CreativeSession>;
+  setTrackDeviceBypassed(
+    trackId: string,
+    deviceId: string,
+    bypassed: boolean,
+  ): Promise<CreativeSession>;
+  setTrackDeviceParameter(
+    trackId: string,
+    deviceId: string,
+    parameterIndex: number,
+    value: number,
+  ): Promise<CreativeSession>;
+  openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
   removeTrack(trackId: string): Promise<CreativeSession>;
   duplicateTrack(trackId: string): Promise<CreativeSession>;
   reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
@@ -249,6 +269,13 @@ export interface NativeApi {
     noteId: string,
     patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
   ): Promise<CreativeSession>;
+  updateMidiNotes(
+    clipId: string,
+    updates: {
+      noteId: string;
+      patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
+    }[],
+  ): Promise<CreativeSession>;
   removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
   quantizeMidiNotes(clipId: string, noteIds: string[], gridTicks: number): Promise<CreativeSession>;
   duplicateMidiNotes(
@@ -257,6 +284,9 @@ export interface NativeApi {
     offsetTicks: number,
   ): Promise<CreativeSession>;
   setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession>;
+  startTakeComparison(takeId: string): Promise<AudioStatus>;
+  switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus>;
+  stopTakeComparison(): Promise<AudioStatus>;
   activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
   placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
   syncArrangementRuntime(): Promise<void>;

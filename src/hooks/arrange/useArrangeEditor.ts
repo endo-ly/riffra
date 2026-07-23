@@ -12,11 +12,14 @@ import { useClipInteractions } from './useClipInteractions';
 
 const ASSET_MIME = 'application/x-riffra-asset';
 
+export type ArrangeSelection =
+  { kind: 'none' } | { kind: 'track'; trackId: string } | { kind: 'clips'; clipIds: string[] };
+
 interface UseArrangeEditorOptions {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
-  selectedClipIds: string[];
-  setSelectedClipIds: (ids: string[]) => void;
+  selection: ArrangeSelection;
+  setSelection: (selection: ArrangeSelection) => void;
   api: NativeApi;
   tool: ArrangeTool;
   snap: SnapGrid;
@@ -29,8 +32,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   const {
     session,
     setSession,
-    selectedClipIds,
-    setSelectedClipIds,
+    selection,
+    setSelection,
     api,
     tool,
     snap,
@@ -38,6 +41,15 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     displayTick,
     analyses,
   } = options;
+  const selectedClipIds = useMemo(
+    () => (selection.kind === 'clips' ? selection.clipIds : []),
+    [selection],
+  );
+  const setSelectedClipIds = useCallback(
+    (ids: string[]) =>
+      setSelection(ids.length ? { kind: 'clips', clipIds: ids } : { kind: 'none' }),
+    [setSelection],
+  );
   const { arrangement } = session;
   const { timebase } = arrangement;
   const [message, setMessage] = useState(
@@ -45,6 +57,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       ? 'Click a waveform Clip to select it · Drag to move · Drag an edge to trim.'
       : 'Arrange ready.',
   );
+  const [runtimeOutOfSync, setRuntimeOutOfSync] = useState(false);
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -61,15 +74,28 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       try {
         const next = await operation;
         if (next) setSession(next);
+        if (next) setRuntimeOutOfSync(false);
         setMessage(next ? success : 'The edit was not applied.');
         return next;
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : String(error));
+        const detail = error instanceof Error ? error.message : String(error);
+        setMessage(detail);
+        if (detail.includes('Playback runtime is out of sync')) setRuntimeOutOfSync(true);
         return null;
       }
     },
     [setSession],
   );
+  const retryRuntimeSync = useCallback(async () => {
+    try {
+      await api.syncArrangementRuntime();
+      setRuntimeOutOfSync(false);
+      setMessage('Playback runtime synchronized.');
+    } catch (error) {
+      setRuntimeOutOfSync(true);
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [api]);
 
   const edgeTicks = useMemo(
     () => [
@@ -326,6 +352,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
 
   return {
     message,
+    runtimeOutOfSync,
+    retryRuntimeSync,
     snapGuide,
     marquee,
     commit,

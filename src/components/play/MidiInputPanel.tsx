@@ -59,7 +59,7 @@ export function MidiInputPanel({
     const externalDevices = audio.midiInputs ?? [];
     const externalListening = audio.midiInputActive && externalDevices.length > 0;
     const parts: string[] = ['Computer Keyboard'];
-    if (externalListening) parts.push(...externalDevices);
+    if (externalListening) parts.push(...externalDevices.map((device) => device.name));
     return parts.join(' · ');
   }, [audio.midiInputs, audio.midiInputActive]);
 

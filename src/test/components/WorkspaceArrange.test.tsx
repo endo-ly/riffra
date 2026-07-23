@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceArrange } from '@/components';
 import { defaultSession, toAssetId, type CreativeSession } from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
+import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 
 afterEach(cleanup);
 
@@ -14,13 +15,13 @@ function Harness({ api }: { api: FakeNativeApi }) {
   const initial = defaultSession();
   initial.workspace = 'arrange';
   const [session, setSession] = useState<CreativeSession>(initial);
-  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
+  const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   return (
     <WorkspaceArrange
       session={session}
       setSession={setSession}
-      selectedClipIds={selectedClipIds}
-      setSelectedClipIds={setSelectedClipIds}
+      selection={selection}
+      setSelection={setSelection}
       api={api}
     />
   );

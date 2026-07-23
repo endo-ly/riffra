@@ -134,7 +134,9 @@ export function WorkspacePlay({
               />
             </div>
             <h3>
-              {audio.midiInputs.length > 0 ? audio.midiInputs.join(' · ') : 'Computer Keyboard'}
+              {audio.midiInputs.length > 0
+                ? audio.midiInputs.map((device) => device.name).join(' · ')
+                : 'Computer Keyboard'}
             </h3>
             <small>{heldNoteSummary ?? 'Awaiting input'}</small>
           </article>

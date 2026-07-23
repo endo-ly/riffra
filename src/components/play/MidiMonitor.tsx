@@ -24,10 +24,10 @@ export function MidiMonitor({
         <p className="inspector-copy">No MIDI input port is visible to Windows.</p>
       ) : (
         <ul className="midi-monitor-list">
-          {probe.inputs.map((name) => (
-            <li key={name}>
+          {probe.inputs.map((device) => (
+            <li key={device.id}>
               <i className={`midi-led${audio.midiInputActive ? '' : ' idle'}`} />
-              <strong>{name}</strong>
+              <strong>{device.name}</strong>
             </li>
           ))}
         </ul>

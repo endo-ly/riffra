@@ -12,6 +12,7 @@ export type {
   AudioClip,
   AudioClipMove,
   AudioClipPatch,
+  AudioInputRoute,
   AudioDevicePairing,
   AudioDeviceProbe,
   AudioDriverConfig,
@@ -34,6 +35,8 @@ export type {
   MidiClip,
   MidiClipMove,
   MidiClipPatch,
+  MidiDeviceInfo,
+  MidiInputRoute,
   MidiEvent,
   MidiEventKind,
   MidiNote,
@@ -98,8 +101,15 @@ export interface TransportStatus {
   audioClockSample: number;
   sampleRate: number;
   sequence: number;
+  recordingPhase: 'idle' | 'countingIn' | 'recording' | 'stopping';
+  recordingStartTick: number;
+  recordingCurrentTick: number;
+  recordingPassOrdinal: number;
+  armedTrackIds: string[];
   clockGeneration: number;
   discontinuity: number;
+  unavailableClipIds: string[];
+  missingDeviceIds: string[];
 }
 
 export type AnalysisJobStatus = Extract<BackgroundJobStatus, { kind: 'analysis' }>;
@@ -180,6 +190,7 @@ export const defaultSession = (): CreativeSession => ({
     midiClips: [],
     markers: [],
     recordingSessions: [],
+    recordingPasses: [],
     takes: [],
   },
   rack: {

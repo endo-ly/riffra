@@ -31,10 +31,13 @@ import type {
   SeparationJobStatus,
   SeparationResult,
   RackInstance,
+  RackDevice,
   DesignTool,
   SessionAudioPair,
   MonitoringState,
+  MidiInputRoute,
   TrackKind,
+  Track,
   Workspace,
   TransportStatus,
 } from '@/lib/domain';
@@ -422,8 +425,8 @@ export class FakeNativeApi implements NativeApi {
   probeMidiDevices = async (): Promise<MidiProbe> => {
     this.calls.push('probeMidiDevices');
     return {
-      inputs: ['Fake MIDI In'],
-      outputs: ['Fake MIDI Out'],
+      inputs: [{ id: 'fake-midi-in', name: 'Fake MIDI In' }],
+      outputs: [{ id: 'fake-midi-out', name: 'Fake MIDI Out' }],
       refreshedAtMs: 1,
       message: 'Fake MIDI probe complete.',
     };
@@ -876,6 +879,9 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
+  startArrangeRecording = async (_recordingSessionId?: string): Promise<AudioStatus> =>
+    this.startRecording();
+
   recordAnotherTake = async (recordingSessionId: string): Promise<AudioStatus> => {
     this.calls.push('recordAnotherTake');
     if (
@@ -940,6 +946,8 @@ export class FakeNativeApi implements NativeApi {
     ];
     return this.audio;
   };
+
+  stopArrangeRecording = async (): Promise<AudioStatus> => this.stopRecording();
 
   setMasterGainDb = async (gainDb: number): Promise<SessionAudioPair> => {
     this.calls.push('setMasterGainDb');
@@ -1238,6 +1246,7 @@ export class FakeNativeApi implements NativeApi {
             solo: false,
             armed: false,
             monitoring: 'off' as const,
+            midiInput: {},
             rack: { devices: [], macros: [] },
           },
         ];
@@ -1280,6 +1289,7 @@ export class FakeNativeApi implements NativeApi {
             fadeOut: { frames: 0, sampleRate: 48_000 },
             loopEnabled: false,
             muted: false,
+            takeVariant: 'raw' as const,
           },
         ],
       },
@@ -1314,6 +1324,7 @@ export class FakeNativeApi implements NativeApi {
               solo: false,
               armed: false,
               monitoring: 'off' as const,
+              midiInput: {},
               rack: { devices: [], macros: [] },
             },
           ];
@@ -1397,6 +1408,8 @@ export class FakeNativeApi implements NativeApi {
       fadeOut: patch.fadeOut ?? current.fadeOut,
       loopEnabled: patch.loopEnabled ?? current.loopEnabled,
       muted: patch.muted ?? current.muted,
+      recordingTakeId: current.recordingTakeId,
+      takeVariant: current.takeVariant,
     };
     const next = clips.slice();
     next.splice(index, 1, replacement);
@@ -1907,11 +1920,145 @@ export class FakeNativeApi implements NativeApi {
             solo: false,
             armed: false,
             monitoring: 'off' as const,
+            midiInput: {},
             rack: { devices: [], macros: [] },
           },
         ],
       },
     }));
+  };
+
+  private updateTrackFields(trackId: string, transform: (track: Track) => Track): CreativeSession {
+    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
+      throw new Error(`Track is not registered: ${trackId}`);
+    }
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        tracks: current.arrangement.tracks.map((track) =>
+          track.id === trackId ? transform(track) : track,
+        ),
+      },
+    }));
+  }
+
+  private updateTrackDevice(
+    trackId: string,
+    deviceId: string,
+    transform: (device: RackDevice) => RackDevice,
+  ): CreativeSession {
+    return this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      instrument:
+        track.instrument?.id === deviceId ? transform(track.instrument) : track.instrument,
+      rack: {
+        ...track.rack,
+        devices: track.rack.devices.map((device) =>
+          device.id === deviceId ? transform(device) : device,
+        ),
+      },
+    }));
+  }
+
+  setTrackAudioInput = async (
+    trackId: string,
+    channelIndex: number | null,
+  ): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      audioInput: channelIndex === null ? undefined : { channelIndex },
+    }));
+
+  setTrackMidiInput = async (trackId: string, route: MidiInputRoute): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({ ...track, midiInput: route }));
+
+  setTrackInstrument = async (trackId: string, pluginPath: string): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      instrument: {
+        id: track.instrument?.id ?? `device:instrument:${Date.now()}`,
+        name: pluginPath.split(/[\\/]/).pop() ?? 'Instrument',
+        kind: 'plugin',
+        path: pluginPath,
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        disabledPlaceholder: false,
+      },
+    }));
+
+  clearTrackInstrument = async (trackId: string): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({ ...track, instrument: undefined }));
+
+  addTrackEffect = async (trackId: string, pluginPath: string): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      rack: {
+        ...track.rack,
+        devices: [
+          ...track.rack.devices,
+          {
+            id: `device:effect:${Date.now()}`,
+            name: pluginPath.split(/[\\/]/).pop() ?? 'Effect',
+            kind: 'plugin',
+            path: pluginPath,
+            bypassed: false,
+            gainDb: 0,
+            parameterValues: [],
+            disabledPlaceholder: false,
+          },
+        ],
+      },
+    }));
+
+  removeTrackEffect = async (trackId: string, deviceId: string): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      rack: {
+        ...track.rack,
+        devices: track.rack.devices.filter((device) => device.id !== deviceId),
+      },
+    }));
+
+  reorderTrackEffects = async (
+    trackId: string,
+    orderedDeviceIds: string[],
+  ): Promise<CreativeSession> =>
+    this.updateTrackFields(trackId, (track) => ({
+      ...track,
+      rack: {
+        ...track.rack,
+        devices: orderedDeviceIds.map((id) =>
+          track.rack.devices.find((device) => device.id === id)!,
+        ),
+      },
+    }));
+
+  setTrackDeviceBypassed = async (
+    trackId: string,
+    deviceId: string,
+    bypassed: boolean,
+  ): Promise<CreativeSession> =>
+    this.updateTrackDevice(trackId, deviceId, (device) => ({ ...device, bypassed }));
+
+  setTrackDeviceParameter = async (
+    trackId: string,
+    deviceId: string,
+    parameterIndex: number,
+    value: number,
+  ): Promise<CreativeSession> =>
+    this.updateTrackDevice(trackId, deviceId, (device) => {
+      const parameterValues = [...device.parameterValues];
+      while (parameterValues.length <= parameterIndex) parameterValues.push(0);
+      parameterValues[parameterIndex] = Math.max(0, Math.min(1, value));
+      return { ...device, parameterValues };
+    });
+
+  openTrackPluginEditor = async (_trackId: string, _deviceId: string): Promise<void> => {
+    this.calls.push('openTrackPluginEditor');
   };
 
   updateTrack = async (
@@ -2193,6 +2340,43 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
+  updateMidiNotes = async (
+    clipId: string,
+    updates: {
+      noteId: string;
+      patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
+    }[],
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateMidiNotes');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: clip.notes.map((note) => {
+                  const patch = updates.find((update) => update.noteId === note.id)?.patch;
+                  return patch
+                    ? {
+                        ...note,
+                        note: patch.note ?? note.note,
+                        startTick: patch.startTick ?? note.startTick,
+                        durationTicks: patch.durationTicks ?? note.durationTicks,
+                        velocity: patch.velocity ?? note.velocity,
+                      }
+                    : note;
+                }),
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
   removeMidiNote = async (clipId: string, noteId: string): Promise<CreativeSession> => {
     this.calls.push('removeMidiNote');
     return this.commitSession((current) => ({
@@ -2291,40 +2475,67 @@ export class FakeNativeApi implements NativeApi {
         arrangement: {
           ...current.arrangement,
           revision: current.arrangement.revision + 1,
-          takes: current.arrangement.takes.map((item) =>
-            item.id === takeId ? { ...item, activeVariant: variant } : item,
-          ),
           audioClips: current.arrangement.audioClips.map((clip) =>
-            clip.id === take.clipId ? { ...clip, assetId } : clip,
+            clip.recordingTakeId === take.id ? { ...clip, assetId, takeVariant: variant } : clip,
           ),
         },
       };
     });
   };
 
+  startTakeComparison = async (_takeId: string): Promise<AudioStatus> => {
+    this.calls.push('startTakeComparison');
+    return this.audio;
+  };
+
+  switchTakeComparisonVariant = async (_variant: AudioTakeVariant): Promise<AudioStatus> => {
+    this.calls.push('switchTakeComparisonVariant');
+    return this.audio;
+  };
+
+  stopTakeComparison = async (): Promise<AudioStatus> => {
+    this.calls.push('stopTakeComparison');
+    return this.audio;
+  };
+
   activateTake = async (sessionId: string, takeId: string): Promise<CreativeSession> => {
     this.calls.push('activateTake');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        takes: current.arrangement.takes.map((take) =>
-          take.sessionId === sessionId ? { ...take, active: take.id === takeId } : take,
-        ),
-      },
-    }));
+    return this.commitSession((current) => {
+      const take = current.arrangement.takes.find(
+        (candidate) => candidate.sessionId === sessionId && candidate.id === takeId,
+      );
+      if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          recordingSessions: current.arrangement.recordingSessions.map((recording) => ({
+            ...recording,
+            trackSlots: recording.trackSlots.map((slot) =>
+              recording.id === sessionId && slot.trackId === take.trackId
+                ? { ...slot, activeTakeId: takeId }
+                : slot,
+            ),
+          })),
+        },
+      };
+    });
   };
 
   placeTakeAsSeparateClip = async (takeId: string): Promise<CreativeSession> => {
     this.calls.push('placeTakeAsSeparateClip');
     const take = this.bootstrapState.session.arrangement.takes.find((item) => item.id === takeId);
-    if (!take?.clipId) throw new Error(`Recording Take has no Timeline Clip: ${takeId}`);
+    if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
     return this.commitSession((current) => {
       const newClipId = `fake-take-place-${Date.now()}`;
-      const audioClip = current.arrangement.audioClips.find((clip) => clip.id === take.clipId);
-      const midiClip = current.arrangement.midiClips.find((clip) => clip.id === take.clipId);
+      const audioClip = current.arrangement.audioClips.find(
+        (clip) => clip.recordingTakeId === take.id,
+      );
+      const midiClip = current.arrangement.midiClips.find(
+        (clip) => clip.recordingTakeId === take.id,
+      );
       if (audioClip) {
         return {
           ...current,
@@ -2353,7 +2564,7 @@ export class FakeNativeApi implements NativeApi {
           },
         };
       }
-      throw new Error(`Recording Take Clip is not found: ${take.clipId}`);
+      throw new Error(`Recording Take has no Timeline Clip: ${takeId}`);
     });
   };
 

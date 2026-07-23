@@ -36,6 +36,7 @@ import type {
   AudioTakeVariant,
   MidiClipMove,
   MidiClipPatch,
+  MidiInputRoute,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
@@ -354,6 +355,12 @@ async function startRecording(): Promise<AudioStatus> {
   }
 }
 
+async function startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('start_arrange_recording', {
+    recordingSessionId: recordingSessionId ?? null,
+  });
+}
+
 async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('record_another_take', { recordingSessionId });
@@ -368,6 +375,10 @@ async function stopRecording(): Promise<AudioStatus> {
   } catch (error) {
     return await audioCommandError('Stop recording', error);
   }
+}
+
+async function stopArrangeRecording(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('stop_arrange_recording');
 }
 
 async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
@@ -596,6 +607,70 @@ async function updateTrack(
   return await invoke<CreativeSession>('update_track', { trackId, patch });
 }
 
+async function setTrackAudioInput(
+  trackId: string,
+  channelIndex: number | null,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_audio_input', { trackId, channelIndex });
+}
+
+async function setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_midi_input', { trackId, route });
+}
+
+async function setTrackInstrument(trackId: string, pluginPath: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_instrument', { trackId, pluginPath });
+}
+
+async function clearTrackInstrument(trackId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('clear_track_instrument', { trackId });
+}
+
+async function addTrackEffect(trackId: string, pluginPath: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('add_track_effect', { trackId, pluginPath });
+}
+
+async function removeTrackEffect(trackId: string, deviceId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_track_effect', { trackId, deviceId });
+}
+
+async function reorderTrackEffects(
+  trackId: string,
+  orderedDeviceIds: string[],
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('reorder_track_effects', { trackId, orderedDeviceIds });
+}
+
+async function setTrackDeviceBypassed(
+  trackId: string,
+  deviceId: string,
+  bypassed: boolean,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_device_bypassed', {
+    trackId,
+    deviceId,
+    bypassed,
+  });
+}
+
+async function setTrackDeviceParameter(
+  trackId: string,
+  deviceId: string,
+  parameterIndex: number,
+  value: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_device_parameter', {
+    trackId,
+    deviceId,
+    parameterIndex,
+    value,
+  });
+}
+
+async function openTrackPluginEditor(trackId: string, deviceId: string): Promise<void> {
+  await invoke<void>('open_track_plugin_editor', { trackId, deviceId });
+}
+
 async function removeTrack(trackId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('remove_track', { trackId });
 }
@@ -649,6 +724,16 @@ async function updateMidiNote(
   return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
 }
 
+async function updateMidiNotes(
+  clipId: string,
+  updates: {
+    noteId: string;
+    patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
+  }[],
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_midi_notes', { clipId, updates });
+}
+
 async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
 }
@@ -675,6 +760,18 @@ async function duplicateMidiNotes(
 
 async function setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession> {
   return await invoke<CreativeSession>('set_take_variant', { takeId, variant });
+}
+
+async function startTakeComparison(takeId: string): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('start_take_comparison', { takeId });
+}
+
+async function switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('switch_take_comparison_variant', { variant });
+}
+
+async function stopTakeComparison(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('stop_take_comparison');
 }
 
 async function activateTake(sessionId: string, takeId: string): Promise<CreativeSession> {
@@ -812,8 +909,10 @@ function createNativeApi(): NativeApi {
     getAudioStatus,
     setEmergencyMute,
     startRecording,
+    startArrangeRecording,
     recordAnotherTake,
     stopRecording,
+    stopArrangeRecording,
     setMasterGainDb,
     previewMasterGainDb,
     recoverAudioDevice,
@@ -844,6 +943,16 @@ function createNativeApi(): NativeApi {
     crossfadeAudioClips,
     addTrack,
     updateTrack,
+    setTrackAudioInput,
+    setTrackMidiInput,
+    setTrackInstrument,
+    clearTrackInstrument,
+    addTrackEffect,
+    removeTrackEffect,
+    reorderTrackEffects,
+    setTrackDeviceBypassed,
+    setTrackDeviceParameter,
+    openTrackPluginEditor,
     removeTrack,
     duplicateTrack,
     reorderTrack,
@@ -852,10 +961,14 @@ function createNativeApi(): NativeApi {
     removeMarker,
     addMidiNote,
     updateMidiNote,
+    updateMidiNotes,
     removeMidiNote,
     quantizeMidiNotes,
     duplicateMidiNotes,
     setTakeVariant,
+    startTakeComparison,
+    switchTakeComparisonVariant,
+    stopTakeComparison,
     activateTake,
     placeTakeAsSeparateClip,
     syncArrangementRuntime,

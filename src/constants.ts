@@ -8,6 +8,3 @@ export const workspaces: { id: Workspace; label: string; key: string }[] = [
 ];
 
 export const librarySections = ['Plugins', 'Racks', 'Recordings'];
-
-const DEFAULT_TEMPO_BPM = 120;
-export const COUNT_IN_BEAT_MS = 60_000 / DEFAULT_TEMPO_BPM;
