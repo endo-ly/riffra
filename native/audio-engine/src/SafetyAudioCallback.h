@@ -30,7 +30,10 @@ public:
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept;
     [[nodiscard]] bool isFeedbackSuspected() const noexcept;
     [[nodiscard]] double getSampleRate() const noexcept;
-    bool startRecording(const juce::File& directory, juce::String& error);
+    bool startRecording(
+        const juce::File& directory,
+        juce::String& error,
+        bool allowNoInput = false);
     bool stopRecording(juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
@@ -67,7 +70,9 @@ private:
         int numInputChannels,
         const float* const* outputChannelData,
         int numOutputChannels,
-        int numSamples) noexcept;
+        int numSamples,
+        int sampleOffset = 0,
+        int capturedSamples = -1) noexcept;
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
@@ -81,7 +86,9 @@ private:
         int numSamples,
         const float* const* inputChannelData,
         int numInputChannels,
-        float rawInputPeak) noexcept;
+        float rawInputPeak,
+        int sampleOffset = 0,
+        int capturedSamples = -1) noexcept;
 
     /// Sine lookup table size. Power-of-two keeps the index wrap cheap; the
     /// stored table has one extra element duplicating index 0 so linear

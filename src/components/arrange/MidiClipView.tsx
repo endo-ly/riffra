@@ -8,6 +8,12 @@ interface MidiClipViewProps {
   laneHeight: number;
   selected: boolean;
   onSelect: (clipId: string, append?: boolean) => void;
+  onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: MidiClip) => void;
+  onTrim: (
+    event: React.PointerEvent<HTMLSpanElement>,
+    clip: MidiClip,
+    side: 'left' | 'right',
+  ) => void;
   onOpenEditor?: (clip: MidiClip) => void;
 }
 
@@ -46,6 +52,7 @@ export function MidiClipView(props: MidiClipViewProps) {
           props.onSelect(clip.id);
         }
       }}
+      onPointerDown={(event) => props.onMove(event, clip)}
       onDoubleClick={() => props.onOpenEditor?.(clip)}
       title={`${clip.name} · ${clip.notes.length} notes · double-click to open MIDI editor`}
     >
@@ -70,6 +77,16 @@ export function MidiClipView(props: MidiClipViewProps) {
           );
         })}
       </svg>
+      <span
+        data-clip-handle
+        className={`${styles.trimHandle} ${styles.trimLeft}`}
+        onPointerDown={(event) => props.onTrim(event, clip, 'left')}
+      />
+      <span
+        data-clip-handle
+        className={`${styles.trimHandle} ${styles.trimRight}`}
+        onPointerDown={(event) => props.onTrim(event, clip, 'right')}
+      />
     </button>
   );
 }

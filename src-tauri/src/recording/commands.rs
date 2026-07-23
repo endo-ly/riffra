@@ -77,6 +77,14 @@ pub fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String
 }
 
 #[tauri::command]
+pub fn record_another_take(
+    recording_session_id: String,
+    state: State<'_, AppState>,
+) -> Result<AudioStatus, String> {
+    application::record_another_take(&context(&state), &recording_session_id)
+}
+
+#[tauri::command]
 pub fn stop_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
     application::stop_recording(&context(&state))
 }

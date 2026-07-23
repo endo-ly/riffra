@@ -18,6 +18,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 20,
+    timelineTick: null,
     recording: {
       active: false,
       directory: null,

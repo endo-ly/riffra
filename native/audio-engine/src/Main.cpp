@@ -78,11 +78,12 @@ public:
         double timeMs = 0.0;
         int status = 0;
         int channel = 0;
-        int note = 0;
-        int velocity = 0;
+        int data1 = 0;
+        int data2 = 0;
     };
 
     void setAudioCallback(SafetyAudioCallback* const callback) noexcept { audioCallback = callback; }
+    void setTimelineEngine(TimelineEngine* const engine) noexcept { timelineEngine = engine; }
 
     void replacePads(std::map<int, Pad>&& next) {
         const juce::ScopedLock lock(padLock);
@@ -119,8 +120,8 @@ public:
             object->setProperty("timeMs", event.timeMs);
             object->setProperty("status", event.status);
             object->setProperty("channel", event.channel);
-            object->setProperty("note", event.note);
-            object->setProperty("velocity", event.velocity);
+            object->setProperty("data1", event.data1);
+            object->setProperty("data2", event.data2);
             encoded.add(juce::var(object));
         }
         auto* root = new juce::DynamicObject();
@@ -135,18 +136,28 @@ public:
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override {
         messageCount.fetch_add(1, std::memory_order_relaxed);
-        if (message.isNoteOn() || message.isNoteOff()) {
+        const auto status = message.getRawDataSize() > 0
+            ? (message.getRawData()[0] & 0xf0)
+            : 0;
+        if (status >= 0x80 && status <= 0xe0) {
             const juce::ScopedLock lock(recordingLock);
             if (recordingMidi.load(std::memory_order_acquire)
                 && recordedEvents.size() < 200'000) {
                 recordedEvents.push_back(RecordedEvent {
                     juce::Time::getMillisecondCounterHiRes() - recordingStartMs,
-                    message.getRawDataSize() > 0 ? message.getRawData()[0] & 0xf0 : 0,
+                    status,
                     message.getChannel(),
-                    message.getNoteNumber(),
-                    message.getVelocity(),
+                    message.getRawDataSize() > 1 ? message.getRawData()[1] : 0,
+                    message.getRawDataSize() > 2 ? message.getRawData()[2] : 0,
                 });
             }
+        }
+        const auto routedToTimeline = timelineEngine != nullptr
+            && timelineEngine->enqueueLiveMidi(message);
+        if (routedToTimeline) {
+            if (message.isNoteOn() || message.isNoteOff())
+                lastNote.store(message.getNoteNumber(), std::memory_order_release);
+            return;
         }
         if (!message.isNoteOn() && !message.isNoteOff())
             return;
@@ -224,6 +235,7 @@ private:
     std::atomic<std::uint64_t> padTriggers { 0 };
     std::atomic<bool> recordingMidi { false };
     SafetyAudioCallback* audioCallback = nullptr;
+    TimelineEngine* timelineEngine = nullptr;
     mutable juce::CriticalSection padLock;
     std::map<int, Pad> pads;
     mutable juce::CriticalSection recordingLock;
@@ -300,7 +312,8 @@ juce::var currentStatus(
     const SafetyAudioCallback& callback,
     const PluginRack* rack = nullptr,
     const MidiMonitor* midi = nullptr,
-    const juce::String& message = {}) {
+    const juce::String& message = {},
+    const TimelineEngine* timeline = nullptr) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state = callback.isDeviceFaulted() ? "faulted"
@@ -325,6 +338,10 @@ juce::var currentStatus(
         status->setProperty("midiRecordedEvents", static_cast<juce::int64>(midi->getRecordedEventCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
+    if (timeline != nullptr) {
+        const auto timelineStatus = timeline->status();
+        status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
+    }
     if (message.isNotEmpty())
         status->setProperty("message", message);
 
@@ -556,6 +573,7 @@ int serve(
     callback.setPluginRack(&rack);
     callback.setTimelineEngine(&timelineEngine);
     midiMonitor.setAudioCallback(&callback);
+    midiMonitor.setTimelineEngine(&timelineEngine);
     callback.setEmergencyMuted(true);
     callback.setMasterGainDb(-18.0f);
 
@@ -1105,16 +1123,17 @@ int serve(
             }
             if (type == "startRecording") {
                 const auto directory = command.getProperty("directory", {}).toString();
+                const auto allowNoInput = static_cast<bool>(command.getProperty("allowNoInput", false));
                 juce::String recordingError;
                 if (directory.isEmpty() ||
-                    !callback.startRecording(juce::File(directory), recordingError)) {
+                    !callback.startRecording(juce::File(directory), recordingError, allowNoInput)) {
                     writeJson(makeError("recording", directory.isEmpty()
                                                          ? "Recording directory is required."
                                                          : recordingError));
                     continue;
                 }
                 midiMonitor.beginRecording(juce::File(directory).getChildFile("midi.json"));
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "stopRecording") {
@@ -1127,7 +1146,7 @@ int serve(
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "status") {

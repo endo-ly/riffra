@@ -3,10 +3,13 @@ import type { AudioClip } from "./AudioClip";
 import type { Marker } from "./Marker";
 import type { MidiClip } from "./MidiClip";
 import type { ProjectTimebase } from "./ProjectTimebase";
+import type { RecordingSessionRecord } from "./RecordingSessionRecord";
+import type { RecordingTakeRecord } from "./RecordingTakeRecord";
 import type { TimelineLoopRange } from "./TimelineLoopRange";
+import type { TimelinePunchRange } from "./TimelinePunchRange";
 import type { Track } from "./Track";
 
 /**
  * The Arrange workspace's production state.
  */
-export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, tracks: Array<Track>, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, markers: Array<Marker>, };
+export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, punchRange?: TimelinePunchRange, tracks: Array<Track>, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, markers: Array<Marker>, recordingSessions: Array<RecordingSessionRecord>, takes: Array<RecordingTakeRecord>, };

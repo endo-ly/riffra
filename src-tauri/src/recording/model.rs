@@ -85,6 +85,16 @@ pub struct RecordingCapture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub count_in_beats: Option<u8>,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub timeline_start_tick: u64,
+    #[serde(default)]
+    pub armed_track_ids: Vec<String>,
+    #[serde(default)]
+    pub loop_recording: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub source: Option<String>,
@@ -125,6 +135,10 @@ impl RecordingCapture {
             workspace: None,
             master_db: None,
             count_in_beats: None,
+            timeline_start_tick: 0,
+            armed_track_ids: Vec::new(),
+            loop_recording: false,
+            recording_session_id: None,
             source: None,
             rack_snapshot: Vec::new(),
             raw_audio_asset_id: None,

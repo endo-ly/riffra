@@ -11,6 +11,8 @@ interface MidiEditorPanelProps {
   onUpdateNote?: (clipId: string, note: MidiNote) => void;
   onRemoveNote?: (clipId: string, noteId: string) => void;
   onAddNote?: (clipId: string, startTick: number, pitch: number) => void;
+  onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => void;
+  onDuplicateNotes?: (clipId: string, noteIds: string[], offsetTicks: number) => void;
 }
 
 const PITCH_HIGH = 96;
@@ -22,6 +24,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     noteId: string;
     preview: MidiNote;
   } | null>(null);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const pixelsPerTick = 0.18;
   const rowHeight = 9;
   const visibleTicks = Math.max(props.clip?.durationTicks ?? 1920, 1920);
@@ -124,6 +127,51 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             ))}
           </select>
         </label>
+        <button
+          disabled={!selectedNoteIds.length}
+          onClick={() =>
+            props.onQuantize?.(
+              props.clip!.id,
+              selectedNoteIds,
+              snapGridTicks(snap, props.timebase) || 240,
+            )
+          }
+        >
+          Quantize
+        </button>
+        <button
+          disabled={!selectedNoteIds.length}
+          onClick={() =>
+            props.onDuplicateNotes?.(
+              props.clip!.id,
+              selectedNoteIds,
+              snapGridTicks(snap, props.timebase) || 240,
+            )
+          }
+        >
+          Duplicate
+        </button>
+        <label className={styles.snap}>
+          VELOCITY
+          <input
+            aria-label="Selected MIDI note velocity"
+            type="range"
+            min="1"
+            max="127"
+            defaultValue="96"
+            disabled={!selectedNoteIds.length}
+            onChange={(event) => {
+              for (const noteId of selectedNoteIds) {
+                const note = props.clip!.notes.find((item) => item.id === noteId);
+                if (note)
+                  props.onUpdateNote?.(props.clip!.id, {
+                    ...note,
+                    velocity: Number(event.target.value),
+                  });
+              }
+            }}
+          />
+        </label>
         <button onClick={props.onClose}>Close</button>
       </header>
       <div
@@ -169,7 +217,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               <span
                 key={note.id}
                 data-note-id={note.id}
-                className={`${styles.note} ${dragging?.noteId === note.id ? styles.dragging : ''}`}
+                className={`${styles.note} ${dragging?.noteId === note.id ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
                 style={{
                   left: visibleNote.startTick * pixelsPerTick,
                   top: (PITCH_HIGH - visibleNote.note - 1) * rowHeight,
@@ -178,9 +226,20 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   opacity: 0.4 + (note.velocity / 127) * 0.6,
                 }}
                 onPointerDown={(event) => handlePointerDown(event, note, 'move')}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedNoteIds((current) =>
+                    event.ctrlKey
+                      ? current.includes(note.id)
+                        ? current.filter((id) => id !== note.id)
+                        : [...current, note.id]
+                      : [note.id],
+                  );
+                }}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   props.onRemoveNote?.(props.clip!.id, note.id);
+                  setSelectedNoteIds((current) => current.filter((id) => id !== note.id));
                 }}
               >
                 <i

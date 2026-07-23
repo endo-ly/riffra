@@ -105,6 +105,14 @@
   cursor: grabbing;
   background: #80f0dc;
 }
+.note.selected {
+  background: #f2ba73;
+  border-color: #ffe0a8;
+}
+.snap input {
+  width: 64px;
+  accent-color: #5fd2c4;
+}
 .resizeHandle {
   position: absolute;
   top: 0;

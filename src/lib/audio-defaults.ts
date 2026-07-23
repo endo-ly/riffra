@@ -20,6 +20,7 @@ export function offlineAudioStatus(
     sampleRate: null,
     bufferSize: null,
     roundTripMs: null,
+    timelineTick: null,
     recording: {
       active: false,
       directory: null,

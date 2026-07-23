@@ -222,6 +222,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     audio,
     setAudio,
     session,
+    setSession,
     setRecordings,
   });
   const {

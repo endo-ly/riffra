@@ -99,6 +99,20 @@ bool TimelineEngine::loadSnapshot(
     }
     prepared->ppq = static_cast<std::uint32_t>(ppq);
     prepared->outputSampleRate = outputSampleRate;
+    const auto denominator = static_cast<int>(timebase.getProperty("timeSignatureDenominator", 4));
+    const auto numerator = static_cast<int>(timebase.getProperty("timeSignatureNumerator", 4));
+    if (denominator <= 0 || numerator <= 0) {
+        error = "Timeline snapshot has an invalid time signature.";
+        return false;
+    }
+    const auto beatTicks = static_cast<double>(prepared->ppq) * 4.0 / denominator;
+    prepared->beatSamples = tickToSample(
+        static_cast<std::uint64_t>(std::llround(beatTicks)),
+        prepared->ppq,
+        prepared->bpm,
+        outputSampleRate);
+    prepared->beatsPerBar = numerator;
+    prepared->metronomeEnabled = static_cast<bool>(snapshot.getProperty("metronomeEnabled", false));
 
     const auto loopRange = snapshot.getProperty("loopRange", {});
     if (loopRange.isObject()) {
@@ -117,12 +131,31 @@ bool TimelineEngine::loadSnapshot(
         }
     }
 
+    const auto punchRange = snapshot.getProperty("punchRange", {});
+    if (punchRange.isObject()) {
+        const auto startTick = static_cast<std::uint64_t>(
+            static_cast<juce::int64>(punchRange.getProperty("startTick", 0)));
+        const auto endTick = static_cast<std::uint64_t>(
+            static_cast<juce::int64>(punchRange.getProperty("endTick", 0)));
+        prepared->punchStartSample = tickToSample(
+            startTick, prepared->ppq, prepared->bpm, outputSampleRate);
+        prepared->punchEndSample = tickToSample(
+            endTick, prepared->ppq, prepared->bpm, outputSampleRate);
+        if (prepared->punchEndSample <= prepared->punchStartSample) {
+            error = "Timeline punch range must have a positive duration.";
+            return false;
+        }
+        prepared->punchEnabled = true;
+    }
+
     const auto tracks = snapshot.getProperty("tracks", {});
     if (!tracks.isArray()) {
         error = "Timeline snapshot tracks must be an array.";
         return false;
     }
     std::int64_t maximumPluginDelay = 0;
+    bool monitorLiveInputState = false;
+    bool armedInstrumentTrackState = false;
     for (const auto& trackValue : *tracks.getArray()) {
         if (!trackValue.isObject()) {
             error = "Timeline track must be an object.";
@@ -131,6 +164,9 @@ bool TimelineEngine::loadSnapshot(
         auto track = std::make_unique<Track>();
         track->id = trackValue.getProperty("id", {}).toString();
         track->outputSampleRate = outputSampleRate;
+        track->instrument = trackValue.getProperty("kind", {}).toString() == "instrument";
+        track->armed = static_cast<bool>(trackValue.getProperty("armed", false));
+        armedInstrumentTrackState |= track->instrument && track->armed;
         if (track->id.isEmpty()) {
             error = "Timeline track requires an id.";
             return false;
@@ -141,6 +177,10 @@ bool TimelineEngine::loadSnapshot(
             -1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0)));
         track->muted = static_cast<bool>(trackValue.getProperty("muted", false));
         track->solo = static_cast<bool>(trackValue.getProperty("solo", false));
+        const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
+        if (!track->instrument &&
+            (monitoring == "on" || (monitoring == "auto" && track->armed)))
+            monitorLiveInputState = true;
 
         const auto rack = trackValue.getProperty("rack", {});
         if (rack.isObject()) {
@@ -265,6 +305,83 @@ bool TimelineEngine::loadSnapshot(
             clip->scratch.setSize(2, maximumBlockSize, false, true, false);
             track->clips.push_back(std::move(clip));
         }
+        const auto midiClips = trackValue.getProperty("midiClips", {});
+        if (!midiClips.isArray()) {
+            error = "Timeline track midiClips must be an array.";
+            return false;
+        }
+        for (const auto& value : *midiClips.getArray()) {
+            if (!value.isObject()) {
+                error = "Timeline MIDI clip must be an object.";
+                return false;
+            }
+            MidiClip midiClip;
+            midiClip.startTick = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                value.getProperty("startTick", 0)));
+            midiClip.durationTicks = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                value.getProperty("durationTicks", 0)));
+            midiClip.loop = static_cast<bool>(value.getProperty("loopEnabled", false));
+            midiClip.muted = static_cast<bool>(value.getProperty("muted", false));
+            if (midiClip.durationTicks == 0) {
+                error = "Timeline MIDI clip must have a positive duration.";
+                return false;
+            }
+            const auto notes = value.getProperty("notes", {});
+            if (!notes.isArray()) {
+                error = "Timeline MIDI clip notes must be an array.";
+                return false;
+            }
+            for (const auto& noteValue : *notes.getArray()) {
+                if (!noteValue.isObject()) {
+                    error = "Timeline MIDI note must be an object.";
+                    return false;
+                }
+                MidiNote note;
+                note.startTick = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                    noteValue.getProperty("startTick", 0)));
+                note.durationTicks = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                    noteValue.getProperty("durationTicks", 0)));
+                note.note = juce::jlimit(0, 127, static_cast<int>(noteValue.getProperty("note", -1)));
+                note.velocity = juce::jlimit(
+                    1, 127, static_cast<int>(noteValue.getProperty("velocity", 0)));
+                note.channel = juce::jlimit(
+                    1, 16, static_cast<int>(noteValue.getProperty("channel", 0)));
+                if (note.durationTicks == 0 || note.startTick >= midiClip.durationTicks) {
+                    error = "Timeline MIDI note has an invalid musical range.";
+                    return false;
+                }
+                midiClip.notes.push_back(note);
+            }
+            const auto events = value.getProperty("events", {});
+            if (!events.isArray()) {
+                error = "Timeline MIDI events must be an array.";
+                return false;
+            }
+            for (const auto& eventValue : *events.getArray()) {
+                if (!eventValue.isObject()) {
+                    error = "Timeline MIDI event must be an object.";
+                    return false;
+                }
+                MidiEvent event;
+                event.kind = eventValue.getProperty("kind", {}).toString();
+                event.tick = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                    eventValue.getProperty("tick", 0)));
+                event.channel = juce::jlimit(
+                    1, 16, static_cast<int>(eventValue.getProperty("channel", 0)));
+                event.data1 = juce::jlimit(0, 127, static_cast<int>(
+                    eventValue.getProperty("data1", 0)));
+                event.data2 = juce::jlimit(0, 127, static_cast<int>(
+                    eventValue.getProperty("data2", 0)));
+                if (event.tick >= midiClip.durationTicks ||
+                    (event.kind != "controlChange" && event.kind != "pitchBend" &&
+                     event.kind != "channelPressure")) {
+                    error = "Timeline MIDI event has an invalid type or musical position.";
+                    return false;
+                }
+                midiClip.events.push_back(event);
+            }
+            track->midiClips.push_back(std::move(midiClip));
+        }
         track->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         prepared->tracks.push_back(std::move(track));
@@ -281,6 +398,8 @@ bool TimelineEngine::loadSnapshot(
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         const auto hasExistingTimeline = timeline != nullptr;
         timeline = std::move(prepared);
+        this->monitorLiveInput.store(monitorLiveInputState, std::memory_order_release);
+        this->armedInstrumentTrack.store(armedInstrumentTrackState, std::memory_order_release);
         if (!hasExistingTimeline)
             timelineSample.store(0, std::memory_order_release);
     }
@@ -296,6 +415,9 @@ void TimelineEngine::play() noexcept {
 
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (lock.isLocked() && timeline != nullptr)
+        resetTrackState(*timeline);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -318,6 +440,85 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     resetTrackState(*timeline);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool TimelineEngine::enqueueLiveMidi(const juce::MidiMessage& message) noexcept {
+    if (!armedInstrumentTrack.load(std::memory_order_acquire))
+        return false;
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || timeline == nullptr)
+        return true;
+    for (auto& trackPtr : timeline->tracks) {
+        auto& track = *trackPtr;
+        if (track.instrument && track.armed && track.rack != nullptr)
+            track.rack->enqueueMidi(message);
+    }
+    return true;
+}
+
+bool TimelineEngine::monitoringEnabled() const noexcept {
+    return monitorLiveInput.load(std::memory_order_acquire);
+}
+
+bool TimelineEngine::recordingWindow(
+    const int sampleCount,
+    int& sampleOffset,
+    int& capturedSamples) const noexcept {
+    sampleOffset = 0;
+    capturedSamples = std::max(0, sampleCount);
+    if (sampleCount <= 0)
+        return false;
+
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || timeline == nullptr || !timeline->punchEnabled)
+        return true;
+
+    const auto position = timelineSample.load(std::memory_order_acquire);
+    const auto blockEnd = position + static_cast<std::int64_t>(sampleCount);
+    if (blockEnd <= timeline->punchStartSample || position >= timeline->punchEndSample) {
+        capturedSamples = 0;
+        return false;
+    }
+    sampleOffset = static_cast<int>(std::max<std::int64_t>(
+        0, timeline->punchStartSample - position));
+    const auto end = std::min<std::int64_t>(blockEnd, timeline->punchEndSample);
+    capturedSamples = static_cast<int>(std::max<std::int64_t>(
+        0, end - position - sampleOffset));
+    return capturedSamples > 0;
+}
+
+void TimelineEngine::mixMetronome(
+    float* const* outputChannels,
+    const int channelCount,
+    const int sampleCount) noexcept {
+    if (state.load(std::memory_order_acquire) != State::playing || sampleCount <= 0)
+        return;
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || timeline == nullptr || !timeline->metronomeEnabled
+        || timeline->beatSamples <= 0)
+        return;
+    const auto loopLength = timeline->loopEndSample - timeline->loopStartSample;
+    const auto start = lastMixStartSample.load(std::memory_order_acquire);
+    constexpr std::int64_t clickSamples = 1'920;
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        auto position = start + sample;
+        if (timeline->loopEnabled && loopLength > 0 && position >= timeline->loopEndSample)
+            position = timeline->loopStartSample +
+                (position - timeline->loopEndSample) % loopLength;
+        if (position < 0)
+            continue;
+        const auto beat = position / timeline->beatSamples;
+        const auto offset = position % timeline->beatSamples;
+        if (offset < 0 || offset >= clickSamples)
+            continue;
+        const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
+        const auto amplitude = beat % timeline->beatsPerBar == 0 ? 0.18f : 0.11f;
+        const auto value = amplitude * envelope;
+        for (int channel = 0; channel < channelCount; ++channel) {
+            if (outputChannels[channel] != nullptr)
+                outputChannels[channel][sample] += value;
+        }
+    }
 }
 
 void TimelineEngine::mixRange(
@@ -400,6 +601,70 @@ void TimelineEngine::mixRange(
     }
 }
 
+void TimelineEngine::scheduleMidi(
+    Track& track,
+    const std::int64_t rangeStart,
+    const int sampleCount) noexcept {
+    track.midiBuffer.clear();
+    const auto rangeEnd = rangeStart + sampleCount;
+    for (const auto& clip : track.midiClips) {
+        if (clip.muted) continue;
+        const auto clipStart = tickToSample(
+            clip.startTick, timeline != nullptr ? timeline->ppq : 960,
+            timeline != nullptr ? timeline->bpm : 120.0, track.outputSampleRate);
+        const auto clipLength = std::max<std::int64_t>(1, tickToSample(
+            clip.durationTicks, timeline != nullptr ? timeline->ppq : 960,
+            timeline != nullptr ? timeline->bpm : 120.0, track.outputSampleRate));
+        const auto firstIteration = clip.loop && rangeStart > clipStart
+            ? std::max<std::int64_t>(0, (rangeStart - clipStart) / clipLength - 1)
+            : 0;
+        const auto lastIteration = clip.loop
+            ? std::max<std::int64_t>(firstIteration,
+                (rangeEnd - clipStart) / clipLength + 1)
+            : 0;
+        const auto addMessage = [&](const juce::MidiMessage& message, const std::int64_t sample) {
+            if (sample >= rangeStart && sample < rangeEnd)
+                track.midiBuffer.addEvent(
+                    message, juce::jlimit(0, sampleCount - 1,
+                        static_cast<int>(sample - rangeStart)));
+        };
+        for (std::int64_t iteration = firstIteration; iteration <= lastIteration; ++iteration) {
+            const auto iterationStart = clipStart + iteration * clipLength;
+            for (const auto& note : clip.notes) {
+                const auto noteStart = iterationStart + tickToSample(
+                    note.startTick, timeline != nullptr ? timeline->ppq : 960,
+                    timeline != nullptr ? timeline->bpm : 120.0, track.outputSampleRate);
+                const auto noteEnd = std::min(
+                    iterationStart + clipLength,
+                    noteStart + std::max<std::int64_t>(1, tickToSample(
+                        note.durationTicks, timeline != nullptr ? timeline->ppq : 960,
+                        timeline != nullptr ? timeline->bpm : 120.0, track.outputSampleRate)));
+                addMessage(juce::MidiMessage::noteOn(
+                    juce::jlimit(1, 16, note.channel), note.note,
+                    static_cast<juce::uint8>(juce::jlimit(1, 127, note.velocity))), noteStart);
+                addMessage(juce::MidiMessage::noteOff(
+                    juce::jlimit(1, 16, note.channel), note.note), noteEnd);
+            }
+            for (const auto& event : clip.events) {
+                const auto eventSample = iterationStart + tickToSample(
+                    event.tick, timeline != nullptr ? timeline->ppq : 960,
+                    timeline != nullptr ? timeline->bpm : 120.0, track.outputSampleRate);
+                const auto channel = juce::jlimit(1, 16, event.channel);
+                if (event.kind == "controlChange")
+                    addMessage(juce::MidiMessage::controllerEvent(
+                        channel, event.data1, event.data2), eventSample);
+                else if (event.kind == "pitchBend")
+                    addMessage(juce::MidiMessage::pitchWheel(
+                        channel, event.data1 | (event.data2 << 7)), eventSample);
+                else if (event.kind == "channelPressure")
+                    addMessage(juce::MidiMessage::channelPressureChange(
+                        channel, event.data1), eventSample);
+            }
+            if (!clip.loop) break;
+        }
+    }
+}
+
 void TimelineEngine::processTracks(
     PreparedTimeline& prepared,
     float* const* outputChannels,
@@ -418,7 +683,9 @@ void TimelineEngine::processTracks(
         float* processedChannels[2] = {
             track.processedBuffer.getWritePointer(0), track.processedBuffer.getWritePointer(1)};
         if (track.rack != nullptr)
-            track.rack->process(inputChannels, 2, processedChannels, 2, sampleCount);
+            track.rack->process(
+                inputChannels, track.instrument ? 0 : 2, processedChannels, 2, sampleCount,
+                track.instrument ? &track.midiBuffer : nullptr);
         else {
             juce::FloatVectorOperations::copy(processedChannels[0], inputChannels[0], sampleCount);
             juce::FloatVectorOperations::copy(processedChannels[1], inputChannels[1], sampleCount);
@@ -454,6 +721,9 @@ void TimelineEngine::resetTrackState(PreparedTimeline& prepared) noexcept {
         for (auto& clip : track.clips) clip->expectedSourceFrame = -1;
         track.mixBuffer.clear();
         track.processedBuffer.clear();
+        track.midiBuffer.clear();
+        if (track.rack != nullptr)
+            track.rack->allNotesOff();
         track.delayBuffer.clear();
         track.delayWritePosition = 0;
     }
@@ -468,6 +738,7 @@ void TimelineEngine::mix(
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
     if (!lock.isLocked() || timeline == nullptr) return;
     auto position = timelineSample.load(std::memory_order_relaxed);
+    lastMixStartSample.store(position, std::memory_order_release);
     auto consumed = 0;
     while (consumed < sampleCount) {
         auto chunk = sampleCount - consumed;
@@ -482,6 +753,8 @@ void TimelineEngine::mix(
             trackPtr->mixBuffer.clear(0, chunk);
         for (auto& trackPtr : timeline->tracks)
             mixRange(*trackPtr, position, 0, chunk);
+        for (auto& trackPtr : timeline->tracks)
+            scheduleMidi(*trackPtr, position, chunk);
         processTracks(*timeline, outputChannels, channelCount, consumed, chunk);
         position += chunk;
         consumed += chunk;
@@ -545,6 +818,8 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     bool mixed = false;
     bool seeked = false;
     bool looped = false;
+    bool punchWindowed = false;
+    bool metronomeMixed = false;
     juce::String error;
     if (sourcesWritten) {
         juce::AudioFormatManager formats;
@@ -630,9 +905,14 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             enabledLoop->setProperty("enabled", true);
             enabledLoop->setProperty("startTick", 0);
             enabledLoop->setProperty("endTick", 960);
+            auto* punchRange = new juce::DynamicObject();
+            punchRange->setProperty("startTick", 480);
+            punchRange->setProperty("endTick", 960);
             loopSnapshot->setProperty("revision", 8);
             loopSnapshot->setProperty("timebase", juce::var(loopTimebase));
             loopSnapshot->setProperty("loopRange", juce::var(enabledLoop));
+            loopSnapshot->setProperty("punchRange", juce::var(punchRange));
+            loopSnapshot->setProperty("metronomeEnabled", true);
             auto* loopTrack = new juce::DynamicObject();
             loopTrack->setProperty("id", "track:loop");
             loopTrack->setProperty("gainDb", 0.0);
@@ -649,12 +929,21 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             loopSnapshot->setProperty("tracks", loopTracks);
             if (engine.loadSnapshot(
                     juce::var(loopSnapshot), formats, 48000.0, 512, error)) {
+                int punchOffset = 0;
+                int punchSamples = 0;
+                engine.seekToTick(480);
+                punchWindowed = engine.recordingWindow(512, punchOffset, punchSamples)
+                    && punchOffset == 0 && punchSamples == 512;
                 engine.seekToTick(0);
                 std::array<float, 24000> silent {};
                 std::array<float*, 1> silentChannels { silent.data() };
                 engine.mix(silentChannels.data(), 1, static_cast<int>(silent.size()));
                 looped = static_cast<juce::int64>(
                     engine.status().getProperty("timelineSample", -1)) == 0;
+                std::array<float, 512> clicks {};
+                std::array<float*, 1> clickChannels { clicks.data() };
+                engine.mixMetronome(clickChannels.data(), 1, static_cast<int>(clicks.size()));
+                metronomeMixed = *std::max_element(clicks.begin(), clicks.end()) > 0.0f;
             }
         }
     }
@@ -669,9 +958,13 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     addCheck("overlapping sources mix through read-ahead and sample-rate correction", mixed);
     addCheck("tick seek resolves against the engine sample clock", seeked);
     addCheck("loop wrap returns to the exact loop start", looped);
+    addCheck("punch range limits the recording window", punchWindowed);
+    addCheck("metronome follows the timeline clock", metronomeMixed);
     result->setProperty("checks", checks);
     result->setProperty("message", error);
-    result->setProperty("passed", sourcesWritten && loaded && mixed && seeked && looped);
+    result->setProperty(
+        "passed", sourcesWritten && loaded && mixed && seeked && looped && punchWindowed
+            && metronomeMixed);
     mono.deleteFile();
     stereo.deleteFile();
     return juce::var(result);

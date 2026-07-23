@@ -28,6 +28,7 @@
 //! framework: the only compensation is re-applying the previous pad set, which
 //! matches the runtime's "reconfigure the whole pad set" capability.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::{fs, path::Path};
 
@@ -37,8 +38,9 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::rack::{RackDefinition, RackInstance};
 use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, CreativeSession, DesignTool, Marker, MidiNote,
-    MonitoringState, ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
+    AiChangeSet, AiPermission, Arrangement, AudioTakeVariant, CreativeSession, DesignTool, Marker,
+    MidiClip, MidiEvent, MidiEventKind, MidiNote, MonitoringState, ProjectTimebase, SamplePad,
+    TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -425,6 +427,277 @@ pub fn apply_arrangement_edit(
     Ok(committed)
 }
 
+fn read_vlq(bytes: &[u8], cursor: &mut usize) -> Result<u64, String> {
+    let mut value = 0_u64;
+    for _ in 0..4 {
+        let byte = *bytes
+            .get(*cursor)
+            .ok_or_else(|| "MIDI file ended inside a variable-length value.".to_string())?;
+        *cursor += 1;
+        value = (value << 7) | u64::from(byte & 0x7f);
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    Err("MIDI variable-length value is too long.".into())
+}
+
+fn read_be_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, String> {
+    let value = u16::from_be_bytes(
+        bytes
+            .get(*cursor..cursor.saturating_add(2))
+            .ok_or_else(|| "MIDI file ended inside a 16-bit value.".to_string())?
+            .try_into()
+            .map_err(|_| "MIDI 16-bit value is truncated.".to_string())?,
+    );
+    *cursor += 2;
+    Ok(value)
+}
+
+fn read_be_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, String> {
+    let value = u32::from_be_bytes(
+        bytes
+            .get(*cursor..cursor.saturating_add(4))
+            .ok_or_else(|| "MIDI file ended inside a 32-bit value.".to_string())?
+            .try_into()
+            .map_err(|_| "MIDI 32-bit value is truncated.".to_string())?,
+    );
+    *cursor += 4;
+    Ok(value)
+}
+
+fn parse_midi_asset(bytes: &[u8]) -> Result<(u64, Vec<MidiNote>, Vec<MidiEvent>), String> {
+    if bytes.len() < 14 || &bytes[0..4] != b"MThd" {
+        return Err("MIDI Asset does not contain a standard MIDI header.".into());
+    }
+    let mut header_cursor = 4;
+    let header_len = read_be_u32(bytes, &mut header_cursor)? as usize;
+    if header_len < 6 || header_cursor.saturating_add(header_len) > bytes.len() {
+        return Err("MIDI header length is invalid.".into());
+    }
+    let _format = read_be_u16(bytes, &mut header_cursor)?;
+    let track_count = read_be_u16(bytes, &mut header_cursor)?;
+    let source_ppq = read_be_u16(bytes, &mut header_cursor)?;
+    if source_ppq == 0 || source_ppq & 0x8000 != 0 || track_count == 0 {
+        return Err("MIDI Asset must use a positive ticks-per-quarter division.".into());
+    }
+    let mut cursor = 8 + header_len;
+    let mut notes = Vec::new();
+    let mut events = Vec::new();
+    let mut last_tick = 0_u64;
+    let mut note_starts: HashMap<(u8, u8), (u64, u8)> = HashMap::new();
+    for _ in 0..track_count {
+        if bytes.get(cursor..cursor.saturating_add(8)) != Some(b"MTrk".as_slice()) {
+            return Err("MIDI track header is missing.".into());
+        }
+        cursor += 4;
+        let track_len = read_be_u32(bytes, &mut cursor)? as usize;
+        let track_end = cursor
+            .checked_add(track_len)
+            .ok_or_else(|| "MIDI track length overflowed.".to_string())?;
+        if track_end > bytes.len() {
+            return Err("MIDI track is truncated.".into());
+        }
+        let mut tick = 0_u64;
+        let mut running_status = 0_u8;
+        while cursor < track_end {
+            tick = tick.saturating_add(read_vlq(bytes, &mut cursor)?);
+            last_tick = last_tick.max(tick);
+            let first = *bytes
+                .get(cursor)
+                .ok_or_else(|| "MIDI event is truncated.".to_string())?;
+            let status = if first & 0x80 != 0 {
+                cursor += 1;
+                if first < 0xf0 {
+                    running_status = first;
+                }
+                first
+            } else if running_status >= 0x80 {
+                running_status
+            } else {
+                return Err("MIDI event has no running status.".into());
+            };
+            if status == 0xff {
+                let _meta_type = *bytes
+                    .get(cursor)
+                    .ok_or_else(|| "MIDI meta event is truncated.".to_string())?;
+                cursor += 1;
+                let length = read_vlq(bytes, &mut cursor)? as usize;
+                cursor = cursor
+                    .checked_add(length)
+                    .ok_or_else(|| "MIDI meta event length overflowed.".to_string())?;
+                if cursor > track_end {
+                    return Err("MIDI meta event is truncated.".into());
+                }
+                continue;
+            }
+            if status == 0xf0 || status == 0xf7 {
+                let length = read_vlq(bytes, &mut cursor)? as usize;
+                cursor = cursor
+                    .checked_add(length)
+                    .ok_or_else(|| "MIDI system event length overflowed.".to_string())?;
+                if cursor > track_end {
+                    return Err("MIDI system event is truncated.".into());
+                }
+                continue;
+            }
+            let channel = (status & 0x0f) + 1;
+            let kind = status >> 4;
+            let data1 = *bytes
+                .get(cursor)
+                .ok_or_else(|| "MIDI channel event is truncated.".to_string())?;
+            cursor += 1;
+            let data2 = if matches!(kind, 0xc | 0xd) {
+                0
+            } else {
+                let value = *bytes
+                    .get(cursor)
+                    .ok_or_else(|| "MIDI channel event is truncated.".to_string())?;
+                cursor += 1;
+                value
+            };
+            let project_tick = (tick * 960 + u64::from(source_ppq) / 2) / u64::from(source_ppq);
+            match kind {
+                0x8 | 0x9 if kind == 0x8 || data2 == 0 => {
+                    if let Some((start, velocity)) = note_starts.remove(&(channel, data1)) {
+                        let end = project_tick.max(start + 1);
+                        notes.push(MidiNote {
+                            id: format!("note:asset:{channel}:{data1}:{start}"),
+                            note: data1,
+                            start_tick: TimelineTick(start),
+                            duration_ticks: end - start,
+                            velocity,
+                            channel,
+                        });
+                        last_tick = last_tick.max(end);
+                    }
+                }
+                0x9 => {
+                    note_starts.insert((channel, data1), (project_tick, data2.max(1)));
+                }
+                0xb => events.push(MidiEvent {
+                    id: format!("event:cc:{channel}:{project_tick}:{data1}"),
+                    kind: MidiEventKind::ControlChange,
+                    tick: TimelineTick(project_tick),
+                    channel,
+                    data1,
+                    data2,
+                }),
+                0xd => events.push(MidiEvent {
+                    id: format!("event:pressure:{channel}:{project_tick}"),
+                    kind: MidiEventKind::ChannelPressure,
+                    tick: TimelineTick(project_tick),
+                    channel,
+                    data1,
+                    data2,
+                }),
+                0xe => events.push(MidiEvent {
+                    id: format!("event:pitch:{channel}:{project_tick}"),
+                    kind: MidiEventKind::PitchBend,
+                    tick: TimelineTick(project_tick),
+                    channel,
+                    data1,
+                    data2,
+                }),
+                _ => {}
+            }
+        }
+        cursor = track_end;
+    }
+    for ((channel, note), (start, velocity)) in note_starts {
+        let end = last_tick.max(start + 1);
+        notes.push(MidiNote {
+            id: format!("note:asset:{channel}:{note}:{start}"),
+            note,
+            start_tick: TimelineTick(start),
+            duration_ticks: end - start,
+            velocity,
+            channel,
+        });
+    }
+    let duration = notes
+        .iter()
+        .map(|note| note.start_tick.0.saturating_add(note.duration_ticks))
+        .chain(events.iter().map(|event| event.tick.0.saturating_add(1)))
+        .chain(std::iter::once(last_tick))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    notes.sort_by_key(|note| note.start_tick.0);
+    events.sort_by_key(|event| event.tick.0);
+    Ok((duration, notes, events))
+}
+
+pub fn add_midi_clip(
+    context: &SessionContext<'_>,
+    asset_id: AssetId,
+    name: String,
+    start_tick: Option<TimelineTick>,
+    track_id: Option<String>,
+) -> Result<CreativeSession, String> {
+    if name.trim().is_empty() {
+        return Err("MIDI clip name must not be empty.".into());
+    }
+    let source_asset = asset::load(context.data_root, &asset_id)
+        .ok_or_else(|| format!("MIDI Asset is not registered: {asset_id}"))?;
+    if source_asset.kind != AssetKind::Midi {
+        return Err(format!("Asset {asset_id} is not a MIDI Asset."));
+    }
+    let bytes = fs::read(&source_asset.content_location)
+        .map_err(|error| format!("MIDI Asset could not be read: {error}"))?;
+    let (duration_ticks, notes, events) = parse_midi_asset(&bytes)?;
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let target_track_id = track_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            session
+                .arrangement
+                .tracks
+                .iter()
+                .find(|track| track.kind == TrackKind::Instrument)
+                .map(|track| track.id.clone())
+        })
+        .unwrap_or_else(|| {
+            let id = format!("track:{}", now_ms());
+            session
+                .arrangement
+                .tracks
+                .push(Track::instrument(id.clone(), "Instrument 1".into()));
+            id
+        });
+    let target_track = session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == target_track_id)
+        .ok_or_else(|| format!("Track is not registered: {target_track_id}"))?;
+    if target_track.kind != TrackKind::Instrument {
+        return Err(format!(
+            "Track is not an Instrument Track: {target_track_id}"
+        ));
+    }
+    let clip = MidiClip {
+        id: format!("midi-clip:{}:{}", asset_id.as_str(), now_ms()),
+        name,
+        track_id: target_track_id,
+        asset_id: Some(asset_id),
+        start_tick: start_tick.unwrap_or(TimelineTick(0)),
+        duration_ticks,
+        notes,
+        events,
+        muted: false,
+        loop_enabled: false,
+    };
+    session
+        .arrangement
+        .add_midi_clip(clip)
+        .map_err(|error| error.to_string())?;
+    session.workspace = Workspace::Arrange;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
 fn runtime_timeline_snapshot(
     context: &SessionContext<'_>,
     session: &CreativeSession,
@@ -489,6 +762,8 @@ fn runtime_timeline_snapshot(
         "revision": arrangement.revision,
         "timebase": arrangement.timebase,
         "loopRange": arrangement.loop_range,
+        "punchRange": arrangement.punch_range,
+        "metronomeEnabled": session.settings.metronome_enabled,
         "tracks": tracks,
         "unavailableClipIds": unavailable_clip_ids,
         "automation": [],
@@ -768,6 +1043,7 @@ pub fn update_session_settings(
     context: &SessionContext<'_>,
     patch: SessionSettingsPatch,
 ) -> Result<CreativeSession, String> {
+    let metronome_changed = patch.metronome_enabled.is_some();
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     if let Some(project_name) = patch.project_name {
         session.project_name = project_name
@@ -792,7 +1068,11 @@ pub fn update_session_settings(
     if let Some(context_items) = patch.ai_context {
         session.settings.ai_context = context_items;
     }
-    commit_session(context, session)
+    let committed = commit_session(context, session)?;
+    if metronome_changed {
+        sync_arrangement_best_effort(context, &committed);
+    }
+    Ok(committed)
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -1139,6 +1419,166 @@ pub fn remove_midi_note(
         .find(|clip| clip.id == clip_id)
         .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
     clip.notes.retain(|note| note.id != note_id);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn quantize_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_ids: &[String],
+    grid_ticks: u64,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .quantize_midi_notes(clip_id, note_ids, grid_ticks)
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn duplicate_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_ids: &[String],
+    offset_ticks: u64,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    session
+        .arrangement
+        .duplicate_midi_notes(clip_id, note_ids, offset_ticks)
+        .map_err(|error| error.to_string())?;
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn set_take_variant(
+    context: &SessionContext<'_>,
+    take_id: &str,
+    variant: AudioTakeVariant,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let take = session
+        .arrangement
+        .takes
+        .iter_mut()
+        .find(|take| take.id == take_id)
+        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
+    let asset_id = match variant {
+        AudioTakeVariant::Raw => take.raw_audio_asset_id.clone(),
+        AudioTakeVariant::Processed => take.processed_audio_asset_id.clone(),
+    }
+    .ok_or_else(|| "The requested Take variant is not available.".to_string())?;
+    take.active_variant = variant;
+    if let Some(clip_id) = take.clip_id.as_ref()
+        && let Some(clip) = session
+            .arrangement
+            .audio_clips
+            .iter_mut()
+            .find(|clip| &clip.id == clip_id)
+    {
+        clip.asset_id = asset_id;
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn activate_take(
+    context: &SessionContext<'_>,
+    session_id: &str,
+    take_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    if !session
+        .arrangement
+        .takes
+        .iter()
+        .any(|take| take.session_id == session_id && take.id == take_id)
+    {
+        return Err(format!("Recording Take is not registered: {take_id}"));
+    }
+    let active_clip_ids = session
+        .arrangement
+        .takes
+        .iter_mut()
+        .filter(|take| take.session_id == session_id)
+        .map(|take| {
+            take.active = take.id == take_id;
+            take.clip_id.clone()
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    for clip in &mut session.arrangement.audio_clips {
+        if active_clip_ids.iter().any(|id| id == &clip.id) {
+            clip.muted = !session.arrangement.takes.iter().any(|take| {
+                take.id == take_id && take.clip_id.as_ref() == Some(&clip.id) && take.active
+            });
+        }
+    }
+    for clip in &mut session.arrangement.midi_clips {
+        if active_clip_ids.iter().any(|id| id == &clip.id) {
+            clip.muted = !session.arrangement.takes.iter().any(|take| {
+                take.id == take_id && take.clip_id.as_ref() == Some(&clip.id) && take.active
+            });
+        }
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    let committed = commit_session(context, session)?;
+    sync_arrangement_best_effort(context, &committed);
+    Ok(committed)
+}
+
+pub fn place_take_as_separate_clip(
+    context: &SessionContext<'_>,
+    take_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let source_clip_id = session
+        .arrangement
+        .takes
+        .iter()
+        .find(|take| take.id == take_id)
+        .and_then(|take| take.clip_id.clone())
+        .ok_or_else(|| format!("Recording Take has no Timeline Clip: {take_id}"))?;
+    let new_clip_id = format!(
+        "clip:take-place:{}:{}",
+        now_ms(),
+        session.arrangement.revision
+    );
+    if let Some(source) = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .find(|clip| clip.id == source_clip_id)
+        .cloned()
+    {
+        let mut clip = source;
+        clip.id = new_clip_id;
+        clip.muted = false;
+        session.arrangement.audio_clips.push(clip);
+    } else if let Some(source) = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .find(|clip| clip.id == source_clip_id)
+        .cloned()
+    {
+        let mut clip = source;
+        clip.id = new_clip_id;
+        clip.muted = false;
+        session.arrangement.midi_clips.push(clip);
+    } else {
+        return Err(format!(
+            "Recording Take Clip is not found: {source_clip_id}"
+        ));
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
     sync_arrangement_best_effort(context, &committed);
     Ok(committed)

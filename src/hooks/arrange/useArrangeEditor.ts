@@ -84,12 +84,16 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       ...arrangement.markers.map((marker) => marker.tick),
       arrangement.loopRange.startTick,
       arrangement.loopRange.endTick,
+      ...(arrangement.punchRange
+        ? [arrangement.punchRange.startTick, arrangement.punchRange.endTick]
+        : []),
     ],
     [
       arrangement.audioClips,
       arrangement.loopRange,
       arrangement.markers,
       arrangement.midiClips,
+      arrangement.punchRange,
       timebase,
     ],
   );
@@ -116,8 +120,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     if (!raw) return;
     try {
       const asset = JSON.parse(raw) as { id: string; name: string; kind: string };
-      if (asset.kind !== 'audio') {
-        setMessage('Only Audio Assets can be placed on an Audio Track.');
+      if (asset.kind !== 'audio' && asset.kind !== 'midi') {
+        setMessage('Only Audio or MIDI Assets can be placed on the Timeline.');
         return;
       }
       const timeline = event.currentTarget.closest('[data-arrange-timeline]');
@@ -128,8 +132,10 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         event.altKey,
       );
       await commit(
-        api.addAudioClipToArrangement(asset.id as AssetId, asset.name, tick, trackId),
-        `${asset.name} added. Click its waveform to select it; press Delete to remove it.`,
+        asset.kind === 'audio'
+          ? api.addAudioClipToArrangement(asset.id as AssetId, asset.name, tick, trackId)
+          : api.addMidiClipToArrangement(asset.id as AssetId, asset.name, tick, trackId),
+        `${asset.name} added. Click it to select it; press Delete to remove it.`,
       );
     } catch {
       setMessage('The dragged Library item is not a valid Audio Asset.');
@@ -279,10 +285,14 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         );
       } else if (selectedClipIds.length && event.ctrlKey && key === 'e') {
         event.preventDefault();
-        const targets = arrangement.audioClips.filter((clip) => selectedClipIds.includes(clip.id));
-        for (const clip of targets) {
-          void clipInteractions.splitClip(clip, displayTick);
-        }
+        const audioTargets = arrangement.audioClips.filter((clip) =>
+          selectedClipIds.includes(clip.id),
+        );
+        const midiTargets = arrangement.midiClips.filter((clip) =>
+          selectedClipIds.includes(clip.id),
+        );
+        for (const clip of audioTargets) void clipInteractions.splitClip(clip, displayTick);
+        for (const clip of midiTargets) void clipInteractions.splitMidiClip(clip, displayTick);
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(

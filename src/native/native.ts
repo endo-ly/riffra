@@ -33,6 +33,9 @@ import type {
   Workspace,
   TransportStatus,
   AudioClipPatch,
+  AudioTakeVariant,
+  MidiClipMove,
+  MidiClipPatch,
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
@@ -351,6 +354,14 @@ async function startRecording(): Promise<AudioStatus> {
   }
 }
 
+async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>('record_another_take', { recordingSessionId });
+  } catch (error) {
+    return await audioCommandError('Start another take', error);
+  }
+}
+
 async function stopRecording(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('stop_recording');
@@ -456,11 +467,31 @@ async function addAudioClipToArrangement(
   );
 }
 
+async function addMidiClipToArrangement(
+  assetId: AssetId,
+  name: string,
+  startTick?: number,
+  trackId?: string,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'add_midi_clip_to_arrangement',
+    { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
+    null,
+  );
+}
+
 async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
 ): Promise<CreativeSession | null> {
   return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
+}
+
+async function updateMidiClip(
+  clipId: string,
+  patch: MidiClipPatch,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('update_midi_clip', { clipId, patch }, null);
 }
 
 async function removeTimelineClips(
@@ -496,6 +527,30 @@ async function duplicateAudioClip(clipId: string): Promise<CreativeSession | nul
 
 async function moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null> {
   return invokeOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
+}
+
+async function moveMidiClips(moves: MidiClipMove[]): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('move_midi_clips', { moves }, null);
+}
+
+async function trimMidiClip(
+  clipId: string,
+  startTick: number,
+  durationTicks: number,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'trim_midi_clip',
+    { clipId, startTick, durationTicks },
+    null,
+  );
+}
+
+async function splitMidiClip(clipId: string, splitTick: number): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('split_midi_clip', { clipId, splitTick }, null);
+}
+
+async function duplicateMidiClip(clipId: string): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>('duplicate_midi_clip', { clipId }, null);
 }
 
 async function pasteTimelineClips(
@@ -598,6 +653,38 @@ async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeS
   return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
 }
 
+async function quantizeMidiNotes(
+  clipId: string,
+  noteIds: string[],
+  gridTicks: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('quantize_midi_notes', { clipId, noteIds, gridTicks });
+}
+
+async function duplicateMidiNotes(
+  clipId: string,
+  noteIds: string[],
+  offsetTicks: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('duplicate_midi_notes', {
+    clipId,
+    noteIds,
+    offsetTicks,
+  });
+}
+
+async function setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_take_variant', { takeId, variant });
+}
+
+async function activateTake(sessionId: string, takeId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('activate_take', { sessionId, takeId });
+}
+
+async function placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('place_take_as_separate_clip', { takeId });
+}
+
 async function syncArrangementRuntime(): Promise<void> {
   await invoke<void>('sync_arrangement_runtime');
 }
@@ -624,6 +711,18 @@ async function updateTimelineLoopRange(
   endTick: number,
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_timeline_loop_range', {
+    enabled,
+    startTick,
+    endTick,
+  });
+}
+
+async function updateTimelinePunchRange(
+  enabled: boolean,
+  startTick: number,
+  endTick: number,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('update_timeline_punch_range', {
     enabled,
     startTick,
     endTick,
@@ -713,6 +812,7 @@ function createNativeApi(): NativeApi {
     getAudioStatus,
     setEmergencyMute,
     startRecording,
+    recordAnotherTake,
     stopRecording,
     setMasterGainDb,
     previewMasterGainDb,
@@ -728,12 +828,18 @@ function createNativeApi(): NativeApi {
     relinkMissingDependency,
     disableMissingPlugin,
     addAudioClipToArrangement,
+    addMidiClipToArrangement,
     updateAudioClip,
+    updateMidiClip,
     removeTimelineClips,
     trimAudioClip,
     splitAudioClip,
     duplicateAudioClip,
     moveAudioClips,
+    moveMidiClips,
+    trimMidiClip,
+    splitMidiClip,
+    duplicateMidiClip,
     pasteTimelineClips,
     crossfadeAudioClips,
     addTrack,
@@ -747,12 +853,18 @@ function createNativeApi(): NativeApi {
     addMidiNote,
     updateMidiNote,
     removeMidiNote,
+    quantizeMidiNotes,
+    duplicateMidiNotes,
+    setTakeVariant,
+    activateTake,
+    placeTakeAsSeparateClip,
     syncArrangementRuntime,
     playTimeline,
     stopTimeline,
     seekTimeline,
     updateArrangementTimebase,
     updateTimelineLoopRange,
+    updateTimelinePunchRange,
     openAssetInDesign,
     switchWorkspace,
     updateSessionSettings,

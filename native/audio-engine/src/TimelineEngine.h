@@ -28,6 +28,13 @@ public:
     void stop() noexcept;
     void audioDeviceStarted() noexcept;
     void seekToTick(std::uint64_t tick) noexcept;
+    [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message) noexcept;
+    [[nodiscard]] bool monitoringEnabled() const noexcept;
+    [[nodiscard]] bool recordingWindow(
+        int sampleCount,
+        int& sampleOffset,
+        int& capturedSamples) const noexcept;
+    void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     [[nodiscard]] juce::var status() const;
 
@@ -53,9 +60,35 @@ private:
         bool muted = false;
     };
 
+    struct MidiNote final {
+        std::uint64_t startTick = 0;
+        std::uint64_t durationTicks = 1;
+        int note = 0;
+        int velocity = 0;
+        int channel = 1;
+    };
+
+    struct MidiEvent final {
+        juce::String kind;
+        std::uint64_t tick = 0;
+        int channel = 1;
+        int data1 = 0;
+        int data2 = 0;
+    };
+
+    struct MidiClip final {
+        std::uint64_t startTick = 0;
+        std::uint64_t durationTicks = 1;
+        bool loop = false;
+        bool muted = false;
+        std::vector<MidiNote> notes;
+        std::vector<MidiEvent> events;
+    };
+
     struct Track final {
         juce::String id;
         std::vector<std::unique_ptr<Clip>> clips;
+        std::vector<MidiClip> midiClips;
         std::unique_ptr<PluginRack> rack;
         juce::AudioBuffer<float> mixBuffer;
         juce::AudioBuffer<float> processedBuffer;
@@ -68,6 +101,9 @@ private:
         float pan = 0.0f;
         bool muted = false;
         bool solo = false;
+        bool instrument = false;
+        bool armed = false;
+        juce::MidiBuffer midiBuffer;
     };
 
     struct PreparedTimeline final {
@@ -78,6 +114,12 @@ private:
         bool loopEnabled = false;
         std::int64_t loopStartSample = 0;
         std::int64_t loopEndSample = 0;
+        bool punchEnabled = false;
+        std::int64_t punchStartSample = 0;
+        std::int64_t punchEndSample = 0;
+        bool metronomeEnabled = false;
+        std::int64_t beatSamples = 0;
+        std::int64_t beatsPerBar = 4;
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
@@ -97,6 +139,7 @@ private:
         int channelCount,
         int destinationStart,
         int sampleCount) noexcept;
+    void scheduleMidi(Track& track, std::int64_t rangeStart, int sampleCount) noexcept;
     void resetTrackState(PreparedTimeline& timeline) noexcept;
 
     juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
@@ -104,10 +147,13 @@ private:
     std::unique_ptr<PreparedTimeline> timeline;
     std::atomic<State> state { State::stopped };
     std::atomic<std::int64_t> timelineSample { 0 };
+    std::atomic<std::int64_t> lastMixStartSample { 0 };
     std::atomic<std::uint64_t> audioClockSample { 0 };
     mutable std::atomic<std::uint64_t> sequence { 0 };
     std::atomic<std::uint64_t> clockGeneration { 0 };
     std::atomic<std::uint64_t> discontinuity { 1 };
+    std::atomic<bool> monitorLiveInput { false };
+    std::atomic<bool> armedInstrumentTrack { false };
 };
 
 [[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);

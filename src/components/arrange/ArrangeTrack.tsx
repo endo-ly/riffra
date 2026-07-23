@@ -30,6 +30,12 @@ interface ArrangeTrackProps {
   ) => Promise<CreativeSession | null>;
   onDrop: (event: React.DragEvent, trackId: string) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
+  onMoveMidi: (event: React.PointerEvent<HTMLButtonElement>, clip: MidiClip) => void;
+  onTrimMidi: (
+    event: React.PointerEvent<HTMLSpanElement>,
+    clip: MidiClip,
+    side: 'left' | 'right',
+  ) => void;
   onSelect: (clipId: string) => void;
   onTrim: (
     event: React.PointerEvent<HTMLSpanElement>,
@@ -294,6 +300,8 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             laneHeight={laneHeight}
             selected={props.selectedClipIds.includes(clip.id)}
             onSelect={props.onSelect}
+            onMove={props.onMoveMidi}
+            onTrim={props.onTrimMidi}
             onOpenEditor={props.onOpenMidiEditor}
           />
         ))}

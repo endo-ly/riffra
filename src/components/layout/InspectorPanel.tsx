@@ -1,6 +1,7 @@
 import type { AudioStatus, BootstrapState, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeClipInspector } from '../arrange/ArrangeClipInspector';
+import { MidiClipInspector } from '../arrange/MidiClipInspector';
 import { Icon } from '../shared/ui';
 import styles from './InspectorPanel.module.css';
 
@@ -26,27 +27,39 @@ export function InspectorPanel(props: InspectorPanelProps) {
         <span>{props.session.workspace === 'arrange' ? 'CLIP INSPECTOR' : 'INSPECTOR'}</span>
       </div>
       {props.session.workspace === 'arrange' ? (
-        <ArrangeClipInspector
-          session={props.session}
-          setSession={props.setSession}
-          selectedClipIds={props.arrangeSelection}
-          setSelectedClipIds={props.setArrangeSelection}
-          api={props.api}
-          onSetLoopToClip={(clip) => {
-            const timebase = props.session.arrangement.timebase;
-            const endTicks = Math.max(
-              1,
-              Math.round(
-                (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-                  (timebase.bpm / 60) *
-                  timebase.ppq,
-              ),
-            );
-            void props.api
-              .updateTimelineLoopRange(true, clip.startTick, clip.startTick + endTicks)
-              .then(props.setSession);
-          }}
-        />
+        props.session.arrangement.midiClips.some((clip) =>
+          props.arrangeSelection.includes(clip.id),
+        ) ? (
+          <MidiClipInspector
+            session={props.session}
+            setSession={props.setSession}
+            selectedClipIds={props.arrangeSelection}
+            setSelectedClipIds={props.setArrangeSelection}
+            api={props.api}
+          />
+        ) : (
+          <ArrangeClipInspector
+            session={props.session}
+            setSession={props.setSession}
+            selectedClipIds={props.arrangeSelection}
+            setSelectedClipIds={props.setArrangeSelection}
+            api={props.api}
+            onSetLoopToClip={(clip) => {
+              const timebase = props.session.arrangement.timebase;
+              const endTicks = Math.max(
+                1,
+                Math.round(
+                  (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
+                    (timebase.bpm / 60) *
+                    timebase.ppq,
+                ),
+              );
+              void props.api
+                .updateTimelineLoopRange(true, clip.startTick, clip.startTick + endTicks)
+                .then(props.setSession);
+            }}
+          />
+        )
       ) : (
         <>
           <div className={styles.inspectorIdentity}>

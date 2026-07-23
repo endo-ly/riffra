@@ -18,6 +18,7 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     sampleRate: 48000,
     bufferSize: 1024,
     roundTripMs: 12,
+    timelineTick: null,
     recording: {
       active: false,
       directory: null,

@@ -67,7 +67,13 @@ Riffraは、Play、Design、Arrangeの三領域を、共通のセッション、
 
 ArrangeのplayheadはC++のEngine Clockを正本とする。Rustは保存済みArrangementからAssetIdを解決したRuntime Timeline Snapshotを構築し、C++の`TimelineEngine`へ渡す。C++はSourceのopen、read-ahead、Sample Rate補正、作業領域確保を非リアルタイムスレッドで行い、Audio Block境界でPrepared Timelineを交換する。Reactは20 Hzの`transport-status`を受け、描画フレーム間だけ表示位置を補間する。
 
-Arrangeの波形はAsset分析結果から派生する表示状態であり、Sessionへ重複保存しない。Trim、Split、Duplicate、Gain、Pan、Fadeの確定操作はRustのArrangement編集へ渡し、返された正準Sessionで表示とRuntimeを収束させる。
+Arrangeの波形はAsset分析結果から派生する表示状態であり、Sessionへ重複保存しない。Trim、Split、Duplicate、Gain、Pan、Fadeの確定操作はRustのArrangement編集へ渡し、返された正準Sessionで表示とRuntimeを収束させる。MIDI Clipも同じCommit境界を使うが、位置・長さはTimelineTickのまま扱う。
+
+ArrangeのRuntime SnapshotはTrack単位でAudio ClipとMIDI Clipを渡す。Instrument TrackではMIDI ClipおよびライブMIDIをTrack Rackへ送り、Audio TrackではAudio ClipをTrack Rackへ送り、Track Gain/PanとPDCを経てMasterへ混ぜる。Seek、Stop、Loop境界ではTrack Rackへ全Note停止を発行し、Noteが鳴り続ける状態を残さない。MIDI ClipのCC、Pitch Bend、Channel PressureはNoteとは別のイベントとして保存し、同じSchedulerから送信する。
+
+録音停止時は、Native RuntimeのRaw/Processed/MIDI出力をCanonical Assetへ登録し、ArmされたTrackごとにRecordingSessionRecord、RecordingTakeRecord、Timeline Clipを同一Session Commitで作成する。Reactは停止結果のBootstrapでSessionを再取得するため、録音結果をLibraryから手動配置する必要がない。Input MonitoringはTrackのOff/Auto/OnをRuntime Snapshotへ渡し、録音経路とAudition/Monitoring経路を分離する。
+
+Loop Recordingでは、Captureの連続出力をLoop境界に沿ってSource FrameとMIDI Tickの範囲へ分割し、各周回を同じRecording SessionのTakeとして保存する。Punch RangeはRuntime Snapshotの録音窓としてNative callbackへ渡し、前後のPlaybackは継続したまま範囲内だけをRaw/Processedへ書き込む。「Record Another Take」は明示したRecording Session IDをCaptureへ保存して同じSessionへ追加する。
 
 ## 4. 制作状態の調整
 

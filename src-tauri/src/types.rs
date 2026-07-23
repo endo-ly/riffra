@@ -28,8 +28,9 @@ use crate::separation::SeparationResult;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
     CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
-    MidiNote, MonitoringState, PlayState, ProjectTimebase, SampleInstrumentState, SamplePad,
-    SessionSettings, SessionSnapshot, TimelineLoopRange, Track, TrackKind, Workspace,
+    MidiClipMove, MidiClipPatch, MidiNote, MonitoringState, PlayState, ProjectTimebase,
+    SampleInstrumentState, SamplePad, SessionSettings, SessionSnapshot, TimelineLoopRange, Track,
+    TrackKind, Workspace,
 };
 use ts_rs::{Config, TS};
 
@@ -63,6 +64,8 @@ fn export_types() {
     AudioClip::export_all(&cfg).expect("AudioClip bindings");
     AudioClipPatch::export_all(&cfg).expect("AudioClipPatch bindings");
     AudioClipMove::export_all(&cfg).expect("AudioClipMove bindings");
+    MidiClipMove::export_all(&cfg).expect("MidiClipMove bindings");
+    MidiClipPatch::export_all(&cfg).expect("MidiClipPatch bindings");
     Arrangement::export_all(&cfg).expect("Arrangement bindings");
     SamplePad::export_all(&cfg).expect("SamplePad bindings");
     SampleInstrumentState::export_all(&cfg).expect("SampleInstrumentState bindings");

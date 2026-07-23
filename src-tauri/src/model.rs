@@ -102,6 +102,8 @@ pub struct AudioStatus {
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub round_trip_ms: Option<f64>,
+    #[serde(default)]
+    pub timeline_tick: Option<u64>,
     pub recording: RecordingStatus,
     pub plugin: Option<PluginStatus>,
     pub midi_inputs: Vec<String>,

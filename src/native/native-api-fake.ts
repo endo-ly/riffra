@@ -9,6 +9,9 @@ import type {
   AudioClip,
   AudioClipMove,
   AudioClipPatch,
+  AudioTakeVariant,
+  MidiClipMove,
+  MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
   JobKind,
@@ -69,6 +72,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 8,
+    timelineTick: null,
     recording,
     plugin: null,
     midiInputs: [],
@@ -872,6 +876,18 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
+  recordAnotherTake = async (recordingSessionId: string): Promise<AudioStatus> => {
+    this.calls.push('recordAnotherTake');
+    if (
+      !this.bootstrapState.session.arrangement.recordingSessions.some(
+        (item) => item.id === recordingSessionId,
+      )
+    ) {
+      throw new Error(`Recording Session is not registered: ${recordingSessionId}`);
+    }
+    return this.startRecording();
+  };
+
   stopRecording = async (): Promise<AudioStatus> => {
     this.calls.push('stopRecording');
     const samples = this.recordingSamples;
@@ -1273,6 +1289,63 @@ export class FakeNativeApi implements NativeApi {
     return next;
   };
 
+  addMidiClipToArrangement = async (
+    assetId: AssetId,
+    name: string,
+    startTick?: number,
+    trackId?: string,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('addMidiClipToArrangement');
+    this.assertAsset(assetId);
+    return this.commitSession((current) => {
+      const selectedTrack =
+        trackId ?? current.arrangement.tracks.find((track) => track.kind === 'instrument')?.id;
+      const nextTrack = selectedTrack
+        ? current.arrangement.tracks
+        : [
+            ...current.arrangement.tracks,
+            {
+              id: `track:${Date.now()}`,
+              name: 'Instrument 1',
+              kind: 'instrument' as const,
+              gainDb: 0,
+              pan: 0,
+              muted: false,
+              solo: false,
+              armed: false,
+              monitoring: 'off' as const,
+              rack: { devices: [], macros: [] },
+            },
+          ];
+      const targetId = selectedTrack ?? nextTrack[nextTrack.length - 1].id;
+      return {
+        ...current,
+        workspace: 'arrange',
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          tracks: nextTrack,
+          midiClips: [
+            ...current.arrangement.midiClips,
+            {
+              id: `midi-clip:${Date.now()}`,
+              name,
+              trackId: targetId,
+              assetId,
+              startTick: startTick ?? 0,
+              durationTicks: 1_920,
+              notes: [],
+              events: [],
+              muted: false,
+              loopEnabled: false,
+            },
+          ],
+        },
+      };
+    });
+  };
+
   /**
    * Shared helper for the Arrangement editing commands. Mirrors the production
    * "edit + persist + return updated session" loop without re-implementing the
@@ -1336,6 +1409,34 @@ export class FakeNativeApi implements NativeApi {
   ): Promise<CreativeSession | null> => {
     this.calls.push('updateAudioClip');
     return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, patch));
+  };
+
+  updateMidiClip = async (
+    clipId: string,
+    patch: MidiClipPatch,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('updateMidiClip');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                name: patch.name ?? clip.name,
+                trackId: patch.trackId ?? clip.trackId,
+                startTick: patch.startTick ?? clip.startTick,
+                durationTicks: patch.durationTicks ?? clip.durationTicks,
+                muted: patch.muted ?? clip.muted,
+                loopEnabled: patch.loopEnabled ?? clip.loopEnabled,
+              }
+            : clip,
+        ),
+      },
+    }));
   };
 
   removeTimelineClips = async (
@@ -1455,6 +1556,94 @@ export class FakeNativeApi implements NativeApi {
         const move = byId.get(clip.id);
         return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
       });
+    });
+  };
+
+  moveMidiClips = async (moves: MidiClipMove[]): Promise<CreativeSession | null> => {
+    this.calls.push('moveMidiClips');
+    return this.commitSession((current) => {
+      const byId = new Map(moves.map((move) => [move.clipId, move]));
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          midiClips: current.arrangement.midiClips.map((clip) => {
+            const move = byId.get(clip.id);
+            return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
+          }),
+        },
+      };
+    });
+  };
+
+  trimMidiClip = async (
+    clipId: string,
+    startTick: number,
+    durationTicks: number,
+  ): Promise<CreativeSession | null> => {
+    this.calls.push('trimMidiClip');
+    return this.updateMidiClip(clipId, { startTick, durationTicks });
+  };
+
+  splitMidiClip = async (clipId: string, splitTick: number): Promise<CreativeSession | null> => {
+    this.calls.push('splitMidiClip');
+    return this.commitSession((current) => {
+      const clip = current.arrangement.midiClips.find((item) => item.id === clipId);
+      if (!clip) return current;
+      const relative = splitTick - clip.startTick;
+      if (relative <= 0 || relative >= clip.durationTicks) return current;
+      const left = { ...clip, durationTicks: relative };
+      const right = {
+        ...clip,
+        id: `${clip.id}:split:${Date.now()}`,
+        name: `${clip.name} split`,
+        startTick: splitTick,
+        durationTicks: clip.durationTicks - relative,
+        notes: clip.notes
+          .filter((note) => note.startTick >= relative)
+          .map((note) => ({ ...note, startTick: note.startTick - relative })),
+        events: clip.events
+          .filter((event) => event.tick >= relative)
+          .map((event) => ({ ...event, tick: event.tick - relative })),
+      };
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          midiClips: current.arrangement.midiClips.flatMap((item) =>
+            item.id === clipId ? [left, right] : [item],
+          ),
+        },
+      };
+    });
+  };
+
+  duplicateMidiClip = async (clipId: string): Promise<CreativeSession | null> => {
+    this.calls.push('duplicateMidiClip');
+    return this.commitSession((current) => {
+      const clip = current.arrangement.midiClips.find((item) => item.id === clipId);
+      if (!clip) return current;
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          midiClips: [
+            ...current.arrangement.midiClips,
+            {
+              ...clip,
+              id: `${clip.id}:copy:${Date.now()}`,
+              name: `${clip.name} copy`,
+              startTick: clip.startTick + clip.durationTicks,
+            },
+          ],
+        },
+      };
     });
   };
 
@@ -1604,6 +1793,22 @@ export class FakeNativeApi implements NativeApi {
         ...current.arrangement,
         revision: current.arrangement.revision + 1,
         loopRange: { enabled, startTick, endTick },
+      },
+    }));
+  };
+
+  updateTimelinePunchRange = async (
+    enabled: boolean,
+    startTick: number,
+    endTick: number,
+  ): Promise<CreativeSession> => {
+    this.calls.push('updateTimelinePunchRange');
+    return this.commitSession((current) => ({
+      ...current,
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        punchRange: enabled ? { startTick, endTick } : undefined,
       },
     }));
   };
@@ -2003,6 +2208,153 @@ export class FakeNativeApi implements NativeApi {
         ),
       },
     }));
+  };
+
+  quantizeMidiNotes = async (
+    clipId: string,
+    noteIds: string[],
+    gridTicks: number,
+  ): Promise<CreativeSession> => {
+    this.calls.push('quantizeMidiNotes');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: clip.notes.map((note) =>
+                  noteIds.includes(note.id)
+                    ? {
+                        ...note,
+                        startTick: Math.min(
+                          clip.durationTicks - 1,
+                          Math.round(note.startTick / gridTicks) * gridTicks,
+                        ),
+                      }
+                    : note,
+                ),
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  duplicateMidiNotes = async (
+    clipId: string,
+    noteIds: string[],
+    offsetTicks: number,
+  ): Promise<CreativeSession> => {
+    this.calls.push('duplicateMidiNotes');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        midiClips: current.arrangement.midiClips.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                notes: [
+                  ...clip.notes,
+                  ...clip.notes
+                    .filter((note) => noteIds.includes(note.id))
+                    .map((note, index) => ({
+                      ...note,
+                      id: `${note.id}:copy:${index}`,
+                      startTick: note.startTick + offsetTicks,
+                    }))
+                    .filter((note) => note.startTick < clip.durationTicks),
+                ],
+              }
+            : clip,
+        ),
+      },
+    }));
+  };
+
+  setTakeVariant = async (takeId: string, variant: AudioTakeVariant): Promise<CreativeSession> => {
+    this.calls.push('setTakeVariant');
+    return this.commitSession((current) => {
+      const take = current.arrangement.takes.find((item) => item.id === takeId);
+      if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
+      const assetId = variant === 'raw' ? take.rawAudioAssetId : take.processedAudioAssetId;
+      if (!assetId) throw new Error('The requested Take variant is not available.');
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...current.arrangement,
+          revision: current.arrangement.revision + 1,
+          takes: current.arrangement.takes.map((item) =>
+            item.id === takeId ? { ...item, activeVariant: variant } : item,
+          ),
+          audioClips: current.arrangement.audioClips.map((clip) =>
+            clip.id === take.clipId ? { ...clip, assetId } : clip,
+          ),
+        },
+      };
+    });
+  };
+
+  activateTake = async (sessionId: string, takeId: string): Promise<CreativeSession> => {
+    this.calls.push('activateTake');
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        takes: current.arrangement.takes.map((take) =>
+          take.sessionId === sessionId ? { ...take, active: take.id === takeId } : take,
+        ),
+      },
+    }));
+  };
+
+  placeTakeAsSeparateClip = async (takeId: string): Promise<CreativeSession> => {
+    this.calls.push('placeTakeAsSeparateClip');
+    const take = this.bootstrapState.session.arrangement.takes.find((item) => item.id === takeId);
+    if (!take?.clipId) throw new Error(`Recording Take has no Timeline Clip: ${takeId}`);
+    return this.commitSession((current) => {
+      const newClipId = `fake-take-place-${Date.now()}`;
+      const audioClip = current.arrangement.audioClips.find((clip) => clip.id === take.clipId);
+      const midiClip = current.arrangement.midiClips.find((clip) => clip.id === take.clipId);
+      if (audioClip) {
+        return {
+          ...current,
+          updatedAtMs: Date.now(),
+          arrangement: {
+            ...current.arrangement,
+            revision: current.arrangement.revision + 1,
+            audioClips: [
+              ...current.arrangement.audioClips,
+              { ...audioClip, id: newClipId, muted: false },
+            ],
+          },
+        };
+      }
+      if (midiClip) {
+        return {
+          ...current,
+          updatedAtMs: Date.now(),
+          arrangement: {
+            ...current.arrangement,
+            revision: current.arrangement.revision + 1,
+            midiClips: [
+              ...current.arrangement.midiClips,
+              { ...midiClip, id: newClipId, muted: false },
+            ],
+          },
+        };
+      }
+      throw new Error(`Recording Take Clip is not found: ${take.clipId}`);
+    });
   };
 
   applyAiSuggestion = async (clipId: string, proposedGainDb: number): Promise<CreativeSession> => {

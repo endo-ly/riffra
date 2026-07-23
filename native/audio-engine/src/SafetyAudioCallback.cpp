@@ -101,7 +101,8 @@ double SafetyAudioCallback::getSampleRate() const noexcept {
 
 bool SafetyAudioCallback::startRecording(
     const juce::File& directory,
-    juce::String& error) {
+    juce::String& error,
+    const bool allowNoInput) {
     const juce::ScopedLock lock(recordingLock);
     if (recording != nullptr) {
         error = "A recording is already active.";
@@ -110,7 +111,7 @@ bool SafetyAudioCallback::startRecording(
     const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
     const auto rawChannels = activeInputChannels.load(std::memory_order_acquire);
     const auto processedChannels = activeOutputChannels.load(std::memory_order_acquire);
-    if (rawChannels <= 0) {
+    if (rawChannels <= 0 && !allowNoInput) {
         error = "No active input channel is available for Raw recording.";
         return false;
     }
@@ -118,10 +119,11 @@ bool SafetyAudioCallback::startRecording(
         error = "Recording currently supports between 1 and 32 raw and processed channels.";
         return false;
     }
+    const auto recordingRawChannels = std::max(1, rawChannels);
     auto candidate = RecordingSession::create(
         directory,
         sampleRate,
-        rawChannels,
+        recordingRawChannels,
         processedChannels,
         error);
     if (candidate == nullptr)
@@ -353,26 +355,32 @@ void SafetyAudioCallback::writeRecording(
     const int numInputChannels,
     const float* const* outputChannelData,
     const int numOutputChannels,
-    const int numSamples) noexcept {
+    const int numSamples,
+    const int sampleOffset,
+    const int capturedSamples) noexcept {
+    const auto offset = std::max(0, sampleOffset);
+    const auto samples = capturedSamples < 0 ? numSamples : std::min(capturedSamples, numSamples - offset);
+    if (samples <= 0)
+        return;
     recordingReaders.fetch_add(1, std::memory_order_acq_rel);
     auto* session = activeRecording.load(std::memory_order_acquire);
-    if (session != nullptr && numSamples <= silenceBuffer.getNumSamples()) {
+    if (session != nullptr && samples <= silenceBuffer.getNumSamples()) {
         std::array<const float*, 32> raw {};
         std::array<const float*, 32> processed {};
         const auto* silence = silenceBuffer.getReadPointer(0);
         for (int channel = 0; channel < session->getRawChannels(); ++channel) {
             raw[static_cast<std::size_t>(channel)] =
                 channel < numInputChannels && inputChannelData[channel] != nullptr
-                    ? inputChannelData[channel]
+                    ? inputChannelData[channel] + offset
                     : silence;
         }
         for (int channel = 0; channel < session->getProcessedChannels(); ++channel) {
             processed[static_cast<std::size_t>(channel)] =
                 channel < numOutputChannels && outputChannelData[channel] != nullptr
-                    ? outputChannelData[channel]
+                    ? outputChannelData[channel] + offset
                     : silence;
         }
-        session->write(raw.data(), processed.data(), numSamples);
+        session->write(raw.data(), processed.data(), samples);
     }
     recordingReaders.fetch_sub(1, std::memory_order_acq_rel);
 }
@@ -383,13 +391,22 @@ void SafetyAudioCallback::silenceAndCommit(
     const int numSamples,
     const float* const* inputChannelData,
     const int numInputChannels,
-    const float rawInputPeak) noexcept {
+    const float rawInputPeak,
+    const int sampleOffset,
+    const int capturedSamples) noexcept {
     for (int channel = 0; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
     holdPeak(inputPeak, rawInputPeak);
     outputPeak.store(0.0f, std::memory_order_release);
-    writeRecording(inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
+    writeRecording(
+        inputChannelData,
+        numInputChannels,
+        outputChannelData,
+        numOutputChannels,
+        numSamples,
+        sampleOffset,
+        capturedSamples);
 }
 
 void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
@@ -399,12 +416,19 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const int numOutputChannels,
     const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    int recordingOffset = 0;
+    int recordedSamples = numSamples;
+    if (timelineEngine != nullptr)
+        (void) timelineEngine->recordingWindow(numSamples, recordingOffset, recordedSamples);
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
     const auto* selectedInput = selectedChannel < numInputChannels
         ? inputChannelData[selectedChannel]
         : nullptr;
-    const std::array<const float*, 1> logicalInputs { selectedInput };
-    const auto numLogicalInputs = selectedInput != nullptr ? 1 : 0;
+    const std::array<const float*, 1> physicalInputs { selectedInput };
+    const auto numPhysicalInputs = selectedInput != nullptr ? 1 : 0;
+    const auto monitorInput = timelineEngine == nullptr || timelineEngine->monitoringEnabled();
+    const std::array<const float*, 1> logicalInputs { monitorInput ? selectedInput : nullptr };
+    const auto numLogicalInputs = monitorInput && selectedInput != nullptr ? 1 : 0;
     float rawInputPeak = 0.0f;
     if (selectedInput != nullptr) {
         const auto maxVal = std::abs(juce::FloatVectorOperations::findMaximum(
@@ -424,9 +448,11 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             outputChannelData,
             numOutputChannels,
             numSamples,
-            logicalInputs.data(),
-            numLogicalInputs,
-            rawInputPeak);
+            physicalInputs.data(),
+            numPhysicalInputs,
+            rawInputPeak,
+            recordingOffset,
+            recordedSamples);
         return;
     }
 
@@ -444,9 +470,11 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             outputChannelData,
             numOutputChannels,
             numSamples,
-            logicalInputs.data(),
-            numLogicalInputs,
-            rawInputPeak);
+            physicalInputs.data(),
+            numPhysicalInputs,
+            rawInputPeak,
+            recordingOffset,
+            recordedSamples);
         return;
     }
 
@@ -488,6 +516,9 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
                 juce::FloatVectorOperations::clear(destination, numSamples);
         }
     }
+
+    if (timelineEngine != nullptr)
+        timelineEngine->mixMetronome(outputChannelData, numOutputChannels, numSamples);
 
     const juce::ScopedTryLock previewTry(previewLock);
     if (previewTry.isLocked()) {
@@ -540,11 +571,13 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             processedWithoutAudition[static_cast<std::size_t>(channel)] =
                 recordingMixBuffer.getReadPointer(channel);
         writeRecording(
-            logicalInputs.data(),
-            numLogicalInputs,
+            physicalInputs.data(),
+            numPhysicalInputs,
             processedWithoutAudition.data(),
             recordingMixBuffer.getNumChannels(),
-            numSamples);
+            numSamples,
+            recordingOffset,
+            recordedSamples);
     }
 }
 

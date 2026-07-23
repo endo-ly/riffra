@@ -28,6 +28,8 @@ interface WorkspaceArrangeProps {
   setSelectedClipIds: (ids: string[]) => void;
   api: NativeApi;
   onRecord?: () => void;
+  onRecordAnotherTake?: (recordingSessionId: string) => void;
+  recordingActive?: boolean;
 }
 
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
@@ -52,6 +54,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
+  const [recordingPreview, setRecordingPreview] = useState<{
+    startTick: number;
+    startedAtMs: number;
+  } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
@@ -65,6 +71,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       ...arrangement.markers.map((marker) => marker.tick),
       arrangement.loopRange.startTick,
       arrangement.loopRange.endTick,
+      ...(arrangement.punchRange
+        ? [arrangement.punchRange.startTick, arrangement.punchRange.endTick]
+        : []),
       0,
     );
     return Math.max(barTicks * 16, contentEnd + barTicks * 2);
@@ -73,10 +82,24 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     arrangement.loopRange,
     arrangement.markers,
     arrangement.midiClips,
+    arrangement.punchRange,
     barTicks,
     timebase,
   ]);
   const timelineWidth = timelineTicks * pixelsPerTick;
+  useEffect(() => {
+    if (props.recordingActive && recordingPreview === null) {
+      setRecordingPreview({ startTick: displayTick, startedAtMs: Date.now() });
+    } else if (!props.recordingActive && recordingPreview !== null) {
+      setRecordingPreview(null);
+    }
+  }, [displayTick, props.recordingActive, recordingPreview]);
+  const recordingPreviewTicks = recordingPreview
+    ? Math.max(
+        1,
+        ((Date.now() - recordingPreview.startedAtMs) / 60_000) * timebase.bpm * timebase.ppq,
+      )
+    : 0;
   const editor = useArrangeEditor({
     ...props,
     tool,
@@ -249,6 +272,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       .then(props.setSession);
   };
 
+  const setPunchToSelection = () => {
+    if (!timeSelection) return;
+    void props.api
+      .updateTimelinePunchRange(true, timeSelection.startTick, timeSelection.endTick)
+      .then(props.setSession);
+  };
+
   const deleteTrack = async (trackId: string, name: string, clipCount: number) => {
     const detail = clipCount
       ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
@@ -331,6 +361,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             mode={rulerMode}
             scrollTop={scrollTop}
             loopRange={loopPreview ?? arrangement.loopRange}
+            punchRange={arrangement.punchRange}
             markers={arrangement.markers}
             selectedMarkerId={selectedMarkerId}
             timeSelection={timeSelection}
@@ -367,6 +398,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             }}
             onSelectMarker={setSelectedMarkerId}
           />
+          {recordingPreview && (
+            <div
+              className={styles.recordingPreview}
+              style={{
+                left: TRACK_HEADER_WIDTH + recordingPreview.startTick * pixelsPerTick,
+                width: recordingPreviewTicks * pixelsPerTick,
+              }}
+            >
+              RECORDING
+            </div>
+          )}
           <div
             className={styles.playhead}
             style={{ left: TRACK_HEADER_WIDTH + displayTick * pixelsPerTick }}
@@ -437,6 +479,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 onCommit={editor.commit}
                 onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
                 onMove={editor.beginMove}
+                onMoveMidi={editor.beginMidiMove}
+                onTrimMidi={editor.beginMidiTrim}
                 onSelect={editor.selectClip}
                 onTrim={editor.beginTrim}
                 onFade={editor.beginFade}
@@ -489,7 +533,124 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             {formatMusicalPosition(timeSelection.endTick, timebase)}
           </span>
           <button onClick={setLoopToSelection}>Set Loop to Selection</button>
+          <button onClick={setPunchToSelection}>Set Punch Range</button>
+          {arrangement.punchRange && (
+            <button
+              onClick={() =>
+                void props.api
+                  .updateTimelinePunchRange(
+                    false,
+                    arrangement.punchRange?.startTick ?? 0,
+                    arrangement.punchRange?.endTick ?? 0,
+                  )
+                  .then(props.setSession)
+              }
+            >
+              Clear Punch
+            </button>
+          )}
           <button onClick={() => setTimeSelection(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {arrangement.recordingSessions.length > 0 && (
+        <div className={styles.selectionActions} aria-label="Recording takes">
+          <span>TAKES</span>
+          {arrangement.recordingSessions.flatMap((recordingSession) => [
+            <span key={`${recordingSession.id}:actions`}>
+              {recordingSession.loopRecording ? 'LOOP SESSION' : 'RECORDING SESSION'}
+              {props.onRecordAnotherTake && (
+                <button onClick={() => props.onRecordAnotherTake?.(recordingSession.id)}>
+                  Record Another Take
+                </button>
+              )}
+            </span>,
+            ...recordingSession.takeIds
+              .map((takeId) => arrangement.takes.find((take) => take.id === takeId))
+              .filter((take): take is NonNullable<typeof take> => Boolean(take))
+              .map((take) => (
+                <span key={take.id}>
+                  {take.id} {take.active ? '· ACTIVE' : ''}
+                  {(take.rawAudioAssetId || take.processedAudioAssetId) && (
+                    <button
+                      onClick={() => {
+                        const assetId =
+                          take.activeVariant === 'raw'
+                            ? (take.rawAudioAssetId ?? take.processedAudioAssetId)
+                            : (take.processedAudioAssetId ?? take.rawAudioAssetId);
+                        if (assetId) void props.api.previewAsset(assetId, { looped: false });
+                      }}
+                    >
+                      Preview
+                    </button>
+                  )}
+                  {take.rawAudioAssetId && take.processedAudioAssetId && (
+                    <button
+                      onClick={() =>
+                        void Promise.all([
+                          props.api.previewAsset(take.rawAudioAssetId!, {
+                            looped: false,
+                            voiceKey: 1,
+                          }),
+                          props.api.previewAsset(take.processedAudioAssetId!, {
+                            looped: false,
+                            voiceKey: 2,
+                          }),
+                        ])
+                      }
+                    >
+                      Compare
+                    </button>
+                  )}
+                  {take.clipId && (
+                    <button
+                      onClick={() =>
+                        void editor.commit(
+                          props.api.placeTakeAsSeparateClip(take.id),
+                          'Take placed as a separate clip.',
+                        )
+                      }
+                    >
+                      Place
+                    </button>
+                  )}
+                  <button
+                    onClick={() =>
+                      void editor.commit(
+                        props.api.activateTake(recordingSession.id, take.id),
+                        'Take activated.',
+                      )
+                    }
+                  >
+                    Activate
+                  </button>
+                  {take.rawAudioAssetId && (
+                    <button
+                      onClick={() =>
+                        void editor.commit(
+                          props.api.setTakeVariant(take.id, 'raw'),
+                          'Raw variant selected.',
+                        )
+                      }
+                    >
+                      Raw
+                    </button>
+                  )}
+                  {take.processedAudioAssetId && (
+                    <button
+                      onClick={() =>
+                        void editor.commit(
+                          props.api.setTakeVariant(take.id, 'processed'),
+                          'Processed variant selected.',
+                        )
+                      }
+                    >
+                      Processed
+                    </button>
+                  )}
+                </span>
+              )),
+          ])}
         </div>
       )}
 
@@ -520,6 +681,18 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           }
           onRemoveNote={(clipId, noteId) =>
             void editor.commit(props.api.removeMidiNote(clipId, noteId), 'Note removed.')
+          }
+          onQuantize={(clipId, noteIds, gridTicks) =>
+            void editor.commit(
+              props.api.quantizeMidiNotes(clipId, noteIds, gridTicks),
+              'MIDI notes quantized.',
+            )
+          }
+          onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
+            void editor.commit(
+              props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks),
+              'MIDI notes duplicated.',
+            )
           }
         />
       )}

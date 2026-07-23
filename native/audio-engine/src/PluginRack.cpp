@@ -99,6 +99,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     pluginInputChannels.store(inputChannels, std::memory_order_release);
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
+    panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
     processedBlocks.store(0, std::memory_order_release);
     contentionBlocks.store(0, std::memory_order_release);
@@ -184,6 +185,7 @@ void PluginRack::clear() noexcept {
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
+    panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
     processedBlocks.store(0, std::memory_order_release);
     contentionBlocks.store(0, std::memory_order_release);
@@ -279,6 +281,10 @@ void PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
     midiCollector.addMessageToQueue(stamped);
 }
 
+void PluginRack::allNotesOff() noexcept {
+    panicPending.store(true, std::memory_order_release);
+}
+
 bool PluginRack::isLoaded() const noexcept {
     return loaded.load(std::memory_order_acquire);
 }
@@ -296,7 +302,8 @@ int PluginRack::latencySamples() const noexcept {
 
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
-                         const int numSamples) noexcept {
+                         const int numSamples,
+                         const juce::MidiBuffer* const timelineMidi) noexcept {
     for (int channel = 0; channel < numOutputChannels; ++channel) {
         auto* output = outputChannelData[channel];
         if (output == nullptr) continue;
@@ -342,7 +349,16 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
 
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
     juce::MidiBuffer midi;
+    if (timelineMidi != nullptr) {
+        for (const auto metadata : *timelineMidi) {
+            midi.addEvent(metadata.getMessage(), metadata.samplePosition);
+        }
+    }
     midiCollector.removeNextBlockOfMessages(midi, numSamples);
+    if (panicPending.exchange(false, std::memory_order_acq_rel)) {
+        for (int channel = 1; channel <= 16; ++channel)
+            midi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
+    }
     plugin->processBlock(buffer, midi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
 }

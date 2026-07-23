@@ -11,4 +11,4 @@ export type RecordingCapture = { captureId: string, sessionId: string, status: R
 /**
  * Session context captured at recording start.
  */
-workspace?: string, masterDb?: number, countInBeats?: number, source?: string, rackSnapshot: Array<RackDevice>, rawAudioAssetId?: AssetId, processedAudioAssetId?: AssetId, midiAssetId?: AssetId, dropoutInformation: DropoutInformation, };
+workspace?: string, masterDb?: number, countInBeats?: number, timelineStartTick: number, armedTrackIds: Array<string>, loopRecording: boolean, recordingSessionId?: string, source?: string, rackSnapshot: Array<RackDevice>, rawAudioAssetId?: AssetId, processedAudioAssetId?: AssetId, midiAssetId?: AssetId, dropoutInformation: DropoutInformation, };

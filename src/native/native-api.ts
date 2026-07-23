@@ -5,6 +5,8 @@ import type {
   AudioDriverConfig,
   AudioStatus,
   AudioClipPatch,
+  MidiClipMove,
+  MidiClipPatch,
   AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
@@ -26,6 +28,7 @@ import type {
   DesignTool,
   SessionAudioPair,
   MonitoringState,
+  AudioTakeVariant,
   RackInstance,
   TrackKind,
   Workspace,
@@ -130,6 +133,7 @@ export interface NativeApi {
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   startRecording(): Promise<AudioStatus>;
+  recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
   stopRecording(): Promise<AudioStatus>;
   /**
    * Sets the master gain on the Audio Runtime and persists the clamped value
@@ -178,7 +182,14 @@ export interface NativeApi {
     startTick?: number,
     trackId?: string,
   ): Promise<CreativeSession | null>;
+  addMidiClipToArrangement(
+    assetId: AssetId,
+    name: string,
+    startTick?: number,
+    trackId?: string,
+  ): Promise<CreativeSession | null>;
   updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
+  updateMidiClip(clipId: string, patch: MidiClipPatch): Promise<CreativeSession | null>;
   removeTimelineClips(
     audioClipIds: string[],
     midiClipIds: string[],
@@ -191,6 +202,14 @@ export interface NativeApi {
   splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
   duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
   moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null>;
+  moveMidiClips(moves: MidiClipMove[]): Promise<CreativeSession | null>;
+  trimMidiClip(
+    clipId: string,
+    startTick: number,
+    durationTicks: number,
+  ): Promise<CreativeSession | null>;
+  splitMidiClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
+  duplicateMidiClip(clipId: string): Promise<CreativeSession | null>;
   pasteTimelineClips(
     audioClipIds: string[],
     midiClipIds: string[],
@@ -231,12 +250,26 @@ export interface NativeApi {
     patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
   ): Promise<CreativeSession>;
   removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
+  quantizeMidiNotes(clipId: string, noteIds: string[], gridTicks: number): Promise<CreativeSession>;
+  duplicateMidiNotes(
+    clipId: string,
+    noteIds: string[],
+    offsetTicks: number,
+  ): Promise<CreativeSession>;
+  setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession>;
+  activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
+  placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
   syncArrangementRuntime(): Promise<void>;
   playTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;
   updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession>;
   updateTimelineLoopRange(
+    enabled: boolean,
+    startTick: number,
+    endTick: number,
+  ): Promise<CreativeSession>;
+  updateTimelinePunchRange(
     enabled: boolean,
     startTick: number,
     endTick: number,

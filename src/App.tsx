@@ -128,6 +128,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     playTransport,
     stopTransport,
     goToStart,
+    startRecordingNow,
     toggleRecording,
     api: nativeApi,
   } = useApp(api);
@@ -281,6 +282,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             setSelectedClipIds={setArrangeSelection}
             api={nativeApi}
             onRecord={() => void toggleRecording()}
+            onRecordAnotherTake={(recordingSessionId) => void startRecordingNow(recordingSessionId)}
+            recordingActive={audio.recording.active}
           />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (

@@ -312,6 +312,35 @@
   border-right: 1px solid rgba(85, 217, 232, 0.5);
 }
 
+.punchRange {
+  position: absolute;
+  z-index: 1;
+  top: 11px;
+  height: 4px;
+  min-width: 2px;
+  color: #f38c8c;
+  font-size: 6px;
+  letter-spacing: 0.1em;
+  background: rgba(243, 140, 140, 0.8);
+}
+
+.recordingPreview {
+  position: absolute;
+  z-index: 4;
+  top: 42px;
+  height: 24px;
+  min-width: 3px;
+  padding: 6px 8px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  background: rgba(220, 83, 83, 0.72);
+  border: 1px solid rgba(255, 171, 171, 0.8);
+  pointer-events: none;
+}
+
 .loopRange span {
   position: absolute;
   top: 7px;

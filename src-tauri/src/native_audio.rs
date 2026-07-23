@@ -68,6 +68,7 @@ struct NativeStatus {
     sample_rate: Option<f64>,
     buffer_size: Option<u32>,
     round_trip_ms: Option<f64>,
+    timeline_tick: Option<u64>,
     recording: Option<NativeRecordingStatus>,
     plugin: Option<NativePluginStatus>,
     midi_inputs: Option<Vec<String>>,
@@ -170,6 +171,7 @@ impl AudioSupervisor {
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
+                timeline_tick: None,
                 recording: RecordingStatus::default(),
                 plugin: None,
                 midi_inputs: Vec::new(),
@@ -206,6 +208,7 @@ impl AudioSupervisor {
             sample_rate: None,
             buffer_size: None,
             round_trip_ms: None,
+            timeline_tick: None,
             recording: RecordingStatus::default(),
             plugin: None,
             midi_inputs: Vec::new(),
@@ -524,9 +527,17 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn start_recording(&self, directory: &Path) -> Result<AudioStatus, String> {
+    pub fn start_recording_with_mode(
+        &self,
+        directory: &Path,
+        allow_no_input: bool,
+    ) -> Result<AudioStatus, String> {
         self.send_command(
-            serde_json::json!({"type": "startRecording", "directory": directory.to_string_lossy()}),
+            serde_json::json!({
+                "type": "startRecording",
+                "directory": directory.to_string_lossy(),
+                "allowNoInput": allow_no_input,
+            }),
             "Recording started; Raw and Processed files are being flushed safely.",
         )
     }
@@ -808,6 +819,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         sample_rate: native.sample_rate.and_then(normalize_sample_rate),
         buffer_size: native.buffer_size,
         round_trip_ms: native.round_trip_ms,
+        timeline_tick: native.timeline_tick,
         recording: native
             .recording
             .map(|recording| RecordingStatus {
@@ -1086,6 +1098,7 @@ mod tests {
             sample_rate: Some(44_100),
             buffer_size: Some(441),
             round_trip_ms: Some(20.0),
+            timeline_tick: None,
             recording: RecordingStatus::default(),
             plugin: None,
             midi_inputs: Vec::new(),

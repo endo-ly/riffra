@@ -27,8 +27,10 @@ public:
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setState(const juce::String& base64, juce::String& error) noexcept;
     void process(const float* const* inputChannelData, int numInputChannels,
-                 float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
+                 float* const* outputChannelData, int numOutputChannels, int numSamples,
+                 const juce::MidiBuffer* timelineMidi = nullptr) noexcept;
     void enqueueMidi(const juce::MidiMessage& message) noexcept;
+    void allNotesOff() noexcept;
     [[nodiscard]] bool isLoaded() const noexcept;
     [[nodiscard]] bool isInstrument() const noexcept;
     [[nodiscard]] int latencySamples() const noexcept;
@@ -73,6 +75,7 @@ private:
     std::atomic<std::uint64_t> contentionBlocks{0};
     std::atomic<std::uint64_t> transitionBlocks{0};
     std::atomic<bool> bypassed{false};
+    std::atomic<bool> panicPending{false};
 };
 
 [[nodiscard]] juce::Array<juce::var> runPluginRackSelfTests();

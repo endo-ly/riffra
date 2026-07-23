@@ -1,4 +1,4 @@
-import type { Marker, ProjectTimebase, TimelineLoopRange } from '@/lib/domain';
+import type { Marker, ProjectTimebase, TimelineLoopRange, TimelinePunchRange } from '@/lib/domain';
 import { formatClock, ticksPerBar, ticksPerBeat, TRACK_HEADER_WIDTH } from '@/lib/arrange-timeline';
 import styles from './WorkspaceArrange.module.css';
 
@@ -10,6 +10,7 @@ interface ArrangeRulerProps {
   mode: 'bars' | 'time';
   scrollTop: number;
   loopRange: TimelineLoopRange;
+  punchRange?: TimelinePunchRange;
   markers: Marker[];
   selectedMarkerId: string | null;
   timeSelection: { startTick: number; endTick: number } | null;
@@ -59,6 +60,17 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
                 props.pixelsPerTick,
             }}
           />
+        )}
+        {props.punchRange && (
+          <div
+            className={styles.punchRange}
+            style={{
+              left: props.punchRange.startTick * props.pixelsPerTick,
+              width: (props.punchRange.endTick - props.punchRange.startTick) * props.pixelsPerTick,
+            }}
+          >
+            PUNCH
+          </div>
         )}
         {props.loopRange.enabled && (
           <div

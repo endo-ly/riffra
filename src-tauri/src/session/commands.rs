@@ -15,8 +15,8 @@ use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{
-    AudioClipMove, AudioClipPatch, CreativeSession, DesignTool, FrameRange, ProjectTimebase,
-    TimelineTick, TrackKind, Workspace,
+    AudioClipMove, AudioClipPatch, AudioTakeVariant, CreativeSession, DesignTool, FrameRange,
+    MidiClipMove, MidiClipPatch, ProjectTimebase, TimelineTick, TrackKind, Workspace,
 };
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
@@ -96,6 +96,19 @@ pub fn add_audio_clip_to_arrangement(
 }
 
 #[tauri::command]
+pub fn add_midi_clip_to_arrangement(
+    asset_id: String,
+    name: String,
+    start_tick: Option<TimelineTick>,
+    track_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let asset_id = AssetId::from_normalized(asset_id)
+        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    application::add_midi_clip(&context(&state), asset_id, name, start_tick, track_id)
+}
+
+#[tauri::command]
 pub fn update_audio_clip(
     clip_id: String,
     patch: AudioClipPatch,
@@ -157,6 +170,69 @@ pub fn move_audio_clips(
 ) -> Result<CreativeSession, String> {
     application::apply_arrangement_edit(&context(&state), |arrangement| {
         arrangement.move_audio_clips(moves)
+    })
+}
+
+#[tauri::command]
+pub fn update_midi_clip(
+    clip_id: String,
+    patch: MidiClipPatch,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.update_midi_clip(&clip_id, patch)
+    })
+}
+
+#[tauri::command]
+pub fn move_midi_clips(
+    moves: Vec<MidiClipMove>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.move_midi_clips(moves)
+    })
+}
+
+#[tauri::command]
+pub fn trim_midi_clip(
+    clip_id: String,
+    start_tick: TimelineTick,
+    duration_ticks: u64,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.trim_midi_clip(&clip_id, start_tick, duration_ticks)
+    })
+}
+
+#[tauri::command]
+pub fn split_midi_clip(
+    clip_id: String,
+    split_tick: TimelineTick,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let stamp = crate::storage::now_ms();
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.split_midi_clip(
+            &clip_id,
+            split_tick,
+            format!("midi-clip:split:{stamp}:{}", arrangement.revision + 1),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn duplicate_midi_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    let stamp = crate::storage::now_ms();
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.duplicate_midi_clip(
+            &clip_id,
+            format!("midi-clip:duplicate:{stamp}:{}", arrangement.revision + 1),
+        )
     })
 }
 
@@ -223,6 +299,18 @@ pub fn update_timeline_loop_range(
 ) -> Result<CreativeSession, String> {
     application::apply_arrangement_edit(&context(&state), |arrangement| {
         arrangement.update_loop_range(enabled, start_tick, end_tick)
+    })
+}
+
+#[tauri::command]
+pub fn update_timeline_punch_range(
+    enabled: bool,
+    start_tick: TimelineTick,
+    end_tick: TimelineTick,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::apply_arrangement_edit(&context(&state), |arrangement| {
+        arrangement.update_punch_range(enabled, start_tick, end_tick)
     })
 }
 
@@ -361,6 +449,52 @@ pub fn remove_midi_note(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::remove_midi_note(&context(&state), &clip_id, &note_id)
+}
+
+#[tauri::command]
+pub fn quantize_midi_notes(
+    clip_id: String,
+    note_ids: Vec<String>,
+    grid_ticks: u64,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::quantize_midi_notes(&context(&state), &clip_id, &note_ids, grid_ticks)
+}
+
+#[tauri::command]
+pub fn duplicate_midi_notes(
+    clip_id: String,
+    note_ids: Vec<String>,
+    offset_ticks: u64,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::duplicate_midi_notes(&context(&state), &clip_id, &note_ids, offset_ticks)
+}
+
+#[tauri::command]
+pub fn set_take_variant(
+    take_id: String,
+    variant: AudioTakeVariant,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_take_variant(&context(&state), &take_id, variant)
+}
+
+#[tauri::command]
+pub fn activate_take(
+    session_id: String,
+    take_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::activate_take(&context(&state), &session_id, &take_id)
+}
+
+#[tauri::command]
+pub fn place_take_as_separate_clip(
+    take_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::place_take_as_separate_clip(&context(&state), &take_id)
 }
 
 #[tauri::command]

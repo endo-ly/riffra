@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import type { AudioAnalysis, AudioClip, CreativeSession } from '@/lib/domain';
+import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import {
   clipDurationTicks,
   framesToTicks,
+  midiClipDurationTicks,
   ticksToFrames,
   type ArrangeTool,
 } from '@/lib/arrange-timeline';
@@ -49,6 +50,19 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }
     },
     [options, timebase],
+  );
+
+  const splitMidiClip = useCallback(
+    async (clip: MidiClip, tick: number) => {
+      const target = options.snapTick(tick);
+      const end = clip.startTick + midiClipDurationTicks(clip);
+      if (target <= clip.startTick || target >= end) {
+        options.setMessage('Place the playhead inside the selected MIDI clip before splitting.');
+        return;
+      }
+      await options.commit(options.api.splitMidiClip(clip.id, target), `${clip.name} split.`);
+    },
+    [options],
   );
 
   const beginMove = (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => {
@@ -127,6 +141,131 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     };
     element.addEventListener('pointermove', move);
     element.addEventListener('pointerup', finish);
+  };
+
+  const beginMidiMove = (event: React.PointerEvent<HTMLButtonElement>, clip: MidiClip) => {
+    if (options.tool === 'split') {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      void splitMidiClip(
+        clip,
+        clip.startTick + (event.clientX - bounds.left) / options.pixelsPerTick,
+      );
+      return;
+    }
+    let movingIds = options.selectedClipIds.includes(clip.id)
+      ? options.selectedClipIds.filter((id) => arrangement.midiClips.some((item) => item.id === id))
+      : [clip.id];
+    if (event.ctrlKey) {
+      movingIds = options.selectedClipIds.includes(clip.id)
+        ? options.selectedClipIds.filter(
+            (id) => id !== clip.id && arrangement.midiClips.some((item) => item.id === id),
+          )
+        : [
+            ...options.selectedClipIds.filter((id) =>
+              arrangement.midiClips.some((item) => item.id === id),
+            ),
+            clip.id,
+          ];
+      options.setSelectedClipIds(movingIds);
+      if (!movingIds.includes(clip.id)) return;
+    } else if (!options.selectedClipIds.includes(clip.id)) {
+      options.setSelectedClipIds([clip.id]);
+    }
+    const selected = arrangement.midiClips.filter((item) => movingIds.includes(item.id));
+    const originX = event.clientX;
+    const originTick = clip.startTick;
+    const element = event.currentTarget;
+    let pendingTick = originTick;
+    let pendingTrack = clip.trackId;
+    let duplicate = event.altKey;
+    const trackRows = Array.from(document.querySelectorAll<HTMLElement>('[data-arrange-track]'));
+    element.setPointerCapture?.(event.pointerId);
+    const move = (pointer: PointerEvent) => {
+      pendingTick = options.snapTick(
+        originTick + (pointer.clientX - originX) / options.pixelsPerTick,
+        pointer.altKey,
+      );
+      duplicate = pointer.altKey;
+      element.style.left = `${pendingTick * options.pixelsPerTick}px`;
+      options.setSnapGuide(pendingTick);
+      for (const row of trackRows) {
+        const bounds = row.getBoundingClientRect();
+        if (pointer.clientY >= bounds.top && pointer.clientY <= bounds.bottom)
+          pendingTrack = row.dataset.trackId ?? clip.trackId;
+      }
+    };
+    const finish = () => {
+      element.removeEventListener('pointermove', move);
+      element.removeEventListener('pointerup', finish);
+      options.setSnapGuide(null);
+      if (pendingTick === originTick && pendingTrack === clip.trackId) return;
+      const deltaTick = pendingTick - originTick;
+      const tracks = arrangement.tracks.map((track) => track.id);
+      const trackDelta = tracks.indexOf(pendingTrack) - tracks.indexOf(clip.trackId);
+      const targetMoves = selected.map((item) => ({
+        clipId: item.id,
+        startTick: Math.max(0, item.startTick + deltaTick),
+        trackId:
+          tracks[
+            Math.max(0, Math.min(tracks.length - 1, tracks.indexOf(item.trackId) + trackDelta))
+          ] ?? item.trackId,
+      }));
+      if (duplicate) {
+        void options.commit(
+          options.api.pasteTimelineClips([], movingIds, pendingTick),
+          'MIDI clip duplicated.',
+        );
+      } else {
+        void options.commit(options.api.moveMidiClips(targetMoves), 'MIDI clip moved.');
+      }
+    };
+    element.addEventListener('pointermove', move);
+    element.addEventListener('pointerup', finish);
+  };
+
+  const beginMidiTrim = (
+    event: React.PointerEvent<HTMLSpanElement>,
+    clip: MidiClip,
+    side: 'left' | 'right',
+  ) => {
+    event.stopPropagation();
+    const element = event.currentTarget.parentElement as HTMLButtonElement;
+    const handle = event.currentTarget;
+    const originX = event.clientX;
+    const originStart = clip.startTick;
+    const originDuration = midiClipDurationTicks(clip);
+    let startTick = originStart;
+    let durationTicks = originDuration;
+    handle.setPointerCapture?.(event.pointerId);
+    const move = (pointer: PointerEvent) => {
+      const delta = (pointer.clientX - originX) / options.pixelsPerTick;
+      if (side === 'left') {
+        const endTick = originStart + originDuration;
+        startTick = Math.max(
+          0,
+          Math.min(endTick - 1, options.snapTick(originStart + delta, pointer.altKey)),
+        );
+        durationTicks = endTick - startTick;
+      } else {
+        const desiredEnd = options.snapTick(originStart + originDuration + delta, pointer.altKey);
+        durationTicks = Math.max(1, desiredEnd - originStart);
+      }
+      element.style.left = `${startTick * options.pixelsPerTick}px`;
+      element.style.width = `${Math.max(24, durationTicks * options.pixelsPerTick)}px`;
+      options.setSnapGuide(side === 'left' ? startTick : startTick + durationTicks);
+    };
+    const finish = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', finish);
+      options.setSnapGuide(null);
+      if (startTick === originStart && durationTicks === originDuration) return;
+      void options.commit(
+        options.api.trimMidiClip(clip.id, startTick, durationTicks),
+        `${clip.name} trimmed.`,
+      );
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', finish);
   };
 
   const beginTrim = (
@@ -251,5 +390,13 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     handle.addEventListener('pointerup', finish);
   };
 
-  return { splitClip, beginMove, beginTrim, beginFade };
+  return {
+    splitClip,
+    splitMidiClip,
+    beginMove,
+    beginMidiMove,
+    beginMidiTrim,
+    beginTrim,
+    beginFade,
+  };
 }
