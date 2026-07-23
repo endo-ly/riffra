@@ -124,6 +124,13 @@ fn validate_completed_capture_assets(
     processed_asset_id: Option<&AssetId>,
     midi_asset_id: Option<&AssetId>,
 ) -> Result<(), String> {
+    if raw_asset_id.is_none() && processed_asset_id.is_none() {
+        let midi_asset_id = midi_asset_id.ok_or_else(|| {
+            "Completed recording has no canonical Audio or MIDI Asset ID.".to_string()
+        })?;
+        let _ = canonical_asset_location(data_root, midi_asset_id, "MIDI")?;
+        return Ok(());
+    }
     let raw_asset_id = raw_asset_id
         .ok_or_else(|| "Completed recording has no canonical raw audio Asset ID.".to_string())?;
     let processed_asset_id = processed_asset_id.ok_or_else(|| {
@@ -177,6 +184,26 @@ fn recover_interrupted_manifest(directory: &Path, manifest: &mut RecordingManife
 }
 
 fn persist_recovered_manifest(path: &Path, manifest: &RecordingManifest) -> std::io::Result<()> {
+    let temporary = path.with_file_name(format!(".manifest-recovery-{}.tmp", std::process::id()));
+    let payload = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    {
+        let mut file = File::create(&temporary)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        if path.exists() {
+            fs::remove_file(path)?;
+            fs::rename(&temporary, path)?;
+        } else {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn persist_manifest_value(path: &Path, manifest: &serde_json::Value) -> std::io::Result<()> {
     let temporary = path.with_file_name(format!(".manifest-recovery-{}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(manifest)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
@@ -517,7 +544,21 @@ pub fn save_asset_ids(
         dropout_end_sample: manifest.dropout_end_sample,
     };
     manifest.capture = Some(capture);
-    persist_recovered_manifest(&manifest_path, &manifest)
+    let payload = fs::read(&manifest_path)?;
+    let mut value = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let object = value.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    object.insert(
+        "capture".into(),
+        serde_json::to_value(manifest.capture)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    );
+    persist_manifest_value(&manifest_path, &value)
 }
 
 /// Persists the capture identity and session snapshot at recording start. The
@@ -525,9 +566,21 @@ pub fn save_asset_ids(
 /// fields; this nested capture is the canonical recording-event representation.
 pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
-    let mut manifest = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
-    manifest.capture = Some(capture);
-    persist_recovered_manifest(&manifest_path, &manifest)
+    let payload = fs::read(&manifest_path)?;
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let object = manifest.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    object.insert(
+        "capture".into(),
+        serde_json::to_value(capture)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    );
+    persist_manifest_value(&manifest_path, &manifest)
 }
 
 fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {

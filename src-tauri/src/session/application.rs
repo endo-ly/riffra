@@ -28,7 +28,7 @@
 //! framework: the only compensation is re-applying the previous pad set, which
 //! matches the runtime's "reconfigure the whole pad set" capability.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::{fs, path::Path};
 
@@ -36,11 +36,11 @@ use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
-use crate::rack::{RackDefinition, RackInstance};
+use crate::rack::{DeviceKind, RackDevice};
 use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, AudioTakeVariant, CreativeSession, DesignTool, Marker,
-    MidiClip, MidiEvent, MidiEventKind, MidiNote, MonitoringState, ProjectTimebase, SamplePad,
-    TimelineTick, Track, TrackKind, Workspace,
+    AiChangeSet, AiPermission, Arrangement, AudioInputRoute, AudioTakeVariant, CreativeSession,
+    DesignTool, Marker, MidiClip, MidiEvent, MidiEventKind, MidiInputRoute, MidiNote,
+    MonitoringState, ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -423,7 +423,7 @@ pub fn apply_arrangement_edit(
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     edit(&mut session.arrangement).map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -687,6 +687,7 @@ pub fn add_midi_clip(
         events,
         muted: false,
         loop_enabled: false,
+        recording_take_id: None,
     };
     session
         .arrangement
@@ -694,27 +695,39 @@ pub fn add_midi_clip(
         .map_err(|error| error.to_string())?;
     session.workspace = Workspace::Arrange;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
-fn runtime_timeline_snapshot(
-    context: &SessionContext<'_>,
-    session: &CreativeSession,
-) -> serde_json::Value {
+fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> serde_json::Value {
     let arrangement = &session.arrangement;
     let mut unavailable_clip_ids = Vec::new();
+    let mut missing_device_ids = Vec::new();
     let tracks = arrangement
         .tracks
         .iter()
         .map(|track| {
+            for device in track
+                .instrument
+                .iter()
+                .chain(track.rack.devices.iter())
+                .filter(|device| device.kind == DeviceKind::Plugin)
+            {
+                if device.disabled_placeholder
+                    || device
+                        .path
+                        .as_deref()
+                        .is_none_or(|path| !Path::new(path).exists())
+                {
+                    missing_device_ids.push(device.id.clone());
+                }
+            }
             let audio_clips = arrangement
                 .audio_clips
                 .iter()
                 .filter(|clip| clip.track_id == track.id)
                 .filter_map(|clip| {
-                    let Some(path) =
-                        asset::resolve_content_location(context.data_root, &clip.asset_id)
+                    let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id)
                     else {
                         unavailable_clip_ids.push(clip.id.clone());
                         return None;
@@ -752,6 +765,9 @@ fn runtime_timeline_snapshot(
                 "solo": track.solo,
                 "armed": track.armed,
                 "monitoring": track.monitoring,
+                "audioInput": track.audio_input,
+                "midiInput": track.midi_input,
+                "instrument": track.instrument,
                 "rack": track.rack,
                 "audioClips": audio_clips,
                 "midiClips": midi_clips,
@@ -766,24 +782,35 @@ fn runtime_timeline_snapshot(
         "metronomeEnabled": session.settings.metronome_enabled,
         "tracks": tracks,
         "unavailableClipIds": unavailable_clip_ids,
+        "missingDeviceIds": missing_device_ids,
         "automation": [],
     })
 }
 
-fn sync_arrangement_best_effort(context: &SessionContext<'_>, session: &CreativeSession) {
-    if let Err(error) = context
+pub(crate) fn runtime_snapshot_for_recording(
+    data_root: &Path,
+    session: &CreativeSession,
+) -> serde_json::Value {
+    runtime_timeline_snapshot(data_root, session)
+}
+
+fn sync_arrangement(context: &SessionContext<'_>, session: &CreativeSession) -> Result<(), String> {
+    context
         .audio
-        .load_timeline_snapshot(runtime_timeline_snapshot(context, session))
-    {
-        tracing::warn!(revision = session.arrangement.revision, %error, "timeline runtime sync failed");
-    }
+        .load_timeline_snapshot(runtime_timeline_snapshot(context.data_root, session))
+        .map_err(|error| {
+            format!(
+                "Playback runtime is out of sync at Session revision {}: {error}",
+                session.arrangement.revision
+            )
+        })
 }
 
 pub fn sync_arrangement_runtime(context: &SessionContext<'_>) -> Result<(), String> {
     let session = context.session.lock().map_err(lock_error)?.clone();
     context
         .audio
-        .load_timeline_snapshot(runtime_timeline_snapshot(context, &session))
+        .load_timeline_snapshot(runtime_timeline_snapshot(context.data_root, &session))
 }
 
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
@@ -809,7 +836,7 @@ pub fn update_timebase(
         .update_timebase(timebase)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -824,7 +851,7 @@ pub fn remove_timeline_clips(
         .remove_timeline_clips(audio_clip_ids, midi_clip_ids)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -864,7 +891,7 @@ pub fn paste_timeline_clips(
         )
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -900,7 +927,7 @@ pub fn trim_audio_clip(
         )
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -989,7 +1016,7 @@ pub fn add_audio_clip(
         .map_err(|error| error.to_string())?;
     session.workspace = Workspace::Arrange;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1019,9 +1046,28 @@ pub fn switch_workspace(
     context: &SessionContext<'_>,
     workspace: Workspace,
 ) -> Result<CreativeSession, String> {
+    let previous_workspace = context.session.lock().map_err(lock_error)?.workspace;
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     session.workspace = workspace;
-    commit_session(context, session)
+    let mode = workspace_processing_mode(workspace);
+    context.audio.set_processing_mode(mode)?;
+    match commit_session(context, session) {
+        Ok(committed) => Ok(committed),
+        Err(error) => {
+            let _ = context
+                .audio
+                .set_processing_mode(workspace_processing_mode(previous_workspace));
+            Err(error)
+        }
+    }
+}
+
+fn workspace_processing_mode(workspace: Workspace) -> &'static str {
+    match workspace {
+        Workspace::Play => "play",
+        Workspace::Arrange => "arrange",
+        Workspace::Home | Workspace::Design => "passive",
+    }
 }
 
 /// Bounded patch for the session metadata and settings that are edited by the
@@ -1070,7 +1116,7 @@ pub fn update_session_settings(
     }
     let committed = commit_session(context, session)?;
     if metronome_changed {
-        sync_arrangement_best_effort(context, &committed);
+        sync_arrangement(context, &committed)?;
     }
     Ok(committed)
 }
@@ -1085,7 +1131,339 @@ pub struct TrackPatch {
     pub solo: Option<bool>,
     pub armed: Option<bool>,
     pub monitoring: Option<MonitoringState>,
-    pub rack: Option<RackInstance>,
+}
+
+fn commit_structural_arrangement(
+    context: &SessionContext<'_>,
+    candidate: CreativeSession,
+) -> Result<CreativeSession, String> {
+    context
+        .audio
+        .prepare_timeline_snapshot(runtime_timeline_snapshot(context.data_root, &candidate))?;
+    let committed = match commit_session(context, candidate) {
+        Ok(committed) => committed,
+        Err(error) => {
+            let _ = context.audio.discard_timeline_snapshot();
+            return Err(error);
+        }
+    };
+    context.audio.commit_timeline_snapshot().map_err(|error| {
+        format!(
+            "Playback runtime is out of sync at Session revision {}: the prepared Arrangement Graph could not be activated: {error}",
+            committed.arrangement.revision
+        )
+    })?;
+    Ok(committed)
+}
+
+fn track_device_mut<'a>(track: &'a mut Track, device_id: &str) -> Option<&'a mut RackDevice> {
+    if track
+        .instrument
+        .as_ref()
+        .is_some_and(|device| device.id == device_id)
+    {
+        return track.instrument.as_mut();
+    }
+    track
+        .rack
+        .devices
+        .iter_mut()
+        .find(|device| device.id == device_id)
+}
+
+fn plugin_device(path: &str, id: String) -> Result<RackDevice, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("VST3 path must not be empty.".into());
+    }
+    let name = Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Plugin")
+        .to_owned();
+    Ok(RackDevice {
+        id,
+        name,
+        kind: DeviceKind::Plugin,
+        path: Some(path.to_owned()),
+        bypassed: false,
+        gain_db: 0.0,
+        parameter_values: Vec::new(),
+        state_data: None,
+        disabled_placeholder: false,
+    })
+}
+
+pub fn set_track_audio_input(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    channel_index: Option<u32>,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if track.kind != TrackKind::Audio {
+        return Err("Only Audio Tracks can route a physical Audio Input.".into());
+    }
+    track.audio_input = channel_index.map(|channel_index| AudioInputRoute { channel_index });
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn set_track_midi_input(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    route: MidiInputRoute,
+) -> Result<CreativeSession, String> {
+    if route
+        .channel
+        .is_some_and(|channel| !(1..=16).contains(&channel))
+    {
+        return Err("MIDI channel must be between 1 and 16.".into());
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if track.kind != TrackKind::Instrument {
+        return Err("Only Instrument Tracks can route MIDI Input.".into());
+    }
+    track.midi_input = route;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn set_track_instrument(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    path: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let revision = session.arrangement.revision;
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if track.kind != TrackKind::Instrument {
+        return Err("Only Instrument Tracks can host an Instrument.".into());
+    }
+    let id = track
+        .instrument
+        .as_ref()
+        .map(|device| device.id.clone())
+        .unwrap_or_else(|| format!("device:instrument:{}:{}", now_ms(), revision));
+    track.instrument = Some(plugin_device(path, id)?);
+    session.arrangement.revision = revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn clear_track_instrument(
+    context: &SessionContext<'_>,
+    track_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    if track.kind != TrackKind::Instrument {
+        return Err("Only Instrument Tracks can host an Instrument.".into());
+    }
+    track.instrument = None;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn add_track_effect(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    path: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let revision = session.arrangement.revision;
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    let id = format!("device:effect:{}:{}", now_ms(), revision);
+    track.rack.devices.push(plugin_device(path, id)?);
+    session.arrangement.revision = revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn remove_track_effect(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    let before = track.rack.devices.len();
+    track.rack.devices.retain(|device| device.id != device_id);
+    if before == track.rack.devices.len() {
+        return Err(format!("Track Effect is not registered: {device_id}"));
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn reorder_track_effects(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    ordered_device_ids: &[String],
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let track = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
+    let unique_ids: HashSet<&str> = ordered_device_ids.iter().map(String::as_str).collect();
+    if ordered_device_ids.len() != track.rack.devices.len()
+        || unique_ids.len() != ordered_device_ids.len()
+        || ordered_device_ids
+            .iter()
+            .any(|id| !track.rack.devices.iter().any(|device| &device.id == id))
+    {
+        return Err("Effect order must contain every Track Effect exactly once.".into());
+    }
+    let mut reordered = Vec::with_capacity(track.rack.devices.len());
+    for id in ordered_device_ids {
+        let index = track
+            .rack
+            .devices
+            .iter()
+            .position(|device| &device.id == id)
+            .ok_or_else(|| format!("Track Effect is not registered: {id}"))?;
+        reordered.push(track.rack.devices.remove(index));
+    }
+    track.rack.devices = reordered;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+pub fn set_track_device_bypassed(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+    bypassed: bool,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let device = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track_device_mut(track, device_id))
+        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+    let previous = device.bypassed;
+    context
+        .audio
+        .set_track_device_bypassed(track_id, device_id, bypassed)?;
+    device.bypassed = bypassed;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    match commit_session(context, session) {
+        Ok(committed) => Ok(committed),
+        Err(error) => {
+            let _ = context
+                .audio
+                .set_track_device_bypassed(track_id, device_id, previous);
+            Err(error)
+        }
+    }
+}
+
+pub fn set_track_device_parameter(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+    parameter_index: u32,
+    value: f32,
+) -> Result<CreativeSession, String> {
+    if !value.is_finite() {
+        return Err("Track Device parameter value must be finite.".into());
+    }
+    let value = value.clamp(0.0, 1.0);
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let device = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track_device_mut(track, device_id))
+        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+    let index = usize::try_from(parameter_index)
+        .map_err(|_| "Track Device parameter index is invalid.".to_string())?;
+    let previous = device.parameter_values.get(index).copied().unwrap_or(0.0);
+    context
+        .audio
+        .set_track_device_parameter(track_id, device_id, parameter_index, value)?;
+    if device.parameter_values.len() <= index {
+        device.parameter_values.resize(index + 1, 0.0);
+    }
+    device.parameter_values[index] = value;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    match commit_session(context, session) {
+        Ok(committed) => Ok(committed),
+        Err(error) => {
+            let _ = context.audio.set_track_device_parameter(
+                track_id,
+                device_id,
+                parameter_index,
+                previous,
+            );
+            Err(error)
+        }
+    }
+}
+
+pub fn open_track_plugin_editor(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+) -> Result<(), String> {
+    let session = context.session.lock().map_err(lock_error)?;
+    let registered = session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .is_some_and(|track| {
+            track
+                .instrument
+                .as_ref()
+                .is_some_and(|device| device.id == device_id)
+                || track
+                    .rack
+                    .devices
+                    .iter()
+                    .any(|device| device.id == device_id)
+        });
+    if !registered {
+        return Err(format!("Track Device is not registered: {device_id}"));
+    }
+    drop(session);
+    context.audio.open_track_plugin_editor(track_id, device_id)
 }
 
 pub fn add_track(
@@ -1108,15 +1486,16 @@ pub fn add_track(
         solo: false,
         armed: false,
         monitoring: MonitoringState::Off,
+        audio_input: None,
+        midi_input: crate::session::MidiInputRoute::default(),
+        instrument: None,
         rack: crate::rack::RackInstance {
             devices: Vec::new(),
             macros: Vec::new(),
         },
     });
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
-    Ok(committed)
+    commit_structural_arrangement(context, session)
 }
 
 pub fn update_track(
@@ -1164,13 +1543,9 @@ pub fn update_track(
     if let Some(value) = patch.monitoring {
         track.monitoring = value;
     }
-    if let Some(rack) = patch.rack {
-        RackDefinition::from_instance(&rack).runtime_supported()?;
-        track.rack = rack;
-    }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1184,9 +1559,7 @@ pub fn remove_track(
         .arrangement
         .remove_track(track_id)
         .map_err(|error| error.to_string())?;
-    let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
-    Ok(committed)
+    commit_structural_arrangement(context, session)
 }
 
 /// Duplicates a Track and its non-destructive Clip references.
@@ -1240,9 +1613,7 @@ pub fn duplicate_track(
         .collect::<Vec<_>>();
     session.arrangement.midi_clips.extend(midi_clips);
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
-    Ok(committed)
+    commit_structural_arrangement(context, session)
 }
 
 /// Moves a Track to a zero-based position while preserving Clip ownership.
@@ -1257,7 +1628,7 @@ pub fn reorder_track(
         .reorder_track(track_id, target_index)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1367,7 +1738,7 @@ pub fn add_midi_note(
         channel,
     });
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1377,6 +1748,31 @@ pub fn update_midi_note(
     note_id: &str,
     patch: MidiNotePatch,
 ) -> Result<CreativeSession, String> {
+    update_midi_notes(
+        context,
+        clip_id,
+        vec![MidiNoteUpdate {
+            note_id: note_id.to_owned(),
+            patch,
+        }],
+    )
+}
+
+pub fn update_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    updates: Vec<MidiNoteUpdate>,
+) -> Result<CreativeSession, String> {
+    if updates.is_empty() {
+        return Err("At least one MIDI Note update is required.".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    if updates
+        .iter()
+        .any(|update| !ids.insert(update.note_id.as_str()))
+    {
+        return Err("Each MIDI Note may be updated only once per operation.".into());
+    }
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let clip = session
         .arrangement
@@ -1384,25 +1780,28 @@ pub fn update_midi_note(
         .iter_mut()
         .find(|clip| clip.id == clip_id)
         .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
-    let note = clip
-        .notes
-        .iter_mut()
-        .find(|note| note.id == note_id)
-        .ok_or_else(|| format!("MIDI note is not registered: {note_id}"))?;
-    if let Some(pitch) = patch.note {
-        note.note = pitch.min(127);
+    for update in updates {
+        let note = clip
+            .notes
+            .iter_mut()
+            .find(|note| note.id == update.note_id)
+            .ok_or_else(|| format!("MIDI note is not registered: {}", update.note_id))?;
+        if let Some(pitch) = update.patch.note {
+            note.note = pitch.min(127);
+        }
+        if let Some(start_tick) = update.patch.start_tick {
+            note.start_tick = start_tick;
+        }
+        if let Some(duration) = update.patch.duration_ticks {
+            note.duration_ticks = duration.max(1);
+        }
+        if let Some(velocity) = update.patch.velocity {
+            note.velocity = velocity.min(127);
+        }
     }
-    if let Some(start_tick) = patch.start_tick {
-        note.start_tick = start_tick;
-    }
-    if let Some(duration) = patch.duration_ticks {
-        note.duration_ticks = duration.max(1);
-    }
-    if let Some(velocity) = patch.velocity {
-        note.velocity = velocity.min(127);
-    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1420,7 +1819,7 @@ pub fn remove_midi_note(
         .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
     clip.notes.retain(|note| note.id != note_id);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1436,7 +1835,7 @@ pub fn quantize_midi_notes(
         .quantize_midi_notes(clip_id, note_ids, grid_ticks)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1452,7 +1851,7 @@ pub fn duplicate_midi_notes(
         .duplicate_midi_notes(clip_id, note_ids, offset_ticks)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1473,20 +1872,60 @@ pub fn set_take_variant(
         AudioTakeVariant::Processed => take.processed_audio_asset_id.clone(),
     }
     .ok_or_else(|| "The requested Take variant is not available.".to_string())?;
-    take.active_variant = variant;
-    if let Some(clip_id) = take.clip_id.as_ref()
-        && let Some(clip) = session
-            .arrangement
-            .audio_clips
-            .iter_mut()
-            .find(|clip| &clip.id == clip_id)
+    if let Some(clip) = session
+        .arrangement
+        .audio_clips
+        .iter_mut()
+        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
     {
         clip.asset_id = asset_id;
+        clip.take_variant = variant;
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
+}
+
+pub fn start_take_comparison(
+    context: &SessionContext<'_>,
+    take_id: &str,
+) -> Result<AudioStatus, String> {
+    let session = context.session.lock().map_err(lock_error)?;
+    let take = session
+        .arrangement
+        .takes
+        .iter()
+        .find(|take| take.id == take_id)
+        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
+    let raw_id = take
+        .raw_audio_asset_id
+        .as_ref()
+        .ok_or_else(|| "Take comparison requires a Raw Asset.".to_string())?;
+    let processed_id = take
+        .processed_audio_asset_id
+        .as_ref()
+        .ok_or_else(|| "Take comparison requires a Processed Asset.".to_string())?;
+    let raw = asset::load(context.data_root, raw_id)
+        .ok_or_else(|| "Take Raw Asset is unavailable.".to_string())?;
+    let processed = asset::load(context.data_root, processed_id)
+        .ok_or_else(|| "Take Processed Asset is unavailable.".to_string())?;
+    drop(session);
+    context.audio.start_take_comparison(
+        Path::new(&raw.content_location),
+        Path::new(&processed.content_location),
+    )
+}
+
+pub fn switch_take_comparison_variant(
+    context: &SessionContext<'_>,
+    variant: AudioTakeVariant,
+) -> Result<AudioStatus, String> {
+    context.audio.switch_take_comparison_variant(variant)
+}
+
+pub fn stop_take_comparison(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
+    context.audio.stop_take_comparison()
 }
 
 pub fn activate_take(
@@ -1495,42 +1934,70 @@ pub fn activate_take(
     take_id: &str,
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    if !session
+    let target_take = session
         .arrangement
         .takes
         .iter()
-        .any(|take| take.session_id == session_id && take.id == take_id)
-    {
-        return Err(format!("Recording Take is not registered: {take_id}"));
-    }
-    let active_clip_ids = session
+        .find(|take| take.session_id == session_id && take.id == take_id)
+        .cloned()
+        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
+    let slot = session
         .arrangement
-        .takes
+        .recording_sessions
         .iter_mut()
-        .filter(|take| take.session_id == session_id)
-        .map(|take| {
-            take.active = take.id == take_id;
-            take.clip_id.clone()
+        .find(|recording| recording.id == session_id)
+        .and_then(|recording| {
+            recording
+                .track_slots
+                .iter_mut()
+                .find(|slot| slot.track_id == target_take.track_id)
         })
-        .flatten()
-        .collect::<Vec<_>>();
-    for clip in &mut session.arrangement.audio_clips {
-        if active_clip_ids.iter().any(|id| id == &clip.id) {
-            clip.muted = !session.arrangement.takes.iter().any(|take| {
-                take.id == take_id && take.clip_id.as_ref() == Some(&clip.id) && take.active
-            });
+        .ok_or_else(|| {
+            format!(
+                "Recording Session has no Track Slot for {}",
+                target_take.track_id
+            )
+        })?;
+    let timeline_clip_id = slot.timeline_clip_id.clone();
+    slot.active_take_id = take_id.to_owned();
+    if let Some(clip) = session
+        .arrangement
+        .audio_clips
+        .iter_mut()
+        .find(|clip| clip.id == timeline_clip_id)
+    {
+        let asset_id = match clip.take_variant {
+            AudioTakeVariant::Raw => target_take.raw_audio_asset_id.clone(),
+            AudioTakeVariant::Processed => target_take.processed_audio_asset_id.clone(),
         }
-    }
-    for clip in &mut session.arrangement.midi_clips {
-        if active_clip_ids.iter().any(|id| id == &clip.id) {
-            clip.muted = !session.arrangement.takes.iter().any(|take| {
-                take.id == take_id && take.clip_id.as_ref() == Some(&clip.id) && take.active
-            });
-        }
+        .or_else(|| target_take.raw_audio_asset_id.clone())
+        .or_else(|| target_take.processed_audio_asset_id.clone())
+        .ok_or_else(|| "The selected Take has no Audio Asset.".to_string())?;
+        clip.asset_id = asset_id;
+        clip.recording_take_id = Some(take_id.to_owned());
+        clip.source_range.start = target_take.source_start_sample;
+        clip.source_range.end = target_take.source_end_sample;
+    } else if let Some(source) = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
+        .cloned()
+        && let Some(clip) = session
+            .arrangement
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.id == timeline_clip_id)
+    {
+        clip.asset_id = target_take.midi_asset_id.clone();
+        clip.notes = source.notes;
+        clip.events = source.events;
+        clip.duration_ticks = target_take.duration_ticks;
+        clip.recording_take_id = Some(take_id.to_owned());
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1539,13 +2006,13 @@ pub fn place_take_as_separate_clip(
     take_id: &str,
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let source_clip_id = session
+    let take = session
         .arrangement
         .takes
         .iter()
         .find(|take| take.id == take_id)
-        .and_then(|take| take.clip_id.clone())
-        .ok_or_else(|| format!("Recording Take has no Timeline Clip: {take_id}"))?;
+        .cloned()
+        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
     let new_clip_id = format!(
         "clip:take-place:{}:{}",
         now_ms(),
@@ -1555,18 +2022,56 @@ pub fn place_take_as_separate_clip(
         .arrangement
         .audio_clips
         .iter()
-        .find(|clip| clip.id == source_clip_id)
+        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
         .cloned()
     {
         let mut clip = source;
         clip.id = new_clip_id;
         clip.muted = false;
         session.arrangement.audio_clips.push(clip);
+    } else if take.raw_audio_asset_id.is_some() || take.processed_audio_asset_id.is_some() {
+        let slot_clip_id = session
+            .arrangement
+            .recording_sessions
+            .iter()
+            .find(|recording| recording.id == take.session_id)
+            .and_then(|recording| {
+                recording
+                    .track_slots
+                    .iter()
+                    .find(|slot| slot.track_id == take.track_id)
+            })
+            .map(|slot| slot.timeline_clip_id.clone())
+            .ok_or_else(|| "Recording Take Track Slot is unavailable.".to_string())?;
+        let mut clip = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == slot_clip_id)
+            .cloned()
+            .ok_or_else(|| "Recording Take slot has no Audio Clip.".to_string())?;
+        clip.id = new_clip_id;
+        clip.start_tick = take.start_tick;
+        clip.source_range.start = take.source_start_sample;
+        clip.source_range.end = take.source_end_sample;
+        clip.timeline_duration.frames = take
+            .source_end_sample
+            .saturating_sub(take.source_start_sample);
+        clip.asset_id = match clip.take_variant {
+            AudioTakeVariant::Raw => take.raw_audio_asset_id.clone(),
+            AudioTakeVariant::Processed => take.processed_audio_asset_id.clone(),
+        }
+        .or(take.processed_audio_asset_id.clone())
+        .or(take.raw_audio_asset_id.clone())
+        .ok_or_else(|| "Recording Take has no usable Audio Asset.".to_string())?;
+        clip.recording_take_id = Some(take.id);
+        clip.muted = false;
+        session.arrangement.audio_clips.push(clip);
     } else if let Some(source) = session
         .arrangement
         .midi_clips
         .iter()
-        .find(|clip| clip.id == source_clip_id)
+        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
         .cloned()
     {
         let mut clip = source;
@@ -1574,13 +2079,11 @@ pub fn place_take_as_separate_clip(
         clip.muted = false;
         session.arrangement.midi_clips.push(clip);
     } else {
-        return Err(format!(
-            "Recording Take Clip is not found: {source_clip_id}"
-        ));
+        return Err(format!("Recording Take has no Timeline Clip: {take_id}"));
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement_best_effort(context, &committed);
+    sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 
@@ -1591,6 +2094,13 @@ pub struct MidiNotePatch {
     pub start_tick: Option<TimelineTick>,
     pub duration_ticks: Option<u64>,
     pub velocity: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiNoteUpdate {
+    pub note_id: String,
+    pub patch: MidiNotePatch,
 }
 
 pub fn apply_ai_suggestion(

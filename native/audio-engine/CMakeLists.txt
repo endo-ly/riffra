@@ -37,11 +37,18 @@ target_sources(riffra-audio PRIVATE
   src/SafetyAudioCallback.h
   src/TimelineEngine.cpp
   src/TimelineEngine.h
+  src/ArrangementGraph.cpp
+  src/ArrangementGraph.h
   src/AudioSafetyDsp.h
   src/RecordingSession.cpp
   src/RecordingSession.h
+  src/ArrangeRecordingSession.cpp
+  src/ArrangeRecordingSession.h
+  src/ArrangementCaptureSink.h
   src/PluginRack.cpp
   src/PluginRack.h
+  src/PluginChain.cpp
+  src/PluginChain.h
   src/PluginEditorHost.cpp
   src/PluginEditorHost.h
   src/PluginRackSelfTest.cpp

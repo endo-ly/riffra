@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "AudioSafetyDsp.h"
+#include "ArrangeRecordingSession.h"
 #include "RecordingSession.h"
 #include "PluginRack.h"
 #include "TimelineEngine.h"
@@ -14,6 +15,8 @@ namespace riffra {
 
 class SafetyAudioCallback final : public juce::AudioIODeviceCallback {
 public:
+    enum class ProcessingMode { play, arrange, passive };
+
     SafetyAudioCallback() = default;
     ~SafetyAudioCallback() override;
 
@@ -35,16 +38,27 @@ public:
         juce::String& error,
         bool allowNoInput = false);
     bool stopRecording(juce::String& error);
+    bool startArrangeRecording(
+        const juce::File& directory,
+        TimelineEngine& timeline,
+        juce::String& error);
+    bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
+    bool switchPreviewBuffer(
+        int voiceKey,
+        const juce::AudioBuffer<float>& buffer,
+        juce::String& error);
     void startSynthNote(int note, float velocity) noexcept;
     void stopSynthNote(int note) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setPluginRack(PluginRack* rack) noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
+    void setProcessingMode(ProcessingMode mode) noexcept;
+    [[nodiscard]] ProcessingMode getProcessingMode() const noexcept;
     [[nodiscard]] bool hasInstrumentPlugin() const noexcept;
     void enqueuePluginMidi(const juce::MidiMessage& message) noexcept;
 
@@ -125,6 +139,7 @@ private:
     std::atomic<unsigned int> recordingReaders { 0 };
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<RecordingSession> recording;
+    std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
     juce::AudioBuffer<float> recordingMixBuffer;
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {
@@ -156,6 +171,7 @@ private:
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;
     PluginRack* pluginRack = nullptr;
     TimelineEngine* timelineEngine = nullptr;
+    std::atomic<ProcessingMode> processingMode { ProcessingMode::passive };
 
     juce::CriticalSection errorLock;
     juce::String lastDeviceError;

@@ -6,4 +6,4 @@ import type { MidiNote } from "./MidiNote";
 /**
  * A non-destructive MIDI clip on the arrangement.
  */
-export type MidiClip = { id: string, name: string, trackId: string, assetId?: AssetId, startTick: number, durationTicks: number, notes: Array<MidiNote>, events: Array<MidiEvent>, muted: boolean, loopEnabled: boolean, };
+export type MidiClip = { id: string, name: string, trackId: string, assetId?: AssetId, startTick: number, durationTicks: number, notes: Array<MidiNote>, events: Array<MidiEvent>, muted: boolean, loopEnabled: boolean, recordingTakeId?: string, };

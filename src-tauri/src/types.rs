@@ -14,8 +14,8 @@ use crate::library::LibraryAsset;
 use crate::missing::MissingDependency;
 use crate::model::{
     AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo,
-    AudioState, AudioStatus, BootstrapState, MidiProbe, PluginParameter, PluginStatus,
-    RecordingStatus, RecoveryCandidate, SessionAudioPair,
+    AudioState, AudioStatus, BootstrapState, MidiDeviceInfo, MidiProbe, PluginParameter,
+    PluginStatus, RecordingStatus, RecoveryCandidate, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -27,10 +27,11 @@ use crate::render::{RenderOptions, RenderResult};
 use crate::separation::SeparationResult;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
-    CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
-    MidiClipMove, MidiClipPatch, MidiNote, MonitoringState, PlayState, ProjectTimebase,
-    SampleInstrumentState, SamplePad, SessionSettings, SessionSnapshot, TimelineLoopRange, Track,
-    TrackKind, Workspace,
+    AudioInputRoute, AudioTakeVariant, CreativeSession, DesignContext, DesignTool, FrameDuration,
+    FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote,
+    MonitoringState, PlayState, ProjectTimebase, RecordingPassRecord, RecordingSessionRecord,
+    RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState, SamplePad,
+    SessionSettings, SessionSnapshot, TimelineLoopRange, Track, TrackKind, Workspace,
 };
 use ts_rs::{Config, TS};
 
@@ -58,9 +59,16 @@ fn export_types() {
     DesignContext::export_all(&cfg).expect("DesignContext bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
+    AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
+    MidiInputRoute::export_all(&cfg).expect("MidiInputRoute bindings");
     Track::export_all(&cfg).expect("Track bindings");
     MidiNote::export_all(&cfg).expect("MidiNote bindings");
     MidiClip::export_all(&cfg).expect("MidiClip bindings");
+    AudioTakeVariant::export_all(&cfg).expect("AudioTakeVariant bindings");
+    RecordingSessionTrackSlot::export_all(&cfg).expect("RecordingSessionTrackSlot bindings");
+    RecordingSessionRecord::export_all(&cfg).expect("RecordingSessionRecord bindings");
+    RecordingPassRecord::export_all(&cfg).expect("RecordingPassRecord bindings");
+    RecordingTakeRecord::export_all(&cfg).expect("RecordingTakeRecord bindings");
     AudioClip::export_all(&cfg).expect("AudioClip bindings");
     AudioClipPatch::export_all(&cfg).expect("AudioClipPatch bindings");
     AudioClipMove::export_all(&cfg).expect("AudioClipMove bindings");
@@ -81,6 +89,7 @@ fn export_types() {
     AudioDriverInfo::export_all(&cfg).expect("AudioDriverInfo bindings");
     AudioDeviceProbe::export_all(&cfg).expect("AudioDeviceProbe bindings");
     MidiProbe::export_all(&cfg).expect("MidiProbe bindings");
+    MidiDeviceInfo::export_all(&cfg).expect("MidiDeviceInfo bindings");
     PluginParameter::export_all(&cfg).expect("PluginParameter bindings");
     PluginStatus::export_all(&cfg).expect("PluginStatus bindings");
     RecordingStatus::export_all(&cfg).expect("RecordingStatus bindings");

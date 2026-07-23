@@ -149,6 +149,25 @@ pub enum TrackKind {
     Instrument,
 }
 
+/// A physical input channel routed to one Audio Track.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInputRoute {
+    pub channel_index: u32,
+}
+
+/// A MIDI source and channel filter routed to one Instrument Track.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiInputRoute {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub channel: Option<u8>,
+}
+
 /// A timeline track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +187,14 @@ pub struct Track {
     pub armed: bool,
     #[serde(default)]
     pub monitoring: MonitoringState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub audio_input: Option<AudioInputRoute>,
+    #[serde(default)]
+    pub midi_input: MidiInputRoute,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instrument: Option<RackDevice>,
     pub rack: RackInstance,
 }
 
@@ -202,6 +229,9 @@ impl Track {
             solo: false,
             armed: false,
             monitoring: MonitoringState::Off,
+            audio_input: None,
+            midi_input: MidiInputRoute::default(),
+            instrument: None,
             rack: empty_track_rack(),
         }
     }
@@ -274,6 +304,9 @@ pub struct MidiClip {
     pub muted: bool,
     #[serde(default)]
     pub loop_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_take_id: Option<String>,
 }
 
 /// Whether a recorded audio take is using its original or processed variant.
@@ -293,26 +326,56 @@ pub struct RecordingSessionRecord {
     pub id: String,
     #[ts(type = "number")]
     pub start_tick: TimelineTick,
-    #[ts(type = "number")]
-    pub end_tick: TimelineTick,
-    pub track_ids: Vec<String>,
     #[serde(default)]
-    pub loop_recording: bool,
+    pub track_slots: Vec<RecordingSessionTrackSlot>,
     #[serde(default)]
-    pub take_ids: Vec<String>,
+    pub pass_ids: Vec<String>,
 }
 
-/// A recorded take and the timeline objects/variants produced from it.
+/// The active take and stable Timeline Clip owned by one recorded Track.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingSessionTrackSlot {
+    pub track_id: String,
+    pub active_take_id: String,
+    pub timeline_clip_id: String,
+}
+
+/// One pass through the recording range.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingPassRecord {
+    pub id: String,
+    pub session_id: String,
+    pub ordinal: u32,
+    #[ts(type = "number")]
+    pub start_tick: TimelineTick,
+    pub duration_ticks: u64,
+    #[serde(default)]
+    pub partial_start: bool,
+    #[serde(default)]
+    pub partial_end: bool,
+    #[serde(default)]
+    pub track_take_ids: Vec<String>,
+}
+
+/// A recorded Track product belonging to one recording pass.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingTakeRecord {
     pub id: String,
     pub session_id: String,
+    #[serde(default)]
+    pub pass_id: String,
     pub track_id: String,
     #[ts(type = "number")]
     pub start_tick: TimelineTick,
     #[ts(type = "number")]
     pub duration_ticks: u64,
+    #[serde(default)]
+    pub source_start_sample: u64,
+    #[serde(default)]
+    pub source_end_sample: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub raw_audio_asset_id: Option<AssetId>,
@@ -322,13 +385,6 @@ pub struct RecordingTakeRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub midi_asset_id: Option<AssetId>,
-    #[serde(default)]
-    pub active_variant: AudioTakeVariant,
-    #[serde(default)]
-    pub active: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub clip_id: Option<String>,
 }
 
 /// A non-destructive audio clip referencing an [`AssetId`].
@@ -351,6 +407,11 @@ pub struct AudioClip {
     pub loop_enabled: bool,
     pub muted: bool,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_take_id: Option<String>,
+    #[serde(default)]
+    pub take_variant: AudioTakeVariant,
 }
 
 impl AudioClip {
@@ -392,6 +453,8 @@ impl AudioClip {
             },
             loop_enabled: false,
             muted: false,
+            recording_take_id: None,
+            take_variant: AudioTakeVariant::Raw,
         }
     }
 
@@ -515,6 +578,8 @@ pub struct Arrangement {
     pub markers: Vec<Marker>,
     #[serde(default)]
     pub recording_sessions: Vec<RecordingSessionRecord>,
+    #[serde(default)]
+    pub recording_passes: Vec<RecordingPassRecord>,
     #[serde(default)]
     pub takes: Vec<RecordingTakeRecord>,
 }
@@ -1558,6 +1623,175 @@ pub struct CreativeSession {
     pub settings: SessionSettings,
 }
 
+/// Deserializes a session and upgrades the former recording-session shape at
+/// the persistence boundary. The returned value contains only the canonical
+/// Session / Pass / Track Slot / Take representation and therefore serializes
+/// without legacy fields.
+pub(crate) fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
+    let value = serde_json::from_slice::<serde_json::Value>(payload)?;
+    let mut session = serde_json::from_value::<CreativeSession>(value.clone())?;
+    let Some(arrangement) = value.get("arrangement") else {
+        return Ok(session);
+    };
+    let legacy_takes = arrangement
+        .get("takes")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !session
+        .arrangement
+        .takes
+        .iter()
+        .any(|take| take.pass_id.is_empty())
+    {
+        return Ok(session);
+    }
+
+    let mut pass_keys = Vec::<(String, u64, u64)>::new();
+    for take in &session.arrangement.takes {
+        let key = (
+            take.session_id.clone(),
+            take.start_tick.0,
+            take.duration_ticks,
+        );
+        if !pass_keys.contains(&key) {
+            pass_keys.push(key);
+        }
+    }
+    for (index, (session_id, start_tick, duration_ticks)) in pass_keys.iter().enumerate() {
+        let pass_id = format!("pass:migrated:{session_id}:{}", index + 1);
+        let ordinal = u32::try_from(
+            pass_keys[..=index]
+                .iter()
+                .filter(|(candidate, _, _)| candidate == session_id)
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
+        let track_take_ids = session
+            .arrangement
+            .takes
+            .iter()
+            .filter(|take| {
+                take.session_id == *session_id
+                    && take.start_tick.0 == *start_tick
+                    && take.duration_ticks == *duration_ticks
+            })
+            .map(|take| take.id.clone())
+            .collect();
+        session
+            .arrangement
+            .recording_passes
+            .push(RecordingPassRecord {
+                id: pass_id.clone(),
+                session_id: session_id.clone(),
+                ordinal,
+                start_tick: TimelineTick(*start_tick),
+                duration_ticks: *duration_ticks,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids,
+            });
+        for take in &mut session.arrangement.takes {
+            if take.session_id == *session_id
+                && take.start_tick.0 == *start_tick
+                && take.duration_ticks == *duration_ticks
+            {
+                take.pass_id = pass_id.clone();
+            }
+        }
+    }
+
+    for (index, take) in session.arrangement.takes.iter_mut().enumerate() {
+        let legacy = legacy_takes.get(index);
+        let clip_id = legacy
+            .and_then(|value| value.get("clipId"))
+            .and_then(serde_json::Value::as_str);
+        let variant = match legacy
+            .and_then(|value| value.get("activeVariant"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("processed") => AudioTakeVariant::Processed,
+            _ => AudioTakeVariant::Raw,
+        };
+        if let Some(clip_id) = clip_id {
+            if let Some(clip) = session
+                .arrangement
+                .audio_clips
+                .iter_mut()
+                .find(|clip| clip.id == clip_id)
+            {
+                clip.recording_take_id = Some(take.id.clone());
+                clip.take_variant = variant;
+                take.source_start_sample = clip.source_range.start;
+                take.source_end_sample = clip.source_range.end;
+            }
+            if let Some(clip) = session
+                .arrangement
+                .midi_clips
+                .iter_mut()
+                .find(|clip| clip.id == clip_id)
+            {
+                clip.recording_take_id = Some(take.id.clone());
+            }
+        }
+    }
+
+    for recording in &mut session.arrangement.recording_sessions {
+        recording.pass_ids = session
+            .arrangement
+            .recording_passes
+            .iter()
+            .filter(|pass| pass.session_id == recording.id)
+            .map(|pass| pass.id.clone())
+            .collect();
+        let mut track_ids = session
+            .arrangement
+            .takes
+            .iter()
+            .filter(|take| take.session_id == recording.id)
+            .map(|take| take.track_id.clone())
+            .collect::<Vec<_>>();
+        track_ids.sort();
+        track_ids.dedup();
+        for track_id in track_ids {
+            let matching = session
+                .arrangement
+                .takes
+                .iter()
+                .enumerate()
+                .filter(|(_, take)| take.session_id == recording.id && take.track_id == track_id)
+                .collect::<Vec<_>>();
+            let selected = matching
+                .iter()
+                .find(|(index, _)| {
+                    legacy_takes
+                        .get(*index)
+                        .and_then(|value| value.get("active"))
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .copied()
+                .or_else(|| matching.last().copied());
+            let Some((index, take)) = selected else {
+                continue;
+            };
+            let Some(timeline_clip_id) = legacy_takes
+                .get(index)
+                .and_then(|value| value.get("clipId"))
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            recording.track_slots.push(RecordingSessionTrackSlot {
+                track_id,
+                active_take_id: take.id.clone(),
+                timeline_clip_id: timeline_clip_id.to_owned(),
+            });
+        }
+    }
+    Ok(session)
+}
+
 fn default_rack() -> RackInstance {
     RackInstance {
         devices: vec![
@@ -1720,28 +1954,7 @@ fn normalize_rack(rack: &mut RackInstance) -> Result<(), String> {
         return Err("A session cannot contain more than 64 rack macros.".into());
     }
     for device in &mut rack.devices {
-        if device.id.trim().is_empty() || device.name.trim().is_empty() {
-            return Err("Rack devices require non-empty ids and names.".into());
-        }
-        if !device.gain_db.is_finite() {
-            return Err(format!("Device '{}' has an invalid gain.", device.name));
-        }
-        device.gain_db = device.gain_db.clamp(-90.0, 24.0);
-        if device.parameter_values.len() > 512 {
-            device.parameter_values.truncate(512);
-        }
-        for value in &mut device.parameter_values {
-            *value = if value.is_finite() {
-                value.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-        }
-        if let Some(state) = device.state_data.as_ref()
-            && state.len() > 4_000_000
-        {
-            device.state_data = Some(state.chars().take(4_000_000).collect());
-        }
+        normalize_rack_device(device)?;
     }
     for macro_control in &mut rack.macros {
         if macro_control.id.trim().is_empty() || macro_control.name.trim().is_empty() {
@@ -1754,6 +1967,32 @@ fn normalize_rack(rack: &mut RackInstance) -> Result<(), String> {
             ));
         }
         macro_control.value = macro_control.value.clamp(0.0, 1.0);
+    }
+    Ok(())
+}
+
+fn normalize_rack_device(device: &mut RackDevice) -> Result<(), String> {
+    if device.id.trim().is_empty() || device.name.trim().is_empty() {
+        return Err("Rack devices require non-empty ids and names.".into());
+    }
+    if !device.gain_db.is_finite() {
+        return Err(format!("Device '{}' has an invalid gain.", device.name));
+    }
+    device.gain_db = device.gain_db.clamp(-90.0, 24.0);
+    if device.parameter_values.len() > 512 {
+        device.parameter_values.truncate(512);
+    }
+    for value in &mut device.parameter_values {
+        *value = if value.is_finite() {
+            value.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+    if let Some(state) = device.state_data.as_ref()
+        && state.len() > 4_000_000
+    {
+        device.state_data = Some(state.chars().take(4_000_000).collect());
     }
     Ok(())
 }
@@ -1819,6 +2058,34 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         }
         track.gain_db = track.gain_db.clamp(-90.0, 24.0);
         track.pan = track.pan.clamp(-1.0, 1.0);
+        match track.kind {
+            TrackKind::Audio if track.instrument.is_some() => {
+                return Err(format!(
+                    "Audio Track '{}' cannot host an Instrument.",
+                    track.name
+                ));
+            }
+            TrackKind::Instrument if track.audio_input.is_some() => {
+                return Err(format!(
+                    "Instrument Track '{}' cannot route a physical Audio Input.",
+                    track.name
+                ));
+            }
+            _ => {}
+        }
+        if track
+            .midi_input
+            .channel
+            .is_some_and(|channel| !(1..=16).contains(&channel))
+        {
+            return Err(format!(
+                "Track '{}' has an invalid MIDI channel.",
+                track.name
+            ));
+        }
+        if let Some(instrument) = &mut track.instrument {
+            normalize_rack_device(instrument)?;
+        }
         normalize_rack(&mut track.rack)?;
     }
     let audio_clips = std::mem::take(&mut arrangement.audio_clips);
@@ -1848,6 +2115,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             midi_clips: Vec::new(),
             markers: Vec::new(),
             recording_sessions: arrangement.recording_sessions.clone(),
+            recording_passes: arrangement.recording_passes.clone(),
             takes: arrangement.takes.clone(),
         };
         candidate
@@ -1941,9 +2209,12 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             normalized_name
         };
     }
-    if arrangement.recording_sessions.len() > 256 || arrangement.takes.len() > 256 {
+    if arrangement.recording_sessions.len() > 256
+        || arrangement.recording_passes.len() > 4096
+        || arrangement.takes.len() > 16_384
+    {
         return Err(
-            "An arrangement cannot contain more than 256 recording sessions or takes.".into(),
+            "An arrangement contains too many recording sessions, passes, or takes.".into(),
         );
     }
     let session_ids = arrangement
@@ -1951,44 +2222,63 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         .iter()
         .map(|recording| recording.id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let clip_ids = arrangement
-        .audio_clips
+    let pass_ids = arrangement
+        .recording_passes
         .iter()
-        .map(|clip| clip.id.as_str())
-        .chain(arrangement.midi_clips.iter().map(|clip| clip.id.as_str()))
+        .map(|pass| pass.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let take_ids = arrangement
+        .takes
+        .iter()
+        .map(|take| take.id.as_str())
         .collect::<std::collections::HashSet<_>>();
     for recording in &arrangement.recording_sessions {
         if recording.id.trim().is_empty()
-            || recording.end_tick <= recording.start_tick
-            || recording
-                .track_ids
-                .iter()
-                .any(|id| !track_ids.contains(id.as_str()))
-            || recording.take_ids.iter().any(|id| {
-                !arrangement
-                    .takes
-                    .iter()
-                    .any(|take| take.id == *id && take.session_id == recording.id)
+            || recording.track_slots.iter().any(|slot| {
+                !track_ids.contains(slot.track_id.as_str())
+                    || !take_ids.contains(slot.active_take_id.as_str())
+                    || !arrangement
+                        .audio_clips
+                        .iter()
+                        .any(|clip| clip.id == slot.timeline_clip_id)
+                        && !arrangement
+                            .midi_clips
+                            .iter()
+                            .any(|clip| clip.id == slot.timeline_clip_id)
             })
+            || recording
+                .pass_ids
+                .iter()
+                .any(|id| !pass_ids.contains(id.as_str()))
         {
             return Err(
                 "Recording Sessions contain invalid track, take, or range references.".into(),
             );
         }
     }
+    for pass in &arrangement.recording_passes {
+        if pass.id.trim().is_empty()
+            || !session_ids.contains(pass.session_id.as_str())
+            || pass.ordinal == 0
+            || pass.duration_ticks == 0
+            || pass
+                .track_take_ids
+                .iter()
+                .any(|id| !take_ids.contains(id.as_str()))
+        {
+            return Err("Recording Passes contain invalid references or ranges.".into());
+        }
+    }
     for take in &arrangement.takes {
         if take.id.trim().is_empty()
             || !session_ids.contains(take.session_id.as_str())
+            || !pass_ids.contains(take.pass_id.as_str())
             || !track_ids.contains(take.track_id.as_str())
             || take.duration_ticks == 0
-            || take
-                .clip_id
-                .as_deref()
-                .is_some_and(|id| !clip_ids.contains(id))
+            || take.source_end_sample < take.source_start_sample
         {
             return Err(
-                "Recording Takes contain invalid session, track, clip, or duration references."
-                    .into(),
+                "Recording Takes contain invalid session, pass, track, or range references.".into(),
             );
         }
     }
@@ -2063,6 +2353,7 @@ mod tests {
             }],
             muted: false,
             loop_enabled: false,
+            recording_take_id: None,
         }
     }
 
@@ -2102,16 +2393,7 @@ mod tests {
     fn arrangement_cannot_add_an_audio_clip_to_an_instrument_track() {
         let mut arrangement = Arrangement::default();
         arrangement.tracks.push(Track {
-            id: "instrument".into(),
-            name: "Instrument".into(),
-            kind: TrackKind::Instrument,
-            gain_db: 0.0,
-            pan: 0.0,
-            muted: false,
-            solo: false,
-            armed: false,
-            monitoring: MonitoringState::Off,
-            rack: empty_track_rack(),
+            ..Track::instrument("instrument".into(), "Instrument".into())
         });
         let error = arrangement
             .add_audio_clip(clip("instrument", mint_asset_id()), |_| true)
@@ -2236,22 +2518,14 @@ mod tests {
             tracks: vec![
                 Track::audio("main".into(), "Main".into()),
                 Track {
-                    id: "extra".into(),
-                    name: "Extra".into(),
-                    kind: TrackKind::Audio,
-                    gain_db: 0.0,
-                    pan: 0.0,
-                    muted: false,
-                    solo: false,
-                    armed: false,
-                    monitoring: MonitoringState::Off,
-                    rack: empty_track_rack(),
+                    ..Track::audio("extra".into(), "Extra".into())
                 },
             ],
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
             markers: Vec::new(),
             recording_sessions: Vec::new(),
+            recording_passes: Vec::new(),
             takes: Vec::new(),
         };
         let mut clip = clip("main", asset);
@@ -2505,6 +2779,7 @@ mod tests {
             events: Vec::new(),
             muted: false,
             loop_enabled: false,
+            recording_take_id: None,
         });
         arrangement
             .paste_timeline_clips(
@@ -2553,5 +2828,40 @@ mod tests {
         );
         // An unused provenance reference keeps the asset import meaningful here.
         let _ = Provenance::recorded_root();
+    }
+
+    #[test]
+    fn legacy_recording_shape_migrates_to_passes_slots_and_clip_variants() {
+        let mut value = serde_json::to_value(CreativeSession::new(0)).unwrap();
+        value["arrangement"]["tracks"] = serde_json::json!([Track::audio(
+            "track:legacy".into(),
+            "Legacy".into()
+        )]);
+        value["arrangement"]["audioClips"] = serde_json::json!([]);
+        value["arrangement"]["takes"] = serde_json::json!([{
+            "id": "take:legacy",
+            "sessionId": "recording:legacy",
+            "trackId": "track:legacy",
+            "startTick": 960,
+            "durationTicks": 480,
+            "active": true,
+            "activeVariant": "processed",
+            "clipId": "clip:legacy"
+        }]);
+        value["arrangement"]["recordingSessions"] = serde_json::json!([{
+            "id": "recording:legacy",
+            "startTick": 960,
+            "takeIds": ["take:legacy"]
+        }]);
+
+        let migrated = deserialize_session(&serde_json::to_vec(&value).unwrap()).unwrap();
+
+        assert_eq!(migrated.arrangement.recording_passes.len(), 1);
+        assert_eq!(migrated.arrangement.recording_passes[0].track_take_ids, ["take:legacy"]);
+        assert!(!migrated.arrangement.takes[0].pass_id.is_empty());
+        assert_eq!(
+            migrated.arrangement.recording_sessions[0].track_slots[0].active_take_id,
+            "take:legacy"
+        );
     }
 }

@@ -174,7 +174,19 @@ pub fn export(
 pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> {
     let payload =
         fs::read(path).map_err(|error| format!("Project manifest could not be read: {error}"))?;
-    let manifest = serde_json::from_slice::<ProjectManifestOwned>(&payload)
+    let mut manifest_value = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| format!("Project manifest is invalid: {error}"))?;
+    let session_value = manifest_value
+        .get("session")
+        .cloned()
+        .ok_or_else(|| "Project manifest has no Session.".to_string())?;
+    let session_payload = serde_json::to_vec(&session_value)
+        .map_err(|error| format!("Project Session is invalid: {error}"))?;
+    let migrated_session = crate::session::deserialize_session(&session_payload)
+        .map_err(|error| format!("Project Session is invalid: {error}"))?;
+    manifest_value["session"] = serde_json::to_value(migrated_session)
+        .map_err(|error| format!("Project Session is invalid: {error}"))?;
+    let manifest = serde_json::from_value::<ProjectManifestOwned>(manifest_value)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
     if manifest.manifest_version != MANIFEST_VERSION {
         return Err(format!(

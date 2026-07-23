@@ -16,7 +16,8 @@ use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{
     AudioClipMove, AudioClipPatch, AudioTakeVariant, CreativeSession, DesignTool, FrameRange,
-    MidiClipMove, MidiClipPatch, ProjectTimebase, TimelineTick, TrackKind, Workspace,
+    MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick, TrackKind,
+    Workspace,
 };
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
@@ -360,6 +361,104 @@ pub fn update_track(
 }
 
 #[tauri::command]
+pub fn set_track_audio_input(
+    track_id: String,
+    channel_index: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_audio_input(&context(&state), &track_id, channel_index)
+}
+
+#[tauri::command]
+pub fn set_track_midi_input(
+    track_id: String,
+    route: MidiInputRoute,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_midi_input(&context(&state), &track_id, route)
+}
+
+#[tauri::command]
+pub fn set_track_instrument(
+    track_id: String,
+    plugin_path: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_instrument(&context(&state), &track_id, &plugin_path)
+}
+
+#[tauri::command]
+pub fn clear_track_instrument(
+    track_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::clear_track_instrument(&context(&state), &track_id)
+}
+
+#[tauri::command]
+pub fn add_track_effect(
+    track_id: String,
+    plugin_path: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::add_track_effect(&context(&state), &track_id, &plugin_path)
+}
+
+#[tauri::command]
+pub fn remove_track_effect(
+    track_id: String,
+    device_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::remove_track_effect(&context(&state), &track_id, &device_id)
+}
+
+#[tauri::command]
+pub fn reorder_track_effects(
+    track_id: String,
+    ordered_device_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::reorder_track_effects(&context(&state), &track_id, &ordered_device_ids)
+}
+
+#[tauri::command]
+pub fn set_track_device_bypassed(
+    track_id: String,
+    device_id: String,
+    bypassed: bool,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_device_bypassed(&context(&state), &track_id, &device_id, bypassed)
+}
+
+#[tauri::command]
+pub fn set_track_device_parameter(
+    track_id: String,
+    device_id: String,
+    parameter_index: u32,
+    value: f32,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_device_parameter(
+        &context(&state),
+        &track_id,
+        &device_id,
+        parameter_index,
+        value,
+    )
+}
+
+#[tauri::command]
+pub fn open_track_plugin_editor(
+    track_id: String,
+    device_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    application::open_track_plugin_editor(&context(&state), &track_id, &device_id)
+}
+
+#[tauri::command]
 pub fn remove_track(
     track_id: String,
     state: State<'_, AppState>,
@@ -443,6 +542,15 @@ pub fn update_midi_note(
 }
 
 #[tauri::command]
+pub fn update_midi_notes(
+    clip_id: String,
+    updates: Vec<application::MidiNoteUpdate>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::update_midi_notes(&context(&state), &clip_id, updates)
+}
+
+#[tauri::command]
 pub fn remove_midi_note(
     clip_id: String,
     note_id: String,
@@ -478,6 +586,29 @@ pub fn set_take_variant(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::set_take_variant(&context(&state), &take_id, variant)
+}
+
+#[tauri::command]
+pub fn start_take_comparison(
+    take_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::model::AudioStatus, String> {
+    application::start_take_comparison(&context(&state), &take_id)
+}
+
+#[tauri::command]
+pub fn switch_take_comparison_variant(
+    variant: AudioTakeVariant,
+    state: State<'_, AppState>,
+) -> Result<crate::model::AudioStatus, String> {
+    application::switch_take_comparison_variant(&context(&state), variant)
+}
+
+#[tauri::command]
+pub fn stop_take_comparison(
+    state: State<'_, AppState>,
+) -> Result<crate::model::AudioStatus, String> {
+    application::stop_take_comparison(&context(&state))
 }
 
 #[tauri::command]

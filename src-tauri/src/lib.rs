@@ -143,9 +143,9 @@ struct NativeMidiProbe {
     #[serde(rename = "type")]
     message_type: String,
     #[serde(default)]
-    midi_inputs: Vec<String>,
+    midi_inputs: Vec<model::MidiDeviceInfo>,
     #[serde(default)]
-    midi_outputs: Vec<String>,
+    midi_outputs: Vec<model::MidiDeviceInfo>,
     #[serde(default)]
     drivers: Vec<NativeAudioDriver>,
 }
@@ -394,6 +394,21 @@ pub fn run() {
             audio_preferences::AudioPreferencesStore::new(&data_root)
                 .save(&effective_preferences)?;
             audio.set_restart_preferences(effective_preferences.clone())?;
+            if !safe_mode {
+                if session.workspace == session::Workspace::Arrange {
+                    audio.load_timeline_snapshot(
+                        session::application::runtime_snapshot_for_recording(
+                            &data_root,
+                            &session,
+                        ),
+                    )?;
+                }
+                audio.set_processing_mode(match session.workspace {
+                    session::Workspace::Play => "play",
+                    session::Workspace::Arrange => "arrange",
+                    session::Workspace::Home | session::Workspace::Design => "passive",
+                })?;
+            }
             SessionStore::new(&data_root).save(&session)?;
             let _ = library::sync_session(&data_root, &session);
             app.manage(AppState {
@@ -471,6 +486,16 @@ pub fn run() {
             session::commands::update_session_settings,
             session::commands::add_track,
             session::commands::update_track,
+            session::commands::set_track_audio_input,
+            session::commands::set_track_midi_input,
+            session::commands::set_track_instrument,
+            session::commands::clear_track_instrument,
+            session::commands::add_track_effect,
+            session::commands::remove_track_effect,
+            session::commands::reorder_track_effects,
+            session::commands::set_track_device_bypassed,
+            session::commands::set_track_device_parameter,
+            session::commands::open_track_plugin_editor,
             session::commands::remove_track,
             session::commands::duplicate_track,
             session::commands::reorder_track,
@@ -479,10 +504,14 @@ pub fn run() {
             session::commands::remove_marker,
             session::commands::add_midi_note,
             session::commands::update_midi_note,
+            session::commands::update_midi_notes,
             session::commands::remove_midi_note,
             session::commands::quantize_midi_notes,
             session::commands::duplicate_midi_notes,
             session::commands::set_take_variant,
+            session::commands::start_take_comparison,
+            session::commands::switch_take_comparison_variant,
+            session::commands::stop_take_comparison,
             session::commands::activate_take,
             session::commands::place_take_as_separate_clip,
             session::commands::apply_ai_suggestion,
@@ -502,8 +531,10 @@ pub fn run() {
             recording::commands::detect_duplicate_recordings,
             recording::commands::tag_recording,
             recording::commands::start_recording,
+            recording::commands::start_arrange_recording,
             recording::commands::record_another_take,
             recording::commands::stop_recording,
+            recording::commands::stop_arrange_recording,
             // Library Read Model queries / updates.
             library::commands::search_library,
             library::commands::update_library_asset,
@@ -529,12 +560,13 @@ mod tests {
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
         let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":["Keyboard"],"midiOutputs":["Microsoft GS Wavetable Synth"]}"#,
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":[{"id":"midi-in-1","name":"Keyboard"}],"midiOutputs":[{"id":"midi-out-1","name":"Microsoft GS Wavetable Synth"}]}"#,
         )
         .unwrap();
         assert_eq!(probe.drivers[0].name, "ASIO");
-        assert_eq!(probe.midi_inputs, ["Keyboard"]);
-        assert_eq!(probe.midi_outputs, ["Microsoft GS Wavetable Synth"]);
+        assert_eq!(probe.midi_inputs[0].id, "midi-in-1");
+        assert_eq!(probe.midi_inputs[0].name, "Keyboard");
+        assert_eq!(probe.midi_outputs[0].id, "midi-out-1");
     }
 
     #[test]

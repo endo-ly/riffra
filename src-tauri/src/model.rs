@@ -106,8 +106,8 @@ pub struct AudioStatus {
     pub timeline_tick: Option<u64>,
     pub recording: RecordingStatus,
     pub plugin: Option<PluginStatus>,
-    pub midi_inputs: Vec<String>,
-    pub midi_outputs: Vec<String>,
+    pub midi_inputs: Vec<MidiDeviceInfo>,
+    pub midi_outputs: Vec<MidiDeviceInfo>,
     pub midi_input_active: bool,
     pub midi_messages: u64,
     pub last_midi_note: Option<u8>,
@@ -123,10 +123,17 @@ pub struct AudioStatus {
 #[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiProbe {
-    pub inputs: Vec<String>,
-    pub outputs: Vec<String>,
+    pub inputs: Vec<MidiDeviceInfo>,
+    pub outputs: Vec<MidiDeviceInfo>,
     pub refreshed_at_ms: u64,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiDeviceInfo {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, TS)]
@@ -160,8 +167,8 @@ pub enum AudioAccessMode {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDeviceProbe {
     pub drivers: Vec<AudioDriverInfo>,
-    pub midi_inputs: Vec<String>,
-    pub midi_outputs: Vec<String>,
+    pub midi_inputs: Vec<MidiDeviceInfo>,
+    pub midi_outputs: Vec<MidiDeviceInfo>,
     pub refreshed_at_ms: u64,
     pub message: String,
 }

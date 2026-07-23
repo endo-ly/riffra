@@ -101,7 +101,7 @@ impl SessionStore {
     /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let session: CreativeSession = serde_json::from_slice(&payload)
+        let session = crate::session::deserialize_session(&payload)
             .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
         let session = session
             .validate_and_normalize()
@@ -124,7 +124,7 @@ impl SessionStore {
     /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        let session: CreativeSession = serde_json::from_slice(&payload)?;
+        let session = crate::session::deserialize_session(&payload)?;
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;

@@ -2,6 +2,7 @@ use crate::audio_preferences::AudioPreferences;
 use crate::model::{
     AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
 };
+use crate::session::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -71,8 +72,8 @@ struct NativeStatus {
     timeline_tick: Option<u64>,
     recording: Option<NativeRecordingStatus>,
     plugin: Option<NativePluginStatus>,
-    midi_inputs: Option<Vec<String>>,
-    midi_outputs: Option<Vec<String>>,
+    midi_inputs: Option<Vec<crate::model::MidiDeviceInfo>>,
+    midi_outputs: Option<Vec<crate::model::MidiDeviceInfo>>,
     midi_input_active: Option<bool>,
     midi_messages: Option<u64>,
     last_midi_note: Option<i32>,
@@ -415,6 +416,29 @@ impl AudioSupervisor {
         Ok(())
     }
 
+    pub fn prepare_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
+        self.send_command_with_timeout(
+            serde_json::json!({
+                "type": "prepareTimelineSnapshot",
+                "protocolVersion": 1,
+                "snapshot": snapshot,
+            }),
+            "",
+            Duration::from_secs(30),
+        )?;
+        Ok(())
+    }
+
+    pub fn commit_timeline_snapshot(&self) -> Result<(), String> {
+        self.send_command(serde_json::json!({"type": "commitTimelineSnapshot"}), "")?;
+        Ok(())
+    }
+
+    pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
+        self.send_command(serde_json::json!({"type": "discardTimelineSnapshot"}), "")?;
+        Ok(())
+    }
+
     pub fn play_timeline(&self) -> Result<(), String> {
         self.send_command(serde_json::json!({"type": "playTimeline"}), "")?;
         Ok(())
@@ -429,6 +453,70 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "seekTimeline", "tick": tick}),
             "",
+        )?;
+        Ok(())
+    }
+
+    pub fn set_processing_mode(&self, mode: &str) -> Result<AudioStatus, String> {
+        if !matches!(mode, "play" | "arrange" | "passive") {
+            return Err("Audio processing mode is invalid.".into());
+        }
+        self.send_command(
+            serde_json::json!({"type": "setProcessingMode", "mode": mode}),
+            "",
+        )
+    }
+
+    pub fn set_track_device_bypassed(
+        &self,
+        track_id: &str,
+        device_id: &str,
+        bypassed: bool,
+    ) -> Result<(), String> {
+        self.send_command(
+            serde_json::json!({
+                "type": "setTrackDeviceBypassed",
+                "trackId": track_id,
+                "deviceId": device_id,
+                "bypassed": bypassed,
+            }),
+            "",
+        )?;
+        Ok(())
+    }
+
+    pub fn set_track_device_parameter(
+        &self,
+        track_id: &str,
+        device_id: &str,
+        parameter_index: u32,
+        value: f32,
+    ) -> Result<(), String> {
+        if !value.is_finite() {
+            return Err("Track Device parameter value must be finite.".into());
+        }
+        self.send_command(
+            serde_json::json!({
+                "type": "setTrackDeviceParameter",
+                "trackId": track_id,
+                "deviceId": device_id,
+                "parameterIndex": parameter_index,
+                "value": value.clamp(0.0, 1.0),
+            }),
+            "",
+        )?;
+        Ok(())
+    }
+
+    pub fn open_track_plugin_editor(&self, track_id: &str, device_id: &str) -> Result<(), String> {
+        self.send_command_with_timeout(
+            serde_json::json!({
+                "type": "openTrackPluginEditor",
+                "trackId": track_id,
+                "deviceId": device_id,
+            }),
+            "",
+            Duration::from_secs(10),
         )?;
         Ok(())
     }
@@ -527,25 +615,27 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn start_recording_with_mode(
+    pub fn start_arrange_recording(
         &self,
         directory: &Path,
         allow_no_input: bool,
+        count_in_beats: u8,
     ) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({
-                "type": "startRecording",
+                "type": "startArrangeRecording",
                 "directory": directory.to_string_lossy(),
                 "allowNoInput": allow_no_input,
+                "countInBeats": count_in_beats,
             }),
-            "Recording started; Raw and Processed files are being flushed safely.",
+            "Arrange recording scheduled on the Native Audio Clock.",
         )
     }
 
-    pub fn stop_recording(&self) -> Result<AudioStatus, String> {
+    pub fn stop_arrange_recording(&self) -> Result<AudioStatus, String> {
         self.send_command(
-            serde_json::json!({"type": "stopRecording"}),
-            "Recording stopped; Raw and Processed files are finalized.",
+            serde_json::json!({"type": "stopArrangeRecording"}),
+            "Arrange recording stopped on the Native Audio Clock.",
         )
     }
 
@@ -631,6 +721,44 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "stopPreviewForKey", "voiceKey": voice_key}),
             "Mapped preview voice stopped; other preview voices remain available.",
+        )
+    }
+
+    pub fn start_take_comparison(
+        &self,
+        raw_path: &Path,
+        processed_path: &Path,
+    ) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({
+                "type": "startTakeComparison",
+                "rawPath": raw_path.to_string_lossy(),
+                "processedPath": processed_path.to_string_lossy(),
+            }),
+            "Take comparison started with one synchronized audition voice.",
+        )
+    }
+
+    pub fn switch_take_comparison_variant(
+        &self,
+        variant: AudioTakeVariant,
+    ) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({
+                "type": "switchTakeComparisonVariant",
+                "variant": match variant {
+                    AudioTakeVariant::Raw => "raw",
+                    AudioTakeVariant::Processed => "processed",
+                },
+            }),
+            "Take comparison variant switched without moving its audition cursor.",
+        )
+    }
+
+    pub fn stop_take_comparison(&self) -> Result<AudioStatus, String> {
+        self.send_command(
+            serde_json::json!({"type": "stopTakeComparison"}),
+            "Take comparison stopped.",
         )
     }
 

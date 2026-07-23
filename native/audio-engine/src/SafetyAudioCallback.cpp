@@ -7,6 +7,8 @@
 namespace riffra {
 SafetyAudioCallback::~SafetyAudioCallback() {
     juce::String ignored;
+    if (timelineEngine != nullptr)
+        stopArrangeRecording(*timelineEngine, ignored);
     stopRecording(ignored);
 }
 
@@ -16,6 +18,16 @@ void SafetyAudioCallback::setPluginRack(PluginRack* const rack) noexcept {
 
 void SafetyAudioCallback::setTimelineEngine(TimelineEngine* const engine) noexcept {
     timelineEngine = engine;
+}
+
+void SafetyAudioCallback::setProcessingMode(const ProcessingMode mode) noexcept {
+    processingMode.store(mode, std::memory_order_release);
+    if (mode != ProcessingMode::play && pluginRack != nullptr)
+        pluginRack->allNotesOff();
+}
+
+SafetyAudioCallback::ProcessingMode SafetyAudioCallback::getProcessingMode() const noexcept {
+    return processingMode.load(std::memory_order_acquire);
 }
 
 bool SafetyAudioCallback::hasInstrumentPlugin() const noexcept {
@@ -104,7 +116,7 @@ bool SafetyAudioCallback::startRecording(
     juce::String& error,
     const bool allowNoInput) {
     const juce::ScopedLock lock(recordingLock);
-    if (recording != nullptr) {
+    if (recording != nullptr || arrangeRecording != nullptr) {
         error = "A recording is already active.";
         return false;
     }
@@ -133,6 +145,35 @@ bool SafetyAudioCallback::startRecording(
     return true;
 }
 
+bool SafetyAudioCallback::startArrangeRecording(
+    const juce::File& directory,
+    TimelineEngine& timeline,
+    juce::String& error) {
+    const juce::ScopedLock lock(recordingLock);
+    if (recording != nullptr || arrangeRecording != nullptr) {
+        error = "A recording is already active.";
+        return false;
+    }
+    auto candidate = ArrangeRecordingSession::create(
+        directory, timeline.recordingConfiguration(), error);
+    if (candidate == nullptr)
+        return false;
+    arrangeRecording = std::move(candidate);
+    timeline.setRecordingSink(arrangeRecording.get());
+    return true;
+}
+
+bool SafetyAudioCallback::stopArrangeRecording(
+    TimelineEngine& timeline,
+    juce::String& error) {
+    const juce::ScopedLock lock(recordingLock);
+    timeline.clearRecordingSink();
+    if (arrangeRecording == nullptr)
+        return true;
+    auto finishing = std::move(arrangeRecording);
+    return finishing->finish(error);
+}
+
 bool SafetyAudioCallback::stopRecording(juce::String& error) {
     const juce::ScopedLock lock(recordingLock);
     activeRecording.store(nullptr, std::memory_order_release);
@@ -146,6 +187,8 @@ bool SafetyAudioCallback::stopRecording(juce::String& error) {
 
 juce::var SafetyAudioCallback::recordingStatus() const {
     const juce::ScopedLock lock(recordingLock);
+    if (arrangeRecording != nullptr)
+        return arrangeRecording->status();
     if (recording != nullptr)
         return recording->status();
     auto* status = new juce::DynamicObject();
@@ -409,6 +452,30 @@ void SafetyAudioCallback::silenceAndCommit(
         capturedSamples);
 }
 
+bool SafetyAudioCallback::switchPreviewBuffer(
+    const int voiceKey,
+    const juce::AudioBuffer<float>& buffer,
+    juce::String& error) {
+    const juce::ScopedLock lock(previewLock);
+    if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
+        error = "Take comparison source contains no audio.";
+        return false;
+    }
+    for (auto& voice : previewVoices) {
+        if (!voice.active || voice.key != voiceKey)
+            continue;
+        const auto relativeCursor = std::max(0, voice.cursor - voice.start);
+        voice.buffer.makeCopyOf(buffer, true);
+        voice.start = 0;
+        voice.end = buffer.getNumSamples();
+        voice.cursor = std::min(relativeCursor, voice.end - 1);
+        voice.sequence = ++previewSequence;
+        return true;
+    }
+    error = "Take comparison is not active.";
+    return false;
+}
+
 void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const float* const* inputChannelData,
     const int numInputChannels,
@@ -424,9 +491,10 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const auto* selectedInput = selectedChannel < numInputChannels
         ? inputChannelData[selectedChannel]
         : nullptr;
-    const std::array<const float*, 1> physicalInputs { selectedInput };
-    const auto numPhysicalInputs = selectedInput != nullptr ? 1 : 0;
-    const auto monitorInput = timelineEngine == nullptr || timelineEngine->monitoringEnabled();
+    const auto* physicalInputs = inputChannelData;
+    const auto numPhysicalInputs = numInputChannels;
+    const auto mode = processingMode.load(std::memory_order_acquire);
+    const auto monitorInput = mode == ProcessingMode::play;
     const std::array<const float*, 1> logicalInputs { monitorInput ? selectedInput : nullptr };
     const auto numLogicalInputs = monitorInput && selectedInput != nullptr ? 1 : 0;
     float rawInputPeak = 0.0f;
@@ -442,13 +510,18 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr)
-            timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
+        if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+            timelineEngine->mix(
+                inputChannelData,
+                numInputChannels,
+                outputChannelData,
+                numOutputChannels,
+                numSamples);
         silenceAndCommit(
             outputChannelData,
             numOutputChannels,
             numSamples,
-            physicalInputs.data(),
+            physicalInputs,
             numPhysicalInputs,
             rawInputPeak,
             recordingOffset,
@@ -464,13 +537,18 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr)
-            timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
+        if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+            timelineEngine->mix(
+                inputChannelData,
+                numInputChannels,
+                outputChannelData,
+                numOutputChannels,
+                numSamples);
         silenceAndCommit(
             outputChannelData,
             numOutputChannels,
             numSamples,
-            physicalInputs.data(),
+            physicalInputs,
             numPhysicalInputs,
             rawInputPeak,
             recordingOffset,
@@ -482,14 +560,14 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     float blockOutputPeak = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
 
-    if (pluginRack != nullptr) {
+    if (mode == ProcessingMode::play && pluginRack != nullptr) {
         pluginRack->process(
             logicalInputs.data(),
             numLogicalInputs,
             outputChannelData,
             numOutputChannels,
             numSamples);
-    } else {
+    } else if (mode == ProcessingMode::play) {
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr) {
                 if (selectedInput != nullptr)
@@ -498,10 +576,19 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
                 else
                     juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
             }
+    } else {
+        for (int channel = 0; channel < numOutputChannels; ++channel)
+            if (outputChannelData[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
     }
 
-    if (timelineEngine != nullptr)
-        timelineEngine->mix(outputChannelData, numOutputChannels, numSamples);
+    if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+        timelineEngine->mix(
+            inputChannelData,
+            numInputChannels,
+            outputChannelData,
+            numOutputChannels,
+            numSamples);
 
     const auto recordingActive = activeRecording.load(std::memory_order_acquire) != nullptr;
     const auto recordingBusReady =
@@ -517,7 +604,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         }
     }
 
-    if (timelineEngine != nullptr)
+    if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
         timelineEngine->mixMetronome(outputChannelData, numOutputChannels, numSamples);
 
     const juce::ScopedTryLock previewTry(previewLock);
@@ -571,7 +658,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             processedWithoutAudition[static_cast<std::size_t>(channel)] =
                 recordingMixBuffer.getReadPointer(channel);
         writeRecording(
-            physicalInputs.data(),
+            physicalInputs,
             numPhysicalInputs,
             processedWithoutAudition.data(),
             recordingMixBuffer.getNumChannels(),
@@ -633,6 +720,8 @@ void SafetyAudioCallback::audioDeviceStopped() {
     stopPreview();
     allNotesOff();
     juce::String ignored;
+    if (timelineEngine != nullptr)
+        stopArrangeRecording(*timelineEngine, ignored);
     stopRecording(ignored);
     activeInputChannels.store(0, std::memory_order_release);
     activeOutputChannels.store(0, std::memory_order_release);
