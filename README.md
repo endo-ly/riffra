@@ -9,6 +9,8 @@ Riffra is a music production workbench built around a short creative loop: hear,
 - A native C++20/JUCE sidecar owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, recording, and render paths.
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
+- Arrange uses a separate native graph per Track: physical input routing, playback/live plugin instances, MIDI routing, PDC, and Track-isolated recording taps never pass through the Play workspace's global rack.
+- Arrange recordings persist a Native Audio Clock manifest plus per-Track Raw, Processed, and MIDI products; Rust finalizes those products into Recording Session / Pass / Take records and stable timeline slots.
 
 Reference documentation under `docs/`:
 
@@ -70,9 +72,10 @@ Run the same checks plus a Native sidecar build and Native self-tests:
 npm run verify:native
 ```
 
-`npm run verify:native` also runs the Native Timeline self-test. It is the
-standard verification entry point for changes that affect the audio engine;
-run it instead of invoking a generated Native executable directly.
+`npm run verify:native` also runs the Native Timeline, Arrangement Graph,
+Track-isolated Arrange recording, legacy recording, and safety self-tests. It
+is the standard verification entry point for changes that affect the audio
+engine; run it instead of invoking a generated Native executable directly.
 
 `build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
 

@@ -1,3 +1,9 @@
+了解。章立てをかなり圧縮して、近い責務を同じ章にまとめたよ。  
+「〜しない。〜する。」の連続みたいな硬い言い回しも、できるだけ自然な日本語に整えてる。  
+仕様の中身は落とさず、表と図を増やして俯瞰しやすくした。
+
+---
+
 # Riffra Arrange Workspace 完全仕様書（統合版）
 
 ## 1. 目的とスコープ
@@ -994,8 +1000,6 @@ Piano Roll では、以下を直接操作できる。
 Piano Roll 上に編集 UI を持たないイベントも破棄しない。  
 保存・再生時には、元のイベントを保持する。
 
-Arrange Runtimeでは、MIDI ClipをInstrument Trackに所属させ、Clip内のNoteとMIDI EventをProject TimebaseのTickからSchedulerへ渡す。Audio Clip用のFrame/Sample Rate変換は行わない。CC、Pitch Bend、Channel PressureはNoteとは別のイベントとして保持し、Seek、Stop、Loop境界では発音停止を送ってから再生位置以降のイベントを送信する。
-
 #### Quantize
 
 Quantize は、選択中の MIDI Note に対して実行する。
@@ -1145,7 +1149,6 @@ Loop 3 → Take 3
 - 録音停止時は、最後に録音された Take を Active Take として Timeline に表示する
 - 最後の周回途中で停止した場合、その部分録音も Take として保存する
 - 他 Take は失われない
-- `Record Another Take` は明示した Recording Session に新しい Take を追加する
 
 Take 一覧から、以下を実行できる。
 
@@ -1175,8 +1178,6 @@ Playback
 
 元 Clip を破壊せず、録音結果は新しい Take / Clip として保持する。
 
-Punch Range は Session の `punchRange` として保存し、Ruler上に表示する。Runtimeは範囲外の入力をRecording Sessionへ書き込まず、前後のTimeline Playbackを継続する。
-
 ---
 
 ### 7.9 MIDI Recording
@@ -1195,8 +1196,6 @@ Quantize は録音後にユーザーが明示的に実行する。
 Record 開始時には、Arm されたすべての Track へ同じ Transport Start を適用する。
 
 すべての録音結果は、共通の Timeline 基準で同期する。
-
-録音停止時は、Raw / Processed / MIDIをCanonical Assetとして登録し、ArmされたTrackごとにRecording Session、Take、Timeline Clipの関係をSessionへCommitする。UIは停止後にSessionを再取得し、録音結果をLibraryから手動配置しない。
 
 ---
 

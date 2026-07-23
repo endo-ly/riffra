@@ -41,16 +41,27 @@ try {
         Invoke-Checked 'Native sidecar build' { & '.\scripts\build-native.ps1' -Configuration Debug }
 
         $RecordingTestDirectory = Join-Path $ArtifactsRoot 'recording-self-test'
+        $ArrangeRecordingTestDirectory = Join-Path $ArtifactsRoot 'arrange-recording-self-test'
         $TimelineTestDirectory = Join-Path $ArtifactsRoot 'timeline-self-test'
         $ResolvedArtifactsRoot = [System.IO.Path]::GetFullPath($ArtifactsRoot)
         $ResolvedRecordingTestDirectory = [System.IO.Path]::GetFullPath($RecordingTestDirectory)
+        $ResolvedArrangeRecordingTestDirectory =
+            [System.IO.Path]::GetFullPath($ArrangeRecordingTestDirectory)
         $ResolvedTimelineTestDirectory = [System.IO.Path]::GetFullPath($TimelineTestDirectory)
-        foreach ($TestDirectory in @($ResolvedRecordingTestDirectory, $ResolvedTimelineTestDirectory)) {
+        foreach ($TestDirectory in @(
+            $ResolvedRecordingTestDirectory,
+            $ResolvedArrangeRecordingTestDirectory,
+            $ResolvedTimelineTestDirectory
+        )) {
             if (-not $TestDirectory.StartsWith($ResolvedArtifactsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "The Native self-test directory escaped the repository artifact directory: $TestDirectory"
             }
         }
-        foreach ($TestDirectory in @($ResolvedRecordingTestDirectory, $ResolvedTimelineTestDirectory)) {
+        foreach ($TestDirectory in @(
+            $ResolvedRecordingTestDirectory,
+            $ResolvedArrangeRecordingTestDirectory,
+            $ResolvedTimelineTestDirectory
+        )) {
             if (Test-Path -LiteralPath $TestDirectory) {
                 Remove-Item -LiteralPath $TestDirectory -Recurse -Force
             }
@@ -63,6 +74,12 @@ try {
         }
         Invoke-Checked 'Native Timeline self-test' {
             & $AudioSidecar --timeline-self-test $ResolvedTimelineTestDirectory
+        }
+        Invoke-Checked 'Native Arrangement Graph self-test' {
+            & $AudioSidecar --arrangement-graph-self-test
+        }
+        Invoke-Checked 'Native Arrange recording self-test' {
+            & $AudioSidecar --arrange-recording-self-test $ResolvedArrangeRecordingTestDirectory
         }
         Invoke-Checked 'Native recording self-test' {
             & $AudioSidecar --recording-self-test $ResolvedRecordingTestDirectory
