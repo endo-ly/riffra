@@ -43,6 +43,7 @@ public:
         TimelineEngine& timeline,
         juce::String& error);
     bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error);
+    bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
@@ -140,6 +141,7 @@ private:
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<RecordingSession> recording;
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
+    std::atomic<bool> arrangeRecordingCancelled { false };
     juce::AudioBuffer<float> recordingMixBuffer;
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {

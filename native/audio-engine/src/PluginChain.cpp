@@ -1,6 +1,7 @@
 #include "PluginChain.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace riffra {
 
@@ -29,21 +30,8 @@ bool PluginChain::load(
             error = "Plugin Chain device could not be loaded: " + loadError->message;
             return false;
         }
-        const auto state = value.getProperty("stateData", {}).toString();
-        if (state.isNotEmpty()) {
-            if (!rack->setState(state, error))
-                return false;
-        } else {
-            const auto parameters = value.getProperty("parameterValues", {});
-            if (parameters.isArray()) {
-                const auto status = rack->parameterStatus().getProperty("parameters", {});
-                const auto count = status.isArray() ? status.size() : 0;
-                for (int index = 0; index < std::min(parameters.size(), count); ++index)
-                    if (!rack->setParameter(index, static_cast<float>(parameters[index]), error))
-                        return false;
-            }
-        }
-        rack->setBypassed(static_cast<bool>(value.getProperty("bypassed", false)));
+        if (!rack->applyPersistedState(value, error))
+            return false;
         candidate.push_back(Device { id, std::move(rack) });
     }
     devices = std::move(candidate);
@@ -138,6 +126,39 @@ bool PluginChain::setParameter(
     return found->rack->setParameter(parameterIndex, value, error);
 }
 
+bool PluginChain::applyState(const juce::var& values, juce::String& error) noexcept {
+    if (!values.isArray()) {
+        error = "Plugin Chain state must be an array.";
+        return false;
+    }
+    for (const auto& value : *values.getArray()) {
+        if (!value.isObject()
+            || value.getProperty("kind", {}).toString() != "plugin"
+            || static_cast<bool>(value.getProperty("disabledPlaceholder", false)))
+            continue;
+        const auto deviceId = value.getProperty("id", {}).toString();
+        auto* rack = findDevice(deviceId);
+        if (rack == nullptr) {
+            error = "Plugin Chain state references an unknown device.";
+            return false;
+        }
+        if (!rack->applyPersistedState(value, error))
+            return false;
+    }
+    return true;
+}
+
+juce::var PluginChain::persistedState(
+    const juce::String& deviceId,
+    juce::String& error) const {
+    const auto* rack = findDevice(deviceId);
+    if (rack == nullptr) {
+        error = "Plugin Chain device was not found.";
+        return {};
+    }
+    return rack->persistedState(error);
+}
+
 int PluginChain::latencySamples() const noexcept {
     auto total = 0;
     for (const auto& device : devices)
@@ -145,11 +166,26 @@ int PluginChain::latencySamples() const noexcept {
     return total;
 }
 
+int PluginChain::tailSamples() const noexcept {
+    std::int64_t total = 0;
+    for (const auto& device : devices)
+        total += std::max(0, device.rack->tailSamples());
+    return static_cast<int>(std::min<std::int64_t>(
+        total, std::numeric_limits<int>::max()));
+}
+
 int PluginChain::size() const noexcept {
     return static_cast<int>(devices.size());
 }
 
 PluginRack* PluginChain::findDevice(const juce::String& deviceId) noexcept {
+    const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
+        return device.id == deviceId;
+    });
+    return found != devices.end() ? found->rack.get() : nullptr;
+}
+
+const PluginRack* PluginChain::findDevice(const juce::String& deviceId) const noexcept {
     const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
         return device.id == deviceId;
     });

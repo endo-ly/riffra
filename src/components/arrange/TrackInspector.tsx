@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AudioStatus, CreativeSession, Track } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
+import { useInspectorOperation } from './useInspectorOperation';
 
 interface TrackInspectorProps {
   track: Track;
@@ -19,14 +20,15 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [name, setName] = useState(props.track.name);
   const [gainDb, setGainDb] = useState(props.track.gainDb);
   const [pan, setPan] = useState(props.track.pan);
+  const { operationMessage, runOperation } = useInspectorOperation();
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
   useEffect(() => setPan(props.track.pan), [props.track.id, props.track.pan]);
   const commit = useCallback(
-    (operation: Promise<CreativeSession>, _message: string) => {
-      void operation.then(props.setSession);
+    (operation: Promise<CreativeSession>, message: string) => {
+      runOperation(operation, message, props.setSession);
     },
-    [props.setSession],
+    [props.setSession, runOperation],
   );
   const setInstrument = () => {
     const path = window.prompt('VST3 instrument path', props.track.instrument?.path ?? '')?.trim();
@@ -37,7 +39,8 @@ export function TrackInspector(props: TrackInspectorProps) {
     (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
   const replaceMissing = (deviceId: string, currentPath?: string) => {
     const path = window.prompt('Replacement VST3 path', currentPath ?? '')?.trim();
-    if (path) void props.onReplaceMissingPlugin(deviceId, path);
+    if (path)
+      runOperation(props.onReplaceMissingPlugin(deviceId, path), 'Missing Plugin replaced.');
   };
   return (
     <>
@@ -163,7 +166,13 @@ export function TrackInspector(props: TrackInspectorProps) {
             )}
             {props.track.instrument && instrumentUnavailable && (
               <>
-                <button onClick={() => void props.onRescanMissingPlugins()}>Re-scan</button>
+                <button
+                  onClick={() =>
+                    runOperation(props.onRescanMissingPlugins(), 'Plugin scan completed.')
+                  }
+                >
+                  Re-scan
+                </button>
                 <button
                   onClick={() =>
                     replaceMissing(props.track.instrument!.id, props.track.instrument!.path)
@@ -173,7 +182,12 @@ export function TrackInspector(props: TrackInspectorProps) {
                 </button>
                 {!props.track.instrument.disabledPlaceholder && (
                   <button
-                    onClick={() => void props.onDisableMissingPlugin(props.track.instrument!.id)}
+                    onClick={() =>
+                      runOperation(
+                        props.onDisableMissingPlugin(props.track.instrument!.id),
+                        'Missing Instrument disabled.',
+                      )
+                    }
                   >
                     Disable
                   </button>
@@ -184,7 +198,10 @@ export function TrackInspector(props: TrackInspectorProps) {
               <>
                 <button
                   onClick={() =>
-                    void props.api.openTrackPluginEditor(props.track.id, props.track.instrument!.id)
+                    runOperation(
+                      props.api.openTrackPluginEditor(props.track.id, props.track.instrument!.id),
+                      'Plugin Editor opened.',
+                    )
                   }
                 >
                   Edit
@@ -201,22 +218,24 @@ export function TrackInspector(props: TrackInspectorProps) {
           </section>
         </>
       )}
-      <section>
-        <header>
-          <strong>MONITORING</strong>
-        </header>
-        {(['off', 'auto', 'on'] as const).map((monitoring) => (
-          <button
-            key={monitoring}
-            aria-pressed={props.track.monitoring === monitoring}
-            onClick={() =>
-              commit(props.api.updateTrack(props.track.id, { monitoring }), 'Monitoring updated.')
-            }
-          >
-            {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
-          </button>
-        ))}
-      </section>
+      {props.track.kind === 'audio' && (
+        <section>
+          <header>
+            <strong>MONITORING</strong>
+          </header>
+          {(['off', 'auto', 'on'] as const).map((monitoring) => (
+            <button
+              key={monitoring}
+              aria-pressed={props.track.monitoring === monitoring}
+              onClick={() =>
+                commit(props.api.updateTrack(props.track.id, { monitoring }), 'Monitoring updated.')
+              }
+            >
+              {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
+            </button>
+          ))}
+        </section>
+      )}
       <TrackPluginChainEditor
         track={props.track}
         api={props.api}
@@ -225,7 +244,9 @@ export function TrackInspector(props: TrackInspectorProps) {
         onDisableMissingPlugin={props.onDisableMissingPlugin}
         onReplaceMissingPlugin={props.onReplaceMissingPlugin}
         onRescanMissingPlugins={props.onRescanMissingPlugins}
+        runOperation={runOperation}
       />
+      {operationMessage && <p role="status">{operationMessage}</p>}
       <section>
         <header>
           <strong>MIX</strong>

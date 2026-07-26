@@ -26,6 +26,8 @@ public:
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setState(const juce::String& base64, juce::String& error) noexcept;
+    bool applyPersistedState(const juce::var& state, juce::String& error) noexcept;
+    [[nodiscard]] juce::var persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
                  const juce::MidiBuffer* timelineMidi = nullptr) noexcept;
@@ -34,6 +36,7 @@ public:
     [[nodiscard]] bool isLoaded() const noexcept;
     [[nodiscard]] bool isInstrument() const noexcept;
     [[nodiscard]] int latencySamples() const noexcept;
+    [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
 
@@ -75,6 +78,8 @@ private:
     std::atomic<std::uint64_t> processedBlocks{0};
     std::atomic<std::uint64_t> contentionBlocks{0};
     std::atomic<std::uint64_t> transitionBlocks{0};
+    std::atomic<std::uint64_t> loadCount{0};
+    std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
 };

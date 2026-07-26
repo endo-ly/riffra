@@ -34,7 +34,9 @@ public:
     void audioDeviceStarted() noexcept;
     void seekToTick(std::uint64_t tick) noexcept;
     bool startRecording(int countInBeats, juce::String& error) noexcept;
+    bool cancelRecordingIfCountingIn() noexcept;
     void stopRecording() noexcept;
+    bool flushRecordingTail(juce::String& error) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
@@ -55,6 +57,15 @@ public:
     [[nodiscard]] PluginRack* findDevice(
         const juce::String& trackId,
         const juce::String& deviceId) noexcept;
+    bool mirrorEditorDeviceState(
+        const juce::String& trackId,
+        const juce::String& deviceId,
+        const juce::var& persistedState,
+        juce::String& error) noexcept;
+    [[nodiscard]] juce::var devicePersistedState(
+        const juce::String& trackId,
+        const juce::String& deviceId,
+        juce::String& error) const;
     [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
         const juce::String& trackId) const noexcept;
     [[nodiscard]] bool monitoringEnabled() const noexcept;
@@ -126,9 +137,13 @@ private:
         std::vector<MidiClip> midiClips;
         std::unique_ptr<PluginRack> instrumentRack;
         juce::String instrumentDeviceId;
-        juce::String effectConfiguration;
-        juce::String instrumentConfiguration;
+        juce::String effectTopologySignature;
+        juce::String instrumentTopologySignature;
+        juce::var effectState;
+        juce::var instrumentState;
         bool reuseRuntimeDevices = false;
+        bool effectStateChanged = false;
+        bool instrumentStateChanged = false;
         PluginChain effectChain;
         PluginChain liveEffectChain;
         juce::AudioBuffer<float> mixBuffer;
@@ -139,6 +154,7 @@ private:
         std::int64_t delayWritePosition = 0;
         std::int64_t compensationDelaySamples = 0;
         std::int64_t pluginDelaySamples = 0;
+        std::int64_t pluginTailSamples = 0;
         double outputSampleRate = 0.0;
         float gainDb = 0.0f;
         float pan = 0.0f;
@@ -208,6 +224,7 @@ private:
     std::atomic<std::int64_t> lastMixStartSample { 0 };
     std::atomic<std::uint64_t> audioClockSample { 0 };
     mutable std::atomic<std::uint64_t> sequence { 0 };
+    std::atomic<std::uint64_t> callbackLockMisses { 0 };
     std::atomic<std::uint64_t> clockGeneration { 0 };
     std::atomic<std::uint64_t> discontinuity { 1 };
     std::atomic<bool> monitorLiveInput { false };

@@ -9,6 +9,11 @@ interface TrackPluginChainEditorProps {
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
+  runOperation: <T>(
+    operation: Promise<T>,
+    successMessage: string,
+    apply?: (value: T) => void,
+  ) => void;
 }
 
 export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
@@ -30,17 +35,34 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
               <strong>
                 {device.disabledPlaceholder ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}
               </strong>
-              <button onClick={() => void props.onRescanMissingPlugins()}>Re-scan</button>
+              <button
+                onClick={() =>
+                  props.runOperation(props.onRescanMissingPlugins(), 'Plugin scan completed.')
+                }
+              >
+                Re-scan
+              </button>
               <button
                 onClick={() => {
                   const path = window.prompt('Replacement VST3 path', device.path ?? '')?.trim();
-                  if (path) void props.onReplaceMissingPlugin(device.id, path);
+                  if (path)
+                    props.runOperation(
+                      props.onReplaceMissingPlugin(device.id, path),
+                      'Missing Plugin replaced.',
+                    );
                 }}
               >
                 Replace
               </button>
               {!device.disabledPlaceholder && (
-                <button onClick={() => void props.onDisableMissingPlugin(device.id)}>
+                <button
+                  onClick={() =>
+                    props.runOperation(
+                      props.onDisableMissingPlugin(device.id),
+                      'Missing Plugin disabled.',
+                    )
+                  }
+                >
                   Disable
                 </button>
               )}
@@ -60,7 +82,12 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
           </button>
           <button
             disabled={device.disabledPlaceholder || props.missingDeviceIds.includes(device.id)}
-            onClick={() => void props.api.openTrackPluginEditor(props.track.id, device.id)}
+            onClick={() =>
+              props.runOperation(
+                props.api.openTrackPluginEditor(props.track.id, device.id),
+                'Plugin Editor opened.',
+              )
+            }
           >
             Edit
           </button>

@@ -110,6 +110,8 @@ struct NativeMeters {
 #[serde(rename_all = "camelCase")]
 struct NativeRecordingStatus {
     active: bool,
+    #[serde(default)]
+    cancelled: bool,
     directory: Option<String>,
     sample_rate: Option<f64>,
     raw_channels: Option<u32>,
@@ -321,11 +323,16 @@ impl AudioSupervisor {
                 }
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                            && payload.get("type").and_then(serde_json::Value::as_str)
-                                == Some("transportStatus")
-                        {
-                            let _ = event_app.emit("transport-status", &payload);
+                        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                            match payload.get("type").and_then(serde_json::Value::as_str) {
+                                Some("transportStatus") => {
+                                    let _ = event_app.emit("transport-status", &payload);
+                                }
+                                Some("trackPluginStateChanged") => {
+                                    let _ = event_app.emit("track-plugin-state-changed", &payload);
+                                }
+                                _ => {}
+                            }
                         }
                         if let Some(response) = handle_native_stdout(&event_status, &bytes)
                             && let Some(request_id) = response.request_id
@@ -762,16 +769,20 @@ impl AudioSupervisor {
         &self,
         raw_path: &Path,
         processed_path: &Path,
-        start_frame: u64,
-        end_frame: u64,
+        raw_start_frame: u64,
+        raw_end_frame: u64,
+        processed_start_frame: u64,
+        processed_end_frame: u64,
     ) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({
                 "type": "startTakeComparison",
                 "rawPath": raw_path.to_string_lossy(),
                 "processedPath": processed_path.to_string_lossy(),
-                "startFrame": start_frame,
-                "endFrame": end_frame,
+                "rawStartFrame": raw_start_frame,
+                "rawEndFrame": raw_end_frame,
+                "processedStartFrame": processed_start_frame,
+                "processedEndFrame": processed_end_frame,
             }),
             "Take comparison started with one synchronized audition voice.",
         )
@@ -990,6 +1001,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
             .recording
             .map(|recording| RecordingStatus {
                 active: recording.active,
+                cancelled: recording.cancelled,
                 directory: recording.directory,
                 sample_rate: recording.sample_rate.and_then(normalize_sample_rate),
                 raw_channels: recording.raw_channels,

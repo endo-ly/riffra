@@ -16,7 +16,6 @@ interface TransportBarProps {
   onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
-  recordCountdown: number | null;
   autosaveError: string | null;
   audioPreferenceMessage: string | null;
   api: NativeApi;
@@ -34,7 +33,6 @@ export function TransportBar(props: TransportBarProps) {
     onGoToStart,
     recordingCommandPending,
     onToggleRecording,
-    recordCountdown,
     autosaveError,
     audioPreferenceMessage,
     api,
@@ -85,8 +83,7 @@ export function TransportBar(props: TransportBarProps) {
     }
   };
 
-  const statusDotState =
-    audio.recording.active || recordCountdown !== null ? 'recording' : audio.state;
+  const statusDotState = audio.recording.active ? 'recording' : audio.state;
   return (
     <footer className="transport">
       <div className={styles.transportLeft}>
@@ -219,11 +216,9 @@ export function TransportBar(props: TransportBarProps) {
       </div>
       <div className="status-line">
         <span className={clsx(styles.statusDot, styles[statusDotState])} />
-        {recordCountdown !== null
-          ? `Count-in · ${recordCountdown} beats`
-          : audio.recording.active
-            ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`
-            : (autosaveError ?? audioPreferenceMessage ?? audio.message)}
+        {audio.recording.active
+          ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`
+          : (autosaveError ?? audioPreferenceMessage ?? audio.message)}
       </div>
     </footer>
   );

@@ -41,6 +41,7 @@ pub struct BootstrapState {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStatus {
     pub active: bool,
+    pub cancelled: bool,
     pub directory: Option<String>,
     pub sample_rate: Option<u32>,
     pub raw_channels: Option<u32>,

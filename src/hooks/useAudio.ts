@@ -27,7 +27,6 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   } = api;
   const { audio, setAudio, setSession, setRecordings } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
-  const [recordCountdown, setRecordCountdown] = useState<number | null>(null);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
   const recordingCommandLock = useRef(false);
 
@@ -114,8 +113,6 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   return {
     audioPreferenceMessage,
     setAudioPreferenceMessage,
-    recordCountdown,
-    setRecordCountdown,
     recordingCommandPending,
     setRecordingCommandPending,
     recordingCommandLock,

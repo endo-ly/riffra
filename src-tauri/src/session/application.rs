@@ -38,10 +38,10 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::rack::{DeviceKind, RackDevice};
 use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, AudioInputRoute, AudioTakeVariant, AutomationLane,
-    AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker, MidiClip, MidiEvent,
-    MidiEventKind, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase, SamplePad,
-    TimelineTick, Track, TrackKind, Workspace,
+    AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
+    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker,
+    MidiClip, MidiEvent, MidiEventKind, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase,
+    SamplePad, TakeAudioSource, TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -1477,6 +1477,55 @@ pub fn open_track_plugin_editor(
     context.audio.open_track_plugin_editor(track_id, device_id)
 }
 
+/// Persists state captured from the native Track Plugin Editor into the
+/// canonical Session. The editor already owns the playback instance and the
+/// Native Runtime mirrors the state into the live instance, so this operation
+/// deliberately does not rebuild or reapply the plugin graph.
+pub fn persist_track_plugin_state(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+) -> Result<CreativeSession, String> {
+    if parameter_values.iter().any(|value| !value.is_finite()) {
+        return Err("Track Plugin Editor returned a non-finite parameter value.".into());
+    }
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    apply_track_plugin_state(
+        &mut session,
+        track_id,
+        device_id,
+        parameter_values,
+        state_data,
+        bypassed,
+    )?;
+    commit_session(context, session)
+}
+
+fn apply_track_plugin_state(
+    session: &mut CreativeSession,
+    track_id: &str,
+    device_id: &str,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+) -> Result<(), String> {
+    let device = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track_device_mut(track, device_id))
+        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+    device.parameter_values = parameter_values;
+    device.state_data = state_data.filter(|value| !value.is_empty());
+    device.bypassed = bypassed;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    Ok(())
+}
+
 pub fn add_track(
     context: &SessionContext<'_>,
     name: String,
@@ -1926,36 +1975,63 @@ pub fn duplicate_midi_notes(
     Ok(committed)
 }
 
-pub fn set_take_variant(
+pub fn set_audio_clip_take_variant(
     context: &SessionContext<'_>,
-    take_id: &str,
+    clip_id: &str,
     variant: AudioTakeVariant,
 ) -> Result<CreativeSession, String> {
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    let take = session
-        .arrangement
-        .takes
-        .iter_mut()
-        .find(|take| take.id == take_id)
-        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
-    let asset_id = match variant {
-        AudioTakeVariant::Raw => take.raw_audio_asset_id.clone(),
-        AudioTakeVariant::Processed => take.processed_audio_asset_id.clone(),
-    }
-    .ok_or_else(|| "The requested Take variant is not available.".to_string())?;
-    if let Some(clip) = session
-        .arrangement
-        .audio_clips
-        .iter_mut()
-        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
-    {
-        clip.asset_id = asset_id;
-        clip.take_variant = variant;
-    }
-    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    apply_audio_clip_take_variant(&mut session, clip_id, variant)?;
     let committed = commit_session(context, session)?;
     sync_arrangement(context, &committed)?;
     Ok(committed)
+}
+
+fn apply_audio_clip_take_variant(
+    session: &mut CreativeSession,
+    clip_id: &str,
+    variant: AudioTakeVariant,
+) -> Result<(), String> {
+    let take_id = session
+        .arrangement
+        .audio_clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .and_then(|clip| clip.recording_take_id.clone())
+        .ok_or_else(|| format!("Audio Clip has no Recording Take: {clip_id}"))?;
+    let take = session
+        .arrangement
+        .takes
+        .iter()
+        .find(|take| take.id == take_id)
+        .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
+    let source = take
+        .audio_source(variant)
+        .cloned()
+        .ok_or_else(|| "The requested Take variant is not available.".to_string())?;
+    let clip = session
+        .arrangement
+        .audio_clips
+        .iter_mut()
+        .find(|clip| clip.id == clip_id)
+        .ok_or_else(|| format!("Audio Clip is not registered: {clip_id}"))?;
+    apply_audio_source_to_clip(clip, &source);
+    clip.take_variant = variant;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    Ok(())
+}
+
+fn apply_audio_source_to_clip(clip: &mut AudioClip, source: &TakeAudioSource) {
+    clip.asset_id = source.asset_id.clone();
+    clip.source_range.start = source.source_start_sample;
+    clip.source_range.end = source.source_end_sample;
+    clip.timeline_duration.frames = source
+        .source_end_sample
+        .saturating_sub(source.source_start_sample);
+    clip.timeline_duration.sample_rate = clip.source_sample_rate;
+    clip.fade_in.sample_rate = clip.source_sample_rate;
+    clip.fade_out.sample_rate = clip.source_sample_rate;
+    clip.normalize_fields();
 }
 
 pub fn start_take_comparison(
@@ -1969,26 +2045,30 @@ pub fn start_take_comparison(
         .iter()
         .find(|take| take.id == take_id)
         .ok_or_else(|| format!("Recording Take is not registered: {take_id}"))?;
-    let raw_id = take
-        .raw_audio_asset_id
+    let raw_source = take
+        .raw_audio
         .as_ref()
         .ok_or_else(|| "Take comparison requires a Raw Asset.".to_string())?;
-    let processed_id = take
-        .processed_audio_asset_id
+    let processed_source = take
+        .processed_audio
         .as_ref()
         .ok_or_else(|| "Take comparison requires a Processed Asset.".to_string())?;
-    let raw = asset::load(context.data_root, raw_id)
+    let raw = asset::load(context.data_root, &raw_source.asset_id)
         .ok_or_else(|| "Take Raw Asset is unavailable.".to_string())?;
-    let processed = asset::load(context.data_root, processed_id)
+    let processed = asset::load(context.data_root, &processed_source.asset_id)
         .ok_or_else(|| "Take Processed Asset is unavailable.".to_string())?;
-    let start_frame = take.source_start_sample;
-    let end_frame = take.source_end_sample;
+    let raw_start_frame = raw_source.source_start_sample;
+    let raw_end_frame = raw_source.source_end_sample;
+    let processed_start_frame = processed_source.source_start_sample;
+    let processed_end_frame = processed_source.source_end_sample;
     drop(session);
     context.audio.start_take_comparison(
         Path::new(&raw.content_location),
         Path::new(&processed.content_location),
-        start_frame,
-        end_frame,
+        raw_start_frame,
+        raw_end_frame,
+        processed_start_frame,
+        processed_end_frame,
     )
 }
 
@@ -2041,17 +2121,12 @@ pub fn activate_take(
         .iter_mut()
         .find(|clip| clip.id == timeline_clip_id)
     {
-        let asset_id = match clip.take_variant {
-            AudioTakeVariant::Raw => target_take.raw_audio_asset_id.clone(),
-            AudioTakeVariant::Processed => target_take.processed_audio_asset_id.clone(),
-        }
-        .or_else(|| target_take.raw_audio_asset_id.clone())
-        .or_else(|| target_take.processed_audio_asset_id.clone())
-        .ok_or_else(|| "The selected Take has no Audio Asset.".to_string())?;
-        clip.asset_id = asset_id;
+        let source = target_take
+            .preferred_audio_source(clip.take_variant)
+            .cloned()
+            .ok_or_else(|| "The selected Take has no Audio Asset.".to_string())?;
+        apply_audio_source_to_clip(clip, &source);
         clip.recording_take_id = Some(take_id.to_owned());
-        clip.source_range.start = target_take.source_start_sample;
-        clip.source_range.end = target_take.source_end_sample;
     } else if target_take.midi_asset_id.is_some() {
         let source = crate::recording::application::midi_clip_for_take(
             context.data_root,
@@ -2105,7 +2180,7 @@ pub fn place_take_as_separate_clip(
         clip.id = new_clip_id;
         clip.muted = false;
         session.arrangement.audio_clips.push(clip);
-    } else if take.raw_audio_asset_id.is_some() || take.processed_audio_asset_id.is_some() {
+    } else if take.raw_audio.is_some() || take.processed_audio.is_some() {
         let slot_clip_id = session
             .arrangement
             .recording_sessions
@@ -2128,18 +2203,11 @@ pub fn place_take_as_separate_clip(
             .ok_or_else(|| "Recording Take slot has no Audio Clip.".to_string())?;
         clip.id = new_clip_id;
         clip.start_tick = take.start_tick;
-        clip.source_range.start = take.source_start_sample;
-        clip.source_range.end = take.source_end_sample;
-        clip.timeline_duration.frames = take
-            .source_end_sample
-            .saturating_sub(take.source_start_sample);
-        clip.asset_id = match clip.take_variant {
-            AudioTakeVariant::Raw => take.raw_audio_asset_id.clone(),
-            AudioTakeVariant::Processed => take.processed_audio_asset_id.clone(),
-        }
-        .or(take.processed_audio_asset_id.clone())
-        .or(take.raw_audio_asset_id.clone())
-        .ok_or_else(|| "Recording Take has no usable Audio Asset.".to_string())?;
+        let source = take
+            .preferred_audio_source(clip.take_variant)
+            .cloned()
+            .ok_or_else(|| "Recording Take has no usable Audio Asset.".to_string())?;
+        apply_audio_source_to_clip(&mut clip, &source);
         clip.recording_take_id = Some(take.id);
         clip.muted = false;
         session.arrangement.audio_clips.push(clip);
@@ -2312,6 +2380,7 @@ pub fn replace_missing_track_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::RecordingTakeRecord;
 
     #[test]
     fn missing_track_plugin_is_projected_as_a_runtime_placeholder() {
@@ -2347,5 +2416,139 @@ mod tests {
                 .unwrap()
                 .disabled_placeholder
         );
+    }
+
+    #[test]
+    fn plugin_editor_state_survives_canonical_session_round_trip() {
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::audio("track:guitar".into(), "Guitar".into());
+        track.rack.devices.push(RackDevice {
+            id: "device:amp".into(),
+            name: "Amp".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\plugins\Amp.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        });
+        session.arrangement.tracks.push(track);
+
+        apply_track_plugin_state(
+            &mut session,
+            "track:guitar",
+            "device:amp",
+            vec![0.25, 0.75],
+            Some("opaque-state".into()),
+            true,
+        )
+        .unwrap();
+        let restored =
+            crate::session::deserialize_session(&serde_json::to_vec(&session).unwrap()).unwrap();
+        let device = &restored.arrangement.tracks[0].rack.devices[0];
+        assert_eq!(device.parameter_values, [0.25, 0.75]);
+        assert_eq!(device.state_data.as_deref(), Some("opaque-state"));
+        assert!(device.bypassed);
+    }
+
+    #[test]
+    fn take_variant_is_applied_only_to_the_selected_clip() {
+        let raw_id = asset::mint_asset_id();
+        let processed_id = asset::mint_asset_id();
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        session.arrangement.takes.push(RecordingTakeRecord {
+            id: "take:1".into(),
+            session_id: "recording:1".into(),
+            pass_id: "pass:1".into(),
+            track_id: "track:audio".into(),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            source_start_sample: 0,
+            source_end_sample: 1_000,
+            raw_audio: Some(TakeAudioSource {
+                asset_id: raw_id.clone(),
+                source_start_sample: 0,
+                source_end_sample: 1_000,
+            }),
+            processed_audio: Some(TakeAudioSource {
+                asset_id: processed_id.clone(),
+                source_start_sample: 128,
+                source_end_sample: 1_256,
+            }),
+            raw_audio_asset_id: None,
+            processed_audio_asset_id: None,
+            midi_asset_id: None,
+        });
+        for id in ["clip:a", "clip:b"] {
+            let mut clip = AudioClip::full_source(
+                id.into(),
+                id.into(),
+                "track:audio".into(),
+                raw_id.clone(),
+                TimelineTick(0),
+                48_000,
+                1_000,
+            );
+            clip.recording_take_id = Some("take:1".into());
+            session.arrangement.audio_clips.push(clip);
+        }
+
+        apply_audio_clip_take_variant(&mut session, "clip:a", AudioTakeVariant::Processed).unwrap();
+
+        let selected = &session.arrangement.audio_clips[0];
+        let untouched = &session.arrangement.audio_clips[1];
+        assert_eq!(selected.asset_id, processed_id);
+        assert_eq!(
+            selected.source_range,
+            crate::session::FrameRange {
+                start: 128,
+                end: 1_256
+            }
+        );
+        assert_eq!(selected.timeline_duration.frames, 1_128);
+        assert_eq!(untouched.asset_id, raw_id);
+        assert_eq!(untouched.take_variant, AudioTakeVariant::Raw);
+    }
+
+    #[test]
+    fn applying_partial_and_full_take_sources_updates_length_and_clamps_fades() {
+        let mut clip = AudioClip::full_source(
+            "clip:1".into(),
+            "Take".into(),
+            "track:audio".into(),
+            asset::mint_asset_id(),
+            TimelineTick(960),
+            48_000,
+            48_000,
+        );
+        clip.fade_in.frames = 24_000;
+        clip.fade_out.frames = 24_000;
+        let clip_id = clip.id.clone();
+        let start_tick = clip.start_tick;
+
+        let partial = TakeAudioSource {
+            asset_id: asset::mint_asset_id(),
+            source_start_sample: 4_000,
+            source_end_sample: 10_000,
+        };
+        apply_audio_source_to_clip(&mut clip, &partial);
+        assert_eq!(clip.timeline_duration.frames, 6_000);
+        assert_eq!(clip.fade_in.frames, 6_000);
+        assert_eq!(clip.fade_out.frames, 6_000);
+
+        let full = TakeAudioSource {
+            asset_id: asset::mint_asset_id(),
+            source_start_sample: 0,
+            source_end_sample: 48_000,
+        };
+        apply_audio_source_to_clip(&mut clip, &full);
+        assert_eq!(clip.timeline_duration.frames, 48_000);
+        assert_eq!(clip.id, clip_id);
+        assert_eq!(clip.start_tick, start_tick);
     }
 }

@@ -66,6 +66,8 @@ bool ArrangeRecordingSession::initialise(
         track.midiChannel = static_cast<int>(value.getProperty("midiChannel", 0));
         track.pluginLatencySamples = static_cast<int>(
             value.getProperty("pluginLatencySamples", 0));
+        track.pluginTailSamples = static_cast<int>(
+            value.getProperty("pluginTailSamples", 0));
         if (track.trackId.isEmpty()) {
             error = "An armed Track has no stable ID.";
             return false;
@@ -140,6 +142,37 @@ void ArrangeRecordingSession::setCaptureRange(
     const std::uint64_t endAudioSample,
     const std::uint64_t startTimelineSample,
     const std::uint64_t endTimelineSample) noexcept {
+    if (endAudioSample <= startAudioSample || endTimelineSample <= startTimelineSample)
+        return;
+    const auto sampleCount = std::min(
+        endAudioSample - startAudioSample,
+        endTimelineSample - startTimelineSample);
+    auto count = captureSegmentCount.load(std::memory_order_relaxed);
+    auto coalesced = false;
+    if (count > 0) {
+        auto& previous = captureSegments[count - 1];
+        if (previous.audioClockEndSample == startAudioSample
+            && previous.timelineEndSample == startTimelineSample
+            && previous.fileEndSample == capturedFileSamples) {
+            previous.audioClockEndSample = startAudioSample + sampleCount;
+            previous.timelineEndSample = startTimelineSample + sampleCount;
+            previous.fileEndSample += sampleCount;
+            capturedFileSamples += sampleCount;
+            coalesced = true;
+        }
+    }
+    if (!coalesced && count < captureSegments.size()) {
+        captureSegments[count] = CaptureSegment {
+            startAudioSample,
+            startAudioSample + sampleCount,
+            startTimelineSample,
+            startTimelineSample + sampleCount,
+            capturedFileSamples,
+            capturedFileSamples + sampleCount,
+        };
+        capturedFileSamples += sampleCount;
+        captureSegmentCount.store(count + 1, std::memory_order_release);
+    }
     auto currentStart = recordStartAudioSample.load(std::memory_order_acquire);
     while (startAudioSample < currentStart
            && !recordStartAudioSample.compare_exchange_weak(
@@ -172,13 +205,24 @@ bool ArrangeRecordingSession::finish(juce::String& error) {
             juce::Array<juce::var> events;
             {
                 const juce::ScopedLock lock(midiLock);
+                const auto segmentCount = std::min(
+                    captureSegmentCount.load(std::memory_order_acquire),
+                    captureSegments.size());
                 for (const auto& event : track.midiEvents) {
+                    const auto segment = std::find_if(
+                        captureSegments.begin(),
+                        captureSegments.begin() + static_cast<std::ptrdiff_t>(segmentCount),
+                        [&](const CaptureSegment& candidate) {
+                            return event.audioSample >= candidate.audioClockStartSample
+                                && event.audioSample < candidate.audioClockEndSample;
+                        });
+                    if (segment == captureSegments.begin()
+                            + static_cast<std::ptrdiff_t>(segmentCount))
+                        continue;
                     auto* value = new juce::DynamicObject();
                     value->setProperty("sampleOffset", static_cast<juce::int64>(
-                        event.audioSample >= recordStartAudioSample.load(std::memory_order_acquire)
-                            ? event.audioSample
-                                - recordStartAudioSample.load(std::memory_order_acquire)
-                            : 0));
+                        segment->fileStartSample
+                            + event.audioSample - segment->audioClockStartSample));
                     value->setProperty("sourceDeviceId", event.sourceDeviceId);
                     value->setProperty("status", event.status);
                     value->setProperty("channel", event.channel);
@@ -205,6 +249,23 @@ bool ArrangeRecordingSession::finish(juce::String& error) {
         return false;
     }
     return completed;
+}
+
+bool ArrangeRecordingSession::cancel(juce::String& error) {
+    if (finished.exchange(true, std::memory_order_acq_rel))
+        return true;
+    for (auto& track : tracks) {
+        if (track.audio != nullptr) {
+            juce::String ignored;
+            (void) track.audio->finish(ignored);
+            track.audio.reset();
+        }
+    }
+    if (directory.exists() && !directory.deleteRecursively()) {
+        error = "Cancelled recording files could not be removed.";
+        return false;
+    }
+    return true;
 }
 
 juce::var ArrangeRecordingSession::status() const {
@@ -266,6 +327,28 @@ bool ArrangeRecordingSession::writeManifest(
     root->setProperty("droppedBlocks", static_cast<juce::int64>(droppedBlocks));
     root->setProperty("missingSamples", static_cast<juce::int64>(missingSamples));
     root->setProperty("recoveryStatus", droppedBlocks == 0 ? "clean" : "partial");
+    juce::Array<juce::var> segments;
+    const auto segmentCount = std::min(
+        captureSegmentCount.load(std::memory_order_acquire),
+        captureSegments.size());
+    for (std::size_t index = 0; index < segmentCount; ++index) {
+        const auto& segment = captureSegments[index];
+        auto* value = new juce::DynamicObject();
+        value->setProperty("audioClockStartSample", static_cast<juce::int64>(
+            segment.audioClockStartSample));
+        value->setProperty("audioClockEndSample", static_cast<juce::int64>(
+            segment.audioClockEndSample));
+        value->setProperty("timelineStartSample", static_cast<juce::int64>(
+            segment.timelineStartSample));
+        value->setProperty("timelineEndSample", static_cast<juce::int64>(
+            segment.timelineEndSample));
+        value->setProperty("fileStartSample", static_cast<juce::int64>(
+            segment.fileStartSample));
+        value->setProperty("fileEndSample", static_cast<juce::int64>(
+            segment.fileEndSample));
+        segments.add(juce::var(value));
+    }
+    root->setProperty("captureSegments", segments);
     juce::Array<juce::var> boundaries;
     const auto count = std::min(loopBoundaryCount.load(std::memory_order_acquire),
                                 loopBoundaries.size());
@@ -297,6 +380,7 @@ bool ArrangeRecordingSession::writeManifest(
         midiInput->setProperty("channel", track.midiChannel);
         value->setProperty("midiInput", juce::var(midiInput));
         value->setProperty("pluginLatencySamples", track.pluginLatencySamples);
+        value->setProperty("pluginTailSamples", track.pluginTailSamples);
         if (track.kind == "audio") {
             value->setProperty("rawFile", "tracks/" + track.trackKey + "/raw.wav");
             value->setProperty(
@@ -333,15 +417,17 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
         track->setProperty("kind", kind);
         track->setProperty("audioInputChannel", input);
         track->setProperty("pluginLatencySamples", input + 8);
+        track->setProperty("pluginTailSamples", input + 16);
         tracks.add(juce::var(track));
     };
     addTrack("track:guitar", "audio", 0);
     addTrack("track:vocal", "audio", 1);
     addTrack("track:keys", "instrument", -1);
     configuration->setProperty("tracks", tracks);
+    const auto configurationValue = juce::var(configuration);
     juce::String error;
     auto session = ArrangeRecordingSession::create(
-        directory, juce::var(configuration), error);
+        directory, configurationValue, error);
     bool written = session != nullptr;
     if (session != nullptr) {
         const auto manifestFile = directory.getChildFile("manifest.json");
@@ -369,7 +455,8 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
             guitarLeft.data(), guitarRight.data() };
         const std::array<const float*, 2> vocalProcessed {
             vocalLeft.data(), vocalRight.data() };
-        session->setCaptureRange(1000, 1512, 24000, 24512);
+        session->setCaptureRange(1000, 1256, 24000, 24256);
+        session->setCaptureRange(1256, 1512, 24000, 24256);
         session->writeAudioTrack(
             "track:guitar", guitarRaw.data(), guitarProcessed.data(), 512);
         session->writeAudioTrack(
@@ -377,21 +464,53 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
         session->writeMidiTrack(
             "track:keys", "midi:keyboard",
             juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);
+        session->writeMidiTrack(
+            "track:keys", "midi:keyboard",
+            juce::MidiMessage::noteOn(1, 61, static_cast<juce::uint8>(100)), 900);
+        session->writeMidiTrack(
+            "track:keys", "midi:keyboard",
+            juce::MidiMessage::noteOn(1, 62, static_cast<juce::uint8>(100)), 1600);
         session->markLoopBoundary(1256);
         written = session->finish(error);
     }
     const auto manifestText = directory.getChildFile("manifest.json").loadFileAsString();
     const auto mapped = manifestText.contains("\"trackKey\": \"0000\"")
         && manifestText.contains("\"trackId\": \"track:guitar\"")
+        && manifestText.contains("\"pluginLatencySamples\": 8")
+        && manifestText.contains("\"pluginTailSamples\": 16")
         && manifestText.contains("\"recordStartAudioSample\": 1000")
         && manifestText.contains("\"recordStartTimelineSample\": 24000")
         && manifestText.contains("\"captureId\": \"capture:self-test\"")
-        && manifestText.contains("\"loopBoundariesSample\"");
+        && manifestText.contains("\"loopBoundariesSample\"")
+        && manifestText.contains("\"captureSegments\"");
     const auto isolated = directory.getChildFile("tracks/0000/raw.wav").existsAsFile()
         && directory.getChildFile("tracks/0000/processed.wav").existsAsFile()
         && directory.getChildFile("tracks/0001/raw.wav").existsAsFile()
         && directory.getChildFile("tracks/0001/processed.wav").existsAsFile()
         && directory.getChildFile("tracks/0002/midi.json").existsAsFile();
+    auto completedManifest = juce::JSON::parse(manifestText);
+    const auto completedSegments = completedManifest.getProperty("captureSegments", {});
+    const auto segmentOffsetsMapped = completedSegments.isArray()
+        && completedSegments.size() == 2
+        && static_cast<juce::int64>(
+            completedSegments[0].getProperty("fileStartSample", -1)) == 0
+        && static_cast<juce::int64>(
+            completedSegments[0].getProperty("fileEndSample", -1)) == 256
+        && static_cast<juce::int64>(
+            completedSegments[1].getProperty("fileStartSample", -1)) == 256
+        && static_cast<juce::int64>(
+            completedSegments[1].getProperty("fileEndSample", -1)) == 512
+        && static_cast<juce::int64>(
+            completedSegments[0].getProperty("timelineStartSample", -1)) == 24000
+        && static_cast<juce::int64>(
+            completedSegments[1].getProperty("timelineStartSample", -1)) == 24000;
+    const auto cancelledDirectory = directory.getSiblingFile(
+        directory.getFileName() + "-cancelled");
+    auto cancelledSession = ArrangeRecordingSession::create(
+        cancelledDirectory, configurationValue, error);
+    const auto cancelledCleanly = cancelledSession != nullptr
+        && cancelledSession->cancel(error)
+        && !cancelledDirectory.exists();
     auto* result = new juce::DynamicObject();
     juce::Array<juce::var> checks;
     const auto addCheck = [&checks](const juce::String& name, const bool passed) {
@@ -402,14 +521,22 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
     };
     addCheck("armed Tracks receive isolated Raw and Processed files", written && isolated);
     addCheck("manifest maps safe keys to stable Track IDs", mapped);
-    addCheck("MIDI events use Native Audio Sample offsets",
-        directory.getChildFile("tracks/0002/midi.json")
-            .loadFileAsString().contains("\"sampleOffset\": 100"));
+    addCheck("Loop capture maps Audio Clock and Timeline ranges to contiguous file offsets",
+        segmentOffsetsMapped);
+    const auto midiText =
+        directory.getChildFile("tracks/0002/midi.json").loadFileAsString();
+    addCheck("Punch filtering keeps only MIDI inside Capture Segments",
+        midiText.contains("\"sampleOffset\": 100")
+            && !midiText.contains("\"data1\": 61")
+            && !midiText.contains("\"data1\": 62"));
+    addCheck("Count-in cancellation leaves no recoverable recording folder",
+        cancelledCleanly);
     result->setProperty("type", "arrangeRecordingSelfTest");
     result->setProperty("checks", checks);
     result->setProperty("message", error);
-    result->setProperty("passed", written && isolated && mapped
-        && static_cast<bool>(checks[2].getProperty("passed", false)));
+    result->setProperty("passed", written && isolated && mapped && segmentOffsetsMapped
+        && cancelledCleanly
+        && static_cast<bool>(checks[3].getProperty("passed", false)));
     return juce::var(result);
 }
 

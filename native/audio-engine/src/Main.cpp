@@ -587,6 +587,7 @@ int serve(
     PluginEditorHost pluginEditor(rack);
     std::unique_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
+    juce::String trackPluginEditorDeviceId;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     MidiMonitor midiMonitor;
@@ -767,6 +768,7 @@ int serve(
                     trackPluginEditor->close();
                     trackPluginEditor.reset();
                     trackPluginEditorTrackId.clear();
+                    trackPluginEditorDeviceId.clear();
                 }
                 auto* ack = new juce::DynamicObject();
                 ack->setProperty("type", "timelineAck");
@@ -867,11 +869,43 @@ int serve(
                     trackPluginEditor->close();
                 trackPluginEditorTrackId =
                     command.getProperty("trackId", {}).toString();
-                trackPluginEditor = std::make_unique<PluginEditorHost>(*device);
+                trackPluginEditorDeviceId =
+                    command.getProperty("deviceId", {}).toString();
+                const auto editorTrackId = trackPluginEditorTrackId;
+                const auto editorDeviceId = trackPluginEditorDeviceId;
+                trackPluginEditor = std::make_unique<PluginEditorHost>(
+                    *device,
+                    [&, editorTrackId, editorDeviceId](const juce::var& state) {
+                        juce::String mirrorError;
+                        if (!timelineEngine.mirrorEditorDeviceState(
+                                editorTrackId,
+                                editorDeviceId,
+                                state,
+                                mirrorError)) {
+                            writeJson(makeError("trackDevice", mirrorError));
+                        }
+                        auto* changed = new juce::DynamicObject();
+                        changed->setProperty("type", "trackPluginStateChanged");
+                        changed->setProperty("trackId", editorTrackId);
+                        changed->setProperty("deviceId", editorDeviceId);
+                        changed->setProperty(
+                            "parameterValues",
+                            state.getProperty(
+                                "parameterValues",
+                                juce::Array<juce::var> {}));
+                        changed->setProperty(
+                            "stateData",
+                            state.getProperty("stateData", {}));
+                        changed->setProperty(
+                            "bypassed",
+                            state.getProperty("bypassed", false));
+                        writeJson(juce::var(changed));
+                    });
                 juce::String editorError;
                 if (!trackPluginEditor->open(editorError)) {
                     trackPluginEditor.reset();
                     trackPluginEditorTrackId.clear();
+                    trackPluginEditorDeviceId.clear();
                     writeJson(makeError("pluginEditor", editorError));
                     continue;
                 }
@@ -1040,11 +1074,9 @@ int serve(
                 continue;
             }
             if (type == "startTakeComparison") {
-                const auto startFrame = static_cast<juce::int64>(
-                    command.getProperty("startFrame", 0));
-                const auto endFrame = static_cast<juce::int64>(
-                    command.getProperty("endFrame", 0));
                 const auto loadComparisonFile = [&](const juce::String& path,
+                                                    const juce::int64 startFrame,
+                                                    const juce::int64 endFrame,
                                                     juce::AudioBuffer<float>& target,
                                                     juce::String& loadError) {
                     std::unique_ptr<juce::AudioFormatReader> reader(
@@ -1076,9 +1108,17 @@ int serve(
                 juce::String comparisonError;
                 if (!loadComparisonFile(
                         command.getProperty("rawPath", {}).toString(),
+                        static_cast<juce::int64>(
+                            command.getProperty("rawStartFrame", 0)),
+                        static_cast<juce::int64>(
+                            command.getProperty("rawEndFrame", 0)),
                         comparisonRaw, comparisonError)
                     || !loadComparisonFile(
                         command.getProperty("processedPath", {}).toString(),
+                        static_cast<juce::int64>(
+                            command.getProperty("processedStartFrame", 0)),
+                        static_cast<juce::int64>(
+                            command.getProperty("processedEndFrame", 0)),
                         comparisonProcessed, comparisonError)
                     || !callback.startPreview(
                         comparisonRaw, 0, comparisonRaw.getNumSamples(), 1.0f,
@@ -1368,15 +1408,23 @@ int serve(
                 continue;
             }
             if (type == "stopRecording" || type == "stopArrangeRecording") {
+                auto cancelledCountIn = false;
                 if (type == "stopArrangeRecording") {
-                    timelineEngine.stopRecording();
+                    cancelledCountIn = timelineEngine.cancelRecordingIfCountingIn();
+                    if (!cancelledCountIn)
+                        timelineEngine.stopRecording();
                     timelineEngine.stop();
                 }
                 juce::String recordingError;
+                const auto tailFlushed = type != "stopArrangeRecording"
+                    || cancelledCountIn
+                    || timelineEngine.flushRecordingTail(recordingError);
                 const auto stopped = type == "stopArrangeRecording"
-                    ? callback.stopArrangeRecording(timelineEngine, recordingError)
+                    ? (cancelledCountIn
+                        ? callback.cancelArrangeRecording(timelineEngine, recordingError)
+                        : callback.stopArrangeRecording(timelineEngine, recordingError))
                     : callback.stopRecording(recordingError);
-                if (!stopped) {
+                if (!stopped || !tailFlushed) {
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }

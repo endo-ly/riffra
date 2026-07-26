@@ -64,7 +64,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     previewPadId,
     transportPlaying,
     recordingCommandPending,
-    recordCountdown,
     autosaveError,
     audioPreferenceMessage,
     exportMessage,
@@ -234,9 +233,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               state={boot}
               onWorkspace={switchWorkspace}
               onQuickRecord={() => void toggleRecording()}
-              recordingActive={
-                audio.recording.active || recordCountdown !== null || recordingCommandPending
-              }
+              recordingActive={audio.recording.active || recordingCommandPending}
               onRecoverAudioDevice={() => void recoverAudio()}
               onExportProject={() => void exportSession()}
               onImportProject={() => void importSession()}
@@ -389,7 +386,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onGoToStart={goToStart}
         recordingCommandPending={recordingCommandPending}
         onToggleRecording={toggleRecording}
-        recordCountdown={recordCountdown}
         autosaveError={autosaveError}
         audioPreferenceMessage={audioPreferenceMessage}
         api={nativeApi}

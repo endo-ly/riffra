@@ -75,6 +75,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     sendMidiToPlugin,
     onAudioStatus,
     onTransportStatus,
+    onTrackPluginStateChanged,
+    persistTrackPluginState,
     playTimeline,
     stopTimeline,
     seekTimeline,
@@ -122,6 +124,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
+  const pluginStateSaveQueue = useRef<Promise<void>>(Promise.resolve());
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -230,8 +233,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const {
     audioPreferenceMessage,
     setAudioPreferenceMessage,
-    recordCountdown,
-    setRecordCountdown,
     recordingCommandPending,
     setRecordingCommandPending,
     recordingCommandLock,
@@ -736,9 +737,26 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const unlistenTransport = onTransportStatus((status) =>
       setTransportPlaying(status.state === 'playing'),
     );
+    const unlistenTrackPluginState = onTrackPluginStateChanged((change) => {
+      pluginStateSaveQueue.current = pluginStateSaveQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          const next = await persistTrackPluginState(change);
+          setSession(next);
+          setAutosaveError(null);
+        })
+        .catch((error: unknown) => {
+          setAutosaveError(
+            error instanceof Error
+              ? error.message
+              : `Track Plugin state could not be saved: ${String(error)}`,
+          );
+        });
+    });
     return () => {
       unlistenAudio();
       unlistenTransport();
+      unlistenTrackPluginState();
     };
   }, []);
 
@@ -873,8 +891,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setRenderPreviewing,
     transportPlaying,
     setTransportPlaying,
-    recordCountdown,
-    setRecordCountdown,
     recordingCommandPending,
     setRecordingCommandPending,
     previewPadId,

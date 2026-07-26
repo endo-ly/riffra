@@ -390,6 +390,17 @@ pub struct RecordingPassRecord {
 /// A recorded Track product belonging to one recording pass.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct TakeAudioSource {
+    pub asset_id: AssetId,
+    #[ts(type = "number")]
+    pub source_start_sample: u64,
+    #[ts(type = "number")]
+    pub source_end_sample: u64,
+}
+
+/// A recorded Track product belonging to one recording pass.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordingTakeRecord {
     pub id: String,
     pub session_id: String,
@@ -406,13 +417,60 @@ pub struct RecordingTakeRecord {
     pub source_end_sample: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub raw_audio_asset_id: Option<AssetId>,
+    pub raw_audio: Option<TakeAudioSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub processed_audio: Option<TakeAudioSource>,
+    /// Legacy v1 field. It is accepted during import and migrated to
+    /// `raw_audio`, but new Sessions do not write it.
+    #[serde(default, skip_serializing)]
+    #[ts(skip)]
+    pub raw_audio_asset_id: Option<AssetId>,
+    /// Legacy v1 field. It is accepted during import and migrated to
+    /// `processed_audio`, but new Sessions do not write it.
+    #[serde(default, skip_serializing)]
+    #[ts(skip)]
     pub processed_audio_asset_id: Option<AssetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub midi_asset_id: Option<AssetId>,
+}
+
+impl RecordingTakeRecord {
+    pub fn audio_source(&self, variant: AudioTakeVariant) -> Option<&TakeAudioSource> {
+        match variant {
+            AudioTakeVariant::Raw => self.raw_audio.as_ref(),
+            AudioTakeVariant::Processed => self.processed_audio.as_ref(),
+        }
+    }
+
+    pub fn preferred_audio_source(&self, variant: AudioTakeVariant) -> Option<&TakeAudioSource> {
+        self.audio_source(variant).or(match variant {
+            AudioTakeVariant::Raw => self.processed_audio.as_ref(),
+            AudioTakeVariant::Processed => self.raw_audio.as_ref(),
+        })
+    }
+
+    fn migrate_legacy_audio_sources(&mut self) {
+        if self.raw_audio.is_none()
+            && let Some(asset_id) = self.raw_audio_asset_id.take()
+        {
+            self.raw_audio = Some(TakeAudioSource {
+                asset_id,
+                source_start_sample: self.source_start_sample,
+                source_end_sample: self.source_end_sample,
+            });
+        }
+        if self.processed_audio.is_none()
+            && let Some(asset_id) = self.processed_audio_asset_id.take()
+        {
+            self.processed_audio = Some(TakeAudioSource {
+                asset_id,
+                source_start_sample: self.source_start_sample,
+                source_end_sample: self.source_end_sample,
+            });
+        }
+    }
 }
 
 /// A non-destructive audio clip referencing an [`AssetId`].
@@ -1676,6 +1734,9 @@ pub(crate) fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, ser
         .iter()
         .any(|take| take.pass_id.is_empty())
     {
+        for take in &mut session.arrangement.takes {
+            take.migrate_legacy_audio_sources();
+        }
         return Ok(session);
     }
 
@@ -1820,6 +1881,9 @@ pub(crate) fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, ser
                 timeline_clip_id: timeline_clip_id.to_owned(),
             });
         }
+    }
+    for take in &mut session.arrangement.takes {
+        take.migrate_legacy_audio_sources();
     }
     Ok(session)
 }
@@ -2081,8 +2145,12 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
     if arrangement.tracks.len() > 128 {
         return Err("An arrangement cannot contain more than 128 tracks.".into());
     }
+    let mut unique_track_ids = std::collections::HashSet::new();
     for track in &mut arrangement.tracks {
-        if track.id.trim().is_empty() || track.name.trim().is_empty() {
+        if track.id.trim().is_empty()
+            || track.name.trim().is_empty()
+            || !unique_track_ids.insert(track.id.as_str())
+        {
             return Err("Tracks require non-empty ids and names.".into());
         }
         if !track.gain_db.is_finite() || !track.pan.is_finite() {
@@ -2122,8 +2190,10 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
     }
     let audio_clips = std::mem::take(&mut arrangement.audio_clips);
     let mut normalized_clips = Vec::with_capacity(audio_clips.len());
+    let mut audio_clip_ids = std::collections::HashSet::new();
     for mut clip in audio_clips {
         if clip.id.trim().is_empty()
+            || !audio_clip_ids.insert(clip.id.clone())
             || clip.name.trim().is_empty()
             || clip.track_id.trim().is_empty()
             || clip.asset_id.as_str().trim().is_empty()
@@ -2165,8 +2235,10 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         .iter()
         .map(|track| track.id.as_str())
         .collect::<std::collections::HashSet<_>>();
+    let mut midi_clip_ids = std::collections::HashSet::new();
     for clip in &mut arrangement.midi_clips {
         if clip.id.trim().is_empty()
+            || !midi_clip_ids.insert(clip.id.as_str())
             || clip.name.trim().is_empty()
             || clip.track_id.trim().is_empty()
             || !track_ids.contains(clip.track_id.as_str())
@@ -2292,6 +2364,9 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             "An arrangement contains too many recording sessions, passes, or takes.".into(),
         );
     }
+    for take in &mut arrangement.takes {
+        take.migrate_legacy_audio_sources();
+    }
     let session_ids = arrangement
         .recording_sessions
         .iter()
@@ -2307,24 +2382,54 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         .iter()
         .map(|take| take.id.as_str())
         .collect::<std::collections::HashSet<_>>();
+    if session_ids.len() != arrangement.recording_sessions.len()
+        || pass_ids.len() != arrangement.recording_passes.len()
+        || take_ids.len() != arrangement.takes.len()
+    {
+        return Err("Recording Session, Pass, and Take IDs must be unique.".into());
+    }
     for recording in &arrangement.recording_sessions {
+        let mut slot_track_ids = std::collections::HashSet::new();
         if recording.id.trim().is_empty()
             || recording.track_slots.iter().any(|slot| {
-                !track_ids.contains(slot.track_id.as_str())
-                    || !take_ids.contains(slot.active_take_id.as_str())
-                    || !arrangement
-                        .audio_clips
-                        .iter()
-                        .any(|clip| clip.id == slot.timeline_clip_id)
-                        && !arrangement
-                            .midi_clips
-                            .iter()
-                            .any(|clip| clip.id == slot.timeline_clip_id)
+                let take = arrangement
+                    .takes
+                    .iter()
+                    .find(|take| take.id == slot.active_take_id);
+                let audio_clip = arrangement
+                    .audio_clips
+                    .iter()
+                    .find(|clip| clip.id == slot.timeline_clip_id);
+                let midi_clip = arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.id == slot.timeline_clip_id);
+                !slot_track_ids.insert(slot.track_id.as_str())
+                    || !track_ids.contains(slot.track_id.as_str())
+                    || take.is_none_or(|take| {
+                        take.session_id != recording.id || take.track_id != slot.track_id
+                    })
+                    || match (audio_clip, midi_clip) {
+                        (Some(clip), None) => {
+                            clip.track_id != slot.track_id
+                                || clip.recording_take_id.as_deref()
+                                    != Some(slot.active_take_id.as_str())
+                        }
+                        (None, Some(clip)) => {
+                            clip.track_id != slot.track_id
+                                || clip.recording_take_id.as_deref()
+                                    != Some(slot.active_take_id.as_str())
+                        }
+                        _ => true,
+                    }
             })
-            || recording
-                .pass_ids
-                .iter()
-                .any(|id| !pass_ids.contains(id.as_str()))
+            || recording.pass_ids.iter().any(|id| {
+                arrangement
+                    .recording_passes
+                    .iter()
+                    .find(|pass| pass.id == *id)
+                    .is_none_or(|pass| pass.session_id != recording.id)
+            })
         {
             return Err(
                 "Recording Sessions contain invalid track, take, or range references.".into(),
@@ -2332,25 +2437,50 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         }
     }
     for pass in &arrangement.recording_passes {
+        let mut pass_take_ids = std::collections::HashSet::new();
         if pass.id.trim().is_empty()
             || !session_ids.contains(pass.session_id.as_str())
             || pass.ordinal == 0
             || pass.duration_ticks == 0
-            || pass
-                .track_take_ids
-                .iter()
-                .any(|id| !take_ids.contains(id.as_str()))
+            || pass.track_take_ids.iter().any(|id| {
+                !pass_take_ids.insert(id.as_str())
+                    || arrangement
+                        .takes
+                        .iter()
+                        .find(|take| take.id == *id)
+                        .is_none_or(|take| {
+                            take.pass_id != pass.id || take.session_id != pass.session_id
+                        })
+            })
         {
             return Err("Recording Passes contain invalid references or ranges.".into());
         }
     }
     for take in &arrangement.takes {
+        let pass = arrangement
+            .recording_passes
+            .iter()
+            .find(|pass| pass.id == take.pass_id);
+        let audio_sources_valid = take
+            .raw_audio
+            .iter()
+            .chain(take.processed_audio.iter())
+            .all(|source| {
+                !source.asset_id.as_str().trim().is_empty()
+                    && source.source_end_sample > source.source_start_sample
+            });
+        let has_audio_source = take.raw_audio.is_some() || take.processed_audio.is_some();
         if take.id.trim().is_empty()
             || !session_ids.contains(take.session_id.as_str())
-            || !pass_ids.contains(take.pass_id.as_str())
+            || pass.is_none_or(|pass| {
+                pass.session_id != take.session_id
+                    || !pass.track_take_ids.iter().any(|id| id == &take.id)
+            })
             || !track_ids.contains(take.track_id.as_str())
             || take.duration_ticks == 0
-            || take.source_end_sample < take.source_start_sample
+            || take.source_end_sample <= take.source_start_sample
+            || (!has_audio_source && take.midi_asset_id.is_none())
+            || !audio_sources_valid
         {
             return Err(
                 "Recording Takes contain invalid session, pass, track, or range references.".into(),
@@ -2973,5 +3103,122 @@ mod tests {
             migrated.arrangement.recording_sessions[0].track_slots[0].active_take_id,
             "take:legacy"
         );
+    }
+
+    fn session_with_recording_relations() -> CreativeSession {
+        let mut session = CreativeSession::new(0);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let asset_id = mint_asset_id();
+        let take = RecordingTakeRecord {
+            id: "take:1".into(),
+            session_id: "recording:1".into(),
+            pass_id: "pass:1".into(),
+            track_id: "track:audio".into(),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            source_start_sample: 0,
+            source_end_sample: 48_000,
+            raw_audio: Some(TakeAudioSource {
+                asset_id: asset_id.clone(),
+                source_start_sample: 0,
+                source_end_sample: 48_000,
+            }),
+            processed_audio: None,
+            raw_audio_asset_id: None,
+            processed_audio_asset_id: None,
+            midi_asset_id: None,
+        };
+        let mut clip = AudioClip::full_source(
+            "clip:1".into(),
+            "Take".into(),
+            "track:audio".into(),
+            asset_id,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        );
+        clip.recording_take_id = Some(take.id.clone());
+        session.arrangement.audio_clips.push(clip);
+        session.arrangement.takes.push(take);
+        session
+            .arrangement
+            .recording_passes
+            .push(RecordingPassRecord {
+                id: "pass:1".into(),
+                session_id: "recording:1".into(),
+                ordinal: 1,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids: vec!["take:1".into()],
+            });
+        session
+            .arrangement
+            .recording_sessions
+            .push(RecordingSessionRecord {
+                id: "recording:1".into(),
+                start_tick: TimelineTick(0),
+                track_slots: vec![RecordingSessionTrackSlot {
+                    track_id: "track:audio".into(),
+                    active_take_id: "take:1".into(),
+                    timeline_clip_id: "clip:1".into(),
+                }],
+                pass_ids: vec!["pass:1".into()],
+            });
+        session
+    }
+
+    #[test]
+    fn legacy_shared_audio_range_migrates_to_variant_sources() {
+        let mut value = serde_json::to_value(session_with_recording_relations()).unwrap();
+        let take = &mut value["arrangement"]["takes"][0];
+        take.as_object_mut().unwrap().remove("rawAudio");
+        take["rawAudioAssetId"] = serde_json::to_value(mint_asset_id()).unwrap();
+        take["sourceStartSample"] = serde_json::json!(120);
+        take["sourceEndSample"] = serde_json::json!(480);
+
+        let migrated = deserialize_session(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let source = migrated.arrangement.takes[0].raw_audio.as_ref().unwrap();
+        assert_eq!(source.source_start_sample, 120);
+        assert_eq!(source.source_end_sample, 480);
+        let persisted = serde_json::to_value(migrated).unwrap();
+        assert!(
+            persisted["arrangement"]["takes"][0]
+                .get("rawAudioAssetId")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn recording_relation_validation_rejects_duplicates_and_cross_links() {
+        let valid = session_with_recording_relations()
+            .validate_and_normalize()
+            .unwrap();
+
+        let mut duplicate = valid.clone();
+        duplicate
+            .arrangement
+            .takes
+            .push(duplicate.arrangement.takes[0].clone());
+        assert!(duplicate.validate_and_normalize().is_err());
+
+        let mut wrong_pass = valid.clone();
+        wrong_pass.arrangement.recording_passes[0].track_take_ids = vec!["missing-take".into()];
+        assert!(wrong_pass.validate_and_normalize().is_err());
+
+        let mut wrong_slot = valid;
+        wrong_slot.arrangement.recording_sessions[0].track_slots[0].active_take_id =
+            "missing-take".into();
+        assert!(wrong_slot.validate_and_normalize().is_err());
+
+        let mut missing_from_pass = session_with_recording_relations();
+        missing_from_pass.arrangement.recording_passes[0]
+            .track_take_ids
+            .clear();
+        assert!(missing_from_pass.validate_and_normalize().is_err());
     }
 }

@@ -469,6 +469,25 @@ pub fn open_track_plugin_editor(
 }
 
 #[tauri::command]
+pub fn persist_track_plugin_state(
+    track_id: String,
+    device_id: String,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::persist_track_plugin_state(
+        &context(&state),
+        &track_id,
+        &device_id,
+        parameter_values,
+        state_data,
+        bypassed,
+    )
+}
+
+#[tauri::command]
 pub fn remove_track(
     track_id: String,
     state: State<'_, AppState>,
@@ -590,12 +609,12 @@ pub fn duplicate_midi_notes(
 }
 
 #[tauri::command]
-pub fn set_take_variant(
-    take_id: String,
+pub fn set_audio_clip_take_variant(
+    clip_id: String,
     variant: AudioTakeVariant,
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
-    application::set_take_variant(&context(&state), &take_id, variant)
+    application::set_audio_clip_take_variant(&context(&state), &clip_id, variant)
 }
 
 #[tauri::command]

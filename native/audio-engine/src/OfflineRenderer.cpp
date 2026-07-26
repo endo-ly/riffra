@@ -172,10 +172,10 @@ bool OfflineRenderer::render(
     }
     writer.reset();
 
-    const auto normalizationGain = normalize && peak > 0.98f
+    const auto normalizationGain = normalize && peak > 0.0f
         ? 0.98f / peak
         : 1.0f;
-    if (normalizationGain < 1.0f) {
+    if (normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
         if (!normalizeFile(partial, normalized, formats, normalizationGain, error)
             || !normalized.moveFileTo(destination)) {
             partial.deleteFile();

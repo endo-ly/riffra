@@ -74,6 +74,7 @@ export type { SeparationResult } from './SeparationResult';
 export type { SessionAudioPair } from './SessionAudioPair';
 export type { SessionSettings } from './SessionSettings';
 export type { SessionSnapshot } from './SessionSnapshot';
+export type { TakeAudioSource } from './TakeAudioSource';
 export type { TimelineLoopRange } from './TimelineLoopRange';
 export type { TimelinePunchRange } from './TimelinePunchRange';
 export type { Track } from './Track';

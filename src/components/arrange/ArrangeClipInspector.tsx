@@ -3,6 +3,7 @@ import type { AudioClip, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { clipDurationTicks, formatMusicalPosition } from '@/lib/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
+import { useInspectorOperation } from './useInspectorOperation';
 
 interface ArrangeClipInspectorProps {
   session: CreativeSession;
@@ -10,7 +11,7 @@ interface ArrangeClipInspectorProps {
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
   api: NativeApi;
-  onSetLoopToClip?: (clip: AudioClip) => void;
+  onSetLoopToClip?: (clip: AudioClip) => Promise<CreativeSession>;
 }
 
 interface Drafts {
@@ -41,7 +42,11 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   );
   const clip = selected.at(-1) ?? null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
-  const [message, setMessage] = useState<string | null>(null);
+  const {
+    operationMessage: message,
+    runOperation,
+    setOperationMessage: setMessage,
+  } = useInspectorOperation();
 
   // Re-seed drafts when the selected clip identity changes. We do NOT reseed
   // on every value change, so the user can finish typing before a blur fires
@@ -52,18 +57,19 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
     else setDrafts(null);
   }, [clip?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const commit = async (operation: Promise<CreativeSession | null>, label: string) => {
-    try {
-      const next = await operation;
+  const commit = (
+    operation: Promise<CreativeSession | null>,
+    label: string,
+    afterSuccess?: () => void,
+  ) => {
+    runOperation(operation, `${label} applied.`, (next) => {
       if (next) {
         props.setSession(next);
-        setMessage(`${label} applied.`);
+        afterSuccess?.();
       } else {
         setMessage(`${label} was not applied.`);
       }
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    }
+    });
   };
 
   if (!clip || !drafts) {
@@ -77,6 +83,9 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   }
 
   const seconds = clip.timelineDuration.frames / clip.timelineDuration.sampleRate;
+  const recordingTake = clip.recordingTakeId
+    ? props.session.arrangement.takes.find((take) => take.id === clip.recordingTakeId)
+    : undefined;
   const patch = (fields: Record<string, unknown>, label: string) =>
     void commit(props.api.updateAudioClip(clip.id, fields), label);
 
@@ -89,7 +98,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
         (item) => item.startTick + clipDurationTicks(item, props.session.arrangement.timebase),
       ),
     );
-    void commit(
+    commit(
       props.api.pasteTimelineClips(props.selectedClipIds, [], target),
       `${selected.length} clip${selected.length === 1 ? '' : 's'} duplicated.`,
     );
@@ -146,6 +155,31 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           </strong>
         </div>
       </section>
+
+      {recordingTake?.rawAudio && recordingTake.processedAudio && (
+        <section className={styles.section}>
+          <header>
+            <strong>SOURCE</strong>
+            <span>CLIP ONLY</span>
+          </header>
+          <div role="group" aria-label="Clip recording source">
+            {(['raw', 'processed'] as const).map((variant) => (
+              <button
+                key={variant}
+                aria-pressed={clip.takeVariant === variant}
+                onClick={() =>
+                  void commit(
+                    props.api.setAudioClipTakeVariant(clip.id, variant),
+                    variant === 'raw' ? 'Raw source' : 'Processed source',
+                  )
+                }
+              >
+                {variant === 'raw' ? 'Raw' : 'Processed'}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className={styles.section}>
         <header>
@@ -240,19 +274,14 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       <div className={styles.toggles}>
         <button
           className={clip.muted ? styles.active : ''}
-          onClick={() =>
-            void commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
-          }
+          onClick={() => commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')}
         >
           Mute
         </button>
         <button
           className={clip.loopEnabled ? styles.active : ''}
           onClick={() =>
-            void commit(
-              props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
-              'Loop',
-            )
+            commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }), 'Loop')
           }
         >
           Loop
@@ -264,17 +293,21 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           <button
             className={styles.primary}
             onClick={() =>
-              void commit(
-                props.api.crossfadeAudioClips(selected[0].id, selected[1].id),
-                'Crossfade',
-              )
+              commit(props.api.crossfadeAudioClips(selected[0].id, selected[1].id), 'Crossfade')
             }
           >
             Create crossfade
           </button>
         )}
         {props.onSetLoopToClip && selected.length === 1 && (
-          <button onClick={() => props.onSetLoopToClip?.(clip)}>Set Loop to Clip</button>
+          <button
+            onClick={() => {
+              const operation = props.onSetLoopToClip?.(clip);
+              if (operation) commit(operation, 'Loop range');
+            }}
+          >
+            Set Loop to Clip
+          </button>
         )}
         <button onClick={duplicateSelection}>
           Duplicate{selected.length > 1 ? ` (${selected.length})` : ''}
@@ -282,8 +315,8 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
         <button
           className={styles.danger}
           onClick={() =>
-            void commit(props.api.removeTimelineClips(props.selectedClipIds, []), 'Delete').then(
-              () => props.setSelectedClipIds([]),
+            commit(props.api.removeTimelineClips(props.selectedClipIds, []), 'Delete', () =>
+              props.setSelectedClipIds([]),
             )
           }
         >

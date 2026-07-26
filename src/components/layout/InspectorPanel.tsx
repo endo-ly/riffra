@@ -103,9 +103,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       timebase.ppq,
                   ),
                 );
-                void props.api
-                  .updateTimelineLoopRange(true, clip.startTick, clip.startTick + endTicks)
-                  .then(props.setSession);
+                return props.api.updateTimelineLoopRange(
+                  true,
+                  clip.startTick,
+                  clip.startTick + endTicks,
+                );
               }}
             />
             <TakeInspector

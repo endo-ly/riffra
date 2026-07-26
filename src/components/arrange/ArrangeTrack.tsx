@@ -169,29 +169,31 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           >
             ●
           </button>
-          <button
-            className={props.track.monitoring !== 'off' ? styles.active : ''}
-            aria-label={`Cycle input monitoring for ${props.track.name}`}
-            title={`Input monitoring: ${props.track.monitoring.toUpperCase()}`}
-            onClick={() => {
-              const next =
-                props.track.monitoring === 'off'
-                  ? 'auto'
-                  : props.track.monitoring === 'auto'
-                    ? 'on'
-                    : 'off';
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, { monitoring: next }),
-                `${props.track.name} monitoring set to ${next.toUpperCase()}.`,
-              );
-            }}
-          >
-            {props.track.monitoring === 'off'
-              ? 'M-IN'
-              : props.track.monitoring === 'auto'
-                ? 'A-IN'
-                : 'ON'}
-          </button>
+          {props.track.kind === 'audio' && (
+            <button
+              className={props.track.monitoring !== 'off' ? styles.active : ''}
+              aria-label={`Cycle input monitoring for ${props.track.name}`}
+              title={`Input monitoring: ${props.track.monitoring.toUpperCase()}`}
+              onClick={() => {
+                const next =
+                  props.track.monitoring === 'off'
+                    ? 'auto'
+                    : props.track.monitoring === 'auto'
+                      ? 'on'
+                      : 'off';
+                void props.onCommit(
+                  props.api.updateTrack(props.track.id, { monitoring: next }),
+                  `${props.track.name} monitoring set to ${next.toUpperCase()}.`,
+                );
+              }}
+            >
+              {props.track.monitoring === 'off'
+                ? 'M-IN'
+                : props.track.monitoring === 'auto'
+                  ? 'A-IN'
+                  : 'ON'}
+            </button>
+          )}
         </div>
         <details className={styles.trackMenu}>
           <summary aria-label={`${props.track.name} track menu`}>•••</summary>

@@ -43,7 +43,7 @@ import type {
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
 import { invokeOrFallback, isNativeRuntime } from './invoke';
-import type { NativeApi } from './native-api';
+import type { NativeApi, TrackPluginStateChange } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -688,6 +688,16 @@ async function openTrackPluginEditor(trackId: string, deviceId: string): Promise
   await invoke<void>('open_track_plugin_editor', { trackId, deviceId });
 }
 
+async function persistTrackPluginState(change: TrackPluginStateChange): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('persist_track_plugin_state', {
+    trackId: change.trackId,
+    deviceId: change.deviceId,
+    parameterValues: change.parameterValues,
+    stateData: change.stateData ?? null,
+    bypassed: change.bypassed,
+  });
+}
+
 async function removeTrack(trackId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('remove_track', { trackId });
 }
@@ -775,8 +785,11 @@ async function duplicateMidiNotes(
   });
 }
 
-async function setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_take_variant', { takeId, variant });
+async function setAudioClipTakeVariant(
+  clipId: string,
+  variant: AudioTakeVariant,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_audio_clip_take_variant', { clipId, variant });
 }
 
 async function startTakeComparison(takeId: string): Promise<AudioStatus> {
@@ -972,6 +985,7 @@ function createNativeApi(): NativeApi {
     setTrackDeviceBypassed,
     setTrackDeviceParameter,
     openTrackPluginEditor,
+    persistTrackPluginState,
     removeTrack,
     duplicateTrack,
     reorderTrack,
@@ -984,7 +998,7 @@ function createNativeApi(): NativeApi {
     removeMidiNote,
     quantizeMidiNotes,
     duplicateMidiNotes,
-    setTakeVariant,
+    setAudioClipTakeVariant,
     startTakeComparison,
     switchTakeComparisonVariant,
     stopTakeComparison,
@@ -1037,6 +1051,23 @@ function createNativeApi(): NativeApi {
           else unlisten = fn;
         },
       );
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    onTrackPluginStateChanged: (callback: (change: TrackPluginStateChange) => void) => {
+      if (!isNativeRuntime()) return () => undefined;
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<TrackPluginStateChange>('track-plugin-state-changed', (event) =>
+        callback(event.payload),
+      )
+        .then((fn) => {
+          if (cancelled) fn();
+          else unlisten = fn;
+        })
+        .catch(() => undefined);
       return () => {
         cancelled = true;
         unlisten?.();

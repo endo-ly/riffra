@@ -35,9 +35,19 @@ public:
         std::uint64_t startTimelineSample,
         std::uint64_t endTimelineSample) noexcept override;
     bool finish(juce::String& error);
+    bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;
 
 private:
+    struct CaptureSegment final {
+        std::uint64_t audioClockStartSample = 0;
+        std::uint64_t audioClockEndSample = 0;
+        std::uint64_t timelineStartSample = 0;
+        std::uint64_t timelineEndSample = 0;
+        std::uint64_t fileStartSample = 0;
+        std::uint64_t fileEndSample = 0;
+    };
+
     struct TrackWriter final {
         struct MidiEvent final {
             std::uint64_t audioSample = 0;
@@ -54,6 +64,7 @@ private:
         juce::String midiDeviceId;
         int midiChannel = 0;
         int pluginLatencySamples = 0;
+        int pluginTailSamples = 0;
         std::unique_ptr<RecordingSession> audio;
         std::vector<MidiEvent> midiEvents;
     };
@@ -63,6 +74,7 @@ private:
     bool writeManifest(const juce::String& state, juce::String& error) const;
 
     static constexpr std::size_t kMaximumLoopBoundaries = 4096;
+    static constexpr std::size_t kMaximumCaptureSegments = 4096;
     juce::File directory;
     juce::File manifest;
     double sampleRate = 0.0;
@@ -77,6 +89,9 @@ private:
     mutable juce::CriticalSection midiLock;
     std::array<std::atomic<std::uint64_t>, kMaximumLoopBoundaries> loopBoundaries {};
     std::atomic<std::size_t> loopBoundaryCount { 0 };
+    std::array<CaptureSegment, kMaximumCaptureSegments> captureSegments {};
+    std::atomic<std::size_t> captureSegmentCount { 0 };
+    std::uint64_t capturedFileSamples = 0;
     std::atomic<std::uint64_t> recordStartAudioSample {
         std::numeric_limits<std::uint64_t>::max()
     };

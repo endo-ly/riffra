@@ -44,7 +44,7 @@ import type {
   TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
-import type { NativeApi } from './native-api';
+import type { NativeApi, TrackPluginStateChange } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -62,6 +62,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     dropoutEndSample: null,
     recoveryStatus: 'clean',
     ...overrides.recording,
+    cancelled: overrides.recording?.cancelled ?? false,
   };
   return {
     state: 'muted',
@@ -867,6 +868,7 @@ export class FakeNativeApi implements NativeApi {
       ...this.audio,
       recording: {
         active: true,
+        cancelled: false,
         directory: 'fake://recordings',
         sampleRate: 48_000,
         rawChannels: 1,
@@ -905,6 +907,7 @@ export class FakeNativeApi implements NativeApi {
       ...this.audio,
       recording: {
         active: false,
+        cancelled: false,
         directory: 'fake://recordings',
         sampleRate: 48_000,
         rawChannels: 1,
@@ -2125,6 +2128,18 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('openTrackPluginEditor');
   };
 
+  persistTrackPluginState = async (change: TrackPluginStateChange): Promise<CreativeSession> =>
+    this.updateTrackDevice(change.trackId, change.deviceId, (device) => ({
+      ...device,
+      parameterValues: [...change.parameterValues],
+      stateData: change.stateData ?? undefined,
+      bypassed: change.bypassed,
+    }));
+
+  onTrackPluginStateChanged = (_callback: (change: TrackPluginStateChange) => void) => {
+    return () => undefined;
+  };
+
   updateTrack = async (
     trackId: string,
     patch: {
@@ -2577,13 +2592,19 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  setTakeVariant = async (takeId: string, variant: AudioTakeVariant): Promise<CreativeSession> => {
-    this.calls.push('setTakeVariant');
+  setAudioClipTakeVariant = async (
+    clipId: string,
+    variant: AudioTakeVariant,
+  ): Promise<CreativeSession> => {
+    this.calls.push('setAudioClipTakeVariant');
     return this.commitSession((current) => {
-      const take = current.arrangement.takes.find((item) => item.id === takeId);
-      if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
-      const assetId = variant === 'raw' ? take.rawAudioAssetId : take.processedAudioAssetId;
-      if (!assetId) throw new Error('The requested Take variant is not available.');
+      const selectedClip = current.arrangement.audioClips.find((clip) => clip.id === clipId);
+      const take = selectedClip?.recordingTakeId
+        ? current.arrangement.takes.find((item) => item.id === selectedClip.recordingTakeId)
+        : undefined;
+      if (!selectedClip || !take) throw new Error(`Audio Clip has no Recording Take: ${clipId}`);
+      const source = variant === 'raw' ? take.rawAudio : take.processedAudio;
+      if (!source) throw new Error('The requested Take variant is not available.');
       return {
         ...current,
         updatedAtMs: Date.now(),
@@ -2591,7 +2612,21 @@ export class FakeNativeApi implements NativeApi {
           ...current.arrangement,
           revision: current.arrangement.revision + 1,
           audioClips: current.arrangement.audioClips.map((clip) =>
-            clip.recordingTakeId === take.id ? { ...clip, assetId, takeVariant: variant } : clip,
+            clip.id === clipId
+              ? {
+                  ...clip,
+                  assetId: source.assetId,
+                  sourceRange: {
+                    start: source.sourceStartSample,
+                    end: source.sourceEndSample,
+                  },
+                  timelineDuration: {
+                    frames: source.sourceEndSample - source.sourceStartSample,
+                    sampleRate: clip.sourceSampleRate,
+                  },
+                  takeVariant: variant,
+                }
+              : clip,
           ),
         },
       };

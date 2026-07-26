@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CreativeSession, RecordingTakeRecord } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import { useInspectorOperation } from './useInspectorOperation';
 
 interface TakeInspectorProps {
   session: CreativeSession;
@@ -39,16 +40,18 @@ export function TakeInspector(props: TakeInspectorProps) {
   }, [arrangement, props.selection]);
   const [previewingTake, setPreviewingTake] = useState<string | null>(null);
   const [comparisonVariant, setComparisonVariant] = useState<'raw' | 'processed'>('raw');
+  const { operationMessage, runOperation } = useInspectorOperation();
 
   useEffect(
     () => () => {
-      void props.api.stopTakeComparison();
+      void props.api.stopTakeComparison().catch(() => undefined);
     },
     [props.api],
   );
 
   if (!context || context.takes.length === 0) return null;
-  const commit = (promise: Promise<CreativeSession>) => void promise.then(props.setSession);
+  const commit = (promise: Promise<CreativeSession>, message: string) =>
+    runOperation(promise, message, props.setSession);
   const preview = (take: RecordingTakeRecord, variant?: 'raw' | 'processed') => {
     const selectedVariant =
       variant ??
@@ -56,23 +59,38 @@ export function TakeInspector(props: TakeInspectorProps) {
       'processed';
     const assetId =
       selectedVariant === 'raw'
-        ? (take.rawAudioAssetId ?? take.processedAudioAssetId)
-        : (take.processedAudioAssetId ?? take.rawAudioAssetId);
-    if (!assetId) return;
-    if (variant && take.rawAudioAssetId && take.processedAudioAssetId) {
+        ? (take.rawAudio?.assetId ?? take.processedAudio?.assetId)
+        : (take.processedAudio?.assetId ?? take.rawAudio?.assetId);
+    if (!assetId) {
+      runOperation(
+        Promise.reject(new Error('This Take has no previewable audio source.')),
+        'Take preview started.',
+      );
+      return;
+    }
+    if (variant && take.rawAudio && take.processedAudio) {
       if (previewingTake === take.id) {
-        void props.api.switchTakeComparisonVariant(selectedVariant);
+        runOperation(
+          props.api.switchTakeComparisonVariant(selectedVariant),
+          `${selectedVariant === 'raw' ? 'Raw' : 'Processed'} comparison selected.`,
+          () => {
+            setComparisonVariant(selectedVariant);
+          },
+        );
       } else {
-        void props.api.startTakeComparison(take.id).then(() => {
-          if (selectedVariant === 'processed')
-            return props.api.switchTakeComparisonVariant('processed');
-          return undefined;
+        const comparison = props.api.startTakeComparison(take.id).then(async (status) => {
+          if (selectedVariant === 'processed') {
+            return await props.api.switchTakeComparisonVariant('processed');
+          }
+          return status;
+        });
+        runOperation(comparison, 'Take comparison started.', () => {
+          setPreviewingTake(take.id);
+          setComparisonVariant(selectedVariant);
         });
       }
-      setPreviewingTake(take.id);
-      setComparisonVariant(selectedVariant);
     } else {
-      void props.api.previewAsset(assetId, { looped: false });
+      runOperation(props.api.previewAsset(assetId, { looped: false }), 'Take preview started.');
     }
   };
 
@@ -93,15 +111,24 @@ export function TakeInspector(props: TakeInspectorProps) {
             <button onClick={() => preview(take)}>Preview</button>
             {!active && (
               <button
-                onClick={() => commit(props.api.activateTake(context.recordingSession.id, take.id))}
+                onClick={() =>
+                  commit(
+                    props.api.activateTake(context.recordingSession.id, take.id),
+                    'Active Take updated.',
+                  )
+                }
               >
                 Use
               </button>
             )}
-            <button onClick={() => commit(props.api.placeTakeAsSeparateClip(take.id))}>
+            <button
+              onClick={() =>
+                commit(props.api.placeTakeAsSeparateClip(take.id), 'Take copy placed.')
+              }
+            >
               Place copy
             </button>
-            {take.rawAudioAssetId && take.processedAudioAssetId && (
+            {take.rawAudio && take.processedAudio && (
               <div role="group" aria-label={`Compare Take ${index + 1}`}>
                 <button
                   aria-pressed={previewingTake === take.id && comparisonVariant === 'raw'}
@@ -120,6 +147,7 @@ export function TakeInspector(props: TakeInspectorProps) {
           </div>
         );
       })}
+      {operationMessage && <p role="status">{operationMessage}</p>}
     </section>
   );
 }

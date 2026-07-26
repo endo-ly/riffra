@@ -35,7 +35,7 @@ use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::session::{
     AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
     RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
-    TimelineTick, TrackKind,
+    TakeAudioSource, TimelineTick, TrackKind,
 };
 use crate::storage::now_ms;
 
@@ -201,6 +201,9 @@ fn build_startup_capture(
 pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, String> {
     let before = context.audio.refresh_status()?;
     let status = context.audio.stop_arrange_recording()?;
+    if status.recording.cancelled {
+        return Ok(status);
+    }
     let directory = status
         .recording
         .directory
@@ -231,9 +234,24 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, Str
 struct NativeArrangeTrack {
     track_id: String,
     kind: String,
+    #[serde(default)]
+    plugin_latency_samples: u64,
+    #[serde(default)]
+    plugin_tail_samples: u64,
     raw_file: Option<String>,
     processed_file: Option<String>,
     midi_file: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeCaptureSegment {
+    audio_clock_start_sample: u64,
+    audio_clock_end_sample: u64,
+    timeline_start_sample: u64,
+    timeline_end_sample: u64,
+    file_start_sample: u64,
+    file_end_sample: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -247,6 +265,8 @@ struct NativeArrangeManifest {
     timeline_start_tick: u64,
     #[serde(default)]
     loop_boundaries_sample: Vec<u64>,
+    #[serde(default)]
+    capture_segments: Vec<NativeCaptureSegment>,
     tracks: Vec<NativeArrangeTrack>,
 }
 
@@ -257,7 +277,10 @@ struct RegisteredTrackOutput {
     raw_asset_id: Option<crate::asset::AssetId>,
     processed_asset_id: Option<crate::asset::AssetId>,
     midi_asset_id: Option<crate::asset::AssetId>,
-    frames: u64,
+    raw_frames: u64,
+    processed_frames: u64,
+    plugin_latency_samples: u64,
+    plugin_tail_samples: u64,
 }
 
 fn native_arrange_manifest(directory: &Path) -> Result<Option<NativeArrangeManifest>, String> {
@@ -338,21 +361,26 @@ fn register_track_outputs(
                 )
             })
             .transpose()?;
-        let audio_path = processed_path
+        let read_frames = |path: &Path| {
+            let bytes = std::fs::read(path)
+                .map_err(|error| format!("Recorded Track audio could not be read: {error}"))?;
+            let wav = crate::analysis::parse_wav(&bytes)?;
+            let frame_bytes = usize::from(wav.bits_per_sample / 8) * usize::from(wav.channels);
+            if frame_bytes == 0 {
+                return Err("Recorded Track audio has an invalid frame format.".to_string());
+            }
+            Ok((wav.data_len / frame_bytes) as u64)
+        };
+        let raw_frames = raw_path
             .as_deref()
             .filter(|path| path.is_file())
-            .or_else(|| raw_path.as_deref().filter(|path| path.is_file()));
-        let frames = audio_path
-            .map(|path| {
-                let bytes = std::fs::read(path)
-                    .map_err(|error| format!("Recorded Track audio could not be read: {error}"))?;
-                let wav = crate::analysis::parse_wav(&bytes)?;
-                let frame_bytes = usize::from(wav.bits_per_sample / 8) * usize::from(wav.channels);
-                if frame_bytes == 0 {
-                    return Err("Recorded Track audio has an invalid frame format.".to_string());
-                }
-                Ok((wav.data_len / frame_bytes) as u64)
-            })
+            .map(read_frames)
+            .transpose()?
+            .unwrap_or(0);
+        let processed_frames = processed_path
+            .as_deref()
+            .filter(|path| path.is_file())
+            .map(read_frames)
             .transpose()?
             .unwrap_or(0);
         outputs.push(RegisteredTrackOutput {
@@ -361,7 +389,10 @@ fn register_track_outputs(
             raw_asset_id,
             processed_asset_id,
             midi_asset_id,
-            frames,
+            raw_frames,
+            processed_frames,
+            plugin_latency_samples: track.plugin_latency_samples,
+            plugin_tail_samples: track.plugin_tail_samples,
         });
     }
     if let Some(representative) = outputs
@@ -423,18 +454,43 @@ fn finalize_arrange_recording(
         .unwrap_or(manifest.timeline_start_tick);
     let start_sample = manifest.record_start_audio_sample;
     let end_sample = manifest.record_end_audio_sample;
-    let mut boundaries = manifest
-        .loop_boundaries_sample
-        .iter()
-        .copied()
-        .filter(|sample| *sample > start_sample && *sample < end_sample)
-        .collect::<Vec<_>>();
-    boundaries.sort_unstable();
-    boundaries.dedup();
-    let mut edges = Vec::with_capacity(boundaries.len() + 2);
-    edges.push(start_sample);
-    edges.extend(boundaries);
-    edges.push(end_sample);
+    let mut segments = manifest.capture_segments.clone();
+    if segments.is_empty() {
+        let mut boundaries = manifest
+            .loop_boundaries_sample
+            .iter()
+            .copied()
+            .filter(|sample| *sample > start_sample && *sample < end_sample)
+            .collect::<Vec<_>>();
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        let mut edges = Vec::with_capacity(boundaries.len() + 2);
+        edges.push(start_sample);
+        edges.extend(boundaries);
+        edges.push(end_sample);
+        segments = edges
+            .windows(2)
+            .scan(0_u64, |file_start, edge| {
+                let length = edge[1] - edge[0];
+                let timeline_start = if *file_start == 0 {
+                    manifest.record_start_timeline_sample.unwrap_or(0)
+                } else {
+                    manifest.record_start_timeline_sample.unwrap_or(0) + *file_start
+                };
+                let segment = NativeCaptureSegment {
+                    audio_clock_start_sample: edge[0],
+                    audio_clock_end_sample: edge[1],
+                    timeline_start_sample: timeline_start,
+                    timeline_end_sample: timeline_start + length,
+                    file_start_sample: *file_start,
+                    file_end_sample: *file_start + length,
+                };
+                *file_start += length;
+                Some(segment)
+            })
+            .collect();
+    }
+    validate_capture_segments(&segments)?;
     let listed = crate::recording::list(context.data_root, None)?
         .into_iter()
         .find(|recording| recording.path == directory.to_string_lossy());
@@ -447,29 +503,26 @@ fn finalize_arrange_recording(
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("capture");
+    let next_pass_ordinal = next_recording_pass_ordinal(&session.arrangement, &recording_id);
     let mut pass_ids = Vec::new();
-    for (index, edge) in edges.windows(2).enumerate() {
+    for (index, segment) in segments.iter().enumerate() {
         let pass_id = format!("pass:{recording_id}:{capture_id}:{index}");
         pass_ids.push(pass_id.clone());
-        let duration_ticks = sample_to_ticks(edge[1] - edge[0]).max(1);
+        let duration_ticks =
+            sample_to_ticks(segment.file_end_sample - segment.file_start_sample).max(1);
+        let segment_start_tick = sample_to_ticks(segment.timeline_start_sample);
         session
             .arrangement
             .recording_passes
             .push(RecordingPassRecord {
                 id: pass_id,
                 session_id: recording_id.clone(),
-                ordinal: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                start_tick: if index == 0 {
-                    TimelineTick(effective_start_tick)
-                } else {
-                    session.arrangement.loop_range.start_tick
-                },
+                ordinal: next_pass_ordinal.saturating_add(u32::try_from(index).unwrap_or(u32::MAX)),
+                start_tick: TimelineTick(segment_start_tick),
                 duration_ticks,
-                partial_start: index == 0
-                    && session.arrangement.loop_range.enabled
-                    && effective_start_tick != session.arrangement.loop_range.start_tick.0,
-                partial_end: index + 2 == edges.len()
-                    && session.arrangement.loop_range.enabled
+                partial_start: session.arrangement.loop_range.enabled
+                    && segment_start_tick != session.arrangement.loop_range.start_tick.0,
+                partial_end: session.arrangement.loop_range.enabled
                     && duration_ticks
                         < session
                             .arrangement
@@ -506,15 +559,11 @@ fn finalize_arrange_recording(
             )?;
             let mut active_take_id = None;
             let mut active_segment = None;
-            for (index, edge) in edges.windows(2).enumerate() {
-                let relative_start_tick = sample_to_ticks(edge[0] - start_sample);
+            for (index, segment) in segments.iter().enumerate() {
+                let relative_start_tick = sample_to_ticks(segment.file_start_sample);
                 let relative_end_tick =
-                    sample_to_ticks(edge[1] - start_sample).max(relative_start_tick + 1);
-                let start_tick = if index == 0 {
-                    TimelineTick(effective_start_tick)
-                } else {
-                    session.arrangement.loop_range.start_tick
-                };
+                    sample_to_ticks(segment.file_end_sample).max(relative_start_tick + 1);
+                let start_tick = TimelineTick(sample_to_ticks(segment.timeline_start_sample));
                 let take_id = format!(
                     "take:{recording_id}:{capture_id}:{}:{index}",
                     output.track_id
@@ -526,15 +575,15 @@ fn finalize_arrange_recording(
                     track_id: output.track_id.clone(),
                     start_tick,
                     duration_ticks: relative_end_tick - relative_start_tick,
-                    source_start_sample: edge[0] - start_sample,
-                    source_end_sample: edge[1] - start_sample,
+                    source_start_sample: segment.file_start_sample,
+                    source_end_sample: segment.file_end_sample,
+                    raw_audio: None,
+                    processed_audio: None,
                     raw_audio_asset_id: None,
                     processed_audio_asset_id: None,
                     midi_asset_id: Some(midi_asset_id.clone()),
                 });
-                session.arrangement.recording_passes[index]
-                    .track_take_ids
-                    .push(take_id.clone());
+                attach_take_to_pass(&mut session.arrangement, &pass_ids[index], take_id.clone())?;
                 active_take_id = Some(take_id);
                 active_segment = Some(RecordingSegment {
                     start_tick,
@@ -578,16 +627,47 @@ fn finalize_arrange_recording(
             }
             continue;
         }
-        if output.frames == 0 {
+        let audio_frames = output.raw_frames.max(output.processed_frames);
+        if audio_frames == 0 {
             continue;
         }
         let mut track_takes = Vec::new();
-        for (index, edge) in edges.windows(2).enumerate() {
-            let relative_start = edge[0] - start_sample;
-            let relative_end = edge[1] - start_sample;
-            let source_start = relative_start.min(output.frames);
-            let source_end = relative_end.min(output.frames);
+        for (index, segment) in segments.iter().enumerate() {
+            let source_start = segment.file_start_sample.min(audio_frames);
+            let source_end = segment.file_end_sample.min(audio_frames);
             if source_end <= source_start {
+                continue;
+            }
+            let raw_audio = output.raw_asset_id.clone().and_then(|asset_id| {
+                let source_start_sample = segment.file_start_sample.min(output.raw_frames);
+                let source_end_sample = segment.file_end_sample.min(output.raw_frames);
+                (source_end_sample > source_start_sample).then_some(TakeAudioSource {
+                    asset_id,
+                    source_start_sample,
+                    source_end_sample,
+                })
+            });
+            let processed_audio = output.processed_asset_id.clone().and_then(|asset_id| {
+                let source_start_sample = segment
+                    .file_start_sample
+                    .saturating_add(output.plugin_latency_samples)
+                    .min(output.processed_frames);
+                let source_end_sample = segment
+                    .file_end_sample
+                    .saturating_add(output.plugin_latency_samples)
+                    .saturating_add(if index + 1 == segments.len() {
+                        output.plugin_tail_samples
+                    } else {
+                        0
+                    })
+                    .min(output.processed_frames);
+                (source_end_sample > source_start_sample).then_some(TakeAudioSource {
+                    asset_id,
+                    source_start_sample,
+                    source_end_sample,
+                })
+            });
+            if raw_audio.is_none() && processed_audio.is_none() {
                 continue;
             }
             let take_id = format!(
@@ -610,14 +690,14 @@ fn finalize_arrange_recording(
                 duration_ticks: pass.duration_ticks,
                 source_start_sample: source_start,
                 source_end_sample: source_end,
-                raw_audio_asset_id: output.raw_asset_id.clone(),
-                processed_audio_asset_id: output.processed_asset_id.clone(),
+                raw_audio,
+                processed_audio,
+                raw_audio_asset_id: None,
+                processed_audio_asset_id: None,
                 midi_asset_id: output.midi_asset_id.clone(),
             };
             session.arrangement.takes.push(take);
-            session.arrangement.recording_passes[index]
-                .track_take_ids
-                .push(take_id.clone());
+            attach_take_to_pass(&mut session.arrangement, &pass_id, take_id.clone())?;
             track_takes.push(take_id);
         }
         let Some(active_take_id) = track_takes.last().cloned() else {
@@ -630,29 +710,29 @@ fn finalize_arrange_recording(
             .find(|take| take.id == active_take_id)
             .cloned()
             .ok_or_else(|| "Active Take disappeared during finalization.".to_string())?;
-        let active_asset = output
-            .processed_asset_id
-            .clone()
-            .or(output.raw_asset_id.clone())
+        let active_variant = if active_take.processed_audio.is_some() {
+            AudioTakeVariant::Processed
+        } else {
+            AudioTakeVariant::Raw
+        };
+        let active_source = active_take
+            .preferred_audio_source(active_variant)
+            .cloned()
             .ok_or_else(|| format!("Recorded Track has no audio Asset: {}", output.track_id))?;
         let clip_id = format!("clip:recording-slot:{recording_id}:{}", output.track_id);
         let mut clip = AudioClip::full_source(
             clip_id.clone(),
             format!("{} Recording", track.name),
             output.track_id.clone(),
-            active_asset,
+            active_source.asset_id,
             active_take.start_tick,
             manifest.sample_rate.round() as u32,
-            active_take.source_end_sample - active_take.source_start_sample,
+            active_source.source_end_sample - active_source.source_start_sample,
         );
-        clip.source_range.start = active_take.source_start_sample;
-        clip.source_range.end = active_take.source_end_sample;
+        clip.source_range.start = active_source.source_start_sample;
+        clip.source_range.end = active_source.source_end_sample;
         clip.recording_take_id = Some(active_take_id.clone());
-        clip.take_variant = if output.processed_asset_id.is_some() {
-            AudioTakeVariant::Processed
-        } else {
-            AudioTakeVariant::Raw
-        };
+        clip.take_variant = active_variant;
         if let Some(existing) = session
             .arrangement
             .audio_clips
@@ -711,6 +791,56 @@ fn finalize_arrange_recording(
     crate::session::application::commit_session(&session_context, session)?;
     crate::session::application::sync_arrangement_runtime(&session_context)
         .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
+}
+
+fn next_recording_pass_ordinal(
+    arrangement: &crate::session::Arrangement,
+    recording_session_id: &str,
+) -> u32 {
+    arrangement
+        .recording_passes
+        .iter()
+        .filter(|pass| pass.session_id == recording_session_id)
+        .map(|pass| pass.ordinal)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+fn validate_capture_segments(segments: &[NativeCaptureSegment]) -> Result<(), String> {
+    if segments.is_empty()
+        || segments.iter().any(|segment| {
+            segment.audio_clock_end_sample <= segment.audio_clock_start_sample
+                || segment.timeline_end_sample <= segment.timeline_start_sample
+                || segment.file_end_sample <= segment.file_start_sample
+                || segment.audio_clock_end_sample - segment.audio_clock_start_sample
+                    != segment.file_end_sample - segment.file_start_sample
+                || segment.timeline_end_sample - segment.timeline_start_sample
+                    != segment.file_end_sample - segment.file_start_sample
+        })
+        || segments.windows(2).any(|pair| {
+            pair[1].audio_clock_start_sample < pair[0].audio_clock_end_sample
+                || pair[1].file_start_sample != pair[0].file_end_sample
+        })
+    {
+        return Err("Arrange recording manifest contains invalid Capture Segments.".into());
+    }
+    Ok(())
+}
+
+fn attach_take_to_pass(
+    arrangement: &mut crate::session::Arrangement,
+    pass_id: &str,
+    take_id: String,
+) -> Result<(), String> {
+    arrangement
+        .recording_passes
+        .iter_mut()
+        .find(|pass| pass.id == pass_id)
+        .ok_or_else(|| format!("Recording Pass is not registered: {pass_id}"))?
+        .track_take_ids
+        .push(take_id);
+    Ok(())
 }
 
 /// Registers each recording product (raw / processed / MIDI) as a canonical
@@ -1280,18 +1410,29 @@ fn place_recording_on_timeline(
                         frames.saturating_mul(segment.relative_end_tick) / total_duration_ticks
                     })
                     .unwrap_or(0),
-                raw_audio_asset_id: raw_asset_id.clone(),
-                processed_audio_asset_id: processed_asset_id.clone(),
+                raw_audio: raw_asset_id.clone().and_then(|asset_id| {
+                    audio_source.map(|(_, frames)| TakeAudioSource {
+                        asset_id,
+                        source_start_sample: frames.saturating_mul(segment.relative_start_tick)
+                            / total_duration_ticks,
+                        source_end_sample: frames.saturating_mul(segment.relative_end_tick)
+                            / total_duration_ticks,
+                    })
+                }),
+                processed_audio: processed_asset_id.clone().and_then(|asset_id| {
+                    audio_source.map(|(_, frames)| TakeAudioSource {
+                        asset_id,
+                        source_start_sample: frames.saturating_mul(segment.relative_start_tick)
+                            / total_duration_ticks,
+                        source_end_sample: frames.saturating_mul(segment.relative_end_tick)
+                            / total_duration_ticks,
+                    })
+                }),
+                raw_audio_asset_id: None,
+                processed_audio_asset_id: None,
                 midi_asset_id: midi_asset_id.clone(),
             });
-            if let Some(pass) = session
-                .arrangement
-                .recording_passes
-                .iter_mut()
-                .find(|pass| pass.id == pass_id)
-            {
-                pass.track_take_ids.push(take_id);
-            }
+            attach_take_to_pass(&mut session.arrangement, &pass_id, take_id)?;
         }
     }
     if take_ids.is_empty() {
@@ -1586,6 +1727,142 @@ mod tests {
     }
 
     #[test]
+    fn record_another_take_continues_pass_ordinals_only_within_its_session() {
+        let mut arrangement = crate::session::Arrangement::default();
+        for ordinal in 1..=3 {
+            arrangement.recording_passes.push(RecordingPassRecord {
+                id: format!("pass:a:{ordinal}"),
+                session_id: "recording:a".into(),
+                ordinal,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids: Vec::new(),
+            });
+        }
+        arrangement.recording_passes.push(RecordingPassRecord {
+            id: "pass:b:1".into(),
+            session_id: "recording:b".into(),
+            ordinal: 1,
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            partial_start: false,
+            partial_end: false,
+            track_take_ids: Vec::new(),
+        });
+
+        assert_eq!(next_recording_pass_ordinal(&arrangement, "recording:a"), 4);
+        assert_eq!(next_recording_pass_ordinal(&arrangement, "recording:b"), 2);
+        assert_eq!(
+            next_recording_pass_ordinal(&arrangement, "recording:new"),
+            1
+        );
+    }
+
+    #[test]
+    fn repeated_record_another_take_attaches_audio_and_midi_to_the_new_pass() {
+        let mut arrangement = crate::session::Arrangement::default();
+        arrangement.recording_passes.push(RecordingPassRecord {
+            id: "pass:old".into(),
+            session_id: "recording:shared".into(),
+            ordinal: 1,
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            partial_start: false,
+            partial_end: false,
+            track_take_ids: vec!["take:old".into()],
+        });
+
+        for ordinal in 2..=4 {
+            let pass_id = format!("pass:new:{ordinal}");
+            arrangement.recording_passes.push(RecordingPassRecord {
+                id: pass_id.clone(),
+                session_id: "recording:shared".into(),
+                ordinal,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids: Vec::new(),
+            });
+            for kind in ["audio", "midi"] {
+                let take_id = format!("take:{kind}:{ordinal}");
+                arrangement.takes.push(RecordingTakeRecord {
+                    id: take_id.clone(),
+                    session_id: "recording:shared".into(),
+                    pass_id: pass_id.clone(),
+                    track_id: format!("track:{kind}"),
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 960,
+                    source_start_sample: 0,
+                    source_end_sample: 48_000,
+                    raw_audio: None,
+                    processed_audio: None,
+                    raw_audio_asset_id: None,
+                    processed_audio_asset_id: None,
+                    midi_asset_id: None,
+                });
+                attach_take_to_pass(&mut arrangement, &pass_id, take_id).unwrap();
+            }
+        }
+
+        assert_eq!(arrangement.recording_passes[0].track_take_ids, ["take:old"]);
+        assert_eq!(
+            next_recording_pass_ordinal(&arrangement, "recording:shared"),
+            5
+        );
+        for take in &arrangement.takes {
+            let pass = arrangement
+                .recording_passes
+                .iter()
+                .find(|pass| pass.id == take.pass_id)
+                .unwrap();
+            assert_eq!(pass.session_id, take.session_id);
+            assert!(pass.track_take_ids.contains(&take.id));
+        }
+
+        assert_eq!(
+            next_recording_pass_ordinal(&arrangement, "recording:new"),
+            1
+        );
+    }
+
+    #[test]
+    fn punch_and_loop_capture_segments_use_contiguous_file_offsets() {
+        let segments = [
+            NativeCaptureSegment {
+                audio_clock_start_sample: 1_000,
+                audio_clock_end_sample: 1_256,
+                timeline_start_sample: 24_000,
+                timeline_end_sample: 24_256,
+                file_start_sample: 0,
+                file_end_sample: 256,
+            },
+            NativeCaptureSegment {
+                audio_clock_start_sample: 1_512,
+                audio_clock_end_sample: 1_768,
+                timeline_start_sample: 24_000,
+                timeline_end_sample: 24_256,
+                file_start_sample: 256,
+                file_end_sample: 512,
+            },
+        ];
+
+        validate_capture_segments(&segments).unwrap();
+        assert_eq!(segments[0].file_end_sample, segments[1].file_start_sample);
+        assert!(
+            segments
+                .iter()
+                .all(|segment| segment.file_end_sample <= 512)
+        );
+
+        let mut invalid = segments;
+        invalid[1].file_start_sample = invalid[1].audio_clock_start_sample;
+        assert!(validate_capture_segments(&invalid).is_err());
+    }
+
+    #[test]
     fn recorded_midi_segment_preserves_controller_events_and_truncates_notes() {
         let source = MidiClip {
             id: "source".into(),
@@ -1660,6 +1937,8 @@ mod tests {
             duration_ticks: 960,
             source_start_sample: 24_000,
             source_end_sample: 48_000,
+            raw_audio: None,
+            processed_audio: None,
             raw_audio_asset_id: None,
             processed_audio_asset_id: None,
             midi_asset_id: Some(asset_id),

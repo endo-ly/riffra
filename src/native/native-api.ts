@@ -37,6 +37,14 @@ import type {
   TransportStatus,
 } from '@/lib/domain';
 
+export interface TrackPluginStateChange {
+  trackId: string;
+  deviceId: string;
+  parameterValues: number[];
+  stateData?: string | null;
+  bypassed: boolean;
+}
+
 /**
  * NativeApi is the seam between the React layer and every side-effectful
  * operation: Tauri commands, the audio sidecar protocol, the filesystem, and
@@ -257,6 +265,7 @@ export interface NativeApi {
     value: number,
   ): Promise<CreativeSession>;
   openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
+  persistTrackPluginState(change: TrackPluginStateChange): Promise<CreativeSession>;
   removeTrack(trackId: string): Promise<CreativeSession>;
   duplicateTrack(trackId: string): Promise<CreativeSession>;
   reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
@@ -290,7 +299,7 @@ export interface NativeApi {
     noteIds: string[],
     offsetTicks: number,
   ): Promise<CreativeSession>;
-  setTakeVariant(takeId: string, variant: AudioTakeVariant): Promise<CreativeSession>;
+  setAudioClipTakeVariant(clipId: string, variant: AudioTakeVariant): Promise<CreativeSession>;
   startTakeComparison(takeId: string): Promise<AudioStatus>;
   switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus>;
   stopTakeComparison(): Promise<AudioStatus>;
@@ -373,4 +382,5 @@ export interface NativeApi {
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
+  onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
 }

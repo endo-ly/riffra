@@ -28,7 +28,11 @@ private:
     PluginEditorHost& host;
 };
 
-PluginEditorHost::PluginEditorHost(PluginRack& pluginRack) : rack(pluginRack) {}
+PluginEditorHost::PluginEditorHost(
+    PluginRack& pluginRack,
+    StateCallback stateCallback)
+    : rack(pluginRack),
+      onStateChanged(std::move(stateCallback)) {}
 
 PluginEditorHost::~PluginEditorHost() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
@@ -107,6 +111,9 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
     }
     try {
         window = std::make_unique<EditorWindow>(rack.currentPluginName(), std::move(editor), *this);
+        lastPublishedState.clear();
+        publishStateIfChanged(true);
+        stateTimer.start();
     } catch (const std::exception& exception) {
         error =
             "VST3 editor window creation raised an exception: " + juce::String(exception.what());
@@ -117,7 +124,23 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
 
 void PluginEditorHost::closeOnMessageThread() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    stateTimer.stop();
+    publishStateIfChanged(true);
     window.reset();
+}
+
+void PluginEditorHost::publishStateIfChanged(const bool force) {
+    if (!onStateChanged)
+        return;
+    juce::String error;
+    const auto state = rack.persistedState(error);
+    if (error.isNotEmpty() || !state.isObject())
+        return;
+    const auto signature = juce::JSON::toString(state, false);
+    if (!force && signature == lastPublishedState)
+        return;
+    lastPublishedState = signature;
+    onStateChanged(state);
 }
 
 }  // namespace riffra

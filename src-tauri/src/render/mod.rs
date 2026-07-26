@@ -204,10 +204,6 @@ fn build_render_plan(
         }
         render_session
             .arrangement
-            .tracks
-            .retain(|track| track.id == track_id);
-        render_session
-            .arrangement
             .audio_clips
             .retain(|clip| clip.track_id == track_id);
         render_session
@@ -218,6 +214,13 @@ fn build_render_plan(
             .arrangement
             .automation_lanes
             .retain(|lane| lane.track_id == track_id);
+        // Keep every Track's plugin graph so all independently rendered stems
+        // use the same project-wide PDC baseline. Only the selected Track owns
+        // renderable content and reaches the final mix.
+        for track in &mut render_session.arrangement.tracks {
+            track.muted = track.id != track_id;
+            track.solo = false;
+        }
     }
 
     let (start_tick, end_tick) = resolve_range(&render_session, &options.range)?;
@@ -467,5 +470,32 @@ mod tests {
             build_render_plan(&root, &session_with_clips(), 1, &RenderOptions::default()).unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
+    }
+
+    #[test]
+    fn track_render_keeps_the_project_graph_for_a_shared_pdc_baseline() {
+        let root = std::env::temp_dir().join("riffra-track-pdc-render-plan");
+        let mut session = session_with_clips();
+        session.arrangement.tracks.push(Track::audio(
+            "latency-reference".into(),
+            "Latency Reference".into(),
+        ));
+        let plan = build_render_plan(
+            &root,
+            &session,
+            1,
+            &RenderOptions {
+                track_id: Some("instrument".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let tracks = plan.snapshot["tracks"].as_array().unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0]["id"], "instrument");
+        assert_eq!(tracks[0]["muted"], false);
+        assert_eq!(tracks[1]["id"], "latency-reference");
+        assert_eq!(tracks[1]["muted"], true);
     }
 }

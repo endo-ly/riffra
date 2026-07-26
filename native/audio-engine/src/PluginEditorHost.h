@@ -12,7 +12,9 @@ namespace riffra {
 
 class PluginEditorHost final {
 public:
-    explicit PluginEditorHost(PluginRack& rack);
+    using StateCallback = std::function<void(const juce::var&)>;
+
+    explicit PluginEditorHost(PluginRack& rack, StateCallback stateCallback = {});
     ~PluginEditorHost();
 
     bool open(juce::String& error);
@@ -27,8 +29,23 @@ private:
     bool runOnMessageThread(std::function<void()> operation, juce::String& error);
     void openOnMessageThread(juce::String& error);
     void closeOnMessageThread();
+    void publishStateIfChanged(bool force);
+
+    class StateTimer final : private juce::Timer {
+    public:
+        explicit StateTimer(PluginEditorHost& owner) : host(owner) {}
+        void start() { startTimer(100); }
+        void stop() { stopTimer(); }
+
+    private:
+        void timerCallback() override { host.publishStateIfChanged(false); }
+        PluginEditorHost& host;
+    };
 
     PluginRack& rack;
+    StateCallback onStateChanged;
+    juce::String lastPublishedState;
+    StateTimer stateTimer { *this };
     std::unique_ptr<EditorWindow> window;
 };
 

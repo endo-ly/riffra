@@ -159,6 +159,7 @@ bool SafetyAudioCallback::startArrangeRecording(
     if (candidate == nullptr)
         return false;
     arrangeRecording = std::move(candidate);
+    arrangeRecordingCancelled.store(false, std::memory_order_release);
     timeline.setRecordingSink(arrangeRecording.get());
     return true;
 }
@@ -185,6 +186,21 @@ bool SafetyAudioCallback::stopRecording(juce::String& error) {
     return finishing->finish(error);
 }
 
+bool SafetyAudioCallback::cancelArrangeRecording(
+    TimelineEngine& timeline,
+    juce::String& error) {
+    const juce::ScopedLock lock(recordingLock);
+    timeline.clearRecordingSink();
+    if (arrangeRecording == nullptr) {
+        arrangeRecordingCancelled.store(true, std::memory_order_release);
+        return true;
+    }
+    auto cancelling = std::move(arrangeRecording);
+    const auto cancelled = cancelling->cancel(error);
+    arrangeRecordingCancelled.store(cancelled, std::memory_order_release);
+    return cancelled;
+}
+
 juce::var SafetyAudioCallback::recordingStatus() const {
     const juce::ScopedLock lock(recordingLock);
     if (arrangeRecording != nullptr)
@@ -193,6 +209,8 @@ juce::var SafetyAudioCallback::recordingStatus() const {
         return recording->status();
     auto* status = new juce::DynamicObject();
     status->setProperty("active", false);
+    status->setProperty(
+        "cancelled", arrangeRecordingCancelled.load(std::memory_order_acquire));
     return juce::var(status);
 }
 

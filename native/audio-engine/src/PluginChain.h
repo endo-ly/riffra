@@ -31,9 +31,15 @@ public:
         int parameterIndex,
         float value,
         juce::String& error) noexcept;
+    bool applyState(const juce::var& devices, juce::String& error) noexcept;
+    [[nodiscard]] juce::var persistedState(
+        const juce::String& deviceId,
+        juce::String& error) const;
     [[nodiscard]] int latencySamples() const noexcept;
+    [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] int size() const noexcept;
     [[nodiscard]] PluginRack* findDevice(const juce::String& deviceId) noexcept;
+    [[nodiscard]] const PluginRack* findDevice(const juce::String& deviceId) const noexcept;
 
 private:
     friend juce::Array<juce::var> runPluginChainSelfTests();
