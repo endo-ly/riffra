@@ -207,12 +207,14 @@ private:
     std::atomic<bool> armedInstrumentTrack { false };
     std::atomic<RecordingPhase> recordingPhase { RecordingPhase::idle };
     std::atomic<std::int64_t> countInRemainingSamples { 0 };
+    std::atomic<std::int64_t> countInBlockStartRemainingSamples { 0 };
     std::atomic<std::uint64_t> recordingStartAudioSample { 0 };
     std::atomic<std::uint64_t> recordingStartTick { 0 };
     std::atomic<std::uint32_t> recordingPassOrdinal { 0 };
     std::atomic<int> captureBlockOffset { 0 };
     std::atomic<int> captureBlockSamples { 0 };
     std::atomic<int> playbackBlockOffset { 0 };
+    std::atomic<int> lastMixPlaybackOffset { 0 };
     std::atomic<ArrangementCaptureSink*> recordingSink { nullptr };
     std::atomic<unsigned int> recordingSinkReaders { 0 };
 };

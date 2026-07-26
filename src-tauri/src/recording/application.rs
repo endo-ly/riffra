@@ -242,6 +242,8 @@ struct NativeArrangeManifest {
     sample_rate: f64,
     record_start_audio_sample: u64,
     record_end_audio_sample: u64,
+    #[serde(default)]
+    record_start_timeline_sample: Option<u64>,
     timeline_start_tick: u64,
     #[serde(default)]
     loop_boundaries_sample: Vec<u64>,
@@ -379,10 +381,9 @@ fn register_track_outputs(
         .iter()
         .find_map(|output| output.midi_asset_id.clone())
     {
-        crate::recording::save_asset_ids(directory, None, None, Some(midi_asset_id))
-            .map_err(|error| {
-                format!("Arrange recording MIDI Asset ID could not be saved: {error}")
-            })?;
+        crate::recording::save_asset_ids(directory, None, None, Some(midi_asset_id)).map_err(
+            |error| format!("Arrange recording MIDI Asset ID could not be saved: {error}"),
+        )?;
     }
     Ok(outputs)
 }
@@ -416,6 +417,10 @@ fn finalize_arrange_recording(
         ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
             .round() as u64
     };
+    let effective_start_tick = manifest
+        .record_start_timeline_sample
+        .map(&sample_to_ticks)
+        .unwrap_or(manifest.timeline_start_tick);
     let start_sample = manifest.record_start_audio_sample;
     let end_sample = manifest.record_end_audio_sample;
     let mut boundaries = manifest
@@ -455,14 +460,14 @@ fn finalize_arrange_recording(
                 session_id: recording_id.clone(),
                 ordinal: u32::try_from(index + 1).unwrap_or(u32::MAX),
                 start_tick: if index == 0 {
-                    TimelineTick(manifest.timeline_start_tick)
+                    TimelineTick(effective_start_tick)
                 } else {
                     session.arrangement.loop_range.start_tick
                 },
                 duration_ticks,
                 partial_start: index == 0
                     && session.arrangement.loop_range.enabled
-                    && manifest.timeline_start_tick != session.arrangement.loop_range.start_tick.0,
+                    && effective_start_tick != session.arrangement.loop_range.start_tick.0,
                 partial_end: index + 2 == edges.len()
                     && session.arrangement.loop_range.enabled
                     && duration_ticks
@@ -496,7 +501,7 @@ fn finalize_arrange_recording(
             let source = parse_recorded_midi(
                 &midi_path,
                 &output.track_id,
-                TimelineTick(manifest.timeline_start_tick),
+                TimelineTick(effective_start_tick),
                 timebase,
             )?;
             let mut active_take_id = None;
@@ -506,7 +511,7 @@ fn finalize_arrange_recording(
                 let relative_end_tick =
                     sample_to_ticks(edge[1] - start_sample).max(relative_start_tick + 1);
                 let start_tick = if index == 0 {
-                    TimelineTick(manifest.timeline_start_tick)
+                    TimelineTick(effective_start_tick)
                 } else {
                     session.arrangement.loop_range.start_tick
                 };
@@ -677,8 +682,7 @@ fn finalize_arrange_recording(
         .iter_mut()
         .find(|recording| recording.id == recording_id)
     {
-        recording.start_tick =
-            TimelineTick(recording.start_tick.0.min(manifest.timeline_start_tick));
+        recording.start_tick = TimelineTick(recording.start_tick.0.min(effective_start_tick));
         recording.pass_ids.extend(pass_ids);
         for slot in slots {
             if let Some(existing) = recording
@@ -698,7 +702,7 @@ fn finalize_arrange_recording(
             .recording_sessions
             .push(RecordingSessionRecord {
                 id: recording_id,
-                start_tick: TimelineTick(manifest.timeline_start_tick),
+                start_tick: TimelineTick(effective_start_tick),
                 track_slots: slots,
                 pass_ids,
             });
@@ -796,10 +800,17 @@ struct RecordedMidiEvent {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RecordedMidiFile {
     #[serde(default)]
     sample_rate: Option<f64>,
     events: Vec<RecordedMidiEvent>,
+}
+
+fn load_recorded_midi(path: &Path) -> Result<RecordedMidiFile, String> {
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("Recorded MIDI could not be read: {error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("Recorded MIDI is invalid: {error}"))
 }
 
 fn parse_recorded_midi(
@@ -808,10 +819,18 @@ fn parse_recorded_midi(
     start_tick: TimelineTick,
     timebase: crate::session::ProjectTimebase,
 ) -> Result<MidiClip, String> {
-    let bytes =
-        std::fs::read(path).map_err(|error| format!("Recorded MIDI could not be read: {error}"))?;
-    let file: RecordedMidiFile = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Recorded MIDI is invalid: {error}"))?;
+    let file = load_recorded_midi(path)?;
+    Ok(midi_clip_from_recorded_file(
+        &file, track_id, start_tick, timebase,
+    ))
+}
+
+fn midi_clip_from_recorded_file(
+    file: &RecordedMidiFile,
+    track_id: &str,
+    start_tick: TimelineTick,
+    timebase: crate::session::ProjectTimebase,
+) -> MidiClip {
     let mut notes = Vec::new();
     let mut events = Vec::new();
     let mut open_notes = std::collections::HashMap::<(u8, u8), (u64, u8)>::new();
@@ -894,7 +913,7 @@ fn parse_recorded_midi(
         .max()
         .unwrap_or(1)
         .max(1);
-    Ok(MidiClip {
+    MidiClip {
         id: format!("midi-clip:recorded:{}", now_ms()),
         name: "Recorded MIDI".into(),
         track_id: track_id.into(),
@@ -906,7 +925,7 @@ fn parse_recorded_midi(
         muted: false,
         loop_enabled: false,
         recording_take_id: None,
-    })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1006,6 +1025,48 @@ fn slice_recorded_midi(
         loop_enabled: false,
         recording_take_id: None,
     }
+}
+
+pub(crate) fn midi_clip_for_take(
+    data_root: &Path,
+    take: &RecordingTakeRecord,
+    timebase: crate::session::ProjectTimebase,
+    clip_id: String,
+) -> Result<MidiClip, String> {
+    let asset_id = take
+        .midi_asset_id
+        .as_ref()
+        .ok_or_else(|| "Recording Take has no MIDI Asset.".to_string())?;
+    let asset = asset::load(data_root, asset_id)
+        .ok_or_else(|| format!("Recorded MIDI Asset is missing: {asset_id}"))?;
+    let path = Path::new(&asset.content_location);
+    let file = load_recorded_midi(path)?;
+    let sample_rate = file
+        .sample_rate
+        .filter(|sample_rate| sample_rate.is_finite() && *sample_rate > 0.0)
+        .ok_or_else(|| "Recorded MIDI has no valid Native sample rate.".to_string())?;
+    let sample_to_ticks = |sample: u64| {
+        ((sample as f64 / sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq)).round()
+            as u64
+    };
+    let source = midi_clip_from_recorded_file(&file, &take.track_id, take.start_tick, timebase);
+    let relative_start_tick = sample_to_ticks(take.source_start_sample);
+    let relative_end_tick =
+        sample_to_ticks(take.source_end_sample).max(relative_start_tick.saturating_add(1));
+    let mut clip = slice_recorded_midi(
+        &source,
+        &take.track_id,
+        RecordingSegment {
+            start_tick: take.start_tick,
+            duration_ticks: take.duration_ticks,
+            relative_start_tick,
+            relative_end_tick,
+        },
+        Some(asset_id.clone()),
+        clip_id,
+    );
+    clip.recording_take_id = Some(take.id.clone());
+    Ok(clip)
 }
 
 fn place_recording_on_timeline(
@@ -1564,6 +1625,60 @@ mod tests {
         assert_eq!(sliced.notes[0].start_tick, TimelineTick(0));
         assert_eq!(sliced.notes[0].duration_ticks, 140);
         assert_eq!(sliced.events[0].tick, TimelineTick(40));
+    }
+
+    #[test]
+    fn midi_take_is_rebuilt_from_its_asset_and_source_range() {
+        let root = temp_root("midi-take");
+        fs::create_dir_all(&root).unwrap();
+        let midi_path = root.join("midi.json");
+        fs::write(
+            &midi_path,
+            br#"{
+                "sampleRate": 48000,
+                "events": [
+                    {"sampleOffset":24000,"status":144,"channel":1,"data1":60,"data2":100},
+                    {"sampleOffset":36000,"status":128,"channel":1,"data1":60,"data2":0}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let asset_id = asset::register(
+            &root,
+            AssetKind::Midi,
+            "Recorded MIDI",
+            &midi_path.to_string_lossy(),
+            Some(Provenance::recorded_root()),
+        )
+        .unwrap();
+        let take = RecordingTakeRecord {
+            id: "take:keys:2".into(),
+            session_id: "recording:1".into(),
+            pass_id: "pass:2".into(),
+            track_id: "track:keys".into(),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            source_start_sample: 24_000,
+            source_end_sample: 48_000,
+            raw_audio_asset_id: None,
+            processed_audio_asset_id: None,
+            midi_asset_id: Some(asset_id),
+        };
+
+        let clip = midi_clip_for_take(
+            &root,
+            &take,
+            crate::session::ProjectTimebase::default(),
+            "midi-clip:slot".into(),
+        )
+        .unwrap();
+
+        assert_eq!(clip.id, "midi-clip:slot");
+        assert_eq!(clip.recording_take_id.as_deref(), Some("take:keys:2"));
+        assert_eq!(clip.notes.len(), 1);
+        assert_eq!(clip.notes[0].start_tick, TimelineTick(0));
+        assert_eq!(clip.notes[0].duration_ticks, 480);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

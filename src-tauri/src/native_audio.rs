@@ -728,12 +728,16 @@ impl AudioSupervisor {
         &self,
         raw_path: &Path,
         processed_path: &Path,
+        start_frame: u64,
+        end_frame: u64,
     ) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({
                 "type": "startTakeComparison",
                 "rawPath": raw_path.to_string_lossy(),
                 "processedPath": processed_path.to_string_lossy(),
+                "startFrame": start_frame,
+                "endFrame": end_frame,
             }),
             "Take comparison started with one synchronized audition voice.",
         )

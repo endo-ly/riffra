@@ -1910,10 +1910,14 @@ pub fn start_take_comparison(
         .ok_or_else(|| "Take Raw Asset is unavailable.".to_string())?;
     let processed = asset::load(context.data_root, processed_id)
         .ok_or_else(|| "Take Processed Asset is unavailable.".to_string())?;
+    let start_frame = take.source_start_sample;
+    let end_frame = take.source_end_sample;
     drop(session);
     context.audio.start_take_comparison(
         Path::new(&raw.content_location),
         Path::new(&processed.content_location),
+        start_frame,
+        end_frame,
     )
 }
 
@@ -1977,18 +1981,19 @@ pub fn activate_take(
         clip.recording_take_id = Some(take_id.to_owned());
         clip.source_range.start = target_take.source_start_sample;
         clip.source_range.end = target_take.source_end_sample;
-    } else if let Some(source) = session
-        .arrangement
-        .midi_clips
-        .iter()
-        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
-        .cloned()
-        && let Some(clip) = session
+    } else if target_take.midi_asset_id.is_some() {
+        let source = crate::recording::application::midi_clip_for_take(
+            context.data_root,
+            &target_take,
+            session.arrangement.timebase,
+            timeline_clip_id.clone(),
+        )?;
+        let clip = session
             .arrangement
             .midi_clips
             .iter_mut()
             .find(|clip| clip.id == timeline_clip_id)
-    {
+            .ok_or_else(|| "Recording Take slot has no MIDI Clip.".to_string())?;
         clip.asset_id = target_take.midi_asset_id.clone();
         clip.notes = source.notes;
         clip.events = source.events;
@@ -2067,16 +2072,13 @@ pub fn place_take_as_separate_clip(
         clip.recording_take_id = Some(take.id);
         clip.muted = false;
         session.arrangement.audio_clips.push(clip);
-    } else if let Some(source) = session
-        .arrangement
-        .midi_clips
-        .iter()
-        .find(|clip| clip.recording_take_id.as_deref() == Some(take_id))
-        .cloned()
-    {
-        let mut clip = source;
-        clip.id = new_clip_id;
-        clip.muted = false;
+    } else if take.midi_asset_id.is_some() {
+        let clip = crate::recording::application::midi_clip_for_take(
+            context.data_root,
+            &take,
+            session.arrangement.timebase,
+            new_clip_id,
+        )?;
         session.arrangement.midi_clips.push(clip);
     } else {
         return Err(format!("Recording Take has no Timeline Clip: {take_id}"));

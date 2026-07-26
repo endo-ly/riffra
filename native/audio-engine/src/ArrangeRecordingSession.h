@@ -31,7 +31,9 @@ public:
         std::uint64_t audioSample) noexcept override;
     void setCaptureRange(
         std::uint64_t startAudioSample,
-        std::uint64_t endAudioSample) noexcept override;
+        std::uint64_t endAudioSample,
+        std::uint64_t startTimelineSample,
+        std::uint64_t endTimelineSample) noexcept override;
     bool finish(juce::String& error);
     [[nodiscard]] juce::var status() const;
 
@@ -79,6 +81,10 @@ private:
         std::numeric_limits<std::uint64_t>::max()
     };
     std::atomic<std::uint64_t> recordEndAudioSample { 0 };
+    std::atomic<std::uint64_t> recordStartTimelineSample {
+        std::numeric_limits<std::uint64_t>::max()
+    };
+    std::atomic<std::uint64_t> recordEndTimelineSample { 0 };
     std::atomic<bool> finished { false };
 };
 

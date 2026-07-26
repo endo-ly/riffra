@@ -2833,10 +2833,8 @@ mod tests {
     #[test]
     fn legacy_recording_shape_migrates_to_passes_slots_and_clip_variants() {
         let mut value = serde_json::to_value(CreativeSession::new(0)).unwrap();
-        value["arrangement"]["tracks"] = serde_json::json!([Track::audio(
-            "track:legacy".into(),
-            "Legacy".into()
-        )]);
+        value["arrangement"]["tracks"] =
+            serde_json::json!([Track::audio("track:legacy".into(), "Legacy".into())]);
         value["arrangement"]["audioClips"] = serde_json::json!([]);
         value["arrangement"]["takes"] = serde_json::json!([{
             "id": "take:legacy",
@@ -2857,7 +2855,10 @@ mod tests {
         let migrated = deserialize_session(&serde_json::to_vec(&value).unwrap()).unwrap();
 
         assert_eq!(migrated.arrangement.recording_passes.len(), 1);
-        assert_eq!(migrated.arrangement.recording_passes[0].track_take_ids, ["take:legacy"]);
+        assert_eq!(
+            migrated.arrangement.recording_passes[0].track_take_ids,
+            ["take:legacy"]
+        );
         assert!(!migrated.arrangement.takes[0].pass_id.is_empty());
         assert_eq!(
             migrated.arrangement.recording_sessions[0].track_slots[0].active_take_id,

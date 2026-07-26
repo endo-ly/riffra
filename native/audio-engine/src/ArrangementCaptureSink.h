@@ -21,7 +21,9 @@ public:
         std::uint64_t audioSample) noexcept = 0;
     virtual void setCaptureRange(
         std::uint64_t startAudioSample,
-        std::uint64_t endAudioSample) noexcept = 0;
+        std::uint64_t endAudioSample,
+        std::uint64_t startTimelineSample,
+        std::uint64_t endTimelineSample) noexcept = 0;
 };
 
 } // namespace riffra

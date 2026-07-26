@@ -995,6 +995,10 @@ int serve(
                 continue;
             }
             if (type == "startTakeComparison") {
+                const auto startFrame = static_cast<juce::int64>(
+                    command.getProperty("startFrame", 0));
+                const auto endFrame = static_cast<juce::int64>(
+                    command.getProperty("endFrame", 0));
                 const auto loadComparisonFile = [&](const juce::String& path,
                                                     juce::AudioBuffer<float>& target,
                                                     juce::String& loadError) {
@@ -1007,11 +1011,18 @@ int serve(
                         loadError = "Take comparison source is unavailable or has a different sample rate.";
                         return false;
                     }
+                    if (startFrame < 0 || endFrame <= startFrame
+                        || endFrame > reader->lengthInSamples
+                        || endFrame - startFrame > std::numeric_limits<int>::max()) {
+                        loadError = "Take comparison range is outside its source.";
+                        return false;
+                    }
+                    const auto frameCount = static_cast<int>(endFrame - startFrame);
                     target.setSize(
                         static_cast<int>(reader->numChannels),
-                        static_cast<int>(reader->lengthInSamples));
+                        frameCount);
                     if (!reader->read(
-                            &target, 0, target.getNumSamples(), 0, true, true)) {
+                            &target, 0, frameCount, startFrame, true, true)) {
                         loadError = "Take comparison source could not be read.";
                         return false;
                     }

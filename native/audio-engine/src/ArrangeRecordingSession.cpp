@@ -137,17 +137,23 @@ void ArrangeRecordingSession::writeMidiTrack(
 
 void ArrangeRecordingSession::setCaptureRange(
     const std::uint64_t startAudioSample,
-    const std::uint64_t endAudioSample) noexcept {
+    const std::uint64_t endAudioSample,
+    const std::uint64_t startTimelineSample,
+    const std::uint64_t endTimelineSample) noexcept {
     auto currentStart = recordStartAudioSample.load(std::memory_order_acquire);
     while (startAudioSample < currentStart
            && !recordStartAudioSample.compare_exchange_weak(
                currentStart, startAudioSample, std::memory_order_acq_rel))
         {}
+    if (startAudioSample == recordStartAudioSample.load(std::memory_order_acquire))
+        recordStartTimelineSample.store(startTimelineSample, std::memory_order_release);
     auto currentEnd = recordEndAudioSample.load(std::memory_order_acquire);
     while (endAudioSample > currentEnd
            && !recordEndAudioSample.compare_exchange_weak(
                currentEnd, endAudioSample, std::memory_order_acq_rel))
         {}
+    if (endAudioSample == recordEndAudioSample.load(std::memory_order_acquire))
+        recordEndTimelineSample.store(endTimelineSample, std::memory_order_release);
 }
 
 bool ArrangeRecordingSession::finish(juce::String& error) {
@@ -237,6 +243,14 @@ bool ArrangeRecordingSession::writeManifest(
         captureStart == std::numeric_limits<std::uint64_t>::max() ? 0 : captureStart));
     root->setProperty("recordEndAudioSample", static_cast<juce::int64>(
         recordEndAudioSample.load(std::memory_order_acquire)));
+    const auto timelineCaptureStart =
+        recordStartTimelineSample.load(std::memory_order_acquire);
+    root->setProperty("recordStartTimelineSample", static_cast<juce::int64>(
+        timelineCaptureStart == std::numeric_limits<std::uint64_t>::max()
+            ? 0
+            : timelineCaptureStart));
+    root->setProperty("recordEndTimelineSample", static_cast<juce::int64>(
+        recordEndTimelineSample.load(std::memory_order_acquire)));
     root->setProperty("timelineStartTick", static_cast<juce::int64>(timelineStartTick));
     std::uint64_t samplesWritten = 0;
     std::uint64_t droppedBlocks = 0;
@@ -330,6 +344,15 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
         directory, juce::var(configuration), error);
     bool written = session != nullptr;
     if (session != nullptr) {
+        const auto manifestFile = directory.getChildFile("manifest.json");
+        auto manifestValue = juce::JSON::parse(manifestFile.loadFileAsString());
+        if (auto* manifestObject = manifestValue.getDynamicObject()) {
+            auto* capture = new juce::DynamicObject();
+            capture->setProperty("captureId", "capture:self-test");
+            manifestObject->setProperty("capture", juce::var(capture));
+            written = manifestFile.replaceWithText(
+                juce::JSON::toString(manifestValue, true));
+        }
         std::array<float, 512> guitarRaw {};
         std::array<float, 512> guitarLeft {};
         std::array<float, 512> guitarRight {};
@@ -346,7 +369,7 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
             guitarLeft.data(), guitarRight.data() };
         const std::array<const float*, 2> vocalProcessed {
             vocalLeft.data(), vocalRight.data() };
-        session->setCaptureRange(1000, 1512);
+        session->setCaptureRange(1000, 1512, 24000, 24512);
         session->writeAudioTrack(
             "track:guitar", guitarRaw.data(), guitarProcessed.data(), 512);
         session->writeAudioTrack(
@@ -361,6 +384,8 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
     const auto mapped = manifestText.contains("\"trackKey\": \"0000\"")
         && manifestText.contains("\"trackId\": \"track:guitar\"")
         && manifestText.contains("\"recordStartAudioSample\": 1000")
+        && manifestText.contains("\"recordStartTimelineSample\": 24000")
+        && manifestText.contains("\"captureId\": \"capture:self-test\"")
         && manifestText.contains("\"loopBoundariesSample\"");
     const auto isolated = directory.getChildFile("tracks/0000/raw.wav").existsAsFile()
         && directory.getChildFile("tracks/0000/processed.wav").existsAsFile()

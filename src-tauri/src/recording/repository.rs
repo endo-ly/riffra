@@ -329,7 +329,12 @@ fn validate_manifest(
         return Ok((String::new(), String::new()));
     }
     if state == "completed" {
-        if current_dropout_information(manifest).0 == 0 {
+        let midi_only = manifest.capture.as_ref().is_some_and(|capture| {
+            capture.raw_audio_asset_id.is_none()
+                && capture.processed_audio_asset_id.is_none()
+                && capture.midi_asset_id.is_some()
+        });
+        if current_dropout_information(manifest).0 == 0 && !midi_only {
             return Err("Completed recording contains no audio samples.".into());
         }
         if current_sample_rate(manifest).is_none() {
@@ -1190,6 +1195,84 @@ mod tests {
         fs::write(take.join("midi.json"), br#"{"version":1,"events":[]}"#).unwrap();
         let results = list(&root, Some("take-midi")).unwrap();
         assert_eq!(results[0].midi_file.as_deref(), Some("midi.json"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn indexes_completed_midi_only_capture_without_audio_samples() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-midi-only");
+        fs::create_dir_all(&take).unwrap();
+        let midi = take.join("midi.json");
+        fs::write(&midi, br#"{"version":2,"sampleRate":48000,"events":[]}"#).unwrap();
+        let midi_id = asset::register(
+            &root,
+            AssetKind::Midi,
+            "MIDI recording",
+            &midi.to_string_lossy(),
+            Some(Provenance::recorded_root()),
+        )
+        .unwrap();
+        let mut capture = RecordingCapture::start("capture:midi-only", "scratch-1", 1_000);
+        capture
+            .transition(RecordingCaptureStatus::Completing, 2_000)
+            .unwrap();
+        capture
+            .transition(RecordingCaptureStatus::Completed, 3_000)
+            .unwrap();
+        capture.sample_rate = Some(48_000);
+        capture.midi_asset_id = Some(midi_id);
+        fs::write(
+            take.join("manifest.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "state": "completed",
+                "sampleRate": 48_000,
+                "samplesWritten": 0,
+                "capture": capture,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let results = list(&root, Some("take-midi-only")).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].state, "completed");
+        assert_eq!(results[0].error, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn capture_updates_preserve_native_arrange_manifest_fields() {
+        let root = temp_root();
+        let take = root.join("recordings/inbox/take-arrange");
+        fs::create_dir_all(&take).unwrap();
+        fs::write(
+            take.join("manifest.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "state": "recording",
+                "sampleRate": 48_000,
+                "samplesWritten": 512,
+                "recordStartAudioSample": 1_000,
+                "tracks": [{
+                    "trackId": "track:guitar",
+                    "trackKey": "0000",
+                    "kind": "audio"
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let capture = RecordingCapture::start("capture:arrange", "scratch-1", 1_000);
+
+        save_capture_start(&take, capture).unwrap();
+        save_asset_ids(&take, None, None, None).unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(take.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["recordStartAudioSample"], 1_000);
+        assert_eq!(manifest["tracks"][0]["trackId"], "track:guitar");
+        assert!(manifest["capture"].is_object());
         let _ = fs::remove_dir_all(root);
     }
 
