@@ -36,6 +36,8 @@ public:
     [[nodiscard]] PluginRack* findDevice(const juce::String& deviceId) noexcept;
 
 private:
+    friend juce::Array<juce::var> runPluginChainSelfTests();
+
     struct Device final {
         juce::String id;
         std::unique_ptr<PluginRack> rack;
@@ -45,5 +47,7 @@ private:
     juce::AudioBuffer<float> firstBuffer;
     juce::AudioBuffer<float> secondBuffer;
 };
+
+[[nodiscard]] juce::Array<juce::var> runPluginChainSelfTests();
 
 } // namespace riffra

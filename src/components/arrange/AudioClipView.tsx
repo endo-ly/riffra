@@ -11,6 +11,7 @@ interface AudioClipViewProps {
   lane: number;
   laneHeight: number;
   selected: boolean;
+  missing: boolean;
   onSelect: (clipId: string, append?: boolean) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
   onTrim: (
@@ -32,7 +33,7 @@ export function AudioClipView(props: AudioClipViewProps) {
     <button
       data-clip-id={clip.id}
       aria-pressed={props.selected}
-      className={`${styles.clip} ${props.selected ? styles.selected : ''} ${clip.loopEnabled ? styles.looped : ''}`}
+      className={`${styles.clip} ${props.selected ? styles.selected : ''} ${clip.loopEnabled ? styles.looped : ''} ${props.missing ? styles.missingClip : ''}`}
       style={{
         left: clip.startTick * props.pixelsPerTick,
         width: Math.max(24, duration * props.pixelsPerTick),
@@ -46,18 +47,23 @@ export function AudioClipView(props: AudioClipViewProps) {
       }}
       title={`Click to select · Drag to move · ${clip.name} · ${(clip.timelineDuration.frames / clip.sourceSampleRate).toFixed(2)} s`}
     >
-      <AudioWaveform analysis={props.analysis} clip={clip} />
+      {!props.missing && <AudioWaveform analysis={props.analysis} clip={clip} />}
       <header className={styles.clipHeader}>
         <strong>{clip.name}</strong>
         <span>
-          {clip.muted
-            ? 'MUTED'
-            : clip.loopEnabled
-              ? 'LOOP'
-              : `${clip.gainDb > 0 ? '+' : ''}${clip.gainDb.toFixed(1)} dB`}
+          {props.missing
+            ? 'MISSING SOURCE'
+            : clip.muted
+              ? 'MUTED'
+              : clip.loopEnabled
+                ? 'LOOP'
+                : `${clip.gainDb > 0 ? '+' : ''}${clip.gainDb.toFixed(1)} dB`}
         </span>
       </header>
-      <div className={styles.clipGainLine} style={{ top: `${50 - clip.gainDb * 0.7}%` }} />
+      {props.missing && <div className={styles.missingClipLabel}>MISSING SOURCE</div>}
+      {!props.missing && (
+        <div className={styles.clipGainLine} style={{ top: `${50 - clip.gainDb * 0.7}%` }} />
+      )}
       {Array.from({ length: loopBoundaries }, (_, index) => (
         <i
           className={styles.loopBoundary}

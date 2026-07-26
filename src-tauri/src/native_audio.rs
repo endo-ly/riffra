@@ -28,6 +28,17 @@ pub struct AudioSupervisor {
     restart_preferences: Mutex<AudioPreferences>,
 }
 
+pub struct NativeOfflineRenderRequest {
+    pub snapshot: serde_json::Value,
+    pub destination: std::path::PathBuf,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub sample_rate: u32,
+    pub block_size: u32,
+    pub master_gain_db: f64,
+    pub normalize: bool,
+}
+
 #[derive(Default)]
 struct CommandResponse {
     request_id: Option<u64>,
@@ -436,6 +447,29 @@ impl AudioSupervisor {
 
     pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
         self.send_command(serde_json::json!({"type": "discardTimelineSnapshot"}), "")?;
+        Ok(())
+    }
+
+    pub fn render_timeline_offline(
+        &self,
+        request: NativeOfflineRenderRequest,
+    ) -> Result<(), String> {
+        self.send_command_with_timeout(
+            serde_json::json!({
+                "type": "renderTimelineOffline",
+                "protocolVersion": 1,
+                "snapshot": request.snapshot,
+                "destination": request.destination.to_string_lossy(),
+                "startTick": request.start_tick,
+                "endTick": request.end_tick,
+                "sampleRate": request.sample_rate,
+                "blockSize": request.block_size,
+                "masterGainDb": request.master_gain_db,
+                "normalize": request.normalize,
+            }),
+            "",
+            Duration::from_secs(31 * 60),
+        )?;
         Ok(())
     }
 

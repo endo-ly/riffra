@@ -40,6 +40,7 @@ public:
 private:
     friend class PluginEditorHost;
     friend juce::Array<juce::var> runPluginRackSelfTests();
+    friend juce::Array<juce::var> runPluginChainSelfTests();
 
     struct CachedParameter {
         int index = 0;

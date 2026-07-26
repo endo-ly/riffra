@@ -486,6 +486,7 @@ pub fn run() {
             session::commands::update_session_settings,
             session::commands::add_track,
             session::commands::update_track,
+            session::commands::set_track_automation,
             session::commands::set_track_audio_input,
             session::commands::set_track_midi_input,
             session::commands::set_track_instrument,
@@ -519,6 +520,7 @@ pub fn run() {
             audio_preferences::set_audio_driver,
             session::commands::relink_missing_dependency,
             session::commands::disable_missing_plugin,
+            session::commands::replace_missing_track_plugin,
             session::commands::get_missing_dependencies,
             // Asset Application Operations.
             asset::commands::preview_asset,

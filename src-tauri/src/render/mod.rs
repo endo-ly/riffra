@@ -1,28 +1,45 @@
 use crate::{
-    analysis::{decode_sample, parse_wav},
     asset,
-    session::{AudioClip, CreativeSession},
+    native_audio::{AudioSupervisor, NativeOfflineRenderRequest},
+    session::CreativeSession,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
-    io::{self, BufWriter, Write},
+    collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
 };
 use ts_rs::TS;
 
 pub(crate) mod commands;
 
-const MAX_RENDER_MINUTES: u64 = 30;
+const MAX_RENDER_MINUTES: f64 = 30.0;
+const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
+const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RenderRange {
+    #[default]
+    EntireArrangement,
+    LoopRange,
+    TimeSelection {
+        #[ts(type = "number")]
+        start_tick: u64,
+        #[ts(type = "number")]
+        end_tick: u64,
+    },
+}
 
 #[derive(Clone, Debug, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderOptions {
     #[serde(default)]
-    pub range_start_ms: u64,
-    #[serde(default)]
-    pub range_end_ms: Option<u64>,
+    pub range: RenderRange,
     #[serde(default)]
     pub normalize: bool,
     #[serde(default)]
@@ -46,551 +63,409 @@ pub struct RenderResult {
     pub message: String,
 }
 
-/// Resolves an audio clip's asset to its content file, failing explicitly when
-/// the asset is not registered so a render never silently reads a stale path.
-fn clip_source(data_root: &Path, clip: &AudioClip) -> Result<PathBuf, String> {
-    asset::resolve_content_location(data_root, &clip.asset_id)
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            format!(
-                "Audio clip '{}' references an unresolvable asset {}.",
-                clip.name, clip.asset_id
-            )
-        })
-}
-
-fn tick_to_frame(tick: u64, timebase: crate::session::ProjectTimebase, sample_rate: u32) -> u64 {
-    (tick as f64 * f64::from(sample_rate) * 60.0 / (timebase.bpm * f64::from(timebase.ppq)))
-        .round()
-        .max(0.0) as u64
-}
-
-fn rescale_frames(frames: u64, source_rate: u32, target_rate: u32) -> u64 {
-    if source_rate == 0 {
-        return 0;
-    }
-    (u128::from(frames) * u128::from(target_rate) / u128::from(source_rate)) as u64
+struct RenderPlan {
+    snapshot: serde_json::Value,
+    start_tick: u64,
+    end_tick: u64,
+    sample_rate: u32,
+    clip_count: usize,
+    source_ids: Vec<asset::AssetId>,
+    output_path: PathBuf,
 }
 
 pub fn render_timeline_with_options(
+    audio: &AudioSupervisor,
     data_root: &Path,
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<RenderResult, String> {
-    render_timeline_with_options_cancel(data_root, session, created_at_ms, options, None)
-}
-
-pub fn render_timeline_with_options_cancel(
-    data_root: &Path,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-    cancelled: Option<&AtomicBool>,
-) -> Result<RenderResult, String> {
-    let has_solo = session.arrangement.tracks.iter().any(|track| track.solo);
-    let clips = session
-        .arrangement
-        .audio_clips
-        .iter()
-        .filter(|clip| !clip.muted)
-        .filter(|clip| {
-            options
-                .track_id
-                .as_deref()
-                .map(|track_id| track_id == clip.track_id)
-                .unwrap_or(true)
-        })
-        .filter(|clip| {
-            let track = session
-                .arrangement
-                .tracks
-                .iter()
-                .find(|track| track.id == clip.track_id);
-            track
-                .map(|track| !track.muted && (!has_solo || track.solo))
-                .unwrap_or(true)
-        })
-        .collect::<Vec<_>>();
-    if clips.is_empty() {
-        return Err("Timeline has no audible clips to render.".into());
-    }
-    let mut sources = Vec::with_capacity(clips.len());
-    let mut sample_rate = None;
-    let mut total_frames = 0_u64;
-    for clip in &clips {
-        let source = clip_source(data_root, clip)?;
-        let bytes = fs::read(&source).map_err(|error| {
-            format!("Timeline source '{}' could not be read: {error}", clip.name)
-        })?;
-        let wav = parse_wav(&bytes)?;
-        if wav.channels == 0
-            || !matches!(wav.format, 1 | 3)
-            || !matches!(wav.bits_per_sample, 8 | 16 | 24 | 32)
-        {
-            return Err(format!(
-                "Timeline source '{}' is not a supported PCM WAV.",
-                clip.name
-            ));
-        }
-        if wav.format == 3 && wav.bits_per_sample != 32 {
-            return Err(format!(
-                "Timeline source '{}' uses an unsupported float width.",
-                clip.name
-            ));
-        }
-        if sample_rate.is_none() {
-            sample_rate = Some(wav.sample_rate);
-        }
-        let bytes_per_sample = usize::from(wav.bits_per_sample / 8);
-        let frame_bytes = bytes_per_sample * usize::from(wav.channels);
-        let source_frames = (wav.data_len / frame_bytes) as u64;
-        let output_rate = sample_rate.unwrap_or(wav.sample_rate);
-        let start_frame =
-            tick_to_frame(clip.start_tick.0, session.arrangement.timebase, output_rate);
-        let duration_frames = rescale_frames(
-            clip.timeline_duration.frames,
-            clip.timeline_duration.sample_rate,
-            output_rate,
-        );
-        let source_in_frame = clip.source_range.start;
-        let source_out_frame = clip.source_range.end.min(source_frames);
-        let available_frames =
-            source_out_frame.saturating_sub(source_in_frame.min(source_out_frame));
-        let audible_frames = if clip.loop_enabled {
-            duration_frames
-        } else {
-            duration_frames.min(available_frames)
-        };
-        total_frames = total_frames.max(start_frame.saturating_add(audible_frames));
-        sources.push((clip, bytes, wav));
-    }
-    let sample_rate =
-        sample_rate.ok_or_else(|| "Timeline has no renderable sources.".to_string())?;
-    let max_frames = u64::from(sample_rate).saturating_mul(60 * MAX_RENDER_MINUTES);
-    if total_frames == 0 || total_frames > max_frames {
-        return Err(format!(
-            "Timeline render is limited to {MAX_RENDER_MINUTES} minutes."
-        ));
-    }
-    let render_start_frame = options
-        .range_start_ms
-        .saturating_mul(u64::from(sample_rate))
-        / 1_000;
-    let requested_end_frame = options
-        .range_end_ms
-        .filter(|end| *end > options.range_start_ms)
-        .map(|end| end.saturating_mul(u64::from(sample_rate)) / 1_000)
-        .unwrap_or(total_frames);
-    let render_end_frame = requested_end_frame.min(total_frames);
-    if render_start_frame >= render_end_frame {
-        return Err("Render range does not overlap the audible timeline.".into());
-    }
-    let output_frames = render_end_frame.saturating_sub(render_start_frame);
-    let frames =
-        usize::try_from(output_frames).map_err(|_| "Timeline render is too large.".to_string())?;
-    let render_start_frame_usize = usize::try_from(render_start_frame)
-        .map_err(|_| "Timeline render range is too large.".to_string())?;
-    let render_end_frame_usize = usize::try_from(render_end_frame)
-        .map_err(|_| "Timeline render range is too large.".to_string())?;
-    let mut output = vec![
-        0.0_f32;
-        frames
-            .checked_mul(2)
-            .ok_or("Timeline render is too large.")?
-    ];
-    for (clip, bytes, wav) in sources {
-        let bytes_per_sample = usize::from(wav.bits_per_sample / 8);
-        let frame_bytes = bytes_per_sample * usize::from(wav.channels);
-        let source_frames = wav.data_len / frame_bytes;
-        let data = bytes
-            .get(wav.data_offset..wav.data_offset + source_frames * frame_bytes)
-            .ok_or_else(|| {
-                format!(
-                    "Timeline source '{}' has an invalid data boundary.",
-                    clip.name
-                )
-            })?;
-        let start_frame =
-            tick_to_frame(clip.start_tick.0, session.arrangement.timebase, sample_rate) as usize;
-        let requested = rescale_frames(
-            clip.timeline_duration.frames,
-            clip.timeline_duration.sample_rate,
-            sample_rate,
-        ) as usize;
-        let source_start_frame = clip.source_range.start as usize;
-        let source_end_frame = (clip.source_range.end as usize).min(source_frames);
-        let source_range =
-            source_end_frame.saturating_sub(source_start_frame.min(source_end_frame));
-        if source_range == 0 {
-            continue;
-        }
-        let track = session
-            .arrangement
-            .tracks
-            .iter()
-            .find(|track| track.id == clip.track_id);
-        let track_gain_db = track.map(|track| track.gain_db).unwrap_or_default();
-        let track_pan = track.map(|track| track.pan).unwrap_or_default();
-        let gain = 10.0_f32.powf(((clip.gain_db + track_gain_db) as f32) / 20.0);
-        let pan = (clip.pan + track_pan).clamp(-1.0, 1.0) as f32;
-        let render_frames = if clip.loop_enabled {
-            requested
-        } else {
-            requested.min(source_range)
-        };
-        for frame in 0..render_frames {
-            if frame % 4096 == 0 && cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-                return Err("Timeline render cancelled; no partial result was promoted.".into());
-            }
-            let absolute_frame = start_frame.saturating_add(frame);
-            if absolute_frame < render_start_frame_usize || absolute_frame >= render_end_frame_usize
-            {
-                continue;
-            }
-            let output_frame = absolute_frame.saturating_sub(render_start_frame_usize);
-            if output_frame >= frames {
-                continue;
-            }
-            let source_offset =
-                rescale_frames(frame as u64, sample_rate, clip.source_sample_rate) as usize;
-            let source_frame = if clip.loop_enabled {
-                source_start_frame + source_offset % source_range
-            } else {
-                source_start_frame + source_offset
-            };
-            if source_frame >= source_end_frame {
-                continue;
-            }
-            let source_start = source_frame * frame_bytes;
-            let left = decode_sample(
-                &data[source_start..source_start + bytes_per_sample],
-                wav.format,
-                wav.bits_per_sample,
-            )? as f32;
-            let right = if wav.channels > 1 {
-                decode_sample(
-                    &data[source_start + bytes_per_sample..source_start + 2 * bytes_per_sample],
-                    wav.format,
-                    wav.bits_per_sample,
-                )? as f32
-            } else {
-                left
-            };
-            let fade_in_frames =
-                rescale_frames(clip.fade_in.frames, clip.fade_in.sample_rate, sample_rate) as usize;
-            let fade_out_frames =
-                rescale_frames(clip.fade_out.frames, clip.fade_out.sample_rate, sample_rate)
-                    as usize;
-            let fade_in = if fade_in_frames == 0 {
-                1.0
-            } else {
-                (frame as f64 / fade_in_frames as f64).clamp(0.0, 1.0) as f32
-            };
-            let fade_out = if fade_out_frames == 0 {
-                1.0
-            } else {
-                (render_frames.saturating_sub(frame + 1) as f64 / fade_out_frames as f64)
-                    .clamp(0.0, 1.0) as f32
-            };
-            let envelope = fade_in.min(fade_out);
-            let left_pan = (1.0 - pan).clamp(0.0, 1.0);
-            let right_pan = (1.0 + pan).clamp(0.0, 1.0);
-            let left = left * gain * envelope * left_pan;
-            let right = right * gain * envelope * right_pan;
-            let output_start = output_frame * 2;
-            output[output_start] = (output[output_start] + left).clamp(-1.0, 1.0);
-            output[output_start + 1] = (output[output_start + 1] + right).clamp(-1.0, 1.0);
-        }
+    let plan = build_render_plan(data_root, session, created_at_ms, &options)?;
+    if let Some(parent) = plan.output_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Render output folder could not be created: {error}"))?;
     }
 
-    apply_master_gain(&mut output, session.settings.master_db);
-    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-        return Err("Timeline render cancelled; no partial result was promoted.".into());
-    }
-    if options.normalize {
-        normalize_peak(&mut output);
+    audio.render_timeline_offline(NativeOfflineRenderRequest {
+        snapshot: plan.snapshot,
+        destination: plan.output_path.clone(),
+        start_tick: plan.start_tick,
+        end_tick: plan.end_tick,
+        sample_rate: plan.sample_rate,
+        block_size: DEFAULT_OFFLINE_BLOCK_SIZE,
+        master_gain_db: session.settings.master_db,
+        normalize: options.normalize,
+    })?;
+    if !plan.output_path.is_file() {
+        return Err("Native Offline Render completed without producing its WAV output.".into());
     }
 
-    let directory = data_root
-        .join("exports")
-        .join(format!("render-{created_at_ms}"));
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Render output folder could not be created: {error}"))?;
-    let path = directory.join("timeline.wav");
-    let partial = directory.join("timeline.wav.partial");
-    write_float_wav(&partial, sample_rate, &output)
-        .map_err(|error| format!("Timeline render could not be written: {error}"))?;
-    fs::rename(&partial, &path)
-        .map_err(|error| format!("Timeline render could not be finalized: {error}"))?;
-    let source_ids = clips
-        .iter()
-        .map(|clip| clip.asset_id.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let rendered_asset_id = asset::register_derived(
-        data_root,
-        &source_ids,
-        crate::asset::AssetKind::Audio,
-        "Timeline render",
-        &path.to_string_lossy(),
-        crate::asset::ProvenanceOperation::Rendered,
-        serde_json::Map::from_iter([
-            (
-                "normalize".into(),
-                serde_json::Value::Bool(options.normalize),
-            ),
-            (
-                "rangeStartMs".into(),
-                serde_json::Value::from(options.range_start_ms),
-            ),
-        ]),
-    )?;
-    let result = RenderResult {
-        asset_id: rendered_asset_id.clone(),
-        path: path.to_string_lossy().into_owned(),
-        sample_rate,
-        frames: output_frames,
-        duration_ms: output_frames * 1_000 / u64::from(sample_rate),
-        clip_count: clips.len(),
-        range_start_ms: render_start_frame * 1_000 / u64::from(sample_rate),
-        range_end_ms: render_end_frame * 1_000 / u64::from(sample_rate),
-        normalized: options.normalize,
-        track_id: options.track_id.clone(),
-        state: "completed".into(),
-        message:
-            if options.normalize {
-                "Timeline rendered to a normalized stereo WAV with master gain; source clips remain unchanged."
-            } else {
-                "Timeline rendered to a new stereo WAV with master gain; source clips remain unchanged."
-            }
-            .into(),
+    let range_start_ms = tick_to_milliseconds(
+        plan.start_tick,
+        session.arrangement.timebase.bpm,
+        session.arrangement.timebase.ppq,
+    );
+    let range_end_ms = tick_to_milliseconds(
+        plan.end_tick,
+        session.arrangement.timebase.bpm,
+        session.arrangement.timebase.ppq,
+    );
+    let frames = tick_to_frames(
+        plan.end_tick,
+        session.arrangement.timebase.bpm,
+        session.arrangement.timebase.ppq,
+        plan.sample_rate,
+    )
+    .saturating_sub(tick_to_frames(
+        plan.start_tick,
+        session.arrangement.timebase.bpm,
+        session.arrangement.timebase.ppq,
+        plan.sample_rate,
+    ));
+    let range_kind = match &options.range {
+        RenderRange::EntireArrangement => "entireArrangement",
+        RenderRange::LoopRange => "loopRange",
+        RenderRange::TimeSelection { .. } => "timeSelection",
     };
-    let manifest = directory.join("render.json");
+    let provenance_parameters = serde_json::Map::from_iter([
+        (
+            "normalize".into(),
+            serde_json::Value::Bool(options.normalize),
+        ),
+        ("rangeKind".into(), serde_json::Value::from(range_kind)),
+        ("startTick".into(), serde_json::Value::from(plan.start_tick)),
+        ("endTick".into(), serde_json::Value::from(plan.end_tick)),
+    ]);
+    let rendered_asset_id = if plan.source_ids.is_empty() {
+        // Piano-roll MIDI may be canonical session data without a backing Asset.
+        // Register the WAV without inventing a false source relationship.
+        asset::register(
+            data_root,
+            crate::asset::AssetKind::Audio,
+            "Timeline render",
+            &plan.output_path.to_string_lossy(),
+            None,
+        )?
+    } else {
+        asset::register_derived(
+            data_root,
+            &plan.source_ids,
+            crate::asset::AssetKind::Audio,
+            "Timeline render",
+            &plan.output_path.to_string_lossy(),
+            crate::asset::ProvenanceOperation::Rendered,
+            provenance_parameters,
+        )?
+    };
+
+    let result = RenderResult {
+        asset_id: rendered_asset_id,
+        path: plan.output_path.to_string_lossy().into_owned(),
+        sample_rate: plan.sample_rate,
+        frames,
+        duration_ms: range_end_ms.saturating_sub(range_start_ms),
+        clip_count: plan.clip_count,
+        range_start_ms,
+        range_end_ms,
+        normalized: options.normalize,
+        track_id: options.track_id,
+        state: "completed".into(),
+        message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
+    };
+    let manifest = plan
+        .output_path
+        .parent()
+        .expect("render output always has a parent")
+        .join("render.json");
     fs::write(
-        &manifest,
-        serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+        manifest,
+        serde_json::to_vec_pretty(&result)
+            .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(result)
 }
 
-fn apply_master_gain(samples: &mut [f32], gain_db: f64) {
-    let gain = 10.0_f32.powf((gain_db as f32) / 20.0);
-    for sample in samples {
-        if !sample.is_finite() {
-            *sample = 0.0;
-        } else {
-            *sample = (*sample * gain).clamp(-1.0, 1.0);
+fn build_render_plan(
+    data_root: &Path,
+    session: &CreativeSession,
+    created_at_ms: u64,
+    options: &RenderOptions,
+) -> Result<RenderPlan, String> {
+    let mut render_session = session.clone();
+    if let Some(track_id) = options.track_id.as_deref() {
+        if !render_session
+            .arrangement
+            .tracks
+            .iter()
+            .any(|track| track.id == track_id)
+        {
+            return Err(format!("Track is not registered: {track_id}"));
+        }
+        render_session
+            .arrangement
+            .tracks
+            .retain(|track| track.id == track_id);
+        render_session
+            .arrangement
+            .audio_clips
+            .retain(|clip| clip.track_id == track_id);
+        render_session
+            .arrangement
+            .midi_clips
+            .retain(|clip| clip.track_id == track_id);
+        render_session
+            .arrangement
+            .automation_lanes
+            .retain(|lane| lane.track_id == track_id);
+    }
+
+    let (start_tick, end_tick) = resolve_range(&render_session, &options.range)?;
+    let duration_minutes = ticks_to_minutes(
+        end_tick.saturating_sub(start_tick),
+        render_session.arrangement.timebase.bpm,
+        render_session.arrangement.timebase.ppq,
+    );
+    if !duration_minutes.is_finite()
+        || duration_minutes <= 0.0
+        || duration_minutes > MAX_RENDER_MINUTES
+    {
+        return Err(format!(
+            "Timeline render must have a positive duration of at most {MAX_RENDER_MINUTES:.0} minutes."
+        ));
+    }
+
+    let has_solo = render_session
+        .arrangement
+        .tracks
+        .iter()
+        .any(|track| track.solo);
+    let audible_track_ids = render_session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| !track.muted && (!has_solo || track.solo))
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let audio_clips = render_session
+        .arrangement
+        .audio_clips
+        .iter()
+        .filter(|clip| !clip.muted && audible_track_ids.contains(clip.track_id.as_str()))
+        .collect::<Vec<_>>();
+    let midi_clips = render_session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| !clip.muted && audible_track_ids.contains(clip.track_id.as_str()))
+        .collect::<Vec<_>>();
+    let clip_count = audio_clips.len() + midi_clips.len();
+    if clip_count == 0 {
+        return Err("Timeline has no audible clips to render.".into());
+    }
+
+    let sample_rate = audio_clips
+        .first()
+        .map_or(DEFAULT_OFFLINE_SAMPLE_RATE, |clip| clip.source_sample_rate);
+    let source_ids = audio_clips
+        .iter()
+        .map(|clip| clip.asset_id.clone())
+        .chain(midi_clips.iter().filter_map(|clip| clip.asset_id.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(missing_id) = source_ids
+        .iter()
+        .find(|asset_id| asset::load(data_root, asset_id).is_none())
+    {
+        return Err(format!(
+            "Offline Render source asset is not registered: {missing_id}"
+        ));
+    }
+    let snapshot =
+        crate::session::application::runtime_snapshot_for_recording(data_root, &render_session);
+    fail_for_missing_dependencies(&snapshot)?;
+
+    Ok(RenderPlan {
+        snapshot,
+        start_tick,
+        end_tick,
+        sample_rate,
+        clip_count,
+        source_ids,
+        output_path: data_root
+            .join("exports")
+            .join(format!("render-{created_at_ms}"))
+            .join("timeline.wav"),
+    })
+}
+
+fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64, u64), String> {
+    match range {
+        RenderRange::EntireArrangement => {
+            let audio_end = session
+                .arrangement
+                .audio_clips
+                .iter()
+                .map(|clip| {
+                    clip.start_tick.0.saturating_add(
+                        session
+                            .arrangement
+                            .timebase
+                            .frames_to_ticks(
+                                clip.timeline_duration.frames,
+                                clip.timeline_duration.sample_rate,
+                            )
+                            .0,
+                    )
+                })
+                .max()
+                .unwrap_or(0);
+            let midi_end = session
+                .arrangement
+                .midi_clips
+                .iter()
+                .map(|clip| clip.start_tick.0.saturating_add(clip.duration_ticks))
+                .max()
+                .unwrap_or(0);
+            let end_tick = audio_end.max(midi_end);
+            if end_tick == 0 {
+                return Err("Entire Arrangement has no positive-duration clips.".into());
+            }
+            Ok((0, end_tick))
+        }
+        RenderRange::LoopRange => {
+            let loop_range = session.arrangement.loop_range;
+            if !loop_range.enabled || loop_range.end_tick <= loop_range.start_tick {
+                return Err("Loop Range must be enabled and have a positive duration.".into());
+            }
+            Ok((loop_range.start_tick.0, loop_range.end_tick.0))
+        }
+        RenderRange::TimeSelection {
+            start_tick,
+            end_tick,
+        } if end_tick > start_tick => Ok((*start_tick, *end_tick)),
+        RenderRange::TimeSelection { .. } => {
+            Err("Time Selection must have a positive duration.".into())
         }
     }
 }
 
-fn normalize_peak(samples: &mut [f32]) {
-    let peak = samples
-        .iter()
-        .filter_map(|sample| sample.is_finite().then_some(sample.abs()))
-        .fold(0.0_f32, f32::max);
-    if peak <= 0.0 {
-        return;
+fn fail_for_missing_dependencies(snapshot: &serde_json::Value) -> Result<(), String> {
+    let unavailable = snapshot["unavailableClipIds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    if !unavailable.is_empty() {
+        return Err(format!(
+            "Offline Render cannot resolve clip assets: {}",
+            unavailable.join(", ")
+        ));
     }
-    let gain = (0.98 / peak).min(1.0);
-    for sample in samples {
-        *sample = if sample.is_finite() {
-            (*sample * gain).clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
+    let missing_devices = snapshot["missingDeviceIds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    if !missing_devices.is_empty() {
+        return Err(format!(
+            "Offline Render cannot load Track Devices: {}",
+            missing_devices.join(", ")
+        ));
     }
+    Ok(())
 }
 
-fn write_float_wav(path: &Path, sample_rate: u32, samples: &[f32]) -> io::Result<()> {
-    let data_len = u32::try_from(
-        samples
-            .len()
-            .checked_mul(4)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "WAV is too large"))?,
-    )
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV is too large"))?;
-    let mut writer = BufWriter::new(File::create(path)?);
-    writer.write_all(b"RIFF")?;
-    writer.write_all(&(36_u32 + data_len).to_le_bytes())?;
-    writer.write_all(b"WAVEfmt ")?;
-    writer.write_all(&16_u32.to_le_bytes())?;
-    writer.write_all(&3_u16.to_le_bytes())?;
-    writer.write_all(&2_u16.to_le_bytes())?;
-    writer.write_all(&sample_rate.to_le_bytes())?;
-    writer.write_all(&(sample_rate.saturating_mul(8)).to_le_bytes())?;
-    writer.write_all(&8_u16.to_le_bytes())?;
-    writer.write_all(&32_u16.to_le_bytes())?;
-    writer.write_all(b"data")?;
-    writer.write_all(&data_len.to_le_bytes())?;
-    for sample in samples {
-        writer.write_all(&sample.to_le_bytes())?;
-    }
-    writer.flush()
+fn ticks_to_minutes(ticks: u64, bpm: f64, ppq: u32) -> f64 {
+    ticks as f64 / (bpm * f64::from(ppq))
+}
+
+fn tick_to_milliseconds(tick: u64, bpm: f64, ppq: u32) -> u64 {
+    (ticks_to_minutes(tick, bpm, ppq) * 60_000.0)
+        .round()
+        .max(0.0) as u64
+}
+
+fn tick_to_frames(tick: u64, bpm: f64, ppq: u32, sample_rate: u32) -> u64 {
+    (ticks_to_minutes(tick, bpm, ppq) * 60.0 * f64::from(sample_rate))
+        .round()
+        .max(0.0) as u64
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetId, AssetKind};
-    use crate::session::Track;
-    use crate::{analysis::analyze, asset, storage::now_ms};
+    use crate::session::{MidiClip, TimelineLoopRange, TimelineTick, Track};
 
-    fn register_source(root: &Path, name: &str) -> AssetId {
-        let source = root.join(name);
-        write_mono_test_wav(&source);
-        asset::register(
-            root,
-            AssetKind::Audio,
-            name,
-            &source.to_string_lossy(),
-            None,
-        )
-        .unwrap()
-    }
-
-    fn clip(id: &str, track_id: &str, asset_id: AssetId) -> AudioClip {
-        AudioClip::full_source(
-            id.into(),
-            id.into(),
-            track_id.into(),
-            asset_id,
-            crate::session::TimelineTick(0),
-            44_100,
-            4_410,
-        )
-    }
-
-    fn session_with_main_track() -> CreativeSession {
-        let mut session = CreativeSession::new(now_ms());
+    fn session_with_clips() -> CreativeSession {
+        let mut session = CreativeSession::new(1);
         session
             .arrangement
             .tracks
-            .push(Track::audio("main".into(), "Main".into()));
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "clip".into(),
+            name: "Clip".into(),
+            track_id: "instrument".into(),
+            asset_id: None,
+            start_tick: TimelineTick(480),
+            duration_ticks: 1_920,
+            notes: Vec::new(),
+            events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
         session
     }
 
     #[test]
-    fn renders_non_destructive_timeline_to_stereo_float_wav() {
-        let root = std::env::temp_dir().join(format!("riffra-render-{}", now_ms()));
-        fs::create_dir_all(&root).unwrap();
-        let asset_id = register_source(&root, "source.wav");
-        let mut session = session_with_main_track();
-        session
-            .arrangement
-            .audio_clips
-            .push(clip("clip:test", "main", asset_id));
-        session.arrangement.audio_clips[0].start_tick = crate::session::TimelineTick(192);
-        session.arrangement.audio_clips[0].timeline_duration.frames = 8_820;
-        session.arrangement.audio_clips[0].gain_db = -6.0;
-        let result =
-            render_timeline_with_options(&root, &session, 42, RenderOptions::default()).unwrap();
-        assert_eq!(result.clip_count, 1);
-        let analysis = analyze(Path::new(&result.path)).unwrap();
-        assert_eq!(analysis.channels, 2);
-        assert!(analysis.samples >= 8_800);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn cancelled_render_never_creates_a_completed_or_partial_output() {
-        let root = std::env::temp_dir().join(format!("riffra-render-cancel-{}", now_ms()));
-        fs::create_dir_all(&root).unwrap();
-        let asset_id = register_source(&root, "source.wav");
-        let mut session = session_with_main_track();
-        session
-            .arrangement
-            .audio_clips
-            .push(clip("clip:cancel", "main", asset_id));
-        let cancelled = AtomicBool::new(true);
-
-        let result = render_timeline_with_options_cancel(
-            &root,
-            &session,
-            99,
-            RenderOptions::default(),
-            Some(&cancelled),
+    fn entire_arrangement_uses_tick_extent() {
+        let session = session_with_clips();
+        assert_eq!(
+            resolve_range(&session, &RenderRange::EntireArrangement).unwrap(),
+            (0, 2_400)
         );
-
-        assert!(result.is_err());
-        assert!(!root.join("exports/render-99/timeline.wav").exists());
-        assert!(!root.join("exports/render-99/timeline.wav.partial").exists());
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn applies_bounded_master_gain_after_clip_mix() {
-        let mut samples = vec![0.5_f32, -0.5, f32::NAN, 2.0];
-        apply_master_gain(&mut samples, -6.0);
-        assert!((samples[0] - 0.25059).abs() < 0.001);
-        assert!((samples[1] + 0.25059).abs() < 0.001);
-        assert_eq!(samples[2], 0.0);
-        assert!(samples[3] <= 1.0);
+    fn loop_range_requires_an_enabled_positive_range() {
+        let mut session = session_with_clips();
+        assert!(resolve_range(&session, &RenderRange::LoopRange).is_err());
+        session.arrangement.loop_range = TimelineLoopRange {
+            enabled: true,
+            start_tick: TimelineTick(960),
+            end_tick: TimelineTick(1_920),
+        };
+        assert_eq!(
+            resolve_range(&session, &RenderRange::LoopRange).unwrap(),
+            (960, 1_920)
+        );
     }
 
     #[test]
-    fn loops_a_non_destructive_source_range_to_clip_length() {
-        let root = std::env::temp_dir().join(format!("riffra-render-loop-{}", now_ms()));
-        fs::create_dir_all(&root).unwrap();
-        let asset_id = register_source(&root, "source.wav");
-        let mut session = session_with_main_track();
-        let mut looped = clip("clip:loop", "main", asset_id);
-        looped.timeline_duration.frames = 8_820;
-        looped.source_range.end = 2_205;
-        looped.loop_enabled = true;
-        session.arrangement.audio_clips.push(looped);
-        let result =
-            render_timeline_with_options(&root, &session, 43, RenderOptions::default()).unwrap();
-        assert_eq!(result.frames, 8_820);
-        let _ = fs::remove_dir_all(root);
+    fn time_selection_rejects_an_empty_range() {
+        assert!(
+            resolve_range(
+                &session_with_clips(),
+                &RenderRange::TimeSelection {
+                    start_tick: 100,
+                    end_tick: 100,
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
-    fn renders_only_the_requested_timeline_range() {
-        let root = std::env::temp_dir().join(format!("riffra-render-range-{}", now_ms()));
-        fs::create_dir_all(&root).unwrap();
-        let asset_id = register_source(&root, "source.wav");
-        let mut session = session_with_main_track();
-        let mut ranged = clip("clip:range", "main", asset_id);
-        ranged.timeline_duration.frames = 8_820;
-        session.arrangement.audio_clips.push(ranged);
-        let result = render_timeline_with_options(
-            &root,
-            &session,
-            44,
-            RenderOptions {
-                range_start_ms: 25,
-                range_end_ms: Some(75),
-                normalize: true,
-                track_id: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(result.frames, 2_205);
-        assert_eq!(result.duration_ms, 50);
-        assert!(result.normalized);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    fn write_mono_test_wav(path: &Path) {
-        let data = vec![0_u8; 4_410 * 2];
-        let mut wav = Vec::new();
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(36_u32 + data.len() as u32).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16_u32.to_le_bytes());
-        wav.extend_from_slice(&1_u16.to_le_bytes());
-        wav.extend_from_slice(&1_u16.to_le_bytes());
-        wav.extend_from_slice(&44_100_u32.to_le_bytes());
-        wav.extend_from_slice(&(44_100_u32 * 2).to_le_bytes());
-        wav.extend_from_slice(&2_u16.to_le_bytes());
-        wav.extend_from_slice(&16_u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        wav.extend_from_slice(&data);
-        fs::write(path, wav).unwrap();
+    fn midi_session_data_does_not_invent_an_asset_source() {
+        let root = std::env::temp_dir().join("riffra-midi-render-plan");
+        let plan =
+            build_render_plan(&root, &session_with_clips(), 1, &RenderOptions::default()).unwrap();
+        assert!(plan.source_ids.is_empty());
+        assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
     }
 }

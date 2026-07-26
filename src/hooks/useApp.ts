@@ -65,6 +65,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
+    replaceMissingTrackPlugin,
     addAudioClipToArrangement,
     openAssetInDesign: openAssetInDesignApi,
     switchWorkspace: switchWorkspaceApi,
@@ -77,6 +78,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     playTimeline,
     stopTimeline,
     seekTimeline,
+    syncArrangementRuntime,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
@@ -525,8 +527,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     let result = renderResult;
     if (!result) {
       result = await renderTimeline({
-        rangeStartMs: 0,
-        rangeEndMs: null,
+        range: { kind: 'entireArrangement' },
         normalize: false,
         trackId: null,
       });
@@ -590,6 +591,42 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setSession(next);
     setMissingDependencies(await getMissingDependencies());
   }, []);
+
+  const replaceMissingPluginDevice = useCallback(
+    async (deviceId: string, newPath: string) => {
+      const next = await replaceMissingTrackPlugin(deviceId, newPath);
+      setSession(next);
+      setMissingDependencies(await getMissingDependencies());
+    },
+    [getMissingDependencies, replaceMissingTrackPlugin, setSession],
+  );
+
+  const rescanMissingPlugins = useCallback(async () => {
+    const completed = await runBackgroundJob(
+      () => startScanJob(boot?.vst3Root),
+      (report) => {
+        setPlugins(report.plugins);
+        setScanMessage(
+          report.issues.length
+            ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+            : `${report.plugins.length}件を検出`,
+        );
+      },
+      (message) => setScanMessage(`VST3 scan failed: ${message}`),
+    );
+    if (!completed) return;
+    try {
+      await syncArrangementRuntime();
+    } finally {
+      setMissingDependencies(await getMissingDependencies());
+    }
+  }, [
+    boot?.vst3Root,
+    getMissingDependencies,
+    runBackgroundJob,
+    startScanJob,
+    syncArrangementRuntime,
+  ]);
 
   const ignoreMissing = useCallback((item: MissingDependency) => {
     setMissingDependencies((current) =>
@@ -817,6 +854,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     missingDependencies,
     relinkMissing,
     disableMissingPluginDevice,
+    replaceMissingPluginDevice,
+    rescanMissingPlugins,
     ignoreMissing,
     recordings,
     setRecordings,

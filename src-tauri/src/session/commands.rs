@@ -15,9 +15,9 @@ use crate::missing::MissingDependency;
 use crate::model::SessionAudioPair;
 use crate::session::application::{self, SessionContext};
 use crate::session::{
-    AudioClipMove, AudioClipPatch, AudioTakeVariant, CreativeSession, DesignTool, FrameRange,
-    MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick, TrackKind,
-    Workspace,
+    AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
+    CreativeSession, DesignTool, FrameRange, MidiClipMove, MidiClipPatch, MidiInputRoute,
+    ProjectTimebase, TimelineTick, TrackKind, Workspace,
 };
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
@@ -361,6 +361,16 @@ pub fn update_track(
 }
 
 #[tauri::command]
+pub fn set_track_automation(
+    track_id: String,
+    parameter: AutomationParameter,
+    points: Vec<AutomationPoint>,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::set_track_automation(&context(&state), &track_id, parameter, points)
+}
+
+#[tauri::command]
 pub fn set_track_audio_input(
     track_id: String,
     channel_index: Option<u32>,
@@ -662,6 +672,15 @@ pub fn disable_missing_plugin(
     state: State<'_, AppState>,
 ) -> Result<CreativeSession, String> {
     application::disable_missing_plugin(&context(&state), &device_id)
+}
+
+#[tauri::command]
+pub fn replace_missing_track_plugin(
+    device_id: String,
+    new_path: String,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::replace_missing_track_plugin(&context(&state), &device_id, &new_path)
 }
 
 #[tauri::command]

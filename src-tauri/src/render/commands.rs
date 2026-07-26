@@ -1,6 +1,6 @@
 //! Tauri boundary for offline timeline rendering.
 
-use tauri::State;
+use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::render::{self, RenderOptions, RenderResult};
@@ -9,16 +9,16 @@ use crate::storage::now_ms;
 #[tauri::command]
 pub async fn render_timeline(
     options: Option<RenderOptions>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<RenderResult, String> {
-    let session = state.session.lock().map_err(lock_error)?.clone();
-    let data_root = state.data_root.clone();
-    let created_at_ms = now_ms();
     tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let session = state.session.lock().map_err(lock_error)?.clone();
         render::render_timeline_with_options(
-            &data_root,
+            &state.audio,
+            &state.data_root,
             &session,
-            created_at_ms,
+            now_ms(),
             options.unwrap_or_default(),
         )
     })

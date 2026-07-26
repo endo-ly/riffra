@@ -22,6 +22,9 @@ interface ArrangeToolbarProps {
   onFollow: (follow: boolean) => void;
   onTimebase: (bpm: number, numerator: number, denominator: number) => void;
   onAddTrack: () => void;
+  automationAvailable: boolean;
+  automationOpen: boolean;
+  onToggleAutomation: () => void;
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
@@ -122,6 +125,19 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         onClick={() => props.onFollow(!props.follow)}
       >
         Follow
+      </button>
+      <button
+        className={`${styles.toggleButton} ${props.automationOpen ? styles.active : ''}`}
+        aria-pressed={props.automationOpen}
+        disabled={!props.automationAvailable}
+        title={
+          props.automationAvailable
+            ? 'Show or hide Automation for the selected Track'
+            : 'Select a Track to edit Automation'
+        }
+        onClick={props.onToggleAutomation}
+      >
+        Automation
       </button>
 
       <div className={styles.toolbarRight}>

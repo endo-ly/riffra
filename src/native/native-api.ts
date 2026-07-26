@@ -30,6 +30,8 @@ import type {
   MonitoringState,
   MidiInputRoute,
   AudioTakeVariant,
+  AutomationParameter,
+  AutomationPoint,
   TrackKind,
   Workspace,
   TransportStatus,
@@ -231,6 +233,11 @@ export interface NativeApi {
       monitoring?: MonitoringState;
     },
   ): Promise<CreativeSession>;
+  setTrackAutomation(
+    trackId: string,
+    parameter: AutomationParameter,
+    points: AutomationPoint[],
+  ): Promise<CreativeSession>;
   setTrackAudioInput(trackId: string, channelIndex: number | null): Promise<CreativeSession>;
   setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<CreativeSession>;
   setTrackInstrument(trackId: string, pluginPath: string): Promise<CreativeSession>;
@@ -354,6 +361,8 @@ export interface NativeApi {
    * Application Operation that mutates and persists the canonical session.
    */
   disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
+  /** Replaces an unresolved Track Device without changing its chain position. */
+  replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<CreativeSession>;
 
   /**
    * Subscribes to the `audio-status` event pushed by the Rust audio supervisor.

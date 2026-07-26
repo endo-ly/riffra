@@ -32,6 +32,7 @@ describe('MissingDependencies (PRJ-004)', () => {
       <MissingDependencies
         missing={missing}
         onRelink={vi.fn()}
+        onReplacePlugin={vi.fn()}
         onDisablePlugin={vi.fn()}
         onIgnore={vi.fn()}
       />,
@@ -49,6 +50,7 @@ describe('MissingDependencies (PRJ-004)', () => {
       <MissingDependencies
         missing={missing}
         onRelink={onRelink}
+        onReplacePlugin={vi.fn()}
         onDisablePlugin={vi.fn()}
         onIgnore={vi.fn()}
       />,
@@ -67,6 +69,7 @@ describe('MissingDependencies (PRJ-004)', () => {
       <MissingDependencies
         missing={missing}
         onRelink={vi.fn()}
+        onReplacePlugin={vi.fn()}
         onDisablePlugin={onDisablePlugin}
         onIgnore={vi.fn()}
       />,
@@ -76,12 +79,35 @@ describe('MissingDependencies (PRJ-004)', () => {
     await waitFor(() => expect(onDisablePlugin).toHaveBeenCalledWith('plugin:gone'));
   });
 
+  it('replaces a missing plugin without treating it as an Asset relink', async () => {
+    const onRelink = vi.fn();
+    const onReplacePlugin = vi.fn();
+    render(
+      <MissingDependencies
+        missing={missing}
+        onRelink={onRelink}
+        onReplacePlugin={onReplacePlugin}
+        onDisablePlugin={vi.fn()}
+        onIgnore={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(/Relink path for Lost Plugin/);
+    await user.type(input, 'C:\\found\\New.vst3');
+    await user.click(
+      within(input.closest('li') as HTMLElement).getByRole('button', { name: /Replace/i }),
+    );
+    expect(onReplacePlugin).toHaveBeenCalledWith('plugin:gone', 'C:\\found\\New.vst3');
+    expect(onRelink).not.toHaveBeenCalled();
+  });
+
   it('ignores an entry so it no longer blocks the user', async () => {
     const onIgnore = vi.fn();
     render(
       <MissingDependencies
         missing={missing}
         onRelink={vi.fn()}
+        onReplacePlugin={vi.fn()}
         onDisablePlugin={vi.fn()}
         onIgnore={onIgnore}
       />,

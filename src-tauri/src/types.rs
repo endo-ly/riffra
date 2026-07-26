@@ -23,15 +23,16 @@ use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use crate::recording::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
-use crate::render::{RenderOptions, RenderResult};
+use crate::render::{RenderOptions, RenderRange, RenderResult};
 use crate::separation::SeparationResult;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
-    AudioInputRoute, AudioTakeVariant, CreativeSession, DesignContext, DesignTool, FrameDuration,
-    FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote,
-    MonitoringState, PlayState, ProjectTimebase, RecordingPassRecord, RecordingSessionRecord,
-    RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState, SamplePad,
-    SessionSettings, SessionSnapshot, TimelineLoopRange, Track, TrackKind, Workspace,
+    AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
+    CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
+    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
+    ProjectTimebase, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
+    RecordingTakeRecord, SampleInstrumentState, SamplePad, SessionSettings, SessionSnapshot,
+    TimelineLoopRange, Track, TrackKind, Workspace,
 };
 use ts_rs::{Config, TS};
 
@@ -62,6 +63,9 @@ fn export_types() {
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
     MidiInputRoute::export_all(&cfg).expect("MidiInputRoute bindings");
     Track::export_all(&cfg).expect("Track bindings");
+    AutomationParameter::export_all(&cfg).expect("AutomationParameter bindings");
+    AutomationPoint::export_all(&cfg).expect("AutomationPoint bindings");
+    AutomationLane::export_all(&cfg).expect("AutomationLane bindings");
     MidiNote::export_all(&cfg).expect("MidiNote bindings");
     MidiClip::export_all(&cfg).expect("MidiClip bindings");
     AudioTakeVariant::export_all(&cfg).expect("AudioTakeVariant bindings");
@@ -106,6 +110,7 @@ fn export_types() {
     PluginScanState::export_all(&cfg).expect("PluginScanState bindings");
     ProjectExport::export_all(&cfg).expect("ProjectExport bindings");
     RenderOptions::export_all(&cfg).expect("RenderOptions bindings");
+    RenderRange::export_all(&cfg).expect("RenderRange bindings");
     RenderResult::export_all(&cfg).expect("RenderResult bindings");
     ScanIssue::export_all(&cfg).expect("ScanIssue bindings");
     ScanReport::export_all(&cfg).expect("ScanReport bindings");

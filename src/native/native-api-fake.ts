@@ -10,6 +10,8 @@ import type {
   AudioClipMove,
   AudioClipPatch,
   AudioTakeVariant,
+  AutomationParameter,
+  AutomationPoint,
   MidiClipMove,
   MidiClipPatch,
   BackgroundJobStatus,
@@ -458,6 +460,8 @@ export class FakeNativeApi implements NativeApi {
 
   renderTimeline = async (options: RenderOptions): Promise<RenderResult | null> => {
     this.calls.push('renderTimeline');
+    const rangeStartMs = options.range.kind === 'timeSelection' ? options.range.startTick : 0;
+    const rangeEndMs = options.range.kind === 'timeSelection' ? options.range.endTick : 1_000;
     return {
       assetId: toAssetId(`asset:fake-render-${++this.renderCounter}`),
       path: 'fake://render.wav',
@@ -465,8 +469,8 @@ export class FakeNativeApi implements NativeApi {
       frames: 48_000,
       durationMs: 1_000,
       clipCount: 1,
-      rangeStartMs: options.rangeStartMs,
-      rangeEndMs: options.rangeEndMs ?? 1_000,
+      rangeStartMs,
+      rangeEndMs,
       normalized: options.normalize,
       trackId: options.trackId,
       state: 'completed',
@@ -1214,10 +1218,70 @@ export class FakeNativeApi implements NativeApi {
           device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
         ),
       },
+      arrangement: {
+        ...session.arrangement,
+        revision: session.arrangement.revision + 1,
+        tracks: session.arrangement.tracks.map((track) => ({
+          ...track,
+          instrument:
+            track.instrument?.id === deviceId
+              ? { ...track.instrument, disabledPlaceholder: true }
+              : track.instrument,
+          rack: {
+            ...track.rack,
+            devices: track.rack.devices.map((device) =>
+              device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
+            ),
+          },
+        })),
+      },
     };
     this.bootstrapState = { ...this.bootstrapState, session: next };
     // A disabled placeholder is acknowledged, so it leaves the missing list
     // (mirrors `collect_missing` skipping disabled-placeholder plugins).
+    this.missing = this.missing.filter((item) => item.id !== deviceId);
+    return next;
+  };
+
+  replaceMissingTrackPlugin = async (
+    deviceId: string,
+    newPath: string,
+  ): Promise<CreativeSession> => {
+    this.calls.push('replaceMissingTrackPlugin');
+    const session = this.bootstrapState.session;
+    const name =
+      newPath
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.vst3$/i, '') || 'Plugin';
+    const replace = (device: RackDevice): RackDevice =>
+      device.id === deviceId
+        ? {
+            ...device,
+            name,
+            path: newPath,
+            disabledPlaceholder: false,
+            bypassed: false,
+            parameterValues: [],
+            stateData: undefined,
+          }
+        : device;
+    const next: CreativeSession = {
+      ...session,
+      arrangement: {
+        ...session.arrangement,
+        revision: session.arrangement.revision + 1,
+        tracks: session.arrangement.tracks.map((track) => ({
+          ...track,
+          instrument: track.instrument ? replace(track.instrument) : undefined,
+          rack: {
+            ...track.rack,
+            devices: track.rack.devices.map(replace),
+          },
+        })),
+      },
+    };
+    this.bootstrapState = { ...this.bootstrapState, session: next };
     this.missing = this.missing.filter((item) => item.id !== deviceId);
     return next;
   };
@@ -2106,6 +2170,40 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
+  setTrackAutomation = async (
+    trackId: string,
+    parameter: AutomationParameter,
+    points: AutomationPoint[],
+  ): Promise<CreativeSession> => {
+    this.calls.push('setTrackAutomation');
+    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
+      throw new Error(`Track is not registered: ${trackId}`);
+    }
+    return this.commitSession((current) => ({
+      ...current,
+      updatedAtMs: Date.now(),
+      arrangement: {
+        ...current.arrangement,
+        revision: current.arrangement.revision + 1,
+        automationLanes: [
+          ...current.arrangement.automationLanes.filter(
+            (lane) => lane.trackId !== trackId || lane.parameter !== parameter,
+          ),
+          ...(points.length
+            ? [
+                {
+                  id: `automation:${trackId}:${parameter}`,
+                  trackId,
+                  parameter,
+                  points: [...points].sort((left, right) => left.tick - right.tick),
+                },
+              ]
+            : []),
+        ],
+      },
+    }));
+  };
+
   removeTrack = async (trackId: string): Promise<CreativeSession> => {
     this.calls.push('removeTrack');
     if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
@@ -2120,6 +2218,9 @@ export class FakeNativeApi implements NativeApi {
         tracks: current.arrangement.tracks.filter((track) => track.id !== trackId),
         audioClips: current.arrangement.audioClips.filter((clip) => clip.trackId !== trackId),
         midiClips: current.arrangement.midiClips.filter((clip) => clip.trackId !== trackId),
+        automationLanes: current.arrangement.automationLanes.filter(
+          (lane) => lane.trackId !== trackId,
+        ),
       },
     }));
   };
@@ -2164,6 +2265,20 @@ export class FakeNativeApi implements NativeApi {
                 ...clip,
                 id: `midi-clip:${Date.now()}:${index}`,
                 trackId: duplicateId,
+              })),
+          ],
+          automationLanes: [
+            ...current.arrangement.automationLanes,
+            ...current.arrangement.automationLanes
+              .filter((lane) => lane.trackId === trackId)
+              .map((lane, laneIndex) => ({
+                ...lane,
+                id: `automation:${duplicateId}:${lane.parameter}`,
+                trackId: duplicateId,
+                points: lane.points.map((point, pointIndex) => ({
+                  ...point,
+                  id: `automation-point:${Date.now()}:${laneIndex}:${pointIndex}`,
+                })),
               })),
           ],
         },

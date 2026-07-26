@@ -1,6 +1,6 @@
 use crate::asset;
 use crate::asset::{AssetId, AssetKind, Provenance};
-use crate::rack::DeviceKind;
+use crate::rack::{DeviceKind, RackDevice};
 use crate::session::CreativeSession;
 use serde::Serialize;
 use std::path::Path;
@@ -26,6 +26,30 @@ pub struct MissingDependency {
 
 fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
     asset::resolve_content_location(data_root, asset_id)
+}
+
+fn collect_missing_plugin(
+    missing: &mut Vec<MissingDependency>,
+    device: &RackDevice,
+    used_by: String,
+) {
+    if device.kind != DeviceKind::Plugin || device.disabled_placeholder {
+        return;
+    }
+    let exists = device
+        .path
+        .as_ref()
+        .is_some_and(|path| Path::new(path).exists());
+    if !exists {
+        missing.push(MissingDependency {
+            kind: "plugin".into(),
+            id: device.id.clone(),
+            name: device.name.clone(),
+            path: device.path.clone().unwrap_or_default(),
+            asset_id: None,
+            used_by: vec![used_by],
+        });
+    }
 }
 
 /// Collects every referenced audio asset or plugin binary whose content is not
@@ -85,27 +109,22 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
     }
 
     for device in &session.rack.devices {
-        if device.kind == DeviceKind::Plugin {
-            // A plugin kept as a disabled placeholder has been acknowledged as
-            // missing on purpose; it stays in the rack but must not re-appear
-            // as an actionable missing dependency every time the project opens.
-            if device.disabled_placeholder {
-                continue;
-            }
-            let exists = device
-                .path
-                .as_ref()
-                .is_some_and(|path| Path::new(path).exists());
-            if !exists {
-                missing.push(MissingDependency {
-                    kind: "plugin".into(),
-                    id: device.id.clone(),
-                    name: device.name.clone(),
-                    path: device.path.clone().unwrap_or_default(),
-                    asset_id: None,
-                    used_by: vec![format!("rack:{}", device.id)],
-                });
-            }
+        collect_missing_plugin(&mut missing, device, format!("rack:{}", device.id));
+    }
+    for track in &session.arrangement.tracks {
+        if let Some(instrument) = &track.instrument {
+            collect_missing_plugin(
+                &mut missing,
+                instrument,
+                format!("track:{}:instrument", track.id),
+            );
+        }
+        for device in &track.rack.devices {
+            collect_missing_plugin(
+                &mut missing,
+                device,
+                format!("track:{}:effect:{}", track.id, device.id),
+            );
         }
     }
 
@@ -158,6 +177,22 @@ pub fn mark_disabled_placeholder(session: &CreativeSession, device_id: &str) -> 
         if device.id == device_id {
             device.disabled_placeholder = true;
         }
+    }
+    let mut arrangement_changed = false;
+    for track in &mut next.arrangement.tracks {
+        for device in track
+            .instrument
+            .iter_mut()
+            .chain(track.rack.devices.iter_mut())
+        {
+            if device.id == device_id && !device.disabled_placeholder {
+                device.disabled_placeholder = true;
+                arrangement_changed = true;
+            }
+        }
+    }
+    if arrangement_changed {
+        next.arrangement.revision = next.arrangement.revision.saturating_add(1);
     }
     next
 }
@@ -287,5 +322,51 @@ mod tests {
         let missing = collect_missing(&data_root, &session);
         assert!(missing.iter().all(|item| item.kind != "plugin"));
         let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn track_devices_remain_in_place_as_actionable_placeholders() {
+        let data_root = root();
+        let mut session = CreativeSession::new(now_ms());
+        let mut track = crate::session::Track::instrument("synth".into(), "Synth".into());
+        let missing_device = |id: &str, name: &str| RackDevice {
+            id: id.into(),
+            name: name.into(),
+            kind: DeviceKind::Plugin,
+            path: Some(format!("C:\\gone\\{name}.vst3")),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        };
+        track.instrument = Some(missing_device("instrument:gone", "Lost Synth"));
+        track
+            .rack
+            .devices
+            .push(missing_device("effect:gone", "Lost FX"));
+        session.arrangement.tracks.push(track);
+
+        let missing = collect_missing(&data_root, &session);
+        assert_eq!(missing.len(), 2);
+        assert!(
+            missing
+                .iter()
+                .any(|item| item.used_by == ["track:synth:instrument"])
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|item| item.used_by == ["track:synth:effect:effect:gone"])
+        );
+
+        let disabled = mark_disabled_placeholder(&session, "effect:gone");
+        assert_eq!(
+            disabled.arrangement.revision,
+            session.arrangement.revision + 1
+        );
+        assert_eq!(disabled.arrangement.tracks[0].rack.devices.len(), 1);
+        assert!(disabled.arrangement.tracks[0].rack.devices[0].disabled_placeholder);
+        assert_eq!(collect_missing(&data_root, &disabled).len(), 1);
     }
 }

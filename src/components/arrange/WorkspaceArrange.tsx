@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CreativeSession } from '@/lib/domain';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { AutomationParameter, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeRuler } from './ArrangeRuler';
 import { ArrangeToolbar } from './ArrangeToolbar';
 import { ArrangeTrack } from './ArrangeTrack';
+import { AutomationLaneView } from './AutomationLaneView';
 import { MidiEditorPanel } from './MidiEditorPanel';
 import {
   BASE_PIXELS_PER_QUARTER,
@@ -39,6 +40,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [zoom, setZoom] = useState(1);
   const [trackSize, setTrackSize] = useState<TrackSize>('normal');
   const [trackSizes, setTrackSizes] = useState<Record<string, TrackSize>>({});
+  const [automationParameters, setAutomationParameters] = useState<
+    Partial<Record<string, AutomationParameter>>
+  >({});
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const [follow, setFollow] = useState(true);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
@@ -63,6 +67,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const contentEnd = Math.max(
       ...arrangement.audioClips.map((clip) => timelineObjectEndTick(clip, timebase)),
       ...arrangement.midiClips.map((clip) => timelineObjectEndTick(clip, timebase)),
+      ...arrangement.automationLanes.flatMap((lane) => lane.points.map((point) => point.tick)),
       ...arrangement.markers.map((marker) => marker.tick),
       arrangement.loopRange.startTick,
       arrangement.loopRange.endTick,
@@ -74,6 +79,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     return Math.max(barTicks * 16, contentEnd + barTicks * 2);
   }, [
     arrangement.audioClips,
+    arrangement.automationLanes,
     arrangement.loopRange,
     arrangement.markers,
     arrangement.midiClips,
@@ -91,14 +97,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     analyses,
   });
   const playbackOutOfSync =
-    editor.runtimeOutOfSync ||
-    Boolean(
-      transport &&
-      (transport.revision !== arrangement.revision ||
-        (transport.unavailableClipIds?.length ?? 0) > 0 ||
-        (transport.missingDeviceIds?.length ?? 0) > 0),
-    );
+    editor.runtimeOutOfSync || Boolean(transport && transport.revision !== arrangement.revision);
+  const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
+  const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
+  const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
 
   const applyZoom = (next: number, clientX?: number) => {
     const bounded = Math.min(4, Math.max(0.35, next));
@@ -291,6 +294,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       [trackId]: sizes[(sizes.indexOf(current) + 1) % sizes.length],
     }));
   };
+  const toggleAutomation = (trackId: string) =>
+    setAutomationParameters((current) => ({
+      ...current,
+      [trackId]: current[trackId] ? undefined : 'volume',
+    }));
 
   return (
     <section className={styles.workspace} aria-label="Arrange timeline">
@@ -328,6 +336,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             'Audio Track added.',
           )
         }
+        automationAvailable={selectedTrackId !== null}
+        automationOpen={selectedTrackId !== null && Boolean(automationParameters[selectedTrackId])}
+        onToggleAutomation={() => {
+          if (selectedTrackId) toggleAutomation(selectedTrackId);
+        }}
       />
 
       <div
@@ -464,60 +477,96 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             </div>
           ) : (
             arrangement.tracks.map((track, trackIndex) => (
-              <ArrangeTrack
-                key={track.id}
-                track={track}
-                clips={arrangement.audioClips.filter((clip) => clip.trackId === track.id)}
-                midiClips={arrangement.midiClips.filter((clip) => clip.trackId === track.id)}
-                session={props.session}
-                analyses={analyses}
-                selectedClipIds={selectedClipIds}
-                selected={props.selection.kind === 'track' && props.selection.trackId === track.id}
-                onSelectTrack={() => props.setSelection({ kind: 'track', trackId: track.id })}
-                timelineWidth={timelineWidth}
-                timelineTicks={timelineTicks}
-                pixelsPerTick={pixelsPerTick}
-                trackSize={trackSizes[track.id] ?? trackSize}
-                api={props.api}
-                onCommit={editor.commit}
-                onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
-                onMove={editor.beginMove}
-                onMoveMidi={editor.beginMidiMove}
-                onTrimMidi={editor.beginMidiTrim}
-                onSelect={editor.selectClip}
-                onTrim={editor.beginTrim}
-                onFade={editor.beginFade}
-                onOpenMidiEditor={(clip) => {
-                  setActiveMidiClipId(clip.id);
-                  setMidiEditorOpen(true);
-                }}
-                onRename={(name) =>
-                  void editor.commit(
-                    props.api.updateTrack(track.id, { name }),
-                    `Track renamed to ${name}.`,
-                  )
-                }
-                onDuplicate={() =>
-                  void editor.commit(
-                    props.api.duplicateTrack(track.id),
-                    `${track.name} duplicated.`,
-                  )
-                }
-                onDelete={() =>
-                  void deleteTrack(
-                    track.id,
-                    track.name,
-                    arrangement.audioClips.filter((clip) => clip.trackId === track.id).length,
-                  )
-                }
-                onReorder={(sourceTrackId) =>
-                  void editor.commit(
-                    props.api.reorderTrack(sourceTrackId, trackIndex),
-                    'Track order updated.',
-                  )
-                }
-                onResize={() => cycleTrackSize(track.id)}
-              />
+              <Fragment key={track.id}>
+                <ArrangeTrack
+                  track={track}
+                  clips={arrangement.audioClips.filter((clip) => clip.trackId === track.id)}
+                  midiClips={arrangement.midiClips.filter((clip) => clip.trackId === track.id)}
+                  session={props.session}
+                  analyses={analyses}
+                  selectedClipIds={selectedClipIds}
+                  unavailableClipIds={transport?.unavailableClipIds ?? []}
+                  selected={
+                    props.selection.kind === 'track' && props.selection.trackId === track.id
+                  }
+                  onSelectTrack={() => props.setSelection({ kind: 'track', trackId: track.id })}
+                  timelineWidth={timelineWidth}
+                  timelineTicks={timelineTicks}
+                  pixelsPerTick={pixelsPerTick}
+                  trackSize={trackSizes[track.id] ?? trackSize}
+                  api={props.api}
+                  onCommit={editor.commit}
+                  onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
+                  onMove={editor.beginMove}
+                  onMoveMidi={editor.beginMidiMove}
+                  onTrimMidi={editor.beginMidiTrim}
+                  onSelect={editor.selectClip}
+                  onTrim={editor.beginTrim}
+                  onFade={editor.beginFade}
+                  onOpenMidiEditor={(clip) => {
+                    setActiveMidiClipId(clip.id);
+                    setMidiEditorOpen(true);
+                  }}
+                  onRename={(name) =>
+                    void editor.commit(
+                      props.api.updateTrack(track.id, { name }),
+                      `Track renamed to ${name}.`,
+                    )
+                  }
+                  onDuplicate={() =>
+                    void editor.commit(
+                      props.api.duplicateTrack(track.id),
+                      `${track.name} duplicated.`,
+                    )
+                  }
+                  onDelete={() =>
+                    void deleteTrack(
+                      track.id,
+                      track.name,
+                      arrangement.audioClips.filter((clip) => clip.trackId === track.id).length,
+                    )
+                  }
+                  onReorder={(sourceTrackId) =>
+                    void editor.commit(
+                      props.api.reorderTrack(sourceTrackId, trackIndex),
+                      'Track order updated.',
+                    )
+                  }
+                  onResize={() => cycleTrackSize(track.id)}
+                  automationOpen={Boolean(automationParameters[track.id])}
+                  onToggleAutomation={() => toggleAutomation(track.id)}
+                />
+                {automationParameters[track.id] && (
+                  <AutomationLaneView
+                    track={track}
+                    lane={arrangement.automationLanes.find(
+                      (lane) =>
+                        lane.trackId === track.id &&
+                        lane.parameter === automationParameters[track.id],
+                    )}
+                    parameter={automationParameters[track.id]!}
+                    timelineWidth={timelineWidth}
+                    pixelsPerTick={pixelsPerTick}
+                    snapTick={editor.snapTick}
+                    onParameter={(parameter) =>
+                      setAutomationParameters((current) => ({
+                        ...current,
+                        [track.id]: parameter,
+                      }))
+                    }
+                    onCommit={(points) =>
+                      void editor.commit(
+                        props.api.setTrackAutomation(
+                          track.id,
+                          automationParameters[track.id]!,
+                          points,
+                        ),
+                        `${track.name} automation updated.`,
+                      )
+                    }
+                  />
+                )}
+              </Fragment>
             ))
           )}
         </div>
@@ -525,7 +574,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
 
       <div className={styles.statusToast} role="status">
         <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
-        {playbackOutOfSync ? 'Playback runtime is out of sync' : editor.message}
+        {playbackOutOfSync
+          ? 'Playback runtime is out of sync'
+          : unavailableClipCount || missingDeviceCount
+            ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
+            : editor.message}
         {playbackOutOfSync && <button onClick={() => void editor.retryRuntimeSync()}>Retry</button>}
         <small>REV {arrangement.revision}</small>
       </div>

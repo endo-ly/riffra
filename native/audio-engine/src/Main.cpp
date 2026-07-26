@@ -7,6 +7,7 @@
 #include "PluginEditorHost.h"
 #include "PluginRack.h"
 #include "TimelineEngine.h"
+#include "OfflineRenderer.h"
 
 #include <iostream>
 #include <map>
@@ -37,6 +38,7 @@ using riffra::PluginEditorHost;
 using riffra::PluginRack;
 using riffra::DCBlocker;
 using riffra::FeedbackDetector;
+using riffra::OfflineRenderer;
 using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
@@ -584,6 +586,7 @@ int serve(
     PluginRack rack;
     PluginEditorHost pluginEditor(rack);
     std::unique_ptr<PluginEditorHost> trackPluginEditor;
+    juce::String trackPluginEditorTrackId;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     MidiMonitor midiMonitor;
@@ -747,10 +750,6 @@ int serve(
                     : 0;
                 juce::String timelineError;
                 const auto snapshot = command.getProperty("snapshot", {});
-                if (trackPluginEditor != nullptr) {
-                    trackPluginEditor->close();
-                    trackPluginEditor.reset();
-                }
                 if (!timelineEngine.loadSnapshot(
                         snapshot,
                         formatManager,
@@ -760,6 +759,14 @@ int serve(
                         type == "loadTimelineSnapshot")) {
                     writeJson(makeError("timeline", timelineError));
                     continue;
+                }
+                if (type == "prepareTimelineSnapshot"
+                    && trackPluginEditor != nullptr
+                    && !timelineEngine.preparedTrackReusesRuntimeDevices(
+                        trackPluginEditorTrackId)) {
+                    trackPluginEditor->close();
+                    trackPluginEditor.reset();
+                    trackPluginEditorTrackId.clear();
                 }
                 auto* ack = new juce::DynamicObject();
                 ack->setProperty("type", "timelineAck");
@@ -779,6 +786,41 @@ int serve(
                     continue;
                 }
                 writeJson(timelineEngine.status());
+                continue;
+            }
+            if (type == "renderTimelineOffline") {
+                if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
+                    writeJson(makeError(
+                        "offlineRender", "Unsupported Offline Render protocol version."));
+                    continue;
+                }
+                OfflineRenderer renderer;
+                OfflineRenderer::Result renderResult;
+                juce::String renderError;
+                if (!renderer.render(
+                        command.getProperty("snapshot", {}),
+                        formatManager,
+                        juce::File(command.getProperty("destination", {}).toString()),
+                        static_cast<std::uint64_t>(static_cast<juce::int64>(
+                            command.getProperty("startTick", 0))),
+                        static_cast<std::uint64_t>(static_cast<juce::int64>(
+                            command.getProperty("endTick", 0))),
+                        static_cast<double>(command.getProperty("sampleRate", 48000.0)),
+                        static_cast<int>(command.getProperty("blockSize", 512)),
+                        static_cast<float>(command.getProperty("masterGainDb", -18.0)),
+                        static_cast<bool>(command.getProperty("normalize", false)),
+                        renderResult,
+                        renderError)) {
+                    writeJson(makeError("offlineRender", renderError));
+                    continue;
+                }
+                writeJson(currentStatus(
+                    manager,
+                    callback,
+                    &rack,
+                    &midiMonitor,
+                    "Offline Render completed through the Arrangement Graph.",
+                    &timelineEngine));
                 continue;
             }
             if (type == "discardTimelineSnapshot") {
@@ -823,10 +865,13 @@ int serve(
                 }
                 if (trackPluginEditor != nullptr)
                     trackPluginEditor->close();
+                trackPluginEditorTrackId =
+                    command.getProperty("trackId", {}).toString();
                 trackPluginEditor = std::make_unique<PluginEditorHost>(*device);
                 juce::String editorError;
                 if (!trackPluginEditor->open(editorError)) {
                     trackPluginEditor.reset();
+                    trackPluginEditorTrackId.clear();
                     writeJson(makeError("pluginEditor", editorError));
                     continue;
                 }
@@ -1534,6 +1579,8 @@ juce::var runSafetySelfTest() {
     }
 
     for (const auto& check : riffra::runPluginRackSelfTests())
+        checks.add(check);
+    for (const auto& check : riffra::runPluginChainSelfTests())
         checks.add(check);
 
     {

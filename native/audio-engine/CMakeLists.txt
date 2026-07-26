@@ -39,6 +39,9 @@ target_sources(riffra-audio PRIVATE
   src/TimelineEngine.h
   src/ArrangementGraph.cpp
   src/ArrangementGraph.h
+  src/ArrangementGraphSelfTest.cpp
+  src/OfflineRenderer.cpp
+  src/OfflineRenderer.h
   src/AudioSafetyDsp.h
   src/RecordingSession.cpp
   src/RecordingSession.h
@@ -49,6 +52,7 @@ target_sources(riffra-audio PRIVATE
   src/PluginRack.h
   src/PluginChain.cpp
   src/PluginChain.h
+  src/PluginChainSelfTest.cpp
   src/PluginEditorHost.cpp
   src/PluginEditorHost.h
   src/PluginRackSelfTest.cpp

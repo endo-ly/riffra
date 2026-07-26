@@ -209,6 +209,34 @@ pub enum MonitoringState {
     On,
 }
 
+/// A Track mix parameter controlled on the Arrangement timeline.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationParameter {
+    Volume,
+    Pan,
+}
+
+/// A single value on an Automation Lane.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationPoint {
+    pub id: String,
+    #[ts(type = "number")]
+    pub tick: TimelineTick,
+    pub value: f64,
+}
+
+/// Timeline control data for one Track parameter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationLane {
+    pub id: String,
+    pub track_id: String,
+    pub parameter: AutomationParameter,
+    pub points: Vec<AutomationPoint>,
+}
+
 fn empty_track_rack() -> RackInstance {
     RackInstance {
         devices: Vec::new(),
@@ -575,6 +603,8 @@ pub struct Arrangement {
     pub audio_clips: Vec<AudioClip>,
     pub midi_clips: Vec<MidiClip>,
     #[serde(default)]
+    pub automation_lanes: Vec<AutomationLane>,
+    #[serde(default)]
     pub markers: Vec<Marker>,
     #[serde(default)]
     pub recording_sessions: Vec<RecordingSessionRecord>,
@@ -629,6 +659,8 @@ impl Arrangement {
         self.tracks.remove(index);
         self.audio_clips.retain(|clip| clip.track_id != track_id);
         self.midi_clips.retain(|clip| clip.track_id != track_id);
+        self.automation_lanes
+            .retain(|lane| lane.track_id != track_id);
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -2113,6 +2145,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             tracks: arrangement.tracks.clone(),
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
+            automation_lanes: Vec::new(),
             markers: Vec::new(),
             recording_sessions: arrangement.recording_sessions.clone(),
             recording_passes: arrangement.recording_passes.clone(),
@@ -2192,6 +2225,48 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
                     clip.name
                 ));
             }
+        }
+    }
+    if arrangement.automation_lanes.len() > arrangement.tracks.len().saturating_mul(2) {
+        return Err(
+            "An arrangement cannot contain more than two Automation Lanes per Track.".into(),
+        );
+    }
+    let mut lane_keys = std::collections::HashSet::new();
+    let mut lane_ids = std::collections::HashSet::new();
+    for lane in &mut arrangement.automation_lanes {
+        if lane.id.trim().is_empty()
+            || !lane_ids.insert(lane.id.as_str())
+            || !track_ids.contains(lane.track_id.as_str())
+            || !lane_keys.insert((lane.track_id.as_str(), lane.parameter))
+        {
+            return Err("Automation Lanes contain invalid or duplicate references.".into());
+        }
+        if lane.points.len() > 16_384 {
+            return Err(format!(
+                "Automation Lane '{}' contains too many points.",
+                lane.id
+            ));
+        }
+        lane.points.sort_by_key(|point| point.tick);
+        let mut point_ids = std::collections::HashSet::new();
+        let mut previous_tick = None;
+        for point in &mut lane.points {
+            if point.id.trim().is_empty()
+                || !point_ids.insert(point.id.as_str())
+                || previous_tick == Some(point.tick)
+                || !point.value.is_finite()
+            {
+                return Err(format!(
+                    "Automation Lane '{}' contains an invalid point.",
+                    lane.id
+                ));
+            }
+            point.value = match lane.parameter {
+                AutomationParameter::Volume => point.value.clamp(-90.0, 24.0),
+                AutomationParameter::Pan => point.value.clamp(-1.0, 1.0),
+            };
+            previous_tick = Some(point.tick);
         }
     }
     if arrangement.markers.len() > 256 {
@@ -2523,6 +2598,7 @@ mod tests {
             ],
             audio_clips: Vec::new(),
             midi_clips: Vec::new(),
+            automation_lanes: Vec::new(),
             markers: Vec::new(),
             recording_sessions: Vec::new(),
             recording_passes: Vec::new(),
@@ -2550,6 +2626,39 @@ mod tests {
         assert_eq!(arrangement.tracks[0].id, "extra");
         assert!(arrangement.audio_clips.is_empty());
         assert_eq!(arrangement.revision, 2);
+    }
+
+    #[test]
+    fn automation_points_are_canonical_and_follow_track_ownership() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
+        arrangement.automation_lanes.push(AutomationLane {
+            id: "automation:main:volume".into(),
+            track_id: "main".into(),
+            parameter: AutomationParameter::Volume,
+            points: vec![
+                AutomationPoint {
+                    id: "late".into(),
+                    tick: TimelineTick(960),
+                    value: 100.0,
+                },
+                AutomationPoint {
+                    id: "early".into(),
+                    tick: TimelineTick(0),
+                    value: -100.0,
+                },
+            ],
+        });
+
+        normalize_arrangement(&mut arrangement).unwrap();
+
+        assert_eq!(arrangement.automation_lanes[0].points[0].id, "early");
+        assert_eq!(arrangement.automation_lanes[0].points[0].value, -90.0);
+        assert_eq!(arrangement.automation_lanes[0].points[1].value, 24.0);
+        arrangement.remove_track("main").unwrap();
+        assert!(arrangement.automation_lanes.is_empty());
     }
 
     #[test]

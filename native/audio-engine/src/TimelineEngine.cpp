@@ -1,5 +1,6 @@
 #include "TimelineEngine.h"
 #include "ArrangementGraph.h"
+#include "OfflineRenderer.h"
 
 #include <algorithm>
 #include <array>
@@ -53,9 +54,47 @@ bool writePcmWave(
         stream.write(reinterpret_cast<const char*>(&sample), sizeof(sample));
     return stream.good();
 }
+
+class CaptureIsolationSink final : public ArrangementCaptureSink {
+public:
+    void writeAudioTrack(
+        const juce::String& trackId,
+        const float* raw,
+        const float* const* processed,
+        const int sampleCount) noexcept override {
+        receivedTrack = trackId;
+        receivedSamples = sampleCount;
+        isolated = raw != nullptr && processed != nullptr
+            && processed[0] != nullptr && processed[1] != nullptr;
+        for (int sample = 0; isolated && sample < sampleCount; ++sample)
+            isolated = std::abs(raw[sample] - 0.05f) < 0.0001f
+                && std::abs(processed[0][sample] - 0.05f) < 0.0001f
+                && std::abs(processed[1][sample] - 0.05f) < 0.0001f;
+    }
+
+    void markLoopBoundary(std::uint64_t) noexcept override {}
+    void writeMidiTrack(
+        const juce::String&,
+        const juce::String&,
+        const juce::MidiMessage&,
+        std::uint64_t) noexcept override {}
+    void setCaptureRange(
+        std::uint64_t,
+        std::uint64_t,
+        std::uint64_t,
+        std::uint64_t) noexcept override {}
+
+    juce::String receivedTrack;
+    int receivedSamples = 0;
+    bool isolated = false;
+};
 } // namespace
 
-TimelineEngine::TimelineEngine() { readAheadThread.startThread(); }
+TimelineEngine::TimelineEngine(const bool offline)
+    : offlineMode(offline) {
+    if (!offlineMode)
+        readAheadThread.startThread();
+}
 
 TimelineEngine::~TimelineEngine() {
     stop();
@@ -64,7 +103,8 @@ TimelineEngine::~TimelineEngine() {
         timeline.reset();
         pendingTimeline.reset();
     }
-    readAheadThread.stopThread(3000);
+    if (readAheadThread.isThreadRunning())
+        readAheadThread.stopThread(3000);
 }
 
 std::int64_t TimelineEngine::tickToSample(
@@ -185,21 +225,62 @@ bool TimelineEngine::loadSnapshot(
             error = "Timeline track requires an id.";
             return false;
         }
-        track->gain = juce::Decibels::decibelsToGain(
-            static_cast<float>(trackValue.getProperty("gainDb", 0.0)));
+        track->gainDb = juce::jlimit(
+            -90.0f, 24.0f, static_cast<float>(trackValue.getProperty("gainDb", 0.0)));
         track->pan = juce::jlimit(
             -1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0)));
         track->muted = static_cast<bool>(trackValue.getProperty("muted", false));
         track->solo = static_cast<bool>(trackValue.getProperty("solo", false));
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
-        track->monitorInput = !track->instrument &&
-            (monitoring == "on" || (monitoring == "auto" && track->armed));
+        track->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
+            monitoring, track->armed, track->instrument);
         if (track->monitorInput)
             monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
         if (audioInput.isObject())
             track->audioInputChannel =
                 static_cast<int>(audioInput.getProperty("channelIndex", -1));
+
+        const auto automation = trackValue.getProperty(
+            "automation", juce::var(juce::Array<juce::var> {}));
+        if (!automation.isArray()) {
+            error = "Timeline track automation must be an array.";
+            return false;
+        }
+        for (const auto& lane : *automation.getArray()) {
+            if (!lane.isObject()) {
+                error = "Timeline Automation Lane must be an object.";
+                return false;
+            }
+            const auto parameter = lane.getProperty("parameter", {}).toString();
+            const auto pointValues = lane.getProperty("points", {});
+            if ((parameter != "volume" && parameter != "pan") || !pointValues.isArray()) {
+                error = "Timeline Automation Lane has an invalid parameter or point list.";
+                return false;
+            }
+            auto& destination = parameter == "volume"
+                ? track->volumeAutomation
+                : track->panAutomation;
+            for (const auto& pointValue : *pointValues.getArray()) {
+                if (!pointValue.isObject()) {
+                    error = "Timeline Automation Point must be an object.";
+                    return false;
+                }
+                const auto tick = static_cast<std::uint64_t>(static_cast<juce::int64>(
+                    pointValue.getProperty("tick", 0)));
+                const auto value = static_cast<float>(pointValue.getProperty("value", 0.0));
+                if (!std::isfinite(value)) {
+                    error = "Timeline Automation Point must have a finite value.";
+                    return false;
+                }
+                destination.push_back({
+                    tickToSample(tick, prepared->ppq, prepared->bpm, outputSampleRate),
+                    parameter == "volume"
+                        ? juce::jlimit(-90.0f, 24.0f, value)
+                        : juce::jlimit(-1.0f, 1.0f, value),
+                });
+            }
+        }
 
         const auto rack = trackValue.getProperty("rack", {});
         const auto instrument = trackValue.getProperty("instrument", {});
@@ -210,7 +291,7 @@ bool TimelineEngine::loadSnapshot(
         track->instrumentConfiguration = instrument.isObject()
             ? juce::JSON::toString(instrument, false)
             : juce::String();
-        if (commitImmediately) {
+        {
             const juce::SpinLock::ScopedLockType lock(timelineLock);
             if (timeline != nullptr) {
                 const auto existing = std::find_if(
@@ -232,7 +313,10 @@ bool TimelineEngine::loadSnapshot(
                 !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
                 return false;
         }
-        if (instrument.isObject() && !track->reuseRuntimeDevices) {
+        if (instrument.isObject()
+            && !static_cast<bool>(
+                instrument.getProperty("disabledPlaceholder", false))
+            && !track->reuseRuntimeDevices) {
             const auto path = instrument.getProperty("path", {}).toString();
             track->instrumentDeviceId = instrument.getProperty("id", {}).toString();
             track->instrumentRack = std::make_unique<PluginRack>();
@@ -327,8 +411,8 @@ bool TimelineEngine::loadSnapshot(
             clip->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
             clip->transport.setSource(
                 clip->readerSource.get(),
-                kReadAheadSamples,
-                &readAheadThread,
+                offlineMode ? 0 : kReadAheadSamples,
+                offlineMode ? nullptr : &readAheadThread,
                 clip->sourceSampleRate,
                 2);
             clip->transport.prepareToPlay(maximumBlockSize, outputSampleRate);
@@ -420,7 +504,8 @@ bool TimelineEngine::loadSnapshot(
         prepared->tracks.push_back(std::move(track));
     }
     for (auto& track : prepared->tracks) {
-        track->compensationDelaySamples = maximumPluginDelay - track->pluginDelaySamples;
+        track->compensationDelaySamples = ArrangementGraph::compensationDelay(
+            maximumPluginDelay, track->pluginDelaySamples);
         track->delayBuffer.setSize(
             2, static_cast<int>(track->compensationDelaySamples + maximumBlockSize + 1),
             false, true, false);
@@ -653,6 +738,19 @@ PluginRack* TimelineEngine::findDevice(
     if (instrument != nullptr && deviceId == track.instrumentDeviceId)
         return instrument;
     return track.effectChain.findDevice(deviceId);
+}
+
+bool TimelineEngine::preparedTrackReusesRuntimeDevices(
+    const juce::String& trackId) const noexcept {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (pendingTimeline == nullptr)
+        return false;
+    const auto track = std::find_if(
+        pendingTimeline->tracks.begin(),
+        pendingTimeline->tracks.end(),
+        [&trackId](const auto& item) { return item->id == trackId; });
+    return track != pendingTimeline->tracks.end()
+        && (*track)->reuseRuntimeDevices;
 }
 
 bool TimelineEngine::setDeviceBypassed(
@@ -1054,6 +1152,7 @@ void TimelineEngine::processTracks(
     const int physicalInputChannelCount,
     float* const* outputChannels,
     const int channelCount,
+    const std::int64_t rangeStart,
     const int destinationStart,
     const int sampleCount) noexcept {
     const auto hasSolo = std::any_of(
@@ -1084,12 +1183,22 @@ void TimelineEngine::processTracks(
             track.effectChain.process(
                 inputChannels, 2, processedChannels, 2, sampleCount);
         }
-        const auto panAngle = (track.pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-        const auto leftGain = track.gain * std::cos(panAngle);
-        const auto rightGain = track.gain * std::sin(panAngle);
         const auto delay = track.compensationDelaySamples;
         const auto delaySize = track.delayBuffer.getNumSamples();
         for (int sample = 0; sample < sampleCount; ++sample) {
+            const auto timelinePosition = rangeStart + sample;
+            const auto gain = juce::Decibels::decibelsToGain(
+                ArrangementGraph::automationValueAt(
+                    track.volumeAutomation, timelinePosition, track.gainDb));
+            const auto pan = juce::jlimit(
+                -1.0f,
+                1.0f,
+                ArrangementGraph::automationValueAt(
+                    track.panAutomation, timelinePosition, track.pan));
+            const auto panAngle =
+                (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            const auto leftGain = gain * std::cos(panAngle);
+            const auto rightGain = gain * std::sin(panAngle);
             float left = processedChannels[0][sample];
             float right = processedChannels[1][sample];
             if (delay > 0 && delaySize > 0) {
@@ -1108,9 +1217,10 @@ void TimelineEngine::processTracks(
         }
         if (!track.instrument && (track.monitorInput || track.armed)
             && track.audioInputChannel >= 0) {
-            const auto* source = track.audioInputChannel < physicalInputChannelCount
-                ? physicalInputChannels[track.audioInputChannel]
-                : nullptr;
+            const auto* source = ArrangementGraph::audioInputSource(
+                track.audioInputChannel,
+                physicalInputChannels,
+                physicalInputChannelCount);
             for (int channel = 0; channel < 2; ++channel) {
                 auto* destination = track.liveInputBuffer.getWritePointer(channel);
                 if (source != nullptr)
@@ -1148,12 +1258,25 @@ void TimelineEngine::processTracks(
             }
             if (track.monitorInput && audible) {
                 for (int sample = 0; sample < sampleCount; ++sample) {
+                    const auto timelinePosition = rangeStart + sample;
+                    const auto gain = juce::Decibels::decibelsToGain(
+                        ArrangementGraph::automationValueAt(
+                            track.volumeAutomation, timelinePosition, track.gainDb));
+                    const auto pan = juce::jlimit(
+                        -1.0f,
+                        1.0f,
+                        ArrangementGraph::automationValueAt(
+                            track.panAutomation, timelinePosition, track.pan));
+                    const auto panAngle =
+                        (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
                     if (channelCount > 0 && outputChannels[0] != nullptr)
                         outputChannels[0][destinationStart + sample] +=
-                            track.liveProcessedBuffer.getSample(0, sample) * leftGain;
+                            track.liveProcessedBuffer.getSample(0, sample)
+                            * gain * std::cos(panAngle);
                     if (channelCount > 1 && outputChannels[1] != nullptr)
                         outputChannels[1][destinationStart + sample] +=
-                            track.liveProcessedBuffer.getSample(1, sample) * rightGain;
+                            track.liveProcessedBuffer.getSample(1, sample)
+                            * gain * std::sin(panAngle);
                 }
             }
         }
@@ -1220,6 +1343,7 @@ void TimelineEngine::mix(
             inputChannelCount,
             outputChannels,
             channelCount,
+            position,
             consumed,
             chunk);
         position += chunk;
@@ -1321,6 +1445,15 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     bool countInAligned = false;
     bool countInAudible = false;
     bool metronomeMixed = false;
+    bool automationRamped = false;
+    bool offlineRangeRendered = false;
+    bool offlineAudioRendered = false;
+    bool graphUpdateReusedDevices = false;
+    bool recordingTapIsolated = false;
+    float automationEarlyLeft = 0.0f;
+    float automationEarlyRight = 0.0f;
+    float automationLateLeft = 0.0f;
+    float automationLateRight = 0.0f;
     juce::String error;
     if (sourcesWritten) {
         juce::AudioFormatManager formats;
@@ -1366,27 +1499,133 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
         audioTrack->setProperty("pan", 0.0);
         audioTrack->setProperty("muted", false);
         audioTrack->setProperty("solo", false);
+        audioTrack->setProperty("armed", true);
+        audioTrack->setProperty("monitoring", "off");
+        auto* audioInput = new juce::DynamicObject();
+        audioInput->setProperty("channelIndex", 0);
+        audioTrack->setProperty("audioInput", juce::var(audioInput));
         auto* rack = new juce::DynamicObject();
         rack->setProperty("devices", juce::Array<juce::var> {});
         audioTrack->setProperty("rack", juce::var(rack));
         audioTrack->setProperty("audioClips", clips);
         audioTrack->setProperty("midiClips", juce::Array<juce::var> {});
+        juce::Array<juce::var> automationPoints;
+        const auto addAutomationPoint = [&automationPoints](
+                                            const juce::String& id,
+                                            const int tick,
+                                            const double value) {
+            auto* point = new juce::DynamicObject();
+            point->setProperty("id", id);
+            point->setProperty("tick", tick);
+            point->setProperty("value", value);
+            automationPoints.add(juce::var(point));
+        };
+        addAutomationPoint("point:left", 0, -1.0);
+        addAutomationPoint("point:right", 20, 1.0);
+        auto* panAutomation = new juce::DynamicObject();
+        panAutomation->setProperty("parameter", "pan");
+        panAutomation->setProperty("points", automationPoints);
+        juce::Array<juce::var> volumePoints;
+        auto* quietPoint = new juce::DynamicObject();
+        quietPoint->setProperty("id", "point:quiet");
+        quietPoint->setProperty("tick", 0);
+        quietPoint->setProperty("value", -24.0);
+        volumePoints.add(juce::var(quietPoint));
+        auto* loudPoint = new juce::DynamicObject();
+        loudPoint->setProperty("id", "point:loud");
+        loudPoint->setProperty("tick", 20);
+        loudPoint->setProperty("value", 0.0);
+        volumePoints.add(juce::var(loudPoint));
+        auto* volumeAutomation = new juce::DynamicObject();
+        volumeAutomation->setProperty("parameter", "volume");
+        volumeAutomation->setProperty("points", volumePoints);
+        juce::Array<juce::var> automation;
+        automation.add(juce::var(volumeAutomation));
+        automation.add(juce::var(panAutomation));
+        audioTrack->setProperty("automation", automation);
         juce::Array<juce::var> tracks;
         tracks.add(juce::var(audioTrack));
+        auto* placeholderTrack = new juce::DynamicObject();
+        placeholderTrack->setProperty("id", "track:missing-instrument");
+        placeholderTrack->setProperty("kind", "instrument");
+        placeholderTrack->setProperty("gainDb", 0.0);
+        placeholderTrack->setProperty("pan", 0.0);
+        placeholderTrack->setProperty("muted", false);
+        placeholderTrack->setProperty("solo", false);
+        auto* placeholderInstrument = new juce::DynamicObject();
+        placeholderInstrument->setProperty("id", "device:missing-instrument");
+        placeholderInstrument->setProperty("path", "C:\\missing\\Instrument.vst3");
+        placeholderInstrument->setProperty("disabledPlaceholder", true);
+        placeholderTrack->setProperty(
+            "instrument", juce::var(placeholderInstrument));
+        auto* placeholderRack = new juce::DynamicObject();
+        placeholderRack->setProperty("devices", juce::Array<juce::var> {});
+        placeholderTrack->setProperty("rack", juce::var(placeholderRack));
+        placeholderTrack->setProperty(
+            "audioClips", juce::Array<juce::var> {});
+        placeholderTrack->setProperty(
+            "midiClips", juce::Array<juce::var> {});
+        placeholderTrack->setProperty(
+            "automation", juce::Array<juce::var> {});
+        tracks.add(juce::var(placeholderTrack));
         auto* snapshotObject = new juce::DynamicObject();
         snapshotObject->setProperty("revision", 7);
         snapshotObject->setProperty("timebase", juce::var(timebase));
         snapshotObject->setProperty("loopRange", juce::var(loopRange));
         snapshotObject->setProperty("tracks", tracks);
-        loaded = engine.loadSnapshot(
-            juce::var(snapshotObject), formats, 48000.0, 512, error);
+        const auto snapshot = juce::var(snapshotObject);
+        loaded = engine.loadSnapshot(snapshot, formats, 48000.0, 512, error);
         if (loaded) {
+            snapshotObject->setProperty("revision", 8);
+            audioTrack->setProperty("gainDb", -3.0);
+            graphUpdateReusedDevices =
+                engine.loadSnapshot(snapshot, formats, 48000.0, 512, error, false)
+                && engine.preparedTrackReusesRuntimeDevices("track:test")
+                && engine.commitPreparedSnapshot(error);
+            OfflineRenderer offlineRenderer;
+            OfflineRenderer::Result offlineResult;
+            const auto offlineOutput = directory.getChildFile("offline-selection.wav");
+            if (offlineRenderer.render(
+                    snapshot,
+                    formats,
+                    offlineOutput,
+                    480,
+                    1440,
+                    48000.0,
+                    512,
+                    0.0f,
+                    false,
+                    offlineResult,
+                    error)) {
+                auto reader = std::unique_ptr<juce::AudioFormatReader>(
+                    formats.createReaderFor(offlineOutput));
+                juce::AudioBuffer<float> rendered(2, 24000);
+                offlineRangeRendered = reader != nullptr
+                    && reader->numChannels == 2
+                    && reader->lengthInSamples == 24000;
+                offlineAudioRendered = offlineRangeRendered
+                    && reader->read(&rendered, 0, 24000, 0, true, true)
+                    && std::max(
+                           rendered.getMagnitude(0, 0, 24000),
+                           rendered.getMagnitude(1, 0, 24000))
+                        > 0.01f;
+            }
+            engine.seekToTick(0);
             engine.play();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::array<float, 512> left {};
             std::array<float, 512> right {};
             std::array<float*, 2> channels { left.data(), right.data() };
-            for (int block = 0; block < 8; ++block)
+            engine.mix(channels.data(), 2, static_cast<int>(left.size()));
+            automationEarlyLeft = std::abs(left[20]);
+            automationEarlyRight = std::abs(right[20]);
+            automationLateLeft = std::abs(left[490]);
+            automationLateRight = std::abs(right[490]);
+            automationRamped = std::abs(left[20]) > std::abs(right[20]) * 2.0f
+                && std::abs(right[490]) > std::abs(left[490]) * 2.0f
+                && std::abs(left[490]) + std::abs(right[490])
+                    > (std::abs(left[20]) + std::abs(right[20])) * 4.0f;
+            for (int block = 1; block < 8; ++block)
                 engine.mix(channels.data(), 2, static_cast<int>(left.size()));
             const auto peak = std::max(
                 *std::max_element(left.begin(), left.end()),
@@ -1395,6 +1634,44 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             engine.seekToTick(960);
             const auto seekStatus = engine.status();
             seeked = static_cast<juce::int64>(seekStatus.getProperty("timelineSample", -1)) == 24000;
+
+            CaptureIsolationSink captureSink;
+            engine.setRecordingSink(&captureSink);
+            engine.seekToTick(0);
+            int captureOffset = 0;
+            int captureSamples = 0;
+            std::array<float, 512> physicalInput {};
+            physicalInput.fill(0.05f);
+            std::array<float, 512> captureLeft {};
+            std::array<float, 512> captureRight {};
+            const std::array<const float*, 1> physicalInputs {
+                physicalInput.data()
+            };
+            const std::array<float*, 2> captureOutputs {
+                captureLeft.data(), captureRight.data()
+            };
+            const auto captureStarted = engine.startRecording(0, error);
+            const auto captureWindow = captureStarted
+                && engine.recordingWindow(
+                    static_cast<int>(physicalInput.size()),
+                    captureOffset,
+                    captureSamples);
+            if (captureWindow)
+                engine.mix(
+                    physicalInputs.data(),
+                    1,
+                    captureOutputs.data(),
+                    2,
+                    static_cast<int>(physicalInput.size()));
+            engine.stopRecording();
+            engine.stop();
+            engine.clearRecordingSink();
+            recordingTapIsolated = captureWindow
+                && captureOffset == 0
+                && captureSamples == static_cast<int>(physicalInput.size())
+                && captureSink.receivedTrack == "track:test"
+                && captureSink.receivedSamples == static_cast<int>(physicalInput.size())
+                && captureSink.isolated;
 
             auto* loopSnapshot = new juce::DynamicObject();
             auto* loopTimebase = new juce::DynamicObject();
@@ -1514,6 +1791,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
         checks.add(juce::var(check));
     };
     addCheck("44.1 kHz mono and 48 kHz stereo sources load", sourcesWritten && loaded);
+    addCheck("disabled Instrument placeholder does not block the Graph", loaded);
     addCheck("overlapping sources mix through read-ahead and sample-rate correction", mixed);
     addCheck("tick seek resolves against the engine sample clock", seeked);
     addCheck("loop wrap returns to the exact loop start", looped);
@@ -1522,14 +1800,34 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     addCheck("count-in and Punch capture share the exact callback offset", countInAligned);
     addCheck("count-in click is generated by the Native Clock", countInAudible);
     addCheck("metronome follows the timeline clock", metronomeMixed);
+    addCheck("Volume and Pan Automation ramp within an audio block", automationRamped);
+    addCheck(
+        "Offline Render writes the exact tick selection",
+        offlineRangeRendered);
+    addCheck(
+        "Offline Render receives audio from the Arrangement Graph",
+        offlineAudioRendered);
+    addCheck(
+        "mix edits swap the Graph without reloading Track Devices",
+        graphUpdateReusedDevices);
+    addCheck(
+        "recording taps exclude Timeline playback and Track mix gain",
+        recordingTapIsolated);
     result->setProperty("checks", checks);
     result->setProperty("message", error);
+    result->setProperty("automationEarlyLeft", automationEarlyLeft);
+    result->setProperty("automationEarlyRight", automationEarlyRight);
+    result->setProperty("automationLateLeft", automationLateLeft);
+    result->setProperty("automationLateRight", automationLateRight);
     result->setProperty(
         "passed", sourcesWritten && loaded && mixed && seeked && looped && punchWindowed
             && immediateRecordStarted && countInAligned && countInAudible
-            && metronomeMixed);
+            && metronomeMixed && automationRamped && offlineRangeRendered
+            && offlineAudioRendered && graphUpdateReusedDevices
+            && recordingTapIsolated);
     mono.deleteFile();
     stereo.deleteFile();
+    directory.getChildFile("offline-selection.wav").deleteFile();
     return juce::var(result);
 }
 

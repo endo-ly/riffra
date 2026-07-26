@@ -20,6 +20,7 @@ interface ArrangeTrackProps {
   analyses: Record<string, AudioAnalysis | null>;
   selectedClipIds: string[];
   selected: boolean;
+  unavailableClipIds: string[];
   timelineWidth: number;
   timelineTicks: number;
   pixelsPerTick: number;
@@ -51,6 +52,8 @@ interface ArrangeTrackProps {
   onDelete: () => void;
   onReorder: (sourceTrackId: string) => void;
   onResize: () => void;
+  automationOpen: boolean;
+  onToggleAutomation: () => void;
 }
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
@@ -218,6 +221,14 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             >
               Height: {props.trackSize}
             </button>
+            <button
+              onClick={(event) => {
+                props.onToggleAutomation();
+                event.currentTarget.closest('details')?.removeAttribute('open');
+              }}
+            >
+              {props.automationOpen ? 'Hide' : 'Show'} Automation
+            </button>
             <button className={styles.deleteTrack} onClick={props.onDelete}>
               Delete
             </button>
@@ -282,6 +293,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             lane={layout.lanes.get(clip.id) ?? 0}
             laneHeight={laneHeight}
             selected={props.selectedClipIds.includes(clip.id)}
+            missing={props.unavailableClipIds.includes(clip.id)}
             onSelect={props.onSelect}
             onMove={props.onMove}
             onTrim={props.onTrim}

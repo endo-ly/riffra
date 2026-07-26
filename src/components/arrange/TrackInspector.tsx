@@ -8,6 +8,10 @@ interface TrackInspectorProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
+  missingDeviceIds: string[];
+  onDisableMissingPlugin: (deviceId: string) => Promise<void>;
+  onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
+  onRescanMissingPlugins: () => Promise<void>;
   api: NativeApi;
 }
 
@@ -27,6 +31,13 @@ export function TrackInspector(props: TrackInspectorProps) {
   const setInstrument = () => {
     const path = window.prompt('VST3 instrument path', props.track.instrument?.path ?? '')?.trim();
     if (path) commit(props.api.setTrackInstrument(props.track.id, path), 'Instrument updated.');
+  };
+  const instrumentUnavailable =
+    props.track.instrument?.disabledPlaceholder ||
+    (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
+  const replaceMissing = (deviceId: string, currentPath?: string) => {
+    const path = window.prompt('Replacement VST3 path', currentPath ?? '')?.trim();
+    if (path) void props.onReplaceMissingPlugin(deviceId, path);
   };
   return (
     <>
@@ -138,10 +149,38 @@ export function TrackInspector(props: TrackInspectorProps) {
               <strong>INSTRUMENT</strong>
             </header>
             <p>{props.track.instrument?.name ?? 'None'}</p>
-            <button onClick={setInstrument}>
-              {props.track.instrument ? 'Change' : 'Choose Instrument'}
-            </button>
-            {props.track.instrument && (
+            {instrumentUnavailable && (
+              <strong>
+                {props.track.instrument?.disabledPlaceholder
+                  ? 'DISABLED PLACEHOLDER'
+                  : 'MISSING PLUGIN'}
+              </strong>
+            )}
+            {!instrumentUnavailable && (
+              <button onClick={setInstrument}>
+                {props.track.instrument ? 'Change' : 'Choose Instrument'}
+              </button>
+            )}
+            {props.track.instrument && instrumentUnavailable && (
+              <>
+                <button onClick={() => void props.onRescanMissingPlugins()}>Re-scan</button>
+                <button
+                  onClick={() =>
+                    replaceMissing(props.track.instrument!.id, props.track.instrument!.path)
+                  }
+                >
+                  Replace
+                </button>
+                {!props.track.instrument.disabledPlaceholder && (
+                  <button
+                    onClick={() => void props.onDisableMissingPlugin(props.track.instrument!.id)}
+                  >
+                    Disable
+                  </button>
+                )}
+              </>
+            )}
+            {props.track.instrument && !instrumentUnavailable && (
               <>
                 <button
                   onClick={() =>
@@ -178,7 +217,15 @@ export function TrackInspector(props: TrackInspectorProps) {
           </button>
         ))}
       </section>
-      <TrackPluginChainEditor track={props.track} api={props.api} commit={commit} />
+      <TrackPluginChainEditor
+        track={props.track}
+        api={props.api}
+        commit={commit}
+        missingDeviceIds={props.missingDeviceIds}
+        onDisableMissingPlugin={props.onDisableMissingPlugin}
+        onReplaceMissingPlugin={props.onReplaceMissingPlugin}
+        onRescanMissingPlugins={props.onRescanMissingPlugins}
+      />
       <section>
         <header>
           <strong>MIX</strong>

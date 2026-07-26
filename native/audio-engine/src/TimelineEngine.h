@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "ArrangementCaptureSink.h"
+#include "ArrangementGraph.h"
 #include "PluginChain.h"
 
 #include <atomic>
@@ -13,7 +14,7 @@ namespace riffra {
 
 class TimelineEngine final {
 public:
-    TimelineEngine();
+    explicit TimelineEngine(bool offline = false);
     ~TimelineEngine();
 
     TimelineEngine(const TimelineEngine&) = delete;
@@ -54,6 +55,8 @@ public:
     [[nodiscard]] PluginRack* findDevice(
         const juce::String& trackId,
         const juce::String& deviceId) noexcept;
+    [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
+        const juce::String& trackId) const noexcept;
     [[nodiscard]] bool monitoringEnabled() const noexcept;
     [[nodiscard]] bool recordingWindow(
         int sampleCount,
@@ -137,8 +140,10 @@ private:
         std::int64_t compensationDelaySamples = 0;
         std::int64_t pluginDelaySamples = 0;
         double outputSampleRate = 0.0;
-        float gain = 1.0f;
+        float gainDb = 0.0f;
         float pan = 0.0f;
+        std::vector<ArrangementGraph::AutomationPoint> volumeAutomation;
+        std::vector<ArrangementGraph::AutomationPoint> panAutomation;
         bool muted = false;
         bool solo = false;
         bool instrument = false;
@@ -185,12 +190,14 @@ private:
         int inputChannelCount,
         float* const* outputChannels,
         int channelCount,
+        std::int64_t rangeStart,
         int destinationStart,
         int sampleCount) noexcept;
     void scheduleMidi(Track& track, std::int64_t rangeStart, int sampleCount) noexcept;
     void resetTrackState(PreparedTimeline& timeline) noexcept;
 
     juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
+    bool offlineMode = false;
     mutable juce::SpinLock timelineLock;
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;

@@ -34,6 +34,8 @@ import type {
   TransportStatus,
   AudioClipPatch,
   AudioTakeVariant,
+  AutomationParameter,
+  AutomationPoint,
   MidiClipMove,
   MidiClipPatch,
   MidiInputRoute,
@@ -465,6 +467,13 @@ async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> 
   return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
 }
 
+async function replaceMissingTrackPlugin(
+  deviceId: string,
+  newPath: string,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('replace_missing_track_plugin', { deviceId, newPath });
+}
+
 async function addAudioClipToArrangement(
   assetId: AssetId,
   name: string,
@@ -605,6 +614,14 @@ async function updateTrack(
   },
 ): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_track', { trackId, patch });
+}
+
+async function setTrackAutomation(
+  trackId: string,
+  parameter: AutomationParameter,
+  points: AutomationPoint[],
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('set_track_automation', { trackId, parameter, points });
 }
 
 async function setTrackAudioInput(
@@ -926,6 +943,7 @@ function createNativeApi(): NativeApi {
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
+    replaceMissingTrackPlugin,
     addAudioClipToArrangement,
     addMidiClipToArrangement,
     updateAudioClip,
@@ -943,6 +961,7 @@ function createNativeApi(): NativeApi {
     crossfadeAudioClips,
     addTrack,
     updateTrack,
+    setTrackAutomation,
     setTrackAudioInput,
     setTrackMidiInput,
     setTrackInstrument,

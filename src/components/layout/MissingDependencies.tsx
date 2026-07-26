@@ -7,6 +7,7 @@ import styles from './MissingDependencies.module.css';
 interface MissingDependenciesProps {
   missing: MissingDependency[];
   onRelink: (item: MissingDependency, newPath: string) => void;
+  onReplacePlugin: (deviceId: string, newPath: string) => void;
   onDisablePlugin: (deviceId: string) => void;
   onIgnore: (item: MissingDependency) => void;
 }
@@ -20,6 +21,7 @@ interface MissingDependenciesProps {
 export function MissingDependencies({
   missing,
   onRelink,
+  onReplacePlugin,
   onDisablePlugin,
   onIgnore,
 }: MissingDependenciesProps) {
@@ -60,9 +62,13 @@ export function MissingDependencies({
                 <button
                   className="text-button"
                   disabled={!newPath.trim()}
-                  onClick={() => onRelink(item, newPath.trim())}
+                  onClick={() =>
+                    item.kind === 'plugin'
+                      ? onReplacePlugin(item.id, newPath.trim())
+                      : onRelink(item, newPath.trim())
+                  }
                 >
-                  <Icon name="link" /> Relink
+                  <Icon name="link" /> {item.kind === 'plugin' ? 'Replace' : 'Relink'}
                 </button>
                 {item.kind === 'plugin' && (
                   <button className="text-button" onClick={() => onDisablePlugin(item.id)}>

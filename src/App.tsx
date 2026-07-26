@@ -76,6 +76,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     cancelActiveJob,
     relinkMissing,
     disableMissingPluginDevice,
+    replaceMissingPluginDevice,
+    rescanMissingPlugins,
     ignoreMissing,
     commandOpen,
     undoStack,
@@ -187,6 +189,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         <MissingDependencies
           missing={missingDependencies}
           onRelink={relinkMissing}
+          onReplacePlugin={(deviceId, newPath) =>
+            void replaceMissingPluginDevice(deviceId, newPath)
+          }
           onDisablePlugin={disableMissingPluginDevice}
           onIgnore={ignoreMissing}
         />
@@ -366,6 +371,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         setSession={setSession}
         arrangeSelection={arrangeSelection}
         setArrangeSelection={setArrangeSelection}
+        missingDependencies={missingDependencies}
+        onDisableMissingPlugin={disableMissingPluginDevice}
+        onReplaceMissingPlugin={replaceMissingPluginDevice}
+        onRescanMissingPlugins={rescanMissingPlugins}
         api={nativeApi}
       />
 

@@ -5,14 +5,25 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceArrange } from '@/components';
-import { defaultSession, toAssetId, type CreativeSession } from '@/lib/domain';
+import {
+  defaultSession,
+  toAssetId,
+  type CreativeSession,
+  type TransportStatus,
+} from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 
 afterEach(cleanup);
 
-function Harness({ api }: { api: FakeNativeApi }) {
-  const initial = defaultSession();
+function Harness({
+  api,
+  initialSession,
+}: {
+  api: FakeNativeApi;
+  initialSession?: CreativeSession;
+}) {
+  const initial = initialSession ?? defaultSession();
   initial.workspace = 'arrange';
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
@@ -89,5 +100,100 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(api.calls).toContain('removeTrack'));
     expect(userConfirmed).toHaveBeenCalledWith(expect.stringContaining('Source Audio Assets'));
     expect(screen.queryByText('Audio 1')).not.toBeInTheDocument();
+  });
+
+  it('edits Track Automation with one Session commit per gesture', async () => {
+    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audio Track' }));
+    fireEvent.click(await screen.findByText('Audio 1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
+    const lane = screen.getByLabelText('Audio 1 volume automation');
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, width: 1200, top: 0, bottom: 84, right: 1200, height: 84 }),
+    });
+
+    fireEvent.pointerDown(lane, { button: 0, clientX: 120, clientY: 42 });
+    await waitFor(() => expect(api.calls).toContain('setTrackAutomation'));
+    const point = screen.getByRole('button', { name: /volume .* at tick/ });
+    const commitsBeforeDrag = api.calls.filter((call) => call === 'setTrackAutomation').length;
+    fireEvent.pointerDown(point, { button: 0, clientX: 120, clientY: 42 });
+    fireEvent.pointerMove(window, { clientX: 180, clientY: 24 });
+    expect(api.calls.filter((call) => call === 'setTrackAutomation')).toHaveLength(
+      commitsBeforeDrag,
+    );
+    fireEvent.pointerUp(window, { clientX: 180, clientY: 24 });
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'setTrackAutomation')).toHaveLength(
+        commitsBeforeDrag + 1,
+      ),
+    );
+  });
+
+  it('keeps an unavailable clip on the timeline and labels its missing source', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
+    session.arrangement.tracks.push({
+      id: 'track:audio',
+      name: 'Audio',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.audioClips.push({
+      id: 'clip:missing',
+      name: 'Lost Take',
+      trackId: 'track:audio',
+      assetId,
+      startTick: 0,
+      sourceRange: { start: 0, end: 48_000 },
+      sourceSampleRate: 48_000,
+      timelineDuration: { frames: 48_000, sampleRate: 48_000 },
+      gainDb: 0,
+      pan: 0,
+      fadeIn: { frames: 0, sampleRate: 48_000 },
+      fadeOut: { frames: 0, sampleRate: 48_000 },
+      loopEnabled: false,
+      muted: false,
+      takeVariant: 'raw',
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const status: TransportStatus = {
+      type: 'transportStatus',
+      state: 'stopped',
+      revision: session.arrangement.revision,
+      timelineTick: 0,
+      timelineSample: 0,
+      audioClockSample: 0,
+      sampleRate: 48_000,
+      sequence: 1,
+      recordingPhase: 'idle',
+      recordingStartTick: 0,
+      recordingCurrentTick: 0,
+      recordingPassOrdinal: 0,
+      armedTrackIds: [],
+      clockGeneration: 1,
+      discontinuity: 1,
+      unavailableClipIds: ['clip:missing'],
+      missingDeviceIds: [],
+    };
+    api.onTransportStatus = (callback) => {
+      queueMicrotask(() => callback(status));
+      return () => undefined;
+    };
+
+    render(<Harness api={api} initialSession={session} />);
+
+    expect(await screen.findByText('Lost Take')).toBeInTheDocument();
+    expect((await screen.findAllByText('MISSING SOURCE')).length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 });

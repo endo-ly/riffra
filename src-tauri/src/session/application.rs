@@ -38,9 +38,10 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::rack::{DeviceKind, RackDevice};
 use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, AudioInputRoute, AudioTakeVariant, CreativeSession,
-    DesignTool, Marker, MidiClip, MidiEvent, MidiEventKind, MidiInputRoute, MidiNote,
-    MonitoringState, ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind, Workspace,
+    AiChangeSet, AiPermission, Arrangement, AudioInputRoute, AudioTakeVariant, AutomationLane,
+    AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker, MidiClip, MidiEvent,
+    MidiEventKind, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase, SamplePad,
+    TimelineTick, Track, TrackKind, Workspace,
 };
 use crate::storage::{SessionStore, now_ms};
 
@@ -707,19 +708,24 @@ fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> ser
         .tracks
         .iter()
         .map(|track| {
-            for device in track
-                .instrument
-                .iter()
-                .chain(track.rack.devices.iter())
+            let mut runtime_instrument = track.instrument.clone();
+            let mut runtime_rack = track.rack.clone();
+            for device in runtime_instrument
+                .iter_mut()
+                .chain(runtime_rack.devices.iter_mut())
                 .filter(|device| device.kind == DeviceKind::Plugin)
             {
-                if device.disabled_placeholder
-                    || device
+                if !device.disabled_placeholder
+                    && device
                         .path
                         .as_deref()
                         .is_none_or(|path| !Path::new(path).exists())
                 {
                     missing_device_ids.push(device.id.clone());
+                    // Keep the canonical unresolved Device intact, but project a
+                    // bypassed placeholder into the Runtime Graph so one missing
+                    // plugin never prevents the rest of the Arrangement playing.
+                    device.disabled_placeholder = true;
                 }
             }
             let audio_clips = arrangement
@@ -755,6 +761,11 @@ fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> ser
                 .iter()
                 .filter(|clip| clip.track_id == track.id)
                 .collect::<Vec<_>>();
+            let automation = arrangement
+                .automation_lanes
+                .iter()
+                .filter(|lane| lane.track_id == track.id)
+                .collect::<Vec<_>>();
             serde_json::json!({
                 "id": track.id,
                 "name": track.name,
@@ -767,10 +778,11 @@ fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> ser
                 "monitoring": track.monitoring,
                 "audioInput": track.audio_input,
                 "midiInput": track.midi_input,
-                "instrument": track.instrument,
-                "rack": track.rack,
+                "instrument": runtime_instrument,
+                "rack": runtime_rack,
                 "audioClips": audio_clips,
                 "midiClips": midi_clips,
+                "automation": automation,
             })
         })
         .collect::<Vec<_>>();
@@ -783,7 +795,6 @@ fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> ser
         "tracks": tracks,
         "unavailableClipIds": unavailable_clip_ids,
         "missingDeviceIds": missing_device_ids,
-        "automation": [],
     })
 }
 
@@ -1549,6 +1560,46 @@ pub fn update_track(
     Ok(committed)
 }
 
+/// Replaces one Track Automation Lane in a single canonical edit.
+///
+/// The UI previews pointer movement locally and calls this once on pointer-up.
+/// An empty point list removes the lane so the Track's regular value applies.
+pub fn set_track_automation(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    parameter: AutomationParameter,
+    mut points: Vec<AutomationPoint>,
+) -> Result<CreativeSession, String> {
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    if !session
+        .arrangement
+        .tracks
+        .iter()
+        .any(|track| track.id == track_id)
+    {
+        return Err(format!("Track is not registered: {track_id}"));
+    }
+    points.sort_by_key(|point| point.tick);
+    session
+        .arrangement
+        .automation_lanes
+        .retain(|lane| lane.track_id != track_id || lane.parameter != parameter);
+    if !points.is_empty() {
+        let parameter_name = match parameter {
+            AutomationParameter::Volume => "volume",
+            AutomationParameter::Pan => "pan",
+        };
+        session.arrangement.automation_lanes.push(AutomationLane {
+            id: format!("automation:{track_id}:{parameter_name}"),
+            track_id: track_id.to_owned(),
+            parameter,
+            points,
+        });
+    }
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
 /// Removes a Track and its Clips without deleting any referenced Asset.
 pub fn remove_track(
     context: &SessionContext<'_>,
@@ -1612,6 +1663,26 @@ pub fn duplicate_track(
         })
         .collect::<Vec<_>>();
     session.arrangement.midi_clips.extend(midi_clips);
+    let automation_lanes = session
+        .arrangement
+        .automation_lanes
+        .iter()
+        .filter(|lane| lane.track_id == track_id)
+        .cloned()
+        .enumerate()
+        .map(|(index, mut lane)| {
+            lane.id = format!("automation:{duplicate_id}:{index}");
+            lane.track_id = duplicate_id.clone();
+            for (point_index, point) in lane.points.iter_mut().enumerate() {
+                point.id = format!("automation-point:{operation_id}:{index}:{point_index}");
+            }
+            lane
+        })
+        .collect::<Vec<_>>();
+    session
+        .arrangement
+        .automation_lanes
+        .extend(automation_lanes);
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_structural_arrangement(context, session)
 }
@@ -2201,7 +2272,80 @@ pub fn disable_missing_plugin(
     context: &SessionContext<'_>,
     device_id: &str,
 ) -> Result<CreativeSession, String> {
+    let session = context.session.lock().map_err(lock_error)?.clone();
+    let candidate = crate::missing::mark_disabled_placeholder(&session, device_id);
+    if candidate == session {
+        return Err(format!(
+            "Missing Plugin Device is not registered: {device_id}"
+        ));
+    }
+    if candidate.arrangement.revision != session.arrangement.revision {
+        commit_structural_arrangement(context, candidate)
+    } else {
+        commit_session(context, candidate)
+    }
+}
+
+/// Replaces an unresolved Track Device in place so its chain position and id
+/// remain stable while the plugin binary and plugin state are refreshed.
+pub fn replace_missing_track_plugin(
+    context: &SessionContext<'_>,
+    device_id: &str,
+    new_path: &str,
+) -> Result<CreativeSession, String> {
+    let path = Path::new(new_path.trim());
+    if !path.exists() {
+        return Err("Replacement VST3 path does not exist.".into());
+    }
     let mut session = context.session.lock().map_err(lock_error)?.clone();
-    session = crate::missing::mark_disabled_placeholder(&session, device_id);
-    commit_session(context, session)
+    let device = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find_map(|track| track_device_mut(track, device_id))
+        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+    *device = plugin_device(&path.to_string_lossy(), device_id.to_owned())?;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_structural_arrangement(context, session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_track_plugin_is_projected_as_a_runtime_placeholder() {
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::instrument("track:synth".into(), "Synth".into());
+        track.instrument = Some(RackDevice {
+            id: "device:missing".into(),
+            name: "Missing Synth".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\missing\Synth.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        });
+        session.arrangement.tracks.push(track);
+
+        let snapshot = runtime_timeline_snapshot(Path::new("."), &session);
+
+        assert_eq!(
+            snapshot["missingDeviceIds"],
+            serde_json::json!(["device:missing"])
+        );
+        assert_eq!(
+            snapshot["tracks"][0]["instrument"]["disabledPlaceholder"],
+            true
+        );
+        assert!(
+            !session.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .unwrap()
+                .disabled_placeholder
+        );
+    }
 }
