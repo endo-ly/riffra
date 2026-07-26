@@ -1504,6 +1504,37 @@ pub fn persist_track_plugin_state(
     commit_session(context, session)
 }
 
+/// Persists one editor-originated parameter without routing it back through
+/// Native. The playback instance has already changed and the live instance
+/// receives the same value through its block-boundary queue.
+pub fn persist_track_plugin_parameter(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    device_id: &str,
+    parameter_index: i32,
+    value: f32,
+) -> Result<CreativeSession, String> {
+    if parameter_index < 0 || !value.is_finite() {
+        return Err("Track Plugin Editor returned an invalid parameter change.".into());
+    }
+    let index = usize::try_from(parameter_index)
+        .map_err(|_| "Track Plugin Editor returned an invalid parameter index.".to_string())?;
+    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let device = session
+        .arrangement
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track_device_mut(track, device_id))
+        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+    if device.parameter_values.len() <= index {
+        device.parameter_values.resize(index + 1, 0.0);
+    }
+    device.parameter_values[index] = value;
+    session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+    commit_session(context, session)
+}
+
 fn apply_track_plugin_state(
     session: &mut CreativeSession,
     track_id: &str,
@@ -2015,7 +2046,35 @@ fn apply_audio_clip_take_variant(
         .iter_mut()
         .find(|clip| clip.id == clip_id)
         .ok_or_else(|| format!("Audio Clip is not registered: {clip_id}"))?;
-    apply_audio_source_to_clip(clip, &source);
+    // Variant data can contain an older latency/tail-inclusive range. Keep the
+    // clip's logical span stable while choosing the matching source window;
+    // modern captures already have equal performance ranges for both variants.
+    let prior_duration = clip.timeline_duration;
+    let target_frames = if prior_duration.sample_rate > 0 && source.sample_rate > 0 {
+        ((prior_duration.frames as f64 * f64::from(source.sample_rate)
+            / f64::from(prior_duration.sample_rate))
+        .round() as u64)
+            .max(1)
+    } else {
+        source
+            .source_end_sample
+            .saturating_sub(source.source_start_sample)
+    };
+    let mut selected_source = source;
+    if selected_source
+        .source_end_sample
+        .saturating_sub(selected_source.source_start_sample)
+        != target_frames
+        && selected_source
+            .source_start_sample
+            .saturating_add(target_frames)
+            <= selected_source.source_end_sample
+    {
+        selected_source.source_end_sample = selected_source
+            .source_start_sample
+            .saturating_add(target_frames);
+    }
+    apply_audio_source_to_clip(clip, &selected_source);
     clip.take_variant = variant;
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     Ok(())
@@ -2028,9 +2087,10 @@ fn apply_audio_source_to_clip(clip: &mut AudioClip, source: &TakeAudioSource) {
     clip.timeline_duration.frames = source
         .source_end_sample
         .saturating_sub(source.source_start_sample);
-    clip.timeline_duration.sample_rate = clip.source_sample_rate;
-    clip.fade_in.sample_rate = clip.source_sample_rate;
-    clip.fade_out.sample_rate = clip.source_sample_rate;
+    clip.source_sample_rate = source.sample_rate;
+    clip.timeline_duration.sample_rate = source.sample_rate;
+    clip.fade_in.sample_rate = source.sample_rate;
+    clip.fade_out.sample_rate = source.sample_rate;
     clip.normalize_fields();
 }
 
@@ -2474,11 +2534,15 @@ mod tests {
                 asset_id: raw_id.clone(),
                 source_start_sample: 0,
                 source_end_sample: 1_000,
+                tail_end_sample: 1_000,
+                sample_rate: 48_000,
             }),
             processed_audio: Some(TakeAudioSource {
                 asset_id: processed_id.clone(),
                 source_start_sample: 128,
                 source_end_sample: 1_256,
+                tail_end_sample: 1_256,
+                sample_rate: 48_000,
             }),
             raw_audio_asset_id: None,
             processed_audio_asset_id: None,
@@ -2507,10 +2571,10 @@ mod tests {
             selected.source_range,
             crate::session::FrameRange {
                 start: 128,
-                end: 1_256
+                end: 1_128
             }
         );
-        assert_eq!(selected.timeline_duration.frames, 1_128);
+        assert_eq!(selected.timeline_duration.frames, 1_000);
         assert_eq!(untouched.asset_id, raw_id);
         assert_eq!(untouched.take_variant, AudioTakeVariant::Raw);
     }
@@ -2535,9 +2599,15 @@ mod tests {
             asset_id: asset::mint_asset_id(),
             source_start_sample: 4_000,
             source_end_sample: 10_000,
+            tail_end_sample: 10_000,
+            sample_rate: 48_000,
         };
         apply_audio_source_to_clip(&mut clip, &partial);
         assert_eq!(clip.timeline_duration.frames, 6_000);
+        assert_eq!(clip.source_sample_rate, 48_000);
+        assert_eq!(clip.timeline_duration.sample_rate, 48_000);
+        assert_eq!(clip.fade_in.sample_rate, 48_000);
+        assert_eq!(clip.fade_out.sample_rate, 48_000);
         assert_eq!(clip.fade_in.frames, 6_000);
         assert_eq!(clip.fade_out.frames, 6_000);
 
@@ -2545,6 +2615,8 @@ mod tests {
             asset_id: asset::mint_asset_id(),
             source_start_sample: 0,
             source_end_sample: 48_000,
+            tail_end_sample: 48_000,
+            sample_rate: 48_000,
         };
         apply_audio_source_to_clip(&mut clip, &full);
         assert_eq!(clip.timeline_duration.frames, 48_000);

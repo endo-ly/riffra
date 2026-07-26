@@ -101,8 +101,10 @@ impl SessionStore {
     /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let session = crate::session::deserialize_session(&payload)
+        let mut session = crate::session::deserialize_session(&payload)
             .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
+        hydrate_legacy_take_sample_rates(&self.data_root, &mut session)
+            .map_err(|error| corrupt_io_error(&error))?;
         let session = session
             .validate_and_normalize()
             .map_err(|error| corrupt_io_error(&error))?;
@@ -124,7 +126,8 @@ impl SessionStore {
     /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        let session = crate::session::deserialize_session(&payload)?;
+        let mut session = crate::session::deserialize_session(&payload)?;
+        hydrate_legacy_take_sample_rates(&self.data_root, &mut session).map_err(invalid_data)?;
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;
@@ -228,6 +231,40 @@ impl SessionStore {
         }
         Ok(())
     }
+}
+
+/// v1/v2 recording Takes did not persist the source rate. Resolve it from the
+/// authoritative registered WAV instead of guessing from the active device.
+/// A missing or invalid asset remains an explicit load error.
+fn hydrate_legacy_take_sample_rates(
+    data_root: &Path,
+    session: &mut CreativeSession,
+) -> Result<(), String> {
+    for take in &mut session.arrangement.takes {
+        for source in [take.raw_audio.as_mut(), take.processed_audio.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            if source.sample_rate != 0 {
+                continue;
+            }
+            let asset = crate::asset::load(data_root, &source.asset_id).ok_or_else(|| {
+                format!(
+                    "Legacy Recording Take source is missing: {}",
+                    source.asset_id
+                )
+            })?;
+            let bytes = fs::read(&asset.content_location).map_err(|error| {
+                format!("Legacy Recording Take audio could not be read: {error}")
+            })?;
+            let wav = crate::analysis::parse_wav(&bytes)?;
+            if wav.sample_rate == 0 {
+                return Err("Legacy Recording Take audio has no sample rate.".into());
+            }
+            source.sample_rate = wav.sample_rate;
+        }
+    }
+    Ok(())
 }
 
 /// Extracts recovery-listing metadata from a session payload without a full

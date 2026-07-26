@@ -18,11 +18,20 @@ public:
         const juce::var& configuration,
         juce::String& error);
 
+    void beginAudioTrackCapture(
+        const juce::String& trackId,
+        std::uint64_t audioClockStartSample,
+        std::uint64_t timelineStartSample) noexcept override;
     void writeAudioTrack(
         const juce::String& trackId,
         const float* raw,
+        int rawSampleCount,
         const float* const* processed,
-        int sampleCount) noexcept override;
+        int processedSampleCount) noexcept override;
+    void endAudioTrackCapture(
+        const juce::String& trackId,
+        std::uint64_t audioClockEndSample,
+        std::uint64_t timelineEndSample) noexcept override;
     void markLoopBoundary(std::uint64_t audioSample) noexcept override;
     void writeMidiTrack(
         const juce::String& trackId,
@@ -39,6 +48,9 @@ public:
     [[nodiscard]] juce::var status() const;
 
 private:
+    static constexpr std::size_t kMaximumLoopBoundaries = 4096;
+    static constexpr std::size_t kMaximumCaptureSegments = 4096;
+
     struct CaptureSegment final {
         std::uint64_t audioClockStartSample = 0;
         std::uint64_t audioClockEndSample = 0;
@@ -49,6 +61,17 @@ private:
     };
 
     struct TrackWriter final {
+        struct VariantCaptureSegment final {
+            std::uint64_t audioClockStartSample = 0;
+            std::uint64_t audioClockEndSample = 0;
+            std::uint64_t timelineStartSample = 0;
+            std::uint64_t timelineEndSample = 0;
+            std::uint64_t rawFileStartSample = 0;
+            std::uint64_t rawFileEndSample = 0;
+            std::uint64_t processedFileStartSample = 0;
+            std::uint64_t processedFileEndSample = 0;
+            std::uint64_t processedTailEndSample = 0;
+        };
         struct MidiEvent final {
             std::uint64_t audioSample = 0;
             juce::String sourceDeviceId;
@@ -67,14 +90,18 @@ private:
         int pluginTailSamples = 0;
         std::unique_ptr<RecordingSession> audio;
         std::vector<MidiEvent> midiEvents;
+        // Allocate this before recording begins; audio callbacks never grow
+        // the vector and therefore never allocate.
+        static constexpr std::size_t kMaximumTrackCaptureSegments = kMaximumCaptureSegments;
+        std::vector<VariantCaptureSegment> captureSegments;
+        std::size_t captureSegmentCount = 0;
+        bool captureActive = false;
     };
 
     ArrangeRecordingSession(juce::File directory, double sampleRate);
     bool initialise(const juce::var& configuration, juce::String& error);
     bool writeManifest(const juce::String& state, juce::String& error) const;
 
-    static constexpr std::size_t kMaximumLoopBoundaries = 4096;
-    static constexpr std::size_t kMaximumCaptureSegments = 4096;
     juce::File directory;
     juce::File manifest;
     double sampleRate = 0.0;

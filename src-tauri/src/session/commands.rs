@@ -488,6 +488,23 @@ pub fn persist_track_plugin_state(
 }
 
 #[tauri::command]
+pub fn persist_track_plugin_parameter(
+    track_id: String,
+    device_id: String,
+    parameter_index: i32,
+    value: f32,
+    state: State<'_, AppState>,
+) -> Result<CreativeSession, String> {
+    application::persist_track_plugin_parameter(
+        &context(&state),
+        &track_id,
+        &device_id,
+        parameter_index,
+        value,
+    )
+}
+
+#[tauri::command]
 pub fn remove_track(
     track_id: String,
     state: State<'_, AppState>,

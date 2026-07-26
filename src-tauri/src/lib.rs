@@ -498,6 +498,7 @@ pub fn run() {
             session::commands::set_track_device_parameter,
             session::commands::open_track_plugin_editor,
             session::commands::persist_track_plugin_state,
+            session::commands::persist_track_plugin_parameter,
             session::commands::remove_track,
             session::commands::duplicate_track,
             session::commands::reorder_track,

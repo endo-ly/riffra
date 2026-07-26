@@ -218,6 +218,18 @@ juce::Array<juce::var> runPluginChainSelfTests() {
             && std::abs(liveValue - 0.75f) < 0.0001f);
     mirroredCheck.getDynamicObject()->setProperty("value", liveValue);
     checks.add(mirroredCheck);
+    liveState.prepare(sampleRate, blockSize);
+    if (auto* liveRack = liveState.findDevice("device-state"))
+        liveRack->enqueueParameterChange(0, 0.25f);
+    liveState.process(inputs.data(), 1, outputs.data(), 2, blockSize);
+    const auto queuedCaptured = liveState.persistedState("device-state", stateError);
+    const auto queuedValues = queuedCaptured.getProperty(
+        "parameterValues", juce::Array<juce::var> {});
+    checks.add(check(
+        "Editor parameter changes reach the Live Chain at a block boundary",
+        queuedValues.isArray()
+            && queuedValues.size() == 1
+            && std::abs(static_cast<float>(queuedValues[0]) - 0.25f) < 0.0001f));
     return checks;
 }
 

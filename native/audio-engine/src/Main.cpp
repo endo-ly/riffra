@@ -900,6 +900,25 @@ int serve(
                             "bypassed",
                             state.getProperty("bypassed", false));
                         writeJson(juce::var(changed));
+                    },
+                    [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
+                        juce::String mirrorError;
+                        if (!timelineEngine.mirrorEditorDeviceParameter(
+                                editorTrackId,
+                                editorDeviceId,
+                                parameterIndex,
+                                value,
+                                mirrorError)) {
+                            writeJson(makeError("trackDevice", mirrorError));
+                            return;
+                        }
+                        auto* changed = new juce::DynamicObject();
+                        changed->setProperty("type", "trackPluginParameterChanged");
+                        changed->setProperty("trackId", editorTrackId);
+                        changed->setProperty("deviceId", editorDeviceId);
+                        changed->setProperty("parameterIndex", parameterIndex);
+                        changed->setProperty("value", value);
+                        writeJson(juce::var(changed));
                     });
                 juce::String editorError;
                 if (!trackPluginEditor->open(editorError)) {
@@ -1083,9 +1102,8 @@ int serve(
                         path.isEmpty() ? nullptr
                                        : formatManager.createReaderFor(juce::File(path)));
                     if (reader == nullptr || reader->lengthInSamples <= 0
-                        || std::abs(reader->sampleRate - callback.getSampleRate()) > 0.5
                         || reader->lengthInSamples > std::numeric_limits<int>::max()) {
-                        loadError = "Take comparison source is unavailable or has a different sample rate.";
+                        loadError = "Take comparison source is unavailable.";
                         return false;
                     }
                     if (startFrame < 0 || endFrame <= startFrame
@@ -1094,14 +1112,39 @@ int serve(
                         loadError = "Take comparison range is outside its source.";
                         return false;
                     }
-                    const auto frameCount = static_cast<int>(endFrame - startFrame);
-                    target.setSize(
-                        static_cast<int>(reader->numChannels),
-                        frameCount);
+                    const auto sourceFrames = static_cast<int>(endFrame - startFrame);
+                    const auto targetRate = callback.getSampleRate();
+                    if (targetRate <= 0.0 || reader->sampleRate <= 0.0) {
+                        loadError = "Take comparison requires an active output sample rate.";
+                        return false;
+                    }
+                    juce::AudioBuffer<float> source(
+                        static_cast<int>(reader->numChannels), sourceFrames + 4);
+                    source.clear();
                     if (!reader->read(
-                            &target, 0, frameCount, startFrame, true, true)) {
+                            &source, 0, sourceFrames, startFrame, true, true)) {
                         loadError = "Take comparison source could not be read.";
                         return false;
+                    }
+                    const auto targetFrames = std::max(
+                        1,
+                        static_cast<int>(std::llround(
+                            static_cast<double>(sourceFrames) * targetRate / reader->sampleRate)));
+                    target.setSize(static_cast<int>(reader->numChannels), targetFrames);
+                    if (std::abs(reader->sampleRate - targetRate) <= 0.5) {
+                        target.copyFrom(0, 0, source, 0, 0, targetFrames);
+                        for (int channel = 1; channel < target.getNumChannels(); ++channel)
+                            target.copyFrom(channel, 0, source, channel, 0, targetFrames);
+                    } else {
+                        const auto ratio = reader->sampleRate / targetRate;
+                        for (int channel = 0; channel < target.getNumChannels(); ++channel) {
+                            juce::LagrangeInterpolator interpolator;
+                            interpolator.process(
+                                ratio,
+                                source.getReadPointer(channel),
+                                target.getWritePointer(channel),
+                                targetFrames);
+                        }
                     }
                     return true;
                 };

@@ -43,7 +43,7 @@ import type {
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
 import { invokeOrFallback, isNativeRuntime } from './invoke';
-import type { NativeApi, TrackPluginStateChange } from './native-api';
+import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -698,6 +698,17 @@ async function persistTrackPluginState(change: TrackPluginStateChange): Promise<
   });
 }
 
+async function persistTrackPluginParameter(
+  change: TrackPluginParameterChange,
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('persist_track_plugin_parameter', {
+    trackId: change.trackId,
+    deviceId: change.deviceId,
+    parameterIndex: change.parameterIndex,
+    value: change.value,
+  });
+}
+
 async function removeTrack(trackId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('remove_track', { trackId });
 }
@@ -986,6 +997,7 @@ function createNativeApi(): NativeApi {
     setTrackDeviceParameter,
     openTrackPluginEditor,
     persistTrackPluginState,
+    persistTrackPluginParameter,
     removeTrack,
     duplicateTrack,
     reorderTrack,
@@ -1061,6 +1073,23 @@ function createNativeApi(): NativeApi {
       let unlisten: (() => void) | null = null;
       let cancelled = false;
       void listen<TrackPluginStateChange>('track-plugin-state-changed', (event) =>
+        callback(event.payload),
+      )
+        .then((fn) => {
+          if (cancelled) fn();
+          else unlisten = fn;
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    onTrackPluginParameterChanged: (callback: (change: TrackPluginParameterChange) => void) => {
+      if (!isNativeRuntime()) return () => undefined;
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<TrackPluginParameterChange>('track-plugin-parameter-changed', (event) =>
         callback(event.payload),
       )
         .then((fn) => {

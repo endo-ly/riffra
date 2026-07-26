@@ -62,6 +62,12 @@ public:
         const juce::String& deviceId,
         const juce::var& persistedState,
         juce::String& error) noexcept;
+    bool mirrorEditorDeviceParameter(
+        const juce::String& trackId,
+        const juce::String& deviceId,
+        int parameterIndex,
+        float value,
+        juce::String& error) noexcept;
     [[nodiscard]] juce::var devicePersistedState(
         const juce::String& trackId,
         const juce::String& deviceId,
@@ -146,10 +152,12 @@ private:
         bool instrumentStateChanged = false;
         PluginChain effectChain;
         PluginChain liveEffectChain;
+        PluginChain recordingEffectChain;
         juce::AudioBuffer<float> mixBuffer;
         juce::AudioBuffer<float> processedBuffer;
         juce::AudioBuffer<float> liveInputBuffer;
         juce::AudioBuffer<float> liveProcessedBuffer;
+        juce::AudioBuffer<float> recordingProcessedBuffer;
         juce::AudioBuffer<float> delayBuffer;
         std::int64_t delayWritePosition = 0;
         std::int64_t compensationDelaySamples = 0;
@@ -169,6 +177,10 @@ private:
         juce::String midiDeviceId;
         int midiChannel = 0;
         juce::MidiBuffer midiBuffer;
+        std::uint64_t recordingCaptureEndAudioSample = 0;
+        std::uint64_t recordingCaptureEndTimelineSample = 0;
+        int recordingLatencyToDiscard = 0;
+        bool recordingCaptureActive = false;
     };
 
     struct PreparedTimeline final {
@@ -223,6 +235,7 @@ private:
     std::atomic<std::int64_t> timelineSample { 0 };
     std::atomic<std::int64_t> lastMixStartSample { 0 };
     std::atomic<std::uint64_t> audioClockSample { 0 };
+    std::atomic<std::uint64_t> callbackAudioStartSample { 0 };
     mutable std::atomic<std::uint64_t> sequence { 0 };
     std::atomic<std::uint64_t> callbackLockMisses { 0 };
     std::atomic<std::uint64_t> clockGeneration { 0 };

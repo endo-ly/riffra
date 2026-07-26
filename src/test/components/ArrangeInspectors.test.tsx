@@ -39,11 +39,19 @@ function recordingSession(): CreativeSession {
     durationTicks: 960,
     sourceStartSample: 0,
     sourceEndSample: 1_000,
-    rawAudio: { assetId: rawId, sourceStartSample: 0, sourceEndSample: 1_000 },
+    rawAudio: {
+      assetId: rawId,
+      sourceStartSample: 0,
+      sourceEndSample: 1_000,
+      tailEndSample: 1_000,
+      sampleRate: 48_000,
+    },
     processedAudio: {
       assetId: processedId,
       sourceStartSample: 128,
       sourceEndSample: 1_256,
+      tailEndSample: 1_256,
+      sampleRate: 48_000,
     },
   });
   for (const id of ['clip:a', 'clip:b']) {

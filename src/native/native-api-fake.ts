@@ -44,7 +44,7 @@ import type {
   TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
-import type { NativeApi, TrackPluginStateChange } from './native-api';
+import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -2136,7 +2136,21 @@ export class FakeNativeApi implements NativeApi {
       bypassed: change.bypassed,
     }));
 
+  persistTrackPluginParameter = async (
+    change: TrackPluginParameterChange,
+  ): Promise<CreativeSession> =>
+    this.updateTrackDevice(change.trackId, change.deviceId, (device) => {
+      const parameterValues = [...device.parameterValues];
+      while (parameterValues.length <= change.parameterIndex) parameterValues.push(0);
+      parameterValues[change.parameterIndex] = change.value;
+      return { ...device, parameterValues };
+    });
+
   onTrackPluginStateChanged = (_callback: (change: TrackPluginStateChange) => void) => {
+    return () => undefined;
+  };
+
+  onTrackPluginParameterChanged = (_callback: (change: TrackPluginParameterChange) => void) => {
     return () => undefined;
   };
 

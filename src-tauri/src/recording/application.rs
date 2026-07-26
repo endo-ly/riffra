@@ -238,9 +238,26 @@ struct NativeArrangeTrack {
     plugin_latency_samples: u64,
     #[serde(default)]
     plugin_tail_samples: u64,
+    #[serde(default)]
+    capture_segments: Vec<NativeTrackCaptureSegment>,
     raw_file: Option<String>,
     processed_file: Option<String>,
     midi_file: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTrackCaptureSegment {
+    audio_clock_start_sample: u64,
+    audio_clock_end_sample: u64,
+    timeline_start_sample: u64,
+    timeline_end_sample: u64,
+    raw_file_start_sample: u64,
+    raw_file_end_sample: u64,
+    processed_file_start_sample: u64,
+    processed_file_end_sample: u64,
+    #[serde(default)]
+    processed_tail_end_sample: u64,
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -278,7 +295,10 @@ struct RegisteredTrackOutput {
     processed_asset_id: Option<crate::asset::AssetId>,
     midi_asset_id: Option<crate::asset::AssetId>,
     raw_frames: u64,
+    raw_sample_rate: u32,
     processed_frames: u64,
+    processed_sample_rate: u32,
+    capture_segments: Vec<NativeTrackCaptureSegment>,
     plugin_latency_samples: u64,
     plugin_tail_samples: u64,
 }
@@ -369,20 +389,23 @@ fn register_track_outputs(
             if frame_bytes == 0 {
                 return Err("Recorded Track audio has an invalid frame format.".to_string());
             }
-            Ok((wav.data_len / frame_bytes) as u64)
+            if wav.sample_rate == 0 {
+                return Err("Recorded Track audio has no sample rate.".to_string());
+            }
+            Ok(((wav.data_len / frame_bytes) as u64, wav.sample_rate))
         };
-        let raw_frames = raw_path
+        let (raw_frames, raw_sample_rate) = raw_path
             .as_deref()
             .filter(|path| path.is_file())
             .map(read_frames)
             .transpose()?
-            .unwrap_or(0);
-        let processed_frames = processed_path
+            .unwrap_or((0, 0));
+        let (processed_frames, processed_sample_rate) = processed_path
             .as_deref()
             .filter(|path| path.is_file())
             .map(read_frames)
             .transpose()?
-            .unwrap_or(0);
+            .unwrap_or((0, 0));
         outputs.push(RegisteredTrackOutput {
             track_id: track.track_id.clone(),
             kind: track.kind.clone(),
@@ -390,7 +413,10 @@ fn register_track_outputs(
             processed_asset_id,
             midi_asset_id,
             raw_frames,
+            raw_sample_rate,
             processed_frames,
+            processed_sample_rate,
+            capture_segments: track.capture_segments.clone(),
             plugin_latency_samples: track.plugin_latency_samples,
             plugin_tail_samples: track.plugin_tail_samples,
         });
@@ -633,38 +659,74 @@ fn finalize_arrange_recording(
         }
         let mut track_takes = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
-            let source_start = segment.file_start_sample.min(audio_frames);
-            let source_end = segment.file_end_sample.min(audio_frames);
+            let mapped = output.capture_segments.iter().find(|mapped| {
+                mapped.audio_clock_start_sample == segment.audio_clock_start_sample
+                    && mapped.audio_clock_end_sample == segment.audio_clock_end_sample
+                    && mapped.timeline_start_sample == segment.timeline_start_sample
+                    && mapped.timeline_end_sample == segment.timeline_end_sample
+            });
+            let source_start = mapped
+                .map(|mapped| mapped.raw_file_start_sample)
+                .unwrap_or(segment.file_start_sample)
+                .min(audio_frames);
+            let source_end = mapped
+                .map(|mapped| mapped.raw_file_end_sample)
+                .unwrap_or(segment.file_end_sample)
+                .min(audio_frames);
             if source_end <= source_start {
                 continue;
             }
             let raw_audio = output.raw_asset_id.clone().and_then(|asset_id| {
-                let source_start_sample = segment.file_start_sample.min(output.raw_frames);
-                let source_end_sample = segment.file_end_sample.min(output.raw_frames);
+                let source_start_sample = mapped
+                    .map(|mapped| mapped.raw_file_start_sample)
+                    .unwrap_or(segment.file_start_sample)
+                    .min(output.raw_frames);
+                let source_end_sample = mapped
+                    .map(|mapped| mapped.raw_file_end_sample)
+                    .unwrap_or(segment.file_end_sample)
+                    .min(output.raw_frames);
                 (source_end_sample > source_start_sample).then_some(TakeAudioSource {
                     asset_id,
                     source_start_sample,
                     source_end_sample,
+                    tail_end_sample: source_end_sample,
+                    sample_rate: output.raw_sample_rate,
                 })
             });
             let processed_audio = output.processed_asset_id.clone().and_then(|asset_id| {
-                let source_start_sample = segment
-                    .file_start_sample
-                    .saturating_add(output.plugin_latency_samples)
+                let source_start_sample = mapped
+                    .map(|mapped| mapped.processed_file_start_sample)
+                    .unwrap_or_else(|| {
+                        segment
+                            .file_start_sample
+                            .saturating_add(output.plugin_latency_samples)
+                    })
                     .min(output.processed_frames);
-                let source_end_sample = segment
-                    .file_end_sample
-                    .saturating_add(output.plugin_latency_samples)
-                    .saturating_add(if index + 1 == segments.len() {
-                        output.plugin_tail_samples
-                    } else {
-                        0
+                let source_end_sample = mapped
+                    .map(|mapped| mapped.processed_file_end_sample)
+                    .unwrap_or_else(|| {
+                        segment
+                            .file_end_sample
+                            .saturating_add(output.plugin_latency_samples)
+                    })
+                    .min(output.processed_frames);
+                let tail_end_sample = mapped
+                    .map(|mapped| mapped.processed_tail_end_sample)
+                    .filter(|end| *end >= source_end_sample)
+                    .unwrap_or_else(|| {
+                        source_end_sample.saturating_add(if index + 1 == segments.len() {
+                            output.plugin_tail_samples
+                        } else {
+                            0
+                        })
                     })
                     .min(output.processed_frames);
                 (source_end_sample > source_start_sample).then_some(TakeAudioSource {
                     asset_id,
                     source_start_sample,
                     source_end_sample,
+                    tail_end_sample,
+                    sample_rate: output.processed_sample_rate,
                 })
             });
             if raw_audio.is_none() && processed_audio.is_none() {
@@ -726,11 +788,15 @@ fn finalize_arrange_recording(
             output.track_id.clone(),
             active_source.asset_id,
             active_take.start_tick,
-            manifest.sample_rate.round() as u32,
+            active_source.sample_rate,
             active_source.source_end_sample - active_source.source_start_sample,
         );
         clip.source_range.start = active_source.source_start_sample;
         clip.source_range.end = active_source.source_end_sample;
+        clip.source_sample_rate = active_source.sample_rate;
+        clip.timeline_duration.sample_rate = active_source.sample_rate;
+        clip.fade_in.sample_rate = active_source.sample_rate;
+        clip.fade_out.sample_rate = active_source.sample_rate;
         clip.recording_take_id = Some(active_take_id.clone());
         clip.take_variant = active_variant;
         if let Some(existing) = session
@@ -742,6 +808,9 @@ fn finalize_arrange_recording(
             existing.asset_id = clip.asset_id;
             existing.source_range = clip.source_range;
             existing.timeline_duration = clip.timeline_duration;
+            existing.source_sample_rate = clip.source_sample_rate;
+            existing.fade_in.sample_rate = clip.fade_in.sample_rate;
+            existing.fade_out.sample_rate = clip.fade_out.sample_rate;
             existing.recording_take_id = clip.recording_take_id;
             existing.take_variant = clip.take_variant;
         } else {
@@ -1417,6 +1486,11 @@ fn place_recording_on_timeline(
                             / total_duration_ticks,
                         source_end_sample: frames.saturating_mul(segment.relative_end_tick)
                             / total_duration_ticks,
+                        tail_end_sample: frames.saturating_mul(segment.relative_end_tick)
+                            / total_duration_ticks,
+                        sample_rate: audio_source
+                            .map(|(sample_rate, _)| sample_rate)
+                            .unwrap_or(0),
                     })
                 }),
                 processed_audio: processed_asset_id.clone().and_then(|asset_id| {
@@ -1426,6 +1500,11 @@ fn place_recording_on_timeline(
                             / total_duration_ticks,
                         source_end_sample: frames.saturating_mul(segment.relative_end_tick)
                             / total_duration_ticks,
+                        tail_end_sample: frames.saturating_mul(segment.relative_end_tick)
+                            / total_duration_ticks,
+                        sample_rate: audio_source
+                            .map(|(sample_rate, _)| sample_rate)
+                            .unwrap_or(0),
                     })
                 }),
                 raw_audio_asset_id: None,

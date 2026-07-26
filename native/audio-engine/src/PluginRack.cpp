@@ -217,8 +217,35 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
     }
 }
 
+void PluginRack::reset() noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin != nullptr)
+        plugin->reset();
+    panicPending.store(true, std::memory_order_release);
+}
+
 void PluginRack::setBypassed(const bool shouldBypass) noexcept {
     bypassed.store(shouldBypass, std::memory_order_release);
+}
+
+void PluginRack::addProcessorListener(juce::AudioProcessorListener& listener) noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin != nullptr)
+        plugin->addListener(&listener);
+}
+
+void PluginRack::removeProcessorListener(juce::AudioProcessorListener& listener) noexcept {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin != nullptr)
+        plugin->removeListener(&listener);
+}
+
+void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
+    if (index < 0 || static_cast<std::size_t>(index) >= kPendingParameterCapacity)
+        return;
+    const auto offset = static_cast<std::size_t>(index);
+    pendingParameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
+    pendingParameterDirty[offset].store(true, std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* PluginRack::createEditor(juce::String& error) {
@@ -409,6 +436,7 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         return;
     }
     if (plugin == nullptr || numOutputChannels <= 0 || numSamples <= 0) return;
+    applyQueuedParameterChanges();
     if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -433,6 +461,22 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
     }
     plugin->processBlock(buffer, midi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void PluginRack::applyQueuedParameterChanges() noexcept {
+    if (plugin == nullptr)
+        return;
+    const auto& parameters = plugin->getParameters();
+    const auto count = std::min(parameters.size(), static_cast<int>(kPendingParameterCapacity));
+    for (int index = 0; index < count; ++index) {
+        if (!pendingParameterDirty[static_cast<std::size_t>(index)].exchange(
+                false, std::memory_order_acq_rel))
+            continue;
+        if (auto* parameter = parameters[index])
+            parameter->setValueNotifyingHost(
+                pendingParameterValues[static_cast<std::size_t>(index)].load(
+                    std::memory_order_acquire));
+    }
 }
 
 void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {

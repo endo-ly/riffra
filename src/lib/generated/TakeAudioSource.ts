@@ -4,4 +4,4 @@ import type { AssetId } from "./AssetId";
 /**
  * A recorded Track product belonging to one recording pass.
  */
-export type TakeAudioSource = { assetId: AssetId, sourceStartSample: number, sourceEndSample: number, };
+export type TakeAudioSource = { assetId: AssetId, sourceStartSample: number, sourceEndSample: number, tailEndSample: number, sampleRate: number, };

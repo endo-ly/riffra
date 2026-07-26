@@ -396,6 +396,11 @@ pub struct TakeAudioSource {
     pub source_start_sample: u64,
     #[ts(type = "number")]
     pub source_end_sample: u64,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub tail_end_sample: u64,
+    #[serde(default)]
+    pub sample_rate: u32,
 }
 
 /// A recorded Track product belonging to one recording pass.
@@ -459,6 +464,8 @@ impl RecordingTakeRecord {
                 asset_id,
                 source_start_sample: self.source_start_sample,
                 source_end_sample: self.source_end_sample,
+                tail_end_sample: self.source_end_sample,
+                sample_rate: 0,
             });
         }
         if self.processed_audio.is_none()
@@ -468,6 +475,8 @@ impl RecordingTakeRecord {
                 asset_id,
                 source_start_sample: self.source_start_sample,
                 source_end_sample: self.source_end_sample,
+                tail_end_sample: self.source_end_sample,
+                sample_rate: 0,
             });
         }
     }
@@ -719,6 +728,7 @@ impl Arrangement {
         self.midi_clips.retain(|clip| clip.track_id != track_id);
         self.automation_lanes
             .retain(|lane| lane.track_id != track_id);
+        self.remove_recording_track_references(None, track_id);
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -933,6 +943,12 @@ impl Arrangement {
             clip.name = name;
         }
         if let Some(track_id) = patch.track_id {
+            if track_id != clip.track_id && self.is_recording_slot_clip(&clip.id) {
+                return Err(DomainError::InvalidClip(
+                    "A recording Session slot clip cannot be moved to another Track; place a copy instead."
+                        .into(),
+                ));
+            }
             clip.track_id = track_id;
         }
         if let Some(start_tick) = patch.start_tick {
@@ -975,6 +991,12 @@ impl Arrangement {
                     "MIDI clip '{}' requires an Instrument Track.",
                     clip.id
                 )));
+            }
+            if movement.track_id != clip.track_id && self.is_recording_slot_clip(&clip.id) {
+                return Err(DomainError::InvalidClip(
+                    "A recording Session slot clip cannot be moved to another Track; place a copy instead."
+                        .into(),
+                ));
             }
         }
         for movement in moves {
@@ -1196,6 +1218,12 @@ impl Arrangement {
             clip.name = name;
         }
         if let Some(track_id) = patch.track_id {
+            if track_id != clip.track_id && self.is_recording_slot_clip(&clip.id) {
+                return Err(DomainError::InvalidClip(
+                    "A recording Session slot clip cannot be moved to another Track; place a copy instead."
+                        .into(),
+                ));
+            }
             clip.track_id = track_id;
         }
         if let Some(start_tick) = patch.start_tick {
@@ -1274,6 +1302,20 @@ impl Arrangement {
             .retain(|clip| !audio_clip_ids.iter().any(|id| id == &clip.id));
         self.midi_clips
             .retain(|clip| !midi_clip_ids.iter().any(|id| id == &clip.id));
+        let removed_slot_tracks = self
+            .recording_sessions
+            .iter()
+            .flat_map(|session| {
+                session.track_slots.iter().filter_map(|slot| {
+                    (audio_clip_ids.iter().any(|id| id == &slot.timeline_clip_id)
+                        || midi_clip_ids.iter().any(|id| id == &slot.timeline_clip_id))
+                    .then_some((session.id.clone(), slot.track_id.clone()))
+                })
+            })
+            .collect::<Vec<_>>();
+        for (session_id, track_id) in removed_slot_tracks {
+            self.remove_recording_track_references(Some(&session_id), &track_id);
+        }
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -1508,6 +1550,12 @@ impl Arrangement {
                         movement.clip_id
                     ))
                 })?;
+            if movement.track_id != clip.track_id && self.is_recording_slot_clip(&clip.id) {
+                return Err(DomainError::InvalidClip(
+                    "A recording Session slot clip cannot be moved to another Track; place a copy instead."
+                        .into(),
+                ));
+            }
             clip.start_tick = movement.start_tick;
             clip.track_id = movement.track_id;
         }
@@ -1517,6 +1565,58 @@ impl Arrangement {
         self.audio_clips = next;
         self.revision = self.revision.saturating_add(1);
         Ok(())
+    }
+
+    fn is_recording_slot_clip(&self, clip_id: &str) -> bool {
+        self.recording_sessions.iter().any(|session| {
+            session
+                .track_slots
+                .iter()
+                .any(|slot| slot.timeline_clip_id == clip_id)
+        })
+    }
+
+    /// Removes recording metadata owned by a track. The source assets remain
+    /// registered: this only removes canonical arrangement references.
+    fn remove_recording_track_references(&mut self, session_id: Option<&str>, track_id: &str) {
+        let removed_take_ids = self
+            .takes
+            .iter()
+            .filter(|take| {
+                take.track_id == track_id && session_id.is_none_or(|id| take.session_id == id)
+            })
+            .map(|take| take.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        if removed_take_ids.is_empty() {
+            return;
+        }
+        self.takes
+            .retain(|take| !removed_take_ids.contains(&take.id));
+        self.recording_passes.iter_mut().for_each(|pass| {
+            pass.track_take_ids
+                .retain(|id| !removed_take_ids.contains(id));
+        });
+        let removed_pass_ids = self
+            .recording_passes
+            .iter()
+            .filter(|pass| pass.track_take_ids.is_empty())
+            .map(|pass| pass.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.recording_passes
+            .retain(|pass| !removed_pass_ids.contains(&pass.id));
+        self.recording_sessions.iter_mut().for_each(|recording| {
+            if session_id.is_none_or(|id| recording.id == id) {
+                recording
+                    .track_slots
+                    .retain(|slot| slot.track_id != track_id);
+            }
+            recording
+                .pass_ids
+                .retain(|id| !removed_pass_ids.contains(id));
+        });
+        self.recording_sessions.retain(|recording| {
+            !(recording.track_slots.is_empty() && recording.pass_ids.is_empty())
+        });
     }
 
     /// Applies an explicit equal-power crossfade to two overlapping clips.
@@ -2468,6 +2568,9 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             .all(|source| {
                 !source.asset_id.as_str().trim().is_empty()
                     && source.source_end_sample > source.source_start_sample
+                    && source.sample_rate > 0
+                    && (source.tail_end_sample == 0
+                        || source.tail_end_sample >= source.source_end_sample)
             });
         let has_audio_source = take.raw_audio.is_some() || take.processed_audio.is_some();
         if take.id.trim().is_empty()
@@ -3125,6 +3228,8 @@ mod tests {
                 asset_id: asset_id.clone(),
                 source_start_sample: 0,
                 source_end_sample: 48_000,
+                tail_end_sample: 48_000,
+                sample_rate: 48_000,
             }),
             processed_audio: None,
             raw_audio_asset_id: None,
@@ -3220,5 +3325,66 @@ mod tests {
             .track_take_ids
             .clear();
         assert!(missing_from_pass.validate_and_normalize().is_err());
+    }
+
+    #[test]
+    fn deleting_a_recording_slot_clip_prunes_only_its_canonical_take_links() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:copy".into()], &[])
+            .unwrap();
+        assert_eq!(session.arrangement.takes.len(), 1);
+        assert_eq!(session.arrangement.recording_sessions.len(), 1);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_recorded_track_prunes_relations_but_not_assets() {
+        let mut session = session_with_recording_relations();
+        let asset_id = session.arrangement.takes[0]
+            .raw_audio
+            .as_ref()
+            .unwrap()
+            .asset_id
+            .clone();
+        session.arrangement.remove_track("track:audio").unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        // The domain intentionally holds no asset store and therefore cannot
+        // delete this source reference from storage.
+        assert!(!asset_id.as_str().is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn moving_a_recording_slot_clip_to_another_track_is_rejected() {
+        let mut session = session_with_recording_relations();
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:other".into(), "Other".into()));
+        let error = session
+            .arrangement
+            .move_audio_clips(vec![AudioClipMove {
+                clip_id: "clip:1".into(),
+                track_id: "track:other".into(),
+                start_tick: TimelineTick(0),
+            }])
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
     }
 }

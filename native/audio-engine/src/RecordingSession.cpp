@@ -123,12 +123,15 @@ bool RecordingSession::write(
     const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || processedWriter == nullptr || numSamples <= 0)
         return false;
+    return writeRaw(rawData, numSamples) && writeProcessed(processedData, numSamples);
+}
+
+bool RecordingSession::writeRaw(const float* const* rawData, const int numSamples) noexcept {
+    if (finished || rawWriter == nullptr || numSamples <= 0)
+        return false;
     const auto attemptedStart = attemptedSamples.fetch_add(
-        static_cast<std::uint64_t>(numSamples),
-        std::memory_order_relaxed);
-    const auto rawAccepted = rawWriter->write(rawData, numSamples);
-    const auto processedAccepted = processedWriter->write(processedData, numSamples);
-    if (!rawAccepted || !processedAccepted) {
+        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    if (!rawWriter->write(rawData, numSamples)) {
         droppedBlocks.fetch_add(1, std::memory_order_relaxed);
         missingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
         auto expected = std::numeric_limits<std::uint64_t>::max();
@@ -138,7 +141,30 @@ bool RecordingSession::write(
             std::memory_order_relaxed);
         return false;
     }
+    rawSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     samplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    return true;
+}
+
+bool RecordingSession::writeProcessed(
+    const float* const* processedData,
+    const int numSamples) noexcept {
+    if (finished || processedWriter == nullptr || numSamples <= 0)
+        return false;
+    const auto attemptedStart = attemptedSamples.fetch_add(
+        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    if (!processedWriter->write(processedData, numSamples)) {
+        droppedBlocks.fetch_add(1, std::memory_order_relaxed);
+        missingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+        auto expected = std::numeric_limits<std::uint64_t>::max();
+        firstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
+        lastMissingSample.store(
+            attemptedStart + static_cast<std::uint64_t>(numSamples),
+            std::memory_order_relaxed);
+        return false;
+    }
+    processedSamplesWritten.fetch_add(
+        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     return true;
 }
 
@@ -150,7 +176,7 @@ bool RecordingSession::finish(juce::String& error) {
     processedWriter.reset();
     writerThread.stopThread(5000);
 
-    auto completed = getSamplesWritten() > 0;
+    auto completed = getRawSamplesWritten() > 0 && getProcessedSamplesWritten() > 0;
     if (!completed)
         error << "Recording contains no audio samples; empty partial files were kept for diagnosis. ";
     if (!rawPartial.existsAsFile()) {
@@ -178,6 +204,14 @@ bool RecordingSession::finish(juce::String& error) {
 
 std::uint64_t RecordingSession::getSamplesWritten() const noexcept {
     return samplesWritten.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getRawSamplesWritten() const noexcept {
+    return rawSamplesWritten.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getProcessedSamplesWritten() const noexcept {
+    return processedSamplesWritten.load(std::memory_order_acquire);
 }
 
 std::uint64_t RecordingSession::getDroppedBlocks() const noexcept {

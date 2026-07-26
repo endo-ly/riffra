@@ -45,6 +45,13 @@ export interface TrackPluginStateChange {
   bypassed: boolean;
 }
 
+export interface TrackPluginParameterChange {
+  trackId: string;
+  deviceId: string;
+  parameterIndex: number;
+  value: number;
+}
+
 /**
  * NativeApi is the seam between the React layer and every side-effectful
  * operation: Tauri commands, the audio sidecar protocol, the filesystem, and
@@ -266,6 +273,7 @@ export interface NativeApi {
   ): Promise<CreativeSession>;
   openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
   persistTrackPluginState(change: TrackPluginStateChange): Promise<CreativeSession>;
+  persistTrackPluginParameter(change: TrackPluginParameterChange): Promise<CreativeSession>;
   removeTrack(trackId: string): Promise<CreativeSession>;
   duplicateTrack(trackId: string): Promise<CreativeSession>;
   reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
@@ -383,4 +391,5 @@ export interface NativeApi {
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
   onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
+  onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;
 }

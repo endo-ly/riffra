@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -23,6 +24,7 @@ public:
     void clear() noexcept;
     void release() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
+    void reset() noexcept;
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setState(const juce::String& base64, juce::String& error) noexcept;
@@ -39,6 +41,11 @@ public:
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
+    void addProcessorListener(juce::AudioProcessorListener& listener) noexcept;
+    void removeProcessorListener(juce::AudioProcessorListener& listener) noexcept;
+    /// Queues a live-only editor parameter change. It is applied by `process`
+    /// while that rack already owns its plugin lock at a block boundary.
+    void enqueueParameterChange(int index, float value) noexcept;
 
 private:
     friend class PluginEditorHost;
@@ -59,6 +66,9 @@ private:
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
     [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
+    void applyQueuedParameterChanges() noexcept;
+
+    static constexpr std::size_t kPendingParameterCapacity = 512;
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
@@ -82,6 +92,8 @@ private:
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
+    std::array<std::atomic<float>, kPendingParameterCapacity> pendingParameterValues {};
+    std::array<std::atomic<bool>, kPendingParameterCapacity> pendingParameterDirty {};
 };
 
 [[nodiscard]] juce::Array<juce::var> runPluginRackSelfTests();

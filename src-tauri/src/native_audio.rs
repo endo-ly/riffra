@@ -331,6 +331,10 @@ impl AudioSupervisor {
                                 Some("trackPluginStateChanged") => {
                                     let _ = event_app.emit("track-plugin-state-changed", &payload);
                                 }
+                                Some("trackPluginParameterChanged") => {
+                                    let _ =
+                                        event_app.emit("track-plugin-parameter-changed", &payload);
+                                }
                                 _ => {}
                             }
                         }

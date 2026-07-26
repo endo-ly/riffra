@@ -15,6 +15,7 @@ public:
         int blockSize,
         juce::String& error);
     void prepare(double sampleRate, int blockSize) noexcept;
+    void reset() noexcept;
     void release() noexcept;
     void clear() noexcept;
     void allNotesOff() noexcept;

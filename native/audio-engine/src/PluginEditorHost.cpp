@@ -6,6 +6,24 @@
 
 namespace riffra {
 
+class PluginEditorHost::ProcessorListener final : public juce::AudioProcessorListener {
+public:
+    explicit ProcessorListener(PluginEditorHost& target) : host(target) {}
+
+    void audioProcessorParameterChanged(
+        juce::AudioProcessor*, const int parameterIndex, const float newValue) override {
+        host.queueParameterChange(parameterIndex, newValue);
+    }
+
+    void audioProcessorChanged(
+        juce::AudioProcessor*, const ChangeDetails&) override {
+        host.markOpaqueStateDirty();
+    }
+
+private:
+    PluginEditorHost& host;
+};
+
 class PluginEditorHost::EditorWindow final : public juce::DocumentWindow {
 public:
     EditorWindow(const juce::String& title, std::unique_ptr<juce::AudioProcessorEditor> editor,
@@ -30,13 +48,16 @@ private:
 
 PluginEditorHost::PluginEditorHost(
     PluginRack& pluginRack,
-    StateCallback stateCallback)
+    StateCallback stateCallback,
+    ParameterCallback parameterCallback)
     : rack(pluginRack),
-      onStateChanged(std::move(stateCallback)) {}
+      onStateChanged(std::move(stateCallback)),
+      onParameterChanged(std::move(parameterCallback)),
+      listener(std::make_unique<ProcessorListener>(*this)) {}
 
 PluginEditorHost::~PluginEditorHost() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
-    window.reset();
+    closeOnMessageThread();
 }
 
 bool PluginEditorHost::open(juce::String& error) {
@@ -111,8 +132,7 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
     }
     try {
         window = std::make_unique<EditorWindow>(rack.currentPluginName(), std::move(editor), *this);
-        lastPublishedState.clear();
-        publishStateIfChanged(true);
+        rack.addProcessorListener(*listener);
         stateTimer.start();
     } catch (const std::exception& exception) {
         error =
@@ -125,21 +145,54 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
 void PluginEditorHost::closeOnMessageThread() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
     stateTimer.stop();
-    publishStateIfChanged(true);
+    drainParameterChanges();
+    publishStateIfDirty(true);
+    if (listener != nullptr)
+        rack.removeProcessorListener(*listener);
     window.reset();
 }
 
-void PluginEditorHost::publishStateIfChanged(const bool force) {
-    if (!onStateChanged)
+void PluginEditorHost::queueParameterChange(const int index, const float value) noexcept {
+    if (index < 0 || static_cast<std::size_t>(index) >= kParameterCapacity)
         return;
+    const auto offset = static_cast<std::size_t>(index);
+    parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
+    parameterDirty[offset].store(true, std::memory_order_release);
+    parameterStateDirty.store(true, std::memory_order_release);
+}
+
+void PluginEditorHost::markOpaqueStateDirty() noexcept {
+    lastOpaqueStateChangeMs.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
+    opaqueStateDirty.store(true, std::memory_order_release);
+}
+
+void PluginEditorHost::drainParameterChanges() {
+    if (!onParameterChanged)
+        return;
+    for (std::size_t index = 0; index < kParameterCapacity; ++index) {
+        if (!parameterDirty[index].exchange(false, std::memory_order_acq_rel))
+            continue;
+        onParameterChanged(
+            static_cast<int>(index),
+            parameterValues[index].load(std::memory_order_acquire));
+    }
+}
+
+void PluginEditorHost::publishStateIfDirty(const bool force) {
+    const auto opaqueDirty = opaqueStateDirty.load(std::memory_order_acquire);
+    const auto parameterStateChanged = parameterStateDirty.load(std::memory_order_acquire);
+    if (!onStateChanged || (!opaqueDirty && !(force && parameterStateChanged)))
+        return;
+    const auto now = juce::Time::getMillisecondCounter();
+    const auto changedAt = lastOpaqueStateChangeMs.load(std::memory_order_acquire);
+    if (!force && static_cast<std::uint32_t>(now - changedAt) < 400)
+        return;
+    opaqueStateDirty.store(false, std::memory_order_release);
+    parameterStateDirty.store(false, std::memory_order_release);
     juce::String error;
     const auto state = rack.persistedState(error);
     if (error.isNotEmpty() || !state.isObject())
         return;
-    const auto signature = juce::JSON::toString(state, false);
-    if (!force && signature == lastPublishedState)
-        return;
-    lastPublishedState = signature;
     onStateChanged(state);
 }
 

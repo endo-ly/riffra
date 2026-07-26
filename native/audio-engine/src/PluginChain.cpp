@@ -47,6 +47,11 @@ void PluginChain::prepare(const double sampleRate, const int blockSize) noexcept
         device.rack->prepare(sampleRate, blockSize);
 }
 
+void PluginChain::reset() noexcept {
+    for (auto& device : devices)
+        device.rack->reset();
+}
+
 void PluginChain::release() noexcept {
     for (auto& device : devices)
         device.rack->release();

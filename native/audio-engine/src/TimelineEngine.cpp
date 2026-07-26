@@ -81,20 +81,31 @@ bool writePcmWave(
 
 class CaptureIsolationSink final : public ArrangementCaptureSink {
 public:
+    void beginAudioTrackCapture(
+        const juce::String&,
+        std::uint64_t,
+        std::uint64_t) noexcept override {}
     void writeAudioTrack(
         const juce::String& trackId,
         const float* raw,
+        const int rawSampleCount,
         const float* const* processed,
-        const int sampleCount) noexcept override {
+        const int processedSampleCount) noexcept override {
         receivedTrack = trackId;
-        receivedSamples = sampleCount;
+        receivedSamples = rawSampleCount;
         isolated = raw != nullptr && processed != nullptr
-            && processed[0] != nullptr && processed[1] != nullptr;
-        for (int sample = 0; isolated && sample < sampleCount; ++sample)
+            && processed[0] != nullptr && processed[1] != nullptr
+            && rawSampleCount == processedSampleCount;
+        for (int sample = 0; isolated && sample < rawSampleCount; ++sample)
             isolated = std::abs(raw[sample] - 0.05f) < 0.0001f
                 && std::abs(processed[0][sample] - 0.05f) < 0.0001f
                 && std::abs(processed[1][sample] - 0.05f) < 0.0001f;
     }
+
+    void endAudioTrackCapture(
+        const juce::String&,
+        std::uint64_t,
+        std::uint64_t) noexcept override {}
 
     void markLoopBoundary(std::uint64_t) noexcept override {}
     void writeMidiTrack(
@@ -348,6 +359,9 @@ bool TimelineEngine::loadSnapshot(
             if (!track->reuseRuntimeDevices && !track->instrument &&
                 !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
                 return false;
+            if (!track->reuseRuntimeDevices && !track->instrument &&
+                !track->recordingEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
+                return false;
         }
         if (instrument.isObject()
             && !static_cast<bool>(
@@ -523,6 +537,7 @@ bool TimelineEngine::loadSnapshot(
         track->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->liveProcessedBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->recordingProcessedBuffer.setSize(2, maximumBlockSize, false, true, false);
         prepared->tracks.push_back(std::move(track));
     }
     for (auto& track : prepared->tracks) {
@@ -580,6 +595,7 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
                 }
                 candidateTrack->effectChain = std::move((*existing)->effectChain);
                 candidateTrack->liveEffectChain = std::move((*existing)->liveEffectChain);
+                candidateTrack->recordingEffectChain = std::move((*existing)->recordingEffectChain);
                 candidateTrack->instrumentRack = std::move((*existing)->instrumentRack);
             }
         }
@@ -603,6 +619,10 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         if (track->effectStateChanged
             && !track->instrument
             && !track->liveEffectChain.applyState(track->effectState, error))
+            return false;
+        if (track->effectStateChanged
+            && !track->instrument
+            && !track->recordingEffectChain.applyState(track->effectState, error))
             return false;
         if (track->instrumentStateChanged
             && track->instrumentRack != nullptr
@@ -660,6 +680,12 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
     if (recordingPhase.load(std::memory_order_acquire) != RecordingPhase::idle) {
         error = "Arrange recording is already active.";
         return false;
+    }
+    for (auto& track : timeline->tracks) {
+        track->recordingCaptureActive = false;
+        track->recordingLatencyToDiscard = 0;
+        if (!track->instrument)
+            track->recordingEffectChain.reset();
     }
     recordingPassOrdinal.store(1, std::memory_order_release);
     const auto alreadyPlaying =
@@ -720,6 +746,8 @@ bool TimelineEngine::flushRecordingTail(juce::String& error) noexcept {
         auto& track = *trackPtr;
         if (!track.armed || track.instrument)
             continue;
+        if (!track.recordingCaptureActive)
+            continue;
         auto remaining = static_cast<int>(std::min<std::int64_t>(
             maximumFlush,
             std::max<std::int64_t>(
@@ -732,24 +760,33 @@ bool TimelineEngine::flushRecordingTail(juce::String& error) noexcept {
                 return false;
             }
             track.liveInputBuffer.clear(0, count);
-            track.liveProcessedBuffer.clear(0, count);
-            track.liveEffectChain.process(
+            track.recordingProcessedBuffer.clear(0, count);
+            track.recordingEffectChain.process(
                 track.liveInputBuffer.getArrayOfReadPointers(),
                 2,
-                track.liveProcessedBuffer.getArrayOfWritePointers(),
+                track.recordingProcessedBuffer.getArrayOfWritePointers(),
                 2,
                 count);
+            const auto discard = std::min(track.recordingLatencyToDiscard, count);
+            track.recordingLatencyToDiscard -= discard;
+            const auto processedCount = count - discard;
             const std::array<const float*, 2> processed {
-                track.liveProcessedBuffer.getReadPointer(0),
-                track.liveProcessedBuffer.getReadPointer(1),
+                track.recordingProcessedBuffer.getReadPointer(0) + discard,
+                track.recordingProcessedBuffer.getReadPointer(1) + discard,
             };
             sink->writeAudioTrack(
                 track.id,
-                track.liveInputBuffer.getReadPointer(0),
+                nullptr,
+                0,
                 processed.data(),
-                count);
+                processedCount);
             remaining -= count;
         }
+        sink->endAudioTrackCapture(
+            track.id,
+            track.recordingCaptureEndAudioSample,
+            track.recordingCaptureEndTimelineSample);
+        track.recordingCaptureActive = false;
     }
     return true;
 }
@@ -875,7 +912,45 @@ bool TimelineEngine::mirrorEditorDeviceState(
         error = "Live Track Device was not found.";
         return false;
     }
-    return live->applyPersistedState(persistedState, error);
+    if (!live->applyPersistedState(persistedState, error))
+        return false;
+    auto* recording = track.recordingEffectChain.findDevice(deviceId);
+    if (recording != nullptr && !recording->applyPersistedState(persistedState, error))
+        return false;
+    return true;
+}
+
+bool TimelineEngine::mirrorEditorDeviceParameter(
+    const juce::String& trackId,
+    const juce::String& deviceId,
+    const int parameterIndex,
+    const float value,
+    juce::String& error) noexcept {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Timeline is not loaded.";
+        return false;
+    }
+    const auto found = std::find_if(
+        timeline->tracks.begin(), timeline->tracks.end(),
+        [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return false;
+    }
+    auto& track = **found;
+    if (track.instrumentRack != nullptr && track.instrumentDeviceId == deviceId)
+        return true;
+    auto* live = track.liveEffectChain.findDevice(deviceId);
+    if (live == nullptr) {
+        error = "Live Track Device was not found.";
+        return false;
+    }
+    live->enqueueParameterChange(parameterIndex, value);
+    if (auto* recording = track.recordingEffectChain.findDevice(deviceId))
+        recording->enqueueParameterChange(parameterIndex, value);
+    sequence.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 juce::var TimelineEngine::devicePersistedState(
@@ -937,6 +1012,7 @@ bool TimelineEngine::setDeviceBypassed(
     } else {
         auto* playback = track.effectChain.findDevice(deviceId);
         auto* live = track.liveEffectChain.findDevice(deviceId);
+        auto* recording = track.recordingEffectChain.findDevice(deviceId);
         if (playback == nullptr) {
             error = "Track Device was not found.";
             return false;
@@ -944,6 +1020,8 @@ bool TimelineEngine::setDeviceBypassed(
         playback->setBypassed(bypassed);
         if (live != nullptr)
             live->setBypassed(bypassed);
+        if (recording != nullptr)
+            recording->setBypassed(bypassed);
     }
     sequence.fetch_add(1, std::memory_order_relaxed);
     return true;
@@ -973,6 +1051,7 @@ bool TimelineEngine::setDeviceParameter(
         ? track.instrumentRack.get()
         : track.effectChain.findDevice(deviceId);
     auto* live = track.liveEffectChain.findDevice(deviceId);
+    auto* recording = track.recordingEffectChain.findDevice(deviceId);
     if (playback == nullptr) {
         error = "Track Device was not found.";
         return false;
@@ -989,6 +1068,13 @@ bool TimelineEngine::setDeviceParameter(
     if (live != nullptr && !live->setParameter(parameterIndex, value, error)) {
         juce::String rollbackError;
         (void) playback->setParameter(parameterIndex, previous, rollbackError);
+        return false;
+    }
+    if (recording != nullptr && !recording->setParameter(parameterIndex, value, error)) {
+        juce::String rollbackError;
+        (void) playback->setParameter(parameterIndex, previous, rollbackError);
+        if (live != nullptr)
+            (void) live->setParameter(parameterIndex, previous, rollbackError);
         return false;
     }
     sequence.fetch_add(1, std::memory_order_relaxed);
@@ -1376,15 +1462,80 @@ void TimelineEngine::processTracks(
                 recordingSinkReaders.fetch_add(1, std::memory_order_acq_rel);
                 if (auto* sink = recordingSink.load(std::memory_order_acquire)) {
                     const auto localOffset = writeStart - destinationStart;
+                    const auto captureAudioStart = callbackAudioStartSample.load(
+                        std::memory_order_acquire) + static_cast<std::uint64_t>(writeStart);
+                    const auto captureTimelineStart = static_cast<std::uint64_t>(
+                        rangeStart + localOffset);
+                    const auto discontinuous = !track.recordingCaptureActive
+                        || captureAudioStart != track.recordingCaptureEndAudioSample;
+                    if (discontinuous && track.recordingCaptureActive) {
+                        auto remaining = static_cast<int>(std::max<std::int64_t>(
+                            0, track.pluginDelaySamples + track.pluginTailSamples));
+                        while (remaining > 0) {
+                            const auto count = std::min(
+                                remaining, track.liveInputBuffer.getNumSamples());
+                            track.liveInputBuffer.clear(0, count);
+                            track.recordingProcessedBuffer.clear(0, count);
+                            track.recordingEffectChain.process(
+                                track.liveInputBuffer.getArrayOfReadPointers(),
+                                2,
+                                track.recordingProcessedBuffer.getArrayOfWritePointers(),
+                                2,
+                                count);
+                            const auto discard = std::min(track.recordingLatencyToDiscard, count);
+                            track.recordingLatencyToDiscard -= discard;
+                            const auto processedCount = count - discard;
+                            const std::array<const float*, 2> tail {
+                                track.recordingProcessedBuffer.getReadPointer(0) + discard,
+                                track.recordingProcessedBuffer.getReadPointer(1) + discard,
+                            };
+                            sink->writeAudioTrack(
+                                track.id, nullptr, 0, tail.data(), processedCount);
+                            remaining -= count;
+                        }
+                        sink->endAudioTrackCapture(
+                            track.id,
+                            track.recordingCaptureEndAudioSample,
+                            track.recordingCaptureEndTimelineSample);
+                        track.recordingCaptureActive = false;
+                    }
+                    if (!track.recordingCaptureActive) {
+                        track.recordingEffectChain.reset();
+                        track.recordingLatencyToDiscard = static_cast<int>(std::max<std::int64_t>(
+                            0, track.pluginDelaySamples));
+                        sink->beginAudioTrackCapture(
+                            track.id, captureAudioStart, captureTimelineStart);
+                        track.recordingCaptureActive = true;
+                    }
+                    track.recordingProcessedBuffer.clear(0, writeEnd - writeStart);
+                    const std::array<const float*, 2> recordingInput {
+                        track.liveInputBuffer.getReadPointer(0) + localOffset,
+                        track.liveInputBuffer.getReadPointer(1) + localOffset,
+                    };
+                    track.recordingEffectChain.process(
+                        recordingInput.data(),
+                        2,
+                        track.recordingProcessedBuffer.getArrayOfWritePointers(),
+                        2,
+                        writeEnd - writeStart);
+                    const auto discard = std::min(
+                        track.recordingLatencyToDiscard, writeEnd - writeStart);
+                    track.recordingLatencyToDiscard -= discard;
+                    const auto processedCount = writeEnd - writeStart - discard;
                     const std::array<const float*, 2> processed {
-                        track.liveProcessedBuffer.getReadPointer(0) + localOffset,
-                        track.liveProcessedBuffer.getReadPointer(1) + localOffset,
+                        track.recordingProcessedBuffer.getReadPointer(0) + discard,
+                        track.recordingProcessedBuffer.getReadPointer(1) + discard,
                     };
                     sink->writeAudioTrack(
                         track.id,
                         track.liveInputBuffer.getReadPointer(0) + localOffset,
+                        writeEnd - writeStart,
                         processed.data(),
-                        writeEnd - writeStart);
+                        processedCount);
+                    track.recordingCaptureEndAudioSample = captureAudioStart
+                        + static_cast<std::uint64_t>(writeEnd - writeStart);
+                    track.recordingCaptureEndTimelineSample = captureTimelineStart
+                        + static_cast<std::uint64_t>(writeEnd - writeStart);
                 }
                 recordingSinkReaders.fetch_sub(1, std::memory_order_acq_rel);
             }
@@ -1426,6 +1577,9 @@ void TimelineEngine::resetTrackState(PreparedTimeline& prepared) noexcept {
             track.instrumentRack->allNotesOff();
         track.effectChain.allNotesOff();
         track.liveEffectChain.allNotesOff();
+        track.recordingEffectChain.allNotesOff();
+        track.recordingCaptureActive = false;
+        track.recordingLatencyToDiscard = 0;
         track.delayBuffer.clear();
         track.delayWritePosition = 0;
     }
@@ -1445,6 +1599,9 @@ void TimelineEngine::mix(
     const int channelCount,
     const int sampleCount) noexcept {
     audioClockSample.fetch_add(static_cast<std::uint64_t>(sampleCount), std::memory_order_relaxed);
+    callbackAudioStartSample.store(
+        audioClockSample.load(std::memory_order_acquire) - static_cast<std::uint64_t>(sampleCount),
+        std::memory_order_release);
     const auto blockPlaybackOffset = juce::jlimit(
         0, sampleCount, playbackBlockOffset.exchange(0, std::memory_order_acq_rel));
     lastMixPlaybackOffset.store(blockPlaybackOffset, std::memory_order_release);

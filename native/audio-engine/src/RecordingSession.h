@@ -25,11 +25,15 @@ public:
         const float* const* rawData,
         const float* const* processedData,
         int numSamples) noexcept;
+    bool writeRaw(const float* const* rawData, int numSamples) noexcept;
+    bool writeProcessed(const float* const* processedData, int numSamples) noexcept;
     bool finish(juce::String& error);
 
     [[nodiscard]] int getRawChannels() const noexcept { return rawChannelCount; }
     [[nodiscard]] int getProcessedChannels() const noexcept { return processedChannelCount; }
     [[nodiscard]] std::uint64_t getSamplesWritten() const noexcept;
+    [[nodiscard]] std::uint64_t getRawSamplesWritten() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getDroppedBlocks() const noexcept;
     [[nodiscard]] std::uint64_t getMissingSamples() const noexcept;
     [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
@@ -67,6 +71,8 @@ private:
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> rawWriter;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> processedWriter;
     std::atomic<std::uint64_t> samplesWritten { 0 };
+    std::atomic<std::uint64_t> rawSamplesWritten { 0 };
+    std::atomic<std::uint64_t> processedSamplesWritten { 0 };
     std::atomic<std::uint64_t> attemptedSamples { 0 };
     std::atomic<std::uint64_t> droppedBlocks { 0 };
     std::atomic<std::uint64_t> missingSamples { 0 };

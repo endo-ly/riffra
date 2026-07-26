@@ -76,7 +76,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     onAudioStatus,
     onTransportStatus,
     onTrackPluginStateChanged,
+    onTrackPluginParameterChanged,
     persistTrackPluginState,
+    persistTrackPluginParameter,
     playTimeline,
     stopTimeline,
     seekTimeline,
@@ -124,7 +126,17 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
-  const pluginStateSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const pendingPluginChanges = useRef(
+    new Map<
+      string,
+      {
+        trackId: string;
+        deviceId: string;
+        parameters: Map<number, number>;
+        state: Parameters<typeof persistTrackPluginState>[0] | null;
+      }
+    >(),
+  );
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -737,25 +749,85 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const unlistenTransport = onTransportStatus((status) =>
       setTransportPlaying(status.state === 'playing'),
     );
+    let pluginSaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let pluginSaveRunning = false;
+    const schedulePluginSave = () => {
+      if (pluginSaveTimer != null || pluginSaveRunning) return;
+      pluginSaveTimer = setTimeout(() => {
+        pluginSaveTimer = null;
+        pluginSaveRunning = true;
+        void (async () => {
+          try {
+            while (pendingPluginChanges.current.size > 0) {
+              const batch = [...pendingPluginChanges.current.entries()];
+              pendingPluginChanges.current.clear();
+              let latest: CreativeSession | null = null;
+              for (const [, pending] of batch) {
+                if (pending.state != null) {
+                  latest = await persistTrackPluginState(pending.state);
+                }
+                for (const [parameterIndex, value] of pending.parameters) {
+                  latest = await persistTrackPluginParameter({
+                    trackId: pending.trackId,
+                    deviceId: pending.deviceId,
+                    parameterIndex,
+                    value,
+                  });
+                }
+              }
+              if (latest != null) {
+                setSession(latest);
+                setAutosaveError(null);
+              }
+            }
+          } catch (error: unknown) {
+            setAutosaveError(
+              error instanceof Error
+                ? error.message
+                : `Track Plugin state could not be saved: ${String(error)}`,
+            );
+          } finally {
+            pluginSaveRunning = false;
+            if (pendingPluginChanges.current.size > 0) schedulePluginSave();
+          }
+        })();
+      }, 100);
+    };
+    const enqueuePluginParameter = (change: {
+      trackId: string;
+      deviceId: string;
+      parameterIndex: number;
+      value: number;
+    }) => {
+      const key = `${change.trackId}\u0000${change.deviceId}`;
+      const pending = pendingPluginChanges.current.get(key) ?? {
+        trackId: change.trackId,
+        deviceId: change.deviceId,
+        parameters: new Map<number, number>(),
+        state: null,
+      };
+      pending.parameters.set(change.parameterIndex, change.value);
+      pendingPluginChanges.current.set(key, pending);
+      schedulePluginSave();
+    };
+    const unlistenTrackPluginParameter = onTrackPluginParameterChanged(enqueuePluginParameter);
     const unlistenTrackPluginState = onTrackPluginStateChanged((change) => {
-      pluginStateSaveQueue.current = pluginStateSaveQueue.current
-        .catch(() => undefined)
-        .then(async () => {
-          const next = await persistTrackPluginState(change);
-          setSession(next);
-          setAutosaveError(null);
-        })
-        .catch((error: unknown) => {
-          setAutosaveError(
-            error instanceof Error
-              ? error.message
-              : `Track Plugin state could not be saved: ${String(error)}`,
-          );
-        });
+      const key = `${change.trackId}\u0000${change.deviceId}`;
+      // A full final snapshot already contains every parameter, so older
+      // intermediate parameter events are intentionally coalesced away.
+      pendingPluginChanges.current.set(key, {
+        trackId: change.trackId,
+        deviceId: change.deviceId,
+        parameters: new Map(),
+        state: change,
+      });
+      schedulePluginSave();
     });
     return () => {
+      if (pluginSaveTimer != null) clearTimeout(pluginSaveTimer);
       unlistenAudio();
       unlistenTransport();
+      unlistenTrackPluginParameter();
       unlistenTrackPluginState();
     };
   }, []);
