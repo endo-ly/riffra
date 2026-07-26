@@ -51,6 +51,16 @@ pub struct RecordingStatus {
     pub missing_samples: u64,
     pub dropout_start_sample: Option<u64>,
     pub dropout_end_sample: Option<u64>,
+    pub raw_attempted_samples: u64,
+    pub processed_attempted_samples: u64,
+    pub raw_dropped_blocks: u64,
+    pub processed_dropped_blocks: u64,
+    pub raw_missing_samples: u64,
+    pub processed_missing_samples: u64,
+    pub raw_dropout_start_sample: Option<u64>,
+    pub raw_dropout_end_sample: Option<u64>,
+    pub processed_dropout_start_sample: Option<u64>,
+    pub processed_dropout_end_sample: Option<u64>,
     pub recovery_status: String,
 }
 

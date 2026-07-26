@@ -3,4 +3,4 @@
 /**
  * Dropout/drop diagnostics captured during recording.
  */
-export type DropoutInformation = { samplesWritten: number, droppedBlocks: number, missingSamples: number, dropoutStartSample: number | null, dropoutEndSample: number | null, };
+export type DropoutInformation = { samplesWritten: number, droppedBlocks: number, missingSamples: number, dropoutStartSample: number | null, dropoutEndSample: number | null, rawAttemptedSamples: number, processedAttemptedSamples: number, rawDroppedBlocks: number, processedDroppedBlocks: number, rawMissingSamples: number, processedMissingSamples: number, rawDropoutStartSample: number | null, rawDropoutEndSample: number | null, processedDropoutStartSample: number | null, processedDropoutEndSample: number | null, };

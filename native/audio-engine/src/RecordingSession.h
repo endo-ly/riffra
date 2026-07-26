@@ -34,6 +34,16 @@ public:
     [[nodiscard]] std::uint64_t getSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getRawSamplesWritten() const noexcept;
     [[nodiscard]] std::uint64_t getProcessedSamplesWritten() const noexcept;
+    [[nodiscard]] std::uint64_t getRawAttemptedSamples() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedAttemptedSamples() const noexcept;
+    [[nodiscard]] std::uint64_t getRawDroppedBlocks() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedDroppedBlocks() const noexcept;
+    [[nodiscard]] std::uint64_t getRawMissingSamples() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedMissingSamples() const noexcept;
+    [[nodiscard]] std::uint64_t getRawFirstMissingSample() const noexcept;
+    [[nodiscard]] std::uint64_t getRawLastMissingSample() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedFirstMissingSample() const noexcept;
+    [[nodiscard]] std::uint64_t getProcessedLastMissingSample() const noexcept;
     [[nodiscard]] std::uint64_t getDroppedBlocks() const noexcept;
     [[nodiscard]] std::uint64_t getMissingSamples() const noexcept;
     [[nodiscard]] std::uint64_t getFirstMissingSample() const noexcept;
@@ -73,11 +83,18 @@ private:
     std::atomic<std::uint64_t> samplesWritten { 0 };
     std::atomic<std::uint64_t> rawSamplesWritten { 0 };
     std::atomic<std::uint64_t> processedSamplesWritten { 0 };
-    std::atomic<std::uint64_t> attemptedSamples { 0 };
-    std::atomic<std::uint64_t> droppedBlocks { 0 };
-    std::atomic<std::uint64_t> missingSamples { 0 };
-    std::atomic<std::uint64_t> firstMissingSample { std::numeric_limits<std::uint64_t>::max() };
-    std::atomic<std::uint64_t> lastMissingSample { 0 };
+    std::atomic<std::uint64_t> rawAttemptedSamples { 0 };
+    std::atomic<std::uint64_t> processedAttemptedSamples { 0 };
+    std::atomic<std::uint64_t> rawDroppedBlocks { 0 };
+    std::atomic<std::uint64_t> processedDroppedBlocks { 0 };
+    std::atomic<std::uint64_t> rawMissingSamples { 0 };
+    std::atomic<std::uint64_t> processedMissingSamples { 0 };
+    std::atomic<std::uint64_t> rawFirstMissingSample { std::numeric_limits<std::uint64_t>::max() };
+    std::atomic<std::uint64_t> rawLastMissingSample { 0 };
+    std::atomic<std::uint64_t> processedFirstMissingSample {
+        std::numeric_limits<std::uint64_t>::max()
+    };
+    std::atomic<std::uint64_t> processedLastMissingSample { 0 };
     bool finished = false;
 };
 

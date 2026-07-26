@@ -18,7 +18,7 @@ public:
         const juce::var& configuration,
         juce::String& error);
 
-    void beginAudioTrackCapture(
+    bool beginAudioTrackCapture(
         const juce::String& trackId,
         std::uint64_t audioClockStartSample,
         std::uint64_t timelineStartSample) noexcept override;
@@ -28,10 +28,11 @@ public:
         int rawSampleCount,
         const float* const* processed,
         int processedSampleCount) noexcept override;
-    void endAudioTrackCapture(
+    bool endAudioTrackCapture(
         const juce::String& trackId,
         std::uint64_t audioClockEndSample,
         std::uint64_t timelineEndSample) noexcept override;
+    bool completeAudioTrackTail(const juce::String& trackId) noexcept override;
     void markLoopBoundary(std::uint64_t audioSample) noexcept override;
     void writeMidiTrack(
         const juce::String& trackId,
@@ -96,6 +97,8 @@ private:
         std::vector<VariantCaptureSegment> captureSegments;
         std::size_t captureSegmentCount = 0;
         bool captureActive = false;
+        bool tailActive = false;
+        std::size_t tailSegmentIndex = 0;
     };
 
     ArrangeRecordingSession(juce::File directory, double sampleRate);

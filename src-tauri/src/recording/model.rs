@@ -52,6 +52,26 @@ pub struct DropoutInformation {
     pub dropout_start_sample: Option<u64>,
     #[serde(default)]
     pub dropout_end_sample: Option<u64>,
+    #[serde(default)]
+    pub raw_attempted_samples: u64,
+    #[serde(default)]
+    pub processed_attempted_samples: u64,
+    #[serde(default)]
+    pub raw_dropped_blocks: u64,
+    #[serde(default)]
+    pub processed_dropped_blocks: u64,
+    #[serde(default)]
+    pub raw_missing_samples: u64,
+    #[serde(default)]
+    pub processed_missing_samples: u64,
+    #[serde(default)]
+    pub raw_dropout_start_sample: Option<u64>,
+    #[serde(default)]
+    pub raw_dropout_end_sample: Option<u64>,
+    #[serde(default)]
+    pub processed_dropout_start_sample: Option<u64>,
+    #[serde(default)]
+    pub processed_dropout_end_sample: Option<u64>,
 }
 
 /// One recording event and the assets it produced.

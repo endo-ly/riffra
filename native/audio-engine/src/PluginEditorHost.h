@@ -3,7 +3,6 @@
 #include <JuceHeader.h>
 
 #include <functional>
-#include <array>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -40,6 +39,7 @@ private:
     void markOpaqueStateDirty() noexcept;
     void drainParameterChanges();
     void publishStateIfDirty(bool force);
+    void resizeParameterQueue() noexcept;
 
     class StateTimer final : private juce::Timer {
     public:
@@ -58,9 +58,9 @@ private:
     PluginRack& rack;
     StateCallback onStateChanged;
     ParameterCallback onParameterChanged;
-    static constexpr std::size_t kParameterCapacity = 512;
-    std::array<std::atomic<float>, kParameterCapacity> parameterValues {};
-    std::array<std::atomic<bool>, kParameterCapacity> parameterDirty {};
+    std::unique_ptr<std::atomic<float>[]> parameterValues;
+    std::unique_ptr<std::atomic<bool>[]> parameterDirty;
+    std::size_t parameterCapacity = 0;
     std::atomic<bool> opaqueStateDirty { false };
     std::atomic<bool> parameterStateDirty { false };
     std::atomic<std::uint32_t> lastOpaqueStateChangeMs { 0 };

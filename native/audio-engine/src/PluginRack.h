@@ -3,7 +3,6 @@
 #include <JuceHeader.h>
 
 #include <atomic>
-#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -41,6 +40,7 @@ public:
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
+    [[nodiscard]] std::size_t parameterCount() const noexcept;
     void addProcessorListener(juce::AudioProcessorListener& listener) noexcept;
     void removeProcessorListener(juce::AudioProcessorListener& listener) noexcept;
     /// Queues a live-only editor parameter change. It is applied by `process`
@@ -67,8 +67,7 @@ private:
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
     [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
     void applyQueuedParameterChanges() noexcept;
-
-    static constexpr std::size_t kPendingParameterCapacity = 512;
+    bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
@@ -92,8 +91,9 @@ private:
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
-    std::array<std::atomic<float>, kPendingParameterCapacity> pendingParameterValues {};
-    std::array<std::atomic<bool>, kPendingParameterCapacity> pendingParameterDirty {};
+    std::unique_ptr<std::atomic<float>[]> pendingParameterValues;
+    std::unique_ptr<std::atomic<bool>[]> pendingParameterDirty;
+    std::atomic<std::size_t> pendingParameterCapacity { 0 };
 };
 
 [[nodiscard]] juce::Array<juce::var> runPluginRackSelfTests();

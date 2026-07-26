@@ -34,6 +34,16 @@ const recordingA: RecordingAsset = {
   missingSamples: 0,
   dropoutStartSample: null,
   dropoutEndSample: null,
+  rawAttemptedSamples: 44_100,
+  processedAttemptedSamples: 44_100,
+  rawDroppedBlocks: 0,
+  processedDroppedBlocks: 0,
+  rawMissingSamples: 0,
+  processedMissingSamples: 0,
+  rawDropoutStartSample: null,
+  rawDropoutEndSample: null,
+  processedDropoutStartSample: null,
+  processedDropoutEndSample: null,
   recoveryStatus: 'clean',
 };
 

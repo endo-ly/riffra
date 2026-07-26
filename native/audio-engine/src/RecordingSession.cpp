@@ -1,5 +1,6 @@
 #include "RecordingSession.h"
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -123,20 +124,22 @@ bool RecordingSession::write(
     const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || processedWriter == nullptr || numSamples <= 0)
         return false;
-    return writeRaw(rawData, numSamples) && writeProcessed(processedData, numSamples);
+    const auto rawWritten = writeRaw(rawData, numSamples);
+    const auto processedWritten = writeProcessed(processedData, numSamples);
+    return rawWritten && processedWritten;
 }
 
 bool RecordingSession::writeRaw(const float* const* rawData, const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || numSamples <= 0)
         return false;
-    const auto attemptedStart = attemptedSamples.fetch_add(
+    const auto attemptedStart = rawAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     if (!rawWriter->write(rawData, numSamples)) {
-        droppedBlocks.fetch_add(1, std::memory_order_relaxed);
-        missingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+        rawDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
+        rawMissingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
         auto expected = std::numeric_limits<std::uint64_t>::max();
-        firstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
-        lastMissingSample.store(
+        rawFirstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
+        rawLastMissingSample.store(
             attemptedStart + static_cast<std::uint64_t>(numSamples),
             std::memory_order_relaxed);
         return false;
@@ -151,14 +154,16 @@ bool RecordingSession::writeProcessed(
     const int numSamples) noexcept {
     if (finished || processedWriter == nullptr || numSamples <= 0)
         return false;
-    const auto attemptedStart = attemptedSamples.fetch_add(
+    const auto attemptedStart = processedAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     if (!processedWriter->write(processedData, numSamples)) {
-        droppedBlocks.fetch_add(1, std::memory_order_relaxed);
-        missingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+        processedDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
+        processedMissingSamples.fetch_add(
+            static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
         auto expected = std::numeric_limits<std::uint64_t>::max();
-        firstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
-        lastMissingSample.store(
+        processedFirstMissingSample.compare_exchange_strong(
+            expected, attemptedStart, std::memory_order_relaxed);
+        processedLastMissingSample.store(
             attemptedStart + static_cast<std::uint64_t>(numSamples),
             std::memory_order_relaxed);
         return false;
@@ -203,7 +208,7 @@ bool RecordingSession::finish(juce::String& error) {
 }
 
 std::uint64_t RecordingSession::getSamplesWritten() const noexcept {
-    return samplesWritten.load(std::memory_order_acquire);
+    return std::max(getRawSamplesWritten(), getProcessedSamplesWritten());
 }
 
 std::uint64_t RecordingSession::getRawSamplesWritten() const noexcept {
@@ -214,21 +219,67 @@ std::uint64_t RecordingSession::getProcessedSamplesWritten() const noexcept {
     return processedSamplesWritten.load(std::memory_order_acquire);
 }
 
-std::uint64_t RecordingSession::getDroppedBlocks() const noexcept {
-    return droppedBlocks.load(std::memory_order_acquire);
+std::uint64_t RecordingSession::getRawAttemptedSamples() const noexcept {
+    return rawAttemptedSamples.load(std::memory_order_acquire);
 }
 
-std::uint64_t RecordingSession::getMissingSamples() const noexcept {
-    return missingSamples.load(std::memory_order_acquire);
+std::uint64_t RecordingSession::getProcessedAttemptedSamples() const noexcept {
+    return processedAttemptedSamples.load(std::memory_order_acquire);
 }
 
-std::uint64_t RecordingSession::getFirstMissingSample() const noexcept {
-    const auto value = firstMissingSample.load(std::memory_order_acquire);
+std::uint64_t RecordingSession::getRawDroppedBlocks() const noexcept {
+    return rawDroppedBlocks.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getProcessedDroppedBlocks() const noexcept {
+    return processedDroppedBlocks.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getRawMissingSamples() const noexcept {
+    return rawMissingSamples.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getProcessedMissingSamples() const noexcept {
+    return processedMissingSamples.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getRawFirstMissingSample() const noexcept {
+    const auto value = rawFirstMissingSample.load(std::memory_order_acquire);
     return value == std::numeric_limits<std::uint64_t>::max() ? 0 : value;
 }
 
+std::uint64_t RecordingSession::getRawLastMissingSample() const noexcept {
+    return rawLastMissingSample.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getProcessedFirstMissingSample() const noexcept {
+    const auto value = processedFirstMissingSample.load(std::memory_order_acquire);
+    return value == std::numeric_limits<std::uint64_t>::max() ? 0 : value;
+}
+
+std::uint64_t RecordingSession::getProcessedLastMissingSample() const noexcept {
+    return processedLastMissingSample.load(std::memory_order_acquire);
+}
+
+std::uint64_t RecordingSession::getDroppedBlocks() const noexcept {
+    return getRawDroppedBlocks() + getProcessedDroppedBlocks();
+}
+
+std::uint64_t RecordingSession::getMissingSamples() const noexcept {
+    return getRawMissingSamples() + getProcessedMissingSamples();
+}
+
+std::uint64_t RecordingSession::getFirstMissingSample() const noexcept {
+    const auto raw = getRawFirstMissingSample();
+    const auto processed = getProcessedFirstMissingSample();
+    if (raw == 0) return processed;
+    if (processed == 0) return raw;
+    return std::min(raw, processed);
+}
+
 std::uint64_t RecordingSession::getLastMissingSample() const noexcept {
-    return lastMissingSample.load(std::memory_order_acquire);
+    return std::max(
+        getRawLastMissingSample(), getProcessedLastMissingSample());
 }
 
 juce::var RecordingSession::status() const {
@@ -243,6 +294,30 @@ juce::var RecordingSession::status() const {
     result->setProperty("missingSamples", static_cast<juce::int64>(getMissingSamples()));
     result->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
     result->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
+    result->setProperty("rawAttemptedSamples", static_cast<juce::int64>(getRawAttemptedSamples()));
+    result->setProperty(
+        "processedAttemptedSamples",
+        static_cast<juce::int64>(getProcessedAttemptedSamples()));
+    result->setProperty("rawDroppedBlocks", static_cast<juce::int64>(getRawDroppedBlocks()));
+    result->setProperty(
+        "processedDroppedBlocks",
+        static_cast<juce::int64>(getProcessedDroppedBlocks()));
+    result->setProperty("rawMissingSamples", static_cast<juce::int64>(getRawMissingSamples()));
+    result->setProperty(
+        "processedMissingSamples",
+        static_cast<juce::int64>(getProcessedMissingSamples()));
+    result->setProperty(
+        "rawDropoutStartSample",
+        static_cast<juce::int64>(getRawFirstMissingSample()));
+    result->setProperty(
+        "rawDropoutEndSample",
+        static_cast<juce::int64>(getRawLastMissingSample()));
+    result->setProperty(
+        "processedDropoutStartSample",
+        static_cast<juce::int64>(getProcessedFirstMissingSample()));
+    result->setProperty(
+        "processedDropoutEndSample",
+        static_cast<juce::int64>(getProcessedLastMissingSample()));
     result->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     return juce::var(result);
 }
@@ -260,6 +335,30 @@ bool RecordingSession::writeManifest(const juce::String& state, juce::String& er
     object->setProperty("missingSamples", static_cast<juce::int64>(getMissingSamples()));
     object->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
     object->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
+    object->setProperty("rawAttemptedSamples", static_cast<juce::int64>(getRawAttemptedSamples()));
+    object->setProperty(
+        "processedAttemptedSamples",
+        static_cast<juce::int64>(getProcessedAttemptedSamples()));
+    object->setProperty("rawDroppedBlocks", static_cast<juce::int64>(getRawDroppedBlocks()));
+    object->setProperty(
+        "processedDroppedBlocks",
+        static_cast<juce::int64>(getProcessedDroppedBlocks()));
+    object->setProperty("rawMissingSamples", static_cast<juce::int64>(getRawMissingSamples()));
+    object->setProperty(
+        "processedMissingSamples",
+        static_cast<juce::int64>(getProcessedMissingSamples()));
+    object->setProperty(
+        "rawDropoutStartSample",
+        static_cast<juce::int64>(getRawFirstMissingSample()));
+    object->setProperty(
+        "rawDropoutEndSample",
+        static_cast<juce::int64>(getRawLastMissingSample()));
+    object->setProperty(
+        "processedDropoutStartSample",
+        static_cast<juce::int64>(getProcessedFirstMissingSample()));
+    object->setProperty(
+        "processedDropoutEndSample",
+        static_cast<juce::int64>(getProcessedLastMissingSample()));
     object->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     object->setProperty("rawFile", rawFinal.existsAsFile() ? "raw.wav" : "raw.wav.partial");
     object->setProperty(

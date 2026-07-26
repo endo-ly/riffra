@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace riffra {
@@ -89,18 +90,19 @@ bool ArrangeRecordingSession::initialise(
     return writeManifest("recording", error);
 }
 
-void ArrangeRecordingSession::beginAudioTrackCapture(
+bool ArrangeRecordingSession::beginAudioTrackCapture(
     const juce::String& trackId,
     const std::uint64_t audioClockStartSample,
     const std::uint64_t timelineStartSample) noexcept {
     if (finished.load(std::memory_order_acquire))
-        return;
+        return false;
     const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
         return track.trackId == trackId;
     });
     if (found == tracks.end() || found->audio == nullptr || found->captureActive
+        || found->tailActive
         || found->captureSegmentCount >= found->captureSegments.capacity())
-        return;
+        return false;
     found->captureSegments.emplace_back();
     auto& segment = found->captureSegments[found->captureSegmentCount++];
     segment.audioClockStartSample = audioClockStartSample;
@@ -111,6 +113,7 @@ void ArrangeRecordingSession::beginAudioTrackCapture(
     segment.processedFileEndSample = segment.processedFileStartSample;
     segment.processedTailEndSample = segment.processedFileStartSample;
     found->captureActive = true;
+    return true;
 }
 
 void ArrangeRecordingSession::writeAudioTrack(
@@ -134,9 +137,12 @@ void ArrangeRecordingSession::writeAudioTrack(
     }
     if (processedSampleCount > 0)
         (void) found->audio->writeProcessed(processed, processedSampleCount);
+    if (found->tailActive && found->tailSegmentIndex < found->captureSegmentCount)
+        found->captureSegments[found->tailSegmentIndex].processedTailEndSample =
+            found->audio->getProcessedSamplesWritten();
 }
 
-void ArrangeRecordingSession::endAudioTrackCapture(
+bool ArrangeRecordingSession::endAudioTrackCapture(
     const juce::String& trackId,
     const std::uint64_t audioClockEndSample,
     const std::uint64_t timelineEndSample) noexcept {
@@ -145,7 +151,7 @@ void ArrangeRecordingSession::endAudioTrackCapture(
     });
     if (found == tracks.end() || found->audio == nullptr || !found->captureActive
         || found->captureSegmentCount == 0)
-        return;
+        return false;
     auto& segment = found->captureSegments[found->captureSegmentCount - 1];
     segment.audioClockEndSample = audioClockEndSample;
     segment.timelineEndSample = timelineEndSample;
@@ -154,6 +160,23 @@ void ArrangeRecordingSession::endAudioTrackCapture(
         + (segment.rawFileEndSample - segment.rawFileStartSample);
     segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
     found->captureActive = false;
+    found->tailActive = true;
+    found->tailSegmentIndex = found->captureSegmentCount - 1;
+    return true;
+}
+
+bool ArrangeRecordingSession::completeAudioTrackTail(
+    const juce::String& trackId) noexcept {
+    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
+        return track.trackId == trackId;
+    });
+    if (found == tracks.end() || found->audio == nullptr || !found->tailActive
+        || found->tailSegmentIndex >= found->captureSegmentCount)
+        return false;
+    auto& segment = found->captureSegments[found->tailSegmentIndex];
+    segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
+    found->tailActive = false;
+    return true;
 }
 
 void ArrangeRecordingSession::markLoopBoundary(
@@ -352,14 +375,20 @@ juce::var ArrangeRecordingSession::status() const {
     result->setProperty("sampleRate", sampleRate);
     std::uint64_t written = 0;
     std::uint64_t dropped = 0;
+    std::uint64_t rawMissing = 0;
+    std::uint64_t processedMissing = 0;
     for (const auto& track : tracks) {
         if (track.audio != nullptr) {
             written = std::max(written, track.audio->getSamplesWritten());
             dropped += track.audio->getDroppedBlocks();
+            rawMissing += track.audio->getRawMissingSamples();
+            processedMissing += track.audio->getProcessedMissingSamples();
         }
     }
     result->setProperty("samplesWritten", static_cast<juce::int64>(written));
     result->setProperty("droppedBlocks", static_cast<juce::int64>(dropped));
+    result->setProperty("rawMissingSamples", static_cast<juce::int64>(rawMissing));
+    result->setProperty("processedMissingSamples", static_cast<juce::int64>(processedMissing));
     result->setProperty("recoveryStatus", dropped == 0 ? "clean" : "partial");
     return juce::var(result);
 }
@@ -393,16 +422,70 @@ bool ArrangeRecordingSession::writeManifest(
     std::uint64_t samplesWritten = 0;
     std::uint64_t droppedBlocks = 0;
     std::uint64_t missingSamples = 0;
+    std::uint64_t rawAttemptedSamples = 0;
+    std::uint64_t processedAttemptedSamples = 0;
+    std::uint64_t rawDroppedBlocks = 0;
+    std::uint64_t processedDroppedBlocks = 0;
+    std::uint64_t rawMissingSamples = 0;
+    std::uint64_t processedMissingSamples = 0;
+    std::optional<std::uint64_t> rawFirstMissingSample;
+    std::optional<std::uint64_t> rawLastMissingSample;
+    std::optional<std::uint64_t> processedFirstMissingSample;
+    std::optional<std::uint64_t> processedLastMissingSample;
     for (const auto& track : tracks) {
         if (track.audio != nullptr) {
             samplesWritten = std::max(samplesWritten, track.audio->getSamplesWritten());
             droppedBlocks += track.audio->getDroppedBlocks();
             missingSamples += track.audio->getMissingSamples();
+            rawAttemptedSamples += track.audio->getRawAttemptedSamples();
+            processedAttemptedSamples += track.audio->getProcessedAttemptedSamples();
+            rawDroppedBlocks += track.audio->getRawDroppedBlocks();
+            processedDroppedBlocks += track.audio->getProcessedDroppedBlocks();
+            rawMissingSamples += track.audio->getRawMissingSamples();
+            processedMissingSamples += track.audio->getProcessedMissingSamples();
+            const auto rawFirst = track.audio->getRawFirstMissingSample();
+            const auto processedFirst = track.audio->getProcessedFirstMissingSample();
+            if (track.audio->getRawMissingSamples() > 0)
+                rawFirstMissingSample = rawFirstMissingSample.has_value()
+                    ? std::min(*rawFirstMissingSample, rawFirst)
+                    : rawFirst;
+            if (track.audio->getProcessedMissingSamples() > 0)
+                processedFirstMissingSample = processedFirstMissingSample.has_value()
+                    ? std::min(*processedFirstMissingSample, processedFirst)
+                    : processedFirst;
+            const auto rawLast = track.audio->getRawLastMissingSample();
+            const auto processedLast = track.audio->getProcessedLastMissingSample();
+            if (track.audio->getRawMissingSamples() > 0)
+                rawLastMissingSample = std::max(rawLastMissingSample.value_or(0), rawLast);
+            if (track.audio->getProcessedMissingSamples() > 0)
+                processedLastMissingSample =
+                    std::max(processedLastMissingSample.value_or(0), processedLast);
         }
     }
     root->setProperty("samplesWritten", static_cast<juce::int64>(samplesWritten));
     root->setProperty("droppedBlocks", static_cast<juce::int64>(droppedBlocks));
     root->setProperty("missingSamples", static_cast<juce::int64>(missingSamples));
+    root->setProperty("rawAttemptedSamples", static_cast<juce::int64>(rawAttemptedSamples));
+    root->setProperty(
+        "processedAttemptedSamples", static_cast<juce::int64>(processedAttemptedSamples));
+    root->setProperty("rawDroppedBlocks", static_cast<juce::int64>(rawDroppedBlocks));
+    root->setProperty(
+        "processedDroppedBlocks", static_cast<juce::int64>(processedDroppedBlocks));
+    root->setProperty("rawMissingSamples", static_cast<juce::int64>(rawMissingSamples));
+    root->setProperty(
+        "processedMissingSamples", static_cast<juce::int64>(processedMissingSamples));
+    root->setProperty(
+        "rawDropoutStartSample",
+        static_cast<juce::int64>(rawFirstMissingSample.value_or(0)));
+    root->setProperty(
+        "rawDropoutEndSample",
+        static_cast<juce::int64>(rawLastMissingSample.value_or(0)));
+    root->setProperty(
+        "processedDropoutStartSample",
+        static_cast<juce::int64>(processedFirstMissingSample.value_or(0)));
+    root->setProperty(
+        "processedDropoutEndSample",
+        static_cast<juce::int64>(processedLastMissingSample.value_or(0)));
     root->setProperty("recoveryStatus", droppedBlocks == 0 ? "clean" : "partial");
     juce::Array<juce::var> segments;
     const auto segmentCount = std::min(
@@ -459,6 +542,32 @@ bool ArrangeRecordingSession::writeManifest(
         value->setProperty("pluginLatencySamples", track.pluginLatencySamples);
         value->setProperty("pluginTailSamples", track.pluginTailSamples);
         if (track.kind == "audio") {
+            if (track.audio != nullptr) {
+                value->setProperty(
+                    "rawAttemptedSamples",
+                    static_cast<juce::int64>(track.audio->getRawAttemptedSamples()));
+                value->setProperty(
+                    "processedAttemptedSamples",
+                    static_cast<juce::int64>(track.audio->getProcessedAttemptedSamples()));
+                value->setProperty(
+                    "rawMissingSamples",
+                    static_cast<juce::int64>(track.audio->getRawMissingSamples()));
+                value->setProperty(
+                    "processedMissingSamples",
+                    static_cast<juce::int64>(track.audio->getProcessedMissingSamples()));
+                value->setProperty(
+                    "rawDropoutStartSample",
+                    static_cast<juce::int64>(track.audio->getRawFirstMissingSample()));
+                value->setProperty(
+                    "rawDropoutEndSample",
+                    static_cast<juce::int64>(track.audio->getRawLastMissingSample()));
+                value->setProperty(
+                    "processedDropoutStartSample",
+                    static_cast<juce::int64>(track.audio->getProcessedFirstMissingSample()));
+                value->setProperty(
+                    "processedDropoutEndSample",
+                    static_cast<juce::int64>(track.audio->getProcessedLastMissingSample()));
+            }
             value->setProperty("rawFile", "tracks/" + track.trackKey + "/raw.wav");
             value->setProperty(
                 "processedFile", "tracks/" + track.trackKey + "/processed.wav");
@@ -565,22 +674,26 @@ juce::var runArrangeRecordingSelfTest(const juce::File& directory) {
         session->writeAudioTrack(
             "track:guitar", guitarRaw.data(), 256, guitarProcessed.data(), 256);
         session->endAudioTrackCapture("track:guitar", 1256, 24256);
+        session->completeAudioTrackTail("track:guitar");
         session->beginAudioTrackCapture("track:guitar", 1256, 24000);
         const std::array<const float*, 2> guitarProcessedSecond {
             guitarLeft.data() + 256, guitarRight.data() + 256 };
         session->writeAudioTrack(
             "track:guitar", guitarRaw.data() + 256, 256, guitarProcessedSecond.data(), 256);
         session->endAudioTrackCapture("track:guitar", 1512, 24256);
+        session->completeAudioTrackTail("track:guitar");
         session->beginAudioTrackCapture("track:vocal", 1000, 24000);
         session->writeAudioTrack(
             "track:vocal", vocalRaw.data(), 256, vocalProcessed.data(), 256);
         session->endAudioTrackCapture("track:vocal", 1256, 24256);
+        session->completeAudioTrackTail("track:vocal");
         session->beginAudioTrackCapture("track:vocal", 1256, 24000);
         const std::array<const float*, 2> vocalProcessedSecond {
             vocalLeft.data() + 256, vocalRight.data() + 256 };
         session->writeAudioTrack(
             "track:vocal", vocalRaw.data() + 256, 256, vocalProcessedSecond.data(), 256);
         session->endAudioTrackCapture("track:vocal", 1512, 24256);
+        session->completeAudioTrackTail("track:vocal");
         session->writeMidiTrack(
             "track:keys", "midi:keyboard",
             juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);

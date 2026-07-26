@@ -1,5 +1,6 @@
 #include <array>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "PluginChain.h"
@@ -61,9 +62,17 @@ public:
         : AudioProcessor(BusesProperties()
               .withInput("Input", juce::AudioChannelSet::stereo(), true)
               .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
-        value = new juce::AudioParameterFloat(
-            "state", "State", 0.0f, 1.0f, 0.0f);
-        addParameter(value);
+        parameters.reserve(700);
+        for (int index = 0; index < 700; ++index) {
+            auto* parameter = new juce::AudioParameterFloat(
+                "state" + juce::String(index),
+                "State " + juce::String(index),
+                0.0f,
+                1.0f,
+                0.0f);
+            parameters.push_back(parameter);
+            addParameter(parameter);
+        }
     }
 
     void prepareToPlay(double, int) override {}
@@ -86,19 +95,21 @@ public:
     const juce::String getProgramName(int) override { return {}; }
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock& state) override {
-        const auto normalized = getParameters()[0]->getValue();
-        state.append(&normalized, sizeof(normalized));
+        for (const auto* parameter : getParameters()) {
+            const auto normalized = parameter->getValue();
+            state.append(&normalized, sizeof(normalized));
+        }
     }
     void setStateInformation(const void* data, const int size) override {
-        if (data == nullptr || size != sizeof(float))
+        if (data == nullptr || size != static_cast<int>(parameters.size() * sizeof(float)))
             return;
-        float normalized = 0.0f;
-        std::memcpy(&normalized, data, sizeof(normalized));
-        getParameters()[0]->setValueNotifyingHost(normalized);
+        const auto* values = static_cast<const float*>(data);
+        for (std::size_t index = 0; index < parameters.size(); ++index)
+            parameters[index]->setValueNotifyingHost(values[index]);
     }
 
 private:
-    juce::AudioParameterFloat* value = nullptr;
+    std::vector<juce::AudioParameterFloat*> parameters;
 };
 
 juce::var check(const juce::String& name, const bool passed) {
@@ -165,6 +176,7 @@ juce::Array<juce::var> runPluginChainSelfTests() {
 
     PluginChain playbackState;
     PluginChain liveState;
+    PluginChain recordingState;
     const auto addStateRack = [](PluginChain& target) {
         auto rack = std::make_unique<PluginRack>();
         auto processor = std::make_unique<StateTestProcessor>();
@@ -177,6 +189,7 @@ juce::Array<juce::var> runPluginChainSelfTests() {
     };
     addStateRack(playbackState);
     addStateRack(liveState);
+    addStateRack(recordingState);
     juce::String stateError;
     const auto changed = playbackState.setParameter(
         "device-state", 0, 0.75f, stateError);
@@ -194,10 +207,17 @@ juce::Array<juce::var> runPluginChainSelfTests() {
         "bypassed", captured.getProperty("bypassed", false));
     juce::Array<juce::var> persistedDevices;
     persistedDevices.add(juce::var(persistedDevice));
+    const auto* liveRackForState = liveState.findDevice("device-state");
+    const auto liveStatusBeforeStateApply = liveRackForState != nullptr
+        ? liveRackForState->status()
+        : juce::var {};
     const auto mirrored = liveState.applyState(
         juce::var(persistedDevices), stateError);
     const auto liveCaptured = liveState.persistedState(
         "device-state", stateError);
+    const auto liveStatusAfterStateApply = liveRackForState != nullptr
+        ? liveRackForState->status()
+        : juce::var {};
     const auto liveValues = liveCaptured.getProperty(
         "parameterValues", juce::Array<juce::var> {});
     const auto stateCaptured = changed && captured.isObject()
@@ -208,28 +228,58 @@ juce::Array<juce::var> runPluginChainSelfTests() {
     checks.add(check(
         "Persisted Plugin state applies to the Live Chain",
         mirrored && stateError.isEmpty()));
-    const auto liveValue = liveValues.isArray() && liveValues.size() == 1
+    checks.add(check(
+        "Opaque Plugin state changes do not add transition blocks",
+        static_cast<juce::int64>(liveStatusAfterStateApply.getProperty(
+            "transitionBlocks", -1))
+            == static_cast<juce::int64>(liveStatusBeforeStateApply.getProperty(
+                "transitionBlocks", -1))));
+    const auto liveValue = liveValues.isArray() && liveValues.size() == 700
         ? static_cast<float>(liveValues[0])
         : -1.0f;
     auto mirroredCheck = check(
         "Plugin Editor state is mirrored into the Live Chain",
         liveValues.isArray()
-            && liveValues.size() == 1
+            && liveValues.size() == 700
             && std::abs(liveValue - 0.75f) < 0.0001f);
     mirroredCheck.getDynamicObject()->setProperty("value", liveValue);
     checks.add(mirroredCheck);
     liveState.prepare(sampleRate, blockSize);
+    recordingState.prepare(sampleRate, blockSize);
+    const std::array<std::pair<int, float>, 4> queuedParameters {
+        std::pair { 0, 0.10f },
+        std::pair { 511, 0.20f },
+        std::pair { 512, 0.30f },
+        std::pair { 699, 0.40f },
+    };
     if (auto* liveRack = liveState.findDevice("device-state"))
-        liveRack->enqueueParameterChange(0, 0.25f);
+        for (const auto [index, value] : queuedParameters)
+            liveRack->enqueueParameterChange(index, value);
+    if (auto* recordingRack = recordingState.findDevice("device-state"))
+        for (const auto [index, value] : queuedParameters)
+            recordingRack->enqueueParameterChange(index, value);
     liveState.process(inputs.data(), 1, outputs.data(), 2, blockSize);
+    recordingState.process(inputs.data(), 1, outputs.data(), 2, blockSize);
     const auto queuedCaptured = liveState.persistedState("device-state", stateError);
     const auto queuedValues = queuedCaptured.getProperty(
         "parameterValues", juce::Array<juce::var> {});
+    const auto recordingCaptured = recordingState.persistedState("device-state", stateError);
+    const auto recordingValues = recordingCaptured.getProperty(
+        "parameterValues", juce::Array<juce::var> {});
     checks.add(check(
-        "Editor parameter changes reach the Live Chain at a block boundary",
+        "700 Plugin Editor parameters reach Live and Recording Chains at a block boundary",
         queuedValues.isArray()
-            && queuedValues.size() == 1
-            && std::abs(static_cast<float>(queuedValues[0]) - 0.25f) < 0.0001f));
+            && queuedValues.size() == 700
+            && std::abs(static_cast<float>(queuedValues[0]) - 0.10f) < 0.0001f
+            && std::abs(static_cast<float>(queuedValues[511]) - 0.20f) < 0.0001f
+            && std::abs(static_cast<float>(queuedValues[512]) - 0.30f) < 0.0001f
+            && std::abs(static_cast<float>(queuedValues[699]) - 0.40f) < 0.0001f
+            && recordingValues.isArray()
+            && recordingValues.size() == 700
+            && std::abs(static_cast<float>(recordingValues[0]) - 0.10f) < 0.0001f
+            && std::abs(static_cast<float>(recordingValues[511]) - 0.20f) < 0.0001f
+            && std::abs(static_cast<float>(recordingValues[512]) - 0.30f) < 0.0001f
+            && std::abs(static_cast<float>(recordingValues[699]) - 0.40f) < 0.0001f));
     return checks;
 }
 

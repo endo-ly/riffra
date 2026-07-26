@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <new>
 #include <vector>
 
 namespace riffra {
@@ -83,10 +84,14 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         return configurationError;
 
     updateParameterCache(*candidate);
+    const auto candidateParameterCount = static_cast<std::size_t>(candidate->getParameters().size());
     midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
     const auto inputChannels = candidate->getMainBusNumInputChannels();
     const auto outputChannels = candidate->getMainBusNumOutputChannels();
     const juce::SpinLock::ScopedLockType lock(pluginLock);
+    juce::String parameterQueueError;
+    if (!allocateParameterQueue(candidateParameterCount, parameterQueueError))
+        return PluginLoadError { "parameterQueue", parameterQueueError };
     if (plugin != nullptr) {
         plugin->releaseResources();
         destroyCount.fetch_add(1, std::memory_order_relaxed);
@@ -182,6 +187,9 @@ void PluginRack::clear() noexcept {
         destroyCount.fetch_add(1, std::memory_order_relaxed);
     }
     plugin.reset();
+    pendingParameterValues.reset();
+    pendingParameterDirty.reset();
+    pendingParameterCapacity.store(0, std::memory_order_release);
     {
         const juce::ScopedLock statusGuard(statusLock);
         pluginPath.clear();
@@ -214,6 +222,12 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
         plugin->setRateAndBufferSizeDetails(sampleRate, blockSize);
         plugin->prepareToPlay(sampleRate, blockSize);
         plugin->reset();
+        if (pendingParameterCapacity.load(std::memory_order_acquire)
+            != static_cast<std::size_t>(plugin->getParameters().size())) {
+            juce::String ignored;
+            (void) allocateParameterQueue(
+                static_cast<std::size_t>(plugin->getParameters().size()), ignored);
+        }
     }
 }
 
@@ -241,11 +255,43 @@ void PluginRack::removeProcessorListener(juce::AudioProcessorListener& listener)
 }
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
-    if (index < 0 || static_cast<std::size_t>(index) >= kPendingParameterCapacity)
+    const auto capacity = pendingParameterCapacity.load(std::memory_order_acquire);
+    if (index < 0 || static_cast<std::size_t>(index) >= capacity
+        || pendingParameterValues == nullptr || pendingParameterDirty == nullptr)
         return;
     const auto offset = static_cast<std::size_t>(index);
     pendingParameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
     pendingParameterDirty[offset].store(true, std::memory_order_release);
+}
+
+std::size_t PluginRack::parameterCount() const noexcept {
+    const juce::ScopedLock statusGuard(statusLock);
+    return cachedParameters.size();
+}
+
+bool PluginRack::allocateParameterQueue(
+    const std::size_t count,
+    juce::String& error) noexcept {
+    if (count == 0) {
+        pendingParameterValues.reset();
+        pendingParameterDirty.reset();
+        pendingParameterCapacity.store(0, std::memory_order_release);
+        return true;
+    }
+    auto values = std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
+    auto dirty = std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
+    if (values == nullptr || dirty == nullptr) {
+        error = "The plugin parameter change queue could not be allocated.";
+        return false;
+    }
+    for (std::size_t index = 0; index < count; ++index) {
+        values[index].store(0.0f, std::memory_order_relaxed);
+        dirty[index].store(false, std::memory_order_relaxed);
+    }
+    pendingParameterValues = std::move(values);
+    pendingParameterDirty = std::move(dirty);
+    pendingParameterCapacity.store(count, std::memory_order_release);
+    return true;
 }
 
 juce::AudioProcessorEditor* PluginRack::createEditor(juce::String& error) {
@@ -467,7 +513,8 @@ void PluginRack::applyQueuedParameterChanges() noexcept {
     if (plugin == nullptr)
         return;
     const auto& parameters = plugin->getParameters();
-    const auto count = std::min(parameters.size(), static_cast<int>(kPendingParameterCapacity));
+    const auto count = std::min(
+        parameters.size(), static_cast<int>(pendingParameterCapacity.load(std::memory_order_acquire)));
     for (int index = 0; index < count; ++index) {
         if (!pendingParameterDirty[static_cast<std::size_t>(index)].exchange(
                 false, std::memory_order_acq_rel))

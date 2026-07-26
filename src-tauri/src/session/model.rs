@@ -1579,6 +1579,18 @@ impl Arrangement {
     /// Removes recording metadata owned by a track. The source assets remain
     /// registered: this only removes canonical arrangement references.
     fn remove_recording_track_references(&mut self, session_id: Option<&str>, track_id: &str) {
+        let stable_slot_clip_ids = self
+            .recording_sessions
+            .iter()
+            .filter(|recording| session_id.is_none_or(|id| recording.id == id))
+            .flat_map(|recording| {
+                recording
+                    .track_slots
+                    .iter()
+                    .filter(|slot| slot.track_id == track_id)
+                    .map(|slot| slot.timeline_clip_id.clone())
+            })
+            .collect::<std::collections::HashSet<_>>();
         let removed_take_ids = self
             .takes
             .iter()
@@ -1587,19 +1599,38 @@ impl Arrangement {
             })
             .map(|take| take.id.clone())
             .collect::<std::collections::HashSet<_>>();
-        if removed_take_ids.is_empty() {
-            return;
+        if !removed_take_ids.is_empty() {
+            self.takes
+                .retain(|take| !removed_take_ids.contains(&take.id));
+            for clip in &mut self.audio_clips {
+                if clip
+                    .recording_take_id
+                    .as_ref()
+                    .is_some_and(|id| removed_take_ids.contains(id))
+                    && !stable_slot_clip_ids.contains(&clip.id)
+                {
+                    clip.recording_take_id = None;
+                }
+            }
+            for clip in &mut self.midi_clips {
+                if clip
+                    .recording_take_id
+                    .as_ref()
+                    .is_some_and(|id| removed_take_ids.contains(id))
+                    && !stable_slot_clip_ids.contains(&clip.id)
+                {
+                    clip.recording_take_id = None;
+                }
+            }
+            self.recording_passes.iter_mut().for_each(|pass| {
+                pass.track_take_ids
+                    .retain(|id| !removed_take_ids.contains(id));
+            });
         }
-        self.takes
-            .retain(|take| !removed_take_ids.contains(&take.id));
-        self.recording_passes.iter_mut().for_each(|pass| {
-            pass.track_take_ids
-                .retain(|id| !removed_take_ids.contains(id));
-        });
         let removed_pass_ids = self
             .recording_passes
             .iter()
-            .filter(|pass| pass.track_take_ids.is_empty())
+            .filter(|pass| !removed_take_ids.is_empty() && pass.track_take_ids.is_empty())
             .map(|pass| pass.id.clone())
             .collect::<std::collections::HashSet<_>>();
         self.recording_passes
@@ -2175,9 +2206,6 @@ fn normalize_rack_device(device: &mut RackDevice) -> Result<(), String> {
         return Err(format!("Device '{}' has an invalid gain.", device.name));
     }
     device.gain_db = device.gain_db.clamp(-90.0, 24.0);
-    if device.parameter_values.len() > 512 {
-        device.parameter_values.truncate(512);
-    }
     for value in &mut device.parameter_values {
         *value = if value.is_finite() {
             value.clamp(0.0, 1.0)
@@ -3348,6 +3376,30 @@ mod tests {
         assert!(session.arrangement.takes.is_empty());
         assert!(session.arrangement.recording_passes.is_empty());
         assert!(session.arrangement.recording_sessions.is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_slot_detaches_a_remaining_copy_clip_from_the_removed_take() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        let asset_id = copy.asset_id.clone();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+
+        let copy = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == "clip:copy")
+            .unwrap();
+        assert!(copy.recording_take_id.is_none());
+        assert_eq!(copy.asset_id, asset_id);
         assert!(session.validate_and_normalize().is_ok());
     }
 

@@ -168,6 +168,9 @@ bool SafetyAudioCallback::stopArrangeRecording(
     TimelineEngine& timeline,
     juce::String& error) {
     const juce::ScopedLock lock(recordingLock);
+    timeline.stopRecording();
+    if (!timeline.flushRecordingTail(error))
+        return false;
     timeline.clearRecordingSink();
     if (arrangeRecording == nullptr)
         return true;

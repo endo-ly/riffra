@@ -121,6 +121,16 @@ struct NativeRecordingStatus {
     missing_samples: Option<u64>,
     dropout_start_sample: Option<u64>,
     dropout_end_sample: Option<u64>,
+    raw_attempted_samples: Option<u64>,
+    processed_attempted_samples: Option<u64>,
+    raw_dropped_blocks: Option<u64>,
+    processed_dropped_blocks: Option<u64>,
+    raw_missing_samples: Option<u64>,
+    processed_missing_samples: Option<u64>,
+    raw_dropout_start_sample: Option<u64>,
+    raw_dropout_end_sample: Option<u64>,
+    processed_dropout_start_sample: Option<u64>,
+    processed_dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
 }
 
@@ -1015,6 +1025,18 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 missing_samples: recording.missing_samples.unwrap_or_default(),
                 dropout_start_sample: recording.dropout_start_sample,
                 dropout_end_sample: recording.dropout_end_sample,
+                raw_attempted_samples: recording.raw_attempted_samples.unwrap_or_default(),
+                processed_attempted_samples: recording
+                    .processed_attempted_samples
+                    .unwrap_or_default(),
+                raw_dropped_blocks: recording.raw_dropped_blocks.unwrap_or_default(),
+                processed_dropped_blocks: recording.processed_dropped_blocks.unwrap_or_default(),
+                raw_missing_samples: recording.raw_missing_samples.unwrap_or_default(),
+                processed_missing_samples: recording.processed_missing_samples.unwrap_or_default(),
+                raw_dropout_start_sample: recording.raw_dropout_start_sample,
+                raw_dropout_end_sample: recording.raw_dropout_end_sample,
+                processed_dropout_start_sample: recording.processed_dropout_start_sample,
+                processed_dropout_end_sample: recording.processed_dropout_end_sample,
                 recovery_status: recording.recovery_status.unwrap_or_else(|| {
                     if recording.dropped_blocks.unwrap_or_default() == 0 {
                         "clean".into()

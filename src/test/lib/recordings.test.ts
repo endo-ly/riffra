@@ -26,6 +26,16 @@ const completedRecording = (): RecordingAsset => ({
   missingSamples: 0,
   dropoutStartSample: null,
   dropoutEndSample: null,
+  rawAttemptedSamples: 96_000,
+  processedAttemptedSamples: 96_000,
+  rawDroppedBlocks: 0,
+  processedDroppedBlocks: 0,
+  rawMissingSamples: 0,
+  processedMissingSamples: 0,
+  rawDropoutStartSample: null,
+  rawDropoutEndSample: null,
+  processedDropoutStartSample: null,
+  processedDropoutEndSample: null,
   recoveryStatus: 'clean',
 });
 

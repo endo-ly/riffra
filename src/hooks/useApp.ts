@@ -25,6 +25,7 @@ import { startingAudioStatus } from '@/lib/audio-defaults';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
 import { useLibrary } from './useLibrary';
 import { useInbox } from './useInbox';
@@ -751,46 +752,104 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     );
     let pluginSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let pluginSaveRunning = false;
-    const schedulePluginSave = () => {
-      if (pluginSaveTimer != null || pluginSaveRunning) return;
-      pluginSaveTimer = setTimeout(() => {
-        pluginSaveTimer = null;
-        pluginSaveRunning = true;
-        void (async () => {
+    let pluginSaveFlushRequested = false;
+    let pluginSaveCompletion: Promise<boolean> | null = null;
+    type PluginChangeBatch = [
+      string,
+      {
+        trackId: string;
+        deviceId: string;
+        parameters: Map<number, number>;
+        state: Parameters<typeof persistTrackPluginState>[0] | null;
+      },
+    ];
+    const mergeFailedPluginBatch = (batch: PluginChangeBatch[]) => {
+      for (const [key, failed] of batch) {
+        const current = pendingPluginChanges.current.get(key);
+        if (current == null) {
+          pendingPluginChanges.current.set(key, {
+            trackId: failed.trackId,
+            deviceId: failed.deviceId,
+            parameters: new Map(failed.parameters),
+            state: failed.state,
+          });
+          continue;
+        }
+        if (current.state == null && failed.state != null) current.state = failed.state;
+        if (current.state == null) {
+          for (const [parameterIndex, value] of failed.parameters) {
+            if (!current.parameters.has(parameterIndex))
+              current.parameters.set(parameterIndex, value);
+          }
+        }
+      }
+    };
+    const runPluginFlush = async (): Promise<boolean> => {
+      let succeeded = true;
+      try {
+        do {
+          pluginSaveFlushRequested = false;
+          const batch = [...pendingPluginChanges.current.entries()] as PluginChangeBatch[];
+          pendingPluginChanges.current.clear();
+          if (batch.length === 0) break;
           try {
-            while (pendingPluginChanges.current.size > 0) {
-              const batch = [...pendingPluginChanges.current.entries()];
-              pendingPluginChanges.current.clear();
-              let latest: CreativeSession | null = null;
-              for (const [, pending] of batch) {
-                if (pending.state != null) {
-                  latest = await persistTrackPluginState(pending.state);
-                }
-                for (const [parameterIndex, value] of pending.parameters) {
-                  latest = await persistTrackPluginParameter({
-                    trackId: pending.trackId,
-                    deviceId: pending.deviceId,
-                    parameterIndex,
-                    value,
-                  });
-                }
-              }
-              if (latest != null) {
-                setSession(latest);
-                setAutosaveError(null);
+            let latest: CreativeSession | null = null;
+            for (const [, pending] of batch) {
+              if (pending.state != null) latest = await persistTrackPluginState(pending.state);
+              for (const [parameterIndex, value] of pending.parameters) {
+                latest = await persistTrackPluginParameter({
+                  trackId: pending.trackId,
+                  deviceId: pending.deviceId,
+                  parameterIndex,
+                  value,
+                });
               }
             }
+            if (latest != null) {
+              setSession(latest);
+              setAutosaveError(null);
+            }
           } catch (error: unknown) {
+            mergeFailedPluginBatch(batch);
+            succeeded = false;
             setAutosaveError(
               error instanceof Error
                 ? error.message
                 : `Track Plugin state could not be saved: ${String(error)}`,
             );
-          } finally {
-            pluginSaveRunning = false;
-            if (pendingPluginChanges.current.size > 0) schedulePluginSave();
+            break;
           }
-        })();
+        } while (pluginSaveFlushRequested || pendingPluginChanges.current.size > 0);
+      } finally {
+        pluginSaveRunning = false;
+      }
+      return succeeded;
+    };
+    const flushPluginChanges = (): Promise<boolean> => {
+      if (pluginSaveRunning) {
+        pluginSaveFlushRequested = true;
+        return pluginSaveCompletion ?? Promise.resolve(true);
+      }
+      pluginSaveRunning = true;
+      const completion = runPluginFlush();
+      pluginSaveCompletion = completion;
+      void completion.then(
+        () => {
+          if (pluginSaveCompletion === completion) pluginSaveCompletion = null;
+        },
+        () => {
+          if (pluginSaveCompletion === completion) pluginSaveCompletion = null;
+        },
+      );
+      return completion;
+    };
+    const schedulePluginSave = () => {
+      if (pluginSaveTimer != null || pluginSaveRunning) return;
+      pluginSaveTimer = setTimeout(() => {
+        pluginSaveTimer = null;
+        void flushPluginChanges().then(() => {
+          if (pendingPluginChanges.current.size > 0) schedulePluginSave();
+        });
       }, 100);
     };
     const enqueuePluginParameter = (change: {
@@ -821,10 +880,32 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         parameters: new Map(),
         state: change,
       });
-      schedulePluginSave();
+      void flushPluginChanges();
     });
+    let unlistenClose: (() => void) | null = null;
+    try {
+      const currentWindow = getCurrentWindow();
+      void currentWindow
+        .onCloseRequested(async (event) => {
+          event.preventDefault();
+          const saved = await flushPluginChanges();
+          if (saved) {
+            await currentWindow.destroy();
+          } else {
+            setAutosaveError('最終Plugin Stateを保存できなかったため、終了を保留しました。');
+          }
+        })
+        .then((unlisten) => {
+          unlistenClose = unlisten;
+        })
+        .catch(() => undefined);
+    } catch {
+      // The browser test/runtime has no Tauri window; native builds register it.
+    }
     return () => {
       if (pluginSaveTimer != null) clearTimeout(pluginSaveTimer);
+      unlistenClose?.();
+      void flushPluginChanges();
       unlistenAudio();
       unlistenTransport();
       unlistenTrackPluginParameter();

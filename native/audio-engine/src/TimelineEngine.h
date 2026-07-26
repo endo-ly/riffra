@@ -92,6 +92,7 @@ public:
 private:
     enum class State { stopped, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
+    enum class CaptureState { idle, capturing, drainingTail, completed };
 
     struct Clip final {
         juce::String id;
@@ -180,7 +181,8 @@ private:
         std::uint64_t recordingCaptureEndAudioSample = 0;
         std::uint64_t recordingCaptureEndTimelineSample = 0;
         int recordingLatencyToDiscard = 0;
-        bool recordingCaptureActive = false;
+        CaptureState recordingCaptureState = CaptureState::idle;
+        int recordingTailRemainingSamples = 0;
     };
 
     struct PreparedTimeline final {
@@ -222,7 +224,10 @@ private:
         int destinationStart,
         int sampleCount) noexcept;
     void scheduleMidi(Track& track, std::int64_t rangeStart, int sampleCount) noexcept;
-    void resetTrackState(PreparedTimeline& timeline) noexcept;
+    void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    bool beginRecordingTailDrain(Track& track, ArrangementCaptureSink* sink) noexcept;
+    bool drainRecordingTails(PreparedTimeline& timeline, int sampleCount) noexcept;
 
     juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
     bool offlineMode = false;
@@ -254,6 +259,9 @@ private:
     std::atomic<int> lastMixPlaybackOffset { 0 };
     std::atomic<ArrangementCaptureSink*> recordingSink { nullptr };
     std::atomic<unsigned int> recordingSinkReaders { 0 };
+    std::atomic<unsigned int> drainingTailTracks { 0 };
+    std::atomic<std::uint64_t> recordingCaptureErrors { 0 };
+    bool loopBoundaryPending = false;
 };
 
 [[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);

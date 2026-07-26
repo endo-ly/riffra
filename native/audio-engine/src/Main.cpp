@@ -1456,12 +1456,13 @@ int serve(
                     cancelledCountIn = timelineEngine.cancelRecordingIfCountingIn();
                     if (!cancelledCountIn)
                         timelineEngine.stopRecording();
-                    timelineEngine.stop();
                 }
                 juce::String recordingError;
                 const auto tailFlushed = type != "stopArrangeRecording"
                     || cancelledCountIn
                     || timelineEngine.flushRecordingTail(recordingError);
+                if (type == "stopArrangeRecording")
+                    timelineEngine.stop();
                 const auto stopped = type == "stopArrangeRecording"
                     ? (cancelledCountIn
                         ? callback.cancelArrangeRecording(timelineEngine, recordingError)

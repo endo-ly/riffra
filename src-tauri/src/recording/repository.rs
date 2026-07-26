@@ -1,6 +1,6 @@
 use crate::{
     asset::{self, AssetId},
-    recording::{RecordingCapture, RecordingCaptureStatus},
+    recording::{DropoutInformation, RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,16 @@ pub struct RecordingAsset {
     pub missing_samples: u64,
     pub dropout_start_sample: Option<u64>,
     pub dropout_end_sample: Option<u64>,
+    pub raw_attempted_samples: u64,
+    pub processed_attempted_samples: u64,
+    pub raw_dropped_blocks: u64,
+    pub processed_dropped_blocks: u64,
+    pub raw_missing_samples: u64,
+    pub processed_missing_samples: u64,
+    pub raw_dropout_start_sample: Option<u64>,
+    pub raw_dropout_end_sample: Option<u64>,
+    pub processed_dropout_start_sample: Option<u64>,
+    pub processed_dropout_end_sample: Option<u64>,
     pub recovery_status: String,
 }
 
@@ -58,6 +68,16 @@ struct RecordingManifest {
     missing_samples: Option<u64>,
     dropout_start_sample: Option<u64>,
     dropout_end_sample: Option<u64>,
+    raw_attempted_samples: Option<u64>,
+    processed_attempted_samples: Option<u64>,
+    raw_dropped_blocks: Option<u64>,
+    processed_dropped_blocks: Option<u64>,
+    raw_missing_samples: Option<u64>,
+    processed_missing_samples: Option<u64>,
+    raw_dropout_start_sample: Option<u64>,
+    raw_dropout_end_sample: Option<u64>,
+    processed_dropout_start_sample: Option<u64>,
+    processed_dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
     #[serde(default)]
     capture: Option<RecordingCapture>,
@@ -96,20 +116,11 @@ fn current_sample_rate(manifest: &RecordingManifest) -> Option<u32> {
         .and_then(|capture| capture.sample_rate)
 }
 
-fn current_dropout_information(
-    manifest: &RecordingManifest,
-) -> (u64, u64, u64, Option<u64>, Option<u64>) {
+fn current_dropout_information(manifest: &RecordingManifest) -> DropoutInformation {
     let Some(capture) = manifest.capture.as_ref() else {
-        return (0, 0, 0, None, None);
+        return DropoutInformation::default();
     };
-    let dropout = &capture.dropout_information;
-    (
-        dropout.samples_written,
-        dropout.dropped_blocks,
-        dropout.missing_samples,
-        dropout.dropout_start_sample,
-        dropout.dropout_end_sample,
-    )
+    capture.dropout_information.clone()
 }
 
 fn canonical_asset_location(data_root: &Path, id: &AssetId, label: &str) -> Result<String, String> {
@@ -334,7 +345,7 @@ fn validate_manifest(
                 && capture.processed_audio_asset_id.is_none()
                 && capture.midi_asset_id.is_some()
         });
-        if current_dropout_information(manifest).0 == 0 && !midi_only {
+        if current_dropout_information(manifest).samples_written == 0 && !midi_only {
             return Err("Completed recording contains no audio samples.".into());
         }
         if current_sample_rate(manifest).is_none() {
@@ -449,17 +460,11 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .join("midi.json")
             .is_file()
             .then(|| "midi.json".to_string());
-        let (
-            samples_written,
-            dropped_blocks,
-            missing_samples,
-            dropout_start_sample,
-            dropout_end_sample,
-        ) = current_dropout_information(&manifest);
+        let dropout = current_dropout_information(&manifest);
         let sample_rate = current_sample_rate(&manifest);
         let recovery_status = if let Some(capture) = manifest.capture.as_ref() {
             match capture.status {
-                RecordingCaptureStatus::Completed if dropped_blocks == 0 => "clean".into(),
+                RecordingCaptureStatus::Completed if dropout.dropped_blocks == 0 => "clean".into(),
                 RecordingCaptureStatus::Failed => "failed".into(),
                 RecordingCaptureStatus::Recording | RecordingCaptureStatus::Completing => {
                     "recording".into()
@@ -470,7 +475,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             }
         } else {
             manifest.recovery_status.clone().unwrap_or_else(|| {
-                if dropped_blocks == 0 {
+                if dropout.dropped_blocks == 0 {
                     "clean".into()
                 } else {
                     "partial".into()
@@ -495,11 +500,21 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             capture: manifest.capture,
             midi_file,
             sample_rate,
-            samples_written,
-            dropped_blocks,
-            missing_samples,
-            dropout_start_sample,
-            dropout_end_sample,
+            samples_written: dropout.samples_written,
+            dropped_blocks: dropout.dropped_blocks,
+            missing_samples: dropout.missing_samples,
+            dropout_start_sample: dropout.dropout_start_sample,
+            dropout_end_sample: dropout.dropout_end_sample,
+            raw_attempted_samples: dropout.raw_attempted_samples,
+            processed_attempted_samples: dropout.processed_attempted_samples,
+            raw_dropped_blocks: dropout.raw_dropped_blocks,
+            processed_dropped_blocks: dropout.processed_dropped_blocks,
+            raw_missing_samples: dropout.raw_missing_samples,
+            processed_missing_samples: dropout.processed_missing_samples,
+            raw_dropout_start_sample: dropout.raw_dropout_start_sample,
+            raw_dropout_end_sample: dropout.raw_dropout_end_sample,
+            processed_dropout_start_sample: dropout.processed_dropout_start_sample,
+            processed_dropout_end_sample: dropout.processed_dropout_end_sample,
             recovery_status,
         });
     }
@@ -547,6 +562,16 @@ pub fn save_asset_ids(
         missing_samples: manifest.missing_samples.unwrap_or_default(),
         dropout_start_sample: manifest.dropout_start_sample,
         dropout_end_sample: manifest.dropout_end_sample,
+        raw_attempted_samples: manifest.raw_attempted_samples.unwrap_or_default(),
+        processed_attempted_samples: manifest.processed_attempted_samples.unwrap_or_default(),
+        raw_dropped_blocks: manifest.raw_dropped_blocks.unwrap_or_default(),
+        processed_dropped_blocks: manifest.processed_dropped_blocks.unwrap_or_default(),
+        raw_missing_samples: manifest.raw_missing_samples.unwrap_or_default(),
+        processed_missing_samples: manifest.processed_missing_samples.unwrap_or_default(),
+        raw_dropout_start_sample: manifest.raw_dropout_start_sample,
+        raw_dropout_end_sample: manifest.raw_dropout_end_sample,
+        processed_dropout_start_sample: manifest.processed_dropout_start_sample,
+        processed_dropout_end_sample: manifest.processed_dropout_end_sample,
     };
     manifest.capture = Some(capture);
     let payload = fs::read(&manifest_path)?;

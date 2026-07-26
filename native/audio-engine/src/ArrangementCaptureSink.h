@@ -8,7 +8,7 @@ namespace riffra {
 class ArrangementCaptureSink {
 public:
     virtual ~ArrangementCaptureSink() = default;
-    virtual void beginAudioTrackCapture(
+    virtual bool beginAudioTrackCapture(
         const juce::String& trackId,
         std::uint64_t audioClockStartSample,
         std::uint64_t timelineStartSample) noexcept = 0;
@@ -18,10 +18,11 @@ public:
         int rawSampleCount,
         const float* const* processed,
         int processedSampleCount) noexcept = 0;
-    virtual void endAudioTrackCapture(
+    virtual bool endAudioTrackCapture(
         const juce::String& trackId,
         std::uint64_t audioClockEndSample,
         std::uint64_t timelineEndSample) noexcept = 0;
+    virtual bool completeAudioTrackTail(const juce::String& trackId) noexcept = 0;
     virtual void markLoopBoundary(std::uint64_t audioSample) noexcept = 0;
     virtual void writeMidiTrack(
         const juce::String& trackId,

@@ -1,6 +1,7 @@
 #include "PluginEditorHost.h"
 
 #include <exception>
+#include <new>
 
 #include "PluginRack.h"
 
@@ -53,7 +54,9 @@ PluginEditorHost::PluginEditorHost(
     : rack(pluginRack),
       onStateChanged(std::move(stateCallback)),
       onParameterChanged(std::move(parameterCallback)),
-      listener(std::make_unique<ProcessorListener>(*this)) {}
+      listener(std::make_unique<ProcessorListener>(*this)) {
+    resizeParameterQueue();
+}
 
 PluginEditorHost::~PluginEditorHost() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
@@ -79,6 +82,8 @@ std::optional<PluginLoadError> PluginEditorHost::load(const juce::String& path,
             [this, &path, sampleRate, blockSize, &result] {
                 closeOnMessageThread();
                 result = rack.load(path, sampleRate, blockSize);
+                if (!result.has_value())
+                    resizeParameterQueue();
             },
             dispatchError)) {
         return PluginLoadError{"pluginLifecycle", dispatchError};
@@ -153,7 +158,8 @@ void PluginEditorHost::closeOnMessageThread() {
 }
 
 void PluginEditorHost::queueParameterChange(const int index, const float value) noexcept {
-    if (index < 0 || static_cast<std::size_t>(index) >= kParameterCapacity)
+    if (index < 0 || static_cast<std::size_t>(index) >= parameterCapacity
+        || parameterValues == nullptr || parameterDirty == nullptr)
         return;
     const auto offset = static_cast<std::size_t>(index);
     parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
@@ -169,13 +175,30 @@ void PluginEditorHost::markOpaqueStateDirty() noexcept {
 void PluginEditorHost::drainParameterChanges() {
     if (!onParameterChanged)
         return;
-    for (std::size_t index = 0; index < kParameterCapacity; ++index) {
+    for (std::size_t index = 0; index < parameterCapacity; ++index) {
         if (!parameterDirty[index].exchange(false, std::memory_order_acq_rel))
             continue;
         onParameterChanged(
             static_cast<int>(index),
             parameterValues[index].load(std::memory_order_acquire));
     }
+}
+
+void PluginEditorHost::resizeParameterQueue() noexcept {
+    const auto count = rack.parameterCount();
+    if (count == parameterCapacity)
+        return;
+    auto values = std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
+    auto dirty = std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
+    if (count > 0 && (values == nullptr || dirty == nullptr))
+        return;
+    for (std::size_t index = 0; index < count; ++index) {
+        values[index].store(0.0f, std::memory_order_relaxed);
+        dirty[index].store(false, std::memory_order_relaxed);
+    }
+    parameterValues = std::move(values);
+    parameterDirty = std::move(dirty);
+    parameterCapacity = count;
 }
 
 void PluginEditorHost::publishStateIfDirty(const bool force) {
