@@ -248,6 +248,79 @@ describe('WorkspaceArrange', () => {
     );
   });
 
+  it('renders draggable handles on the loop range band', () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    expect(screen.getByRole('slider', { name: 'Loop start' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Loop end' })).toBeInTheDocument();
+  });
+
+  it('renders draggable handles on the punch range band', () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    expect(screen.getByRole('slider', { name: 'Punch start' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Punch end' })).toBeInTheDocument();
+  });
+
+  it('drags the loop start handle to update the loop range', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const startHandle = screen.getByRole('slider', { name: 'Loop start' });
+    fireEvent.pointerDown(startHandle, { clientX: 0 });
+    fireEvent.pointerMove(window, { clientX: 100 });
+    fireEvent.pointerUp(window, { clientX: 100 });
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+    const loopRange = screen.getByText('LOOP').parentElement!;
+    await waitFor(() => expect(loopRange).toHaveStyle({ left: '96px' }));
+  });
+
+  it('drags the loop end handle to update the loop range', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const endHandle = screen.getByRole('slider', { name: 'Loop end' });
+    fireEvent.pointerDown(endHandle, { clientX: 0 });
+    fireEvent.pointerMove(window, { clientX: -100 });
+    fireEvent.pointerUp(window, { clientX: -100 });
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+    const loopRange = screen.getByText('LOOP').parentElement!;
+    await waitFor(() => expect(loopRange).toHaveStyle({ width: '288px' }));
+  });
+
+  it('drags the punch end handle to update the punch range', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const endHandle = screen.getByRole('slider', { name: 'Punch end' });
+    fireEvent.pointerDown(endHandle, { clientX: 0 });
+    fireEvent.pointerMove(window, { clientX: 100 });
+    fireEvent.pointerUp(window, { clientX: 100 });
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
+    const punchRange = screen.getByRole('button', { name: 'Clear punch range' }).parentElement!;
+    await waitFor(() => expect(punchRange).toHaveStyle({ width: '288px' }));
+  });
+
   it('deletes the selected marker with the Delete key', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';

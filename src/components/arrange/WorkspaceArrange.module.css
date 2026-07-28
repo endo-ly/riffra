@@ -249,7 +249,6 @@
   z-index: 7;
   top: 0;
   height: 42px;
-  overflow: hidden;
   cursor: crosshair;
   background: linear-gradient(180deg, #12171c, #10151a);
   border-bottom: 1px solid #303943;
@@ -287,10 +286,9 @@
   position: absolute;
   z-index: 2;
   top: 0;
-  height: 4px;
+  height: 3px;
   min-width: 2px;
-  background: var(--amber);
-  box-shadow: 0 2px 8px rgba(231, 181, 93, 0.28);
+  background: rgba(231, 181, 93, 0.72);
 }
 
 .loopRange::before,
@@ -300,7 +298,14 @@
   top: 0;
   width: 1px;
   height: 42px;
-  background: rgba(231, 181, 93, 0.34);
+  pointer-events: none;
+  background: rgba(231, 181, 93, 0.22);
+  transition: background 0.08s ease;
+}
+
+.loopRange:hover::before,
+.loopRange:hover::after {
+  background: rgba(231, 181, 93, 0.45);
 }
 
 .loopRange::after {
@@ -321,20 +326,30 @@
   position: absolute;
   z-index: 1;
   top: 11px;
-  height: 4px;
+  height: 3px;
   min-width: 2px;
   color: #f38c8c;
   font-size: 6px;
   letter-spacing: 0.1em;
-  background: rgba(243, 140, 140, 0.8);
+  background: rgba(243, 140, 140, 0.72);
 }
-.punchRange::before {
+.punchRange::before,
+.punchRange::after {
   content: '';
   position: absolute;
-  top: -8px;
+  top: -11px;
+  width: 1px;
+  height: 42px;
+  pointer-events: none;
+  background: rgba(243, 140, 140, 0.22);
+  transition: background 0.08s ease;
+}
+.punchRange:hover::before,
+.punchRange:hover::after {
+  background: rgba(243, 140, 140, 0.45);
+}
+.punchRange::after {
   right: 0;
-  bottom: -8px;
-  left: 0;
 }
 
 .recordingPreview {
@@ -354,36 +369,89 @@
   pointer-events: none;
 }
 
-.loopRange span {
+.loopRange .loopLabel {
   position: absolute;
   top: 7px;
-  left: 5px;
+  left: 18px;
   color: #c39b56;
   font-size: 6px;
   letter-spacing: 0.1em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.08s ease;
 }
 
-.loopHandle {
+.loopRange:hover .loopLabel {
+  opacity: 1;
+}
+
+.loopHandle,
+.punchHandle {
   position: absolute;
   top: 0;
-  bottom: 0;
-  width: 6px;
+  width: 10px;
+  height: 42px;
   cursor: ew-resize;
-  background: rgba(231, 181, 93, 0.7);
+  z-index: 4;
+  background: transparent;
 }
-.loopHandleStart {
-  left: -3px;
+
+.loopHandle::after,
+.punchHandle::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 9px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  opacity: 0.85;
+  transition:
+    opacity 0.08s ease,
+    transform 0.08s ease,
+    background 0.08s ease;
 }
-.loopHandleEnd {
-  right: -3px;
-}
-.loopHandle:hover {
+
+.loopHandle::after {
   background: #f0c067;
+}
+
+.punchHandle::after {
+  background: #f6a3a3;
+}
+
+.loopHandle:hover::after,
+.punchHandle:hover::after,
+.loopRange:hover .loopHandle::after,
+.punchRange:hover .punchHandle::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.2);
+}
+
+.loopHandle:hover::after,
+.loopRange:hover .loopHandle::after {
+  background: #ffe1a0;
+}
+
+.punchHandle:hover::after,
+.punchRange:hover .punchHandle::after {
+  background: #ffc4c4;
+}
+
+.loopHandleStart,
+.punchHandleStart {
+  left: -5px;
+}
+
+.loopHandleEnd,
+.punchHandleEnd {
+  right: -5px;
 }
 
 .rangeClose {
   position: absolute;
-  z-index: 3;
+  z-index: 5;
   display: grid;
   place-content: center;
   padding: 0;
@@ -397,15 +465,17 @@
 }
 .loopClose {
   top: 0;
-  right: 7px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 14px;
   height: 14px;
   color: #1a1206;
   background: #e7b55d;
 }
 .punchClose {
-  top: -4px;
-  right: 0;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 12px;
   height: 12px;
   color: #2a0d0d;

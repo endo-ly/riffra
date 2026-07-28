@@ -61,6 +61,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     startTick: number;
     endTick: number;
   } | null>(null);
+  const [punchPreview, setPunchPreview] = useState<{
+    startTick: number;
+    endTick: number;
+  } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
@@ -222,7 +226,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
     if (
       (event.target as HTMLElement).closest(
-        '[data-marker-id], [data-loop-handle], [data-range-close]',
+        '[data-marker-id], [data-range-handle], [data-range-close]',
       )
     )
       return;
@@ -268,43 +272,87 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     boundary: 'start' | 'end',
   ) => {
     event.stopPropagation();
-    const handle = event.currentTarget;
+    event.preventDefault();
     const originX = event.clientX;
     const range = arrangement.loopRange;
     const origin = boundary === 'start' ? range.startTick : range.endTick;
-    handle.setPointerCapture?.(event.pointerId);
-    const move = (pointer: PointerEvent) => {
-      const next = editor.snapTick(
-        origin + (pointer.clientX - originX) / pixelsPerTick,
-        pointer.altKey,
-      );
+    const computeNext = (clientX: number, altKey: boolean) =>
+      editor.snapTick(origin + (clientX - originX) / pixelsPerTick, altKey);
+    const applyPreview = (clientX: number, altKey: boolean) => {
+      const next = computeNext(clientX, altKey);
       setLoopPreview({
         enabled: range.enabled,
         startTick: boundary === 'start' ? next : range.startTick,
         endTick: boundary === 'end' ? next : range.endTick,
       });
     };
+    const move = (pointer: PointerEvent) => applyPreview(pointer.clientX, pointer.altKey);
     const finish = (pointer: PointerEvent) => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', finish);
-      const next = editor.snapTick(
-        origin + (pointer.clientX - originX) / pixelsPerTick,
-        pointer.altKey,
-      );
-      setLoopPreview(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      const next = computeNext(pointer.clientX, pointer.altKey);
       if (next !== origin) {
-        void editor.commit(
-          props.api.updateTimelineLoopRange(
-            range.enabled,
-            boundary === 'start' ? next : range.startTick,
-            boundary === 'end' ? next : range.endTick,
-          ),
-          'Loop range updated.',
-        );
+        void editor
+          .commit(
+            props.api.updateTimelineLoopRange(
+              range.enabled,
+              boundary === 'start' ? next : range.startTick,
+              boundary === 'end' ? next : range.endTick,
+            ),
+            'Loop range updated.',
+          )
+          .finally(() => setLoopPreview(null));
+      } else {
+        setLoopPreview(null);
       }
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', finish);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    applyPreview(event.clientX, event.altKey);
+  };
+
+  const dragPunchHandle = (
+    event: React.PointerEvent<HTMLSpanElement>,
+    boundary: 'start' | 'end',
+  ) => {
+    event.stopPropagation();
+    event.preventDefault();
+    const originX = event.clientX;
+    const range = arrangement.punchRange;
+    if (!range) return;
+    const origin = boundary === 'start' ? range.startTick : range.endTick;
+    const computeNext = (clientX: number, altKey: boolean) =>
+      editor.snapTick(origin + (clientX - originX) / pixelsPerTick, altKey);
+    const applyPreview = (clientX: number, altKey: boolean) => {
+      const next = computeNext(clientX, altKey);
+      setPunchPreview({
+        startTick: boundary === 'start' ? next : range.startTick,
+        endTick: boundary === 'end' ? next : range.endTick,
+      });
+    };
+    const move = (pointer: PointerEvent) => applyPreview(pointer.clientX, pointer.altKey);
+    const finish = (pointer: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      const next = computeNext(pointer.clientX, pointer.altKey);
+      if (next !== origin) {
+        void editor
+          .commit(
+            api.updateTimelinePunchRange(
+              true,
+              boundary === 'start' ? next : range.startTick,
+              boundary === 'end' ? next : range.endTick,
+            ),
+            'Punch range updated.',
+          )
+          .finally(() => setPunchPreview(null));
+      } else {
+        setPunchPreview(null);
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    applyPreview(event.clientX, event.altKey);
   };
 
   const setLoopToSelection = () => {
@@ -342,10 +390,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   const addMarkerAt = (tick: number) => {
-    void editor.commit(
-      props.api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`),
-      'Marker added.',
-    );
+    const existing = new Set(arrangement.markers.map((marker) => marker.id));
+    void editor
+      .commit(
+        api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`),
+        'Marker added. Press Delete to remove.',
+      )
+      .then((next) => {
+        if (!next) return;
+        const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
+        if (created) setSelectedMarkerId(created.id);
+      });
   };
 
   const renameMarker = (marker: Marker) => {
@@ -483,12 +538,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             mode={rulerMode}
             scrollTop={scrollTop}
             loopRange={loopPreview ?? arrangement.loopRange}
-            punchRange={arrangement.punchRange}
+            punchRange={punchPreview ?? arrangement.punchRange}
             markers={arrangement.markers}
             selectedMarkerId={selectedMarkerId}
             timeSelection={timeSelection}
             onPointerDown={seekFromRuler}
             onLoopHandle={dragLoopHandle}
+            onPunchHandle={dragPunchHandle}
             onClearLoop={clearLoop}
             onClearPunch={clearPunch}
             onRulerContextMenu={openRulerContextMenu}

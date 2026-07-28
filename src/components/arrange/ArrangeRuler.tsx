@@ -16,6 +16,7 @@ interface ArrangeRulerProps {
   timeSelection: { startTick: number; endTick: number } | null;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onLoopHandle: (event: React.PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') => void;
+  onPunchHandle?: (event: React.PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') => void;
   onClearLoop?: () => void;
   onClearPunch?: () => void;
   onRulerContextMenu?: (event: React.MouseEvent<HTMLDivElement>, tick: number) => void;
@@ -60,7 +61,7 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
         onDoubleClick={(event) => {
           if (
             (event.target as HTMLElement).closest(
-              '[data-marker-id], [data-loop-handle], [data-range-close]',
+              '[data-marker-id], [data-range-handle], [data-range-close]',
             )
           )
             return;
@@ -88,7 +89,6 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
               width: (props.punchRange.endTick - props.punchRange.startTick) * props.pixelsPerTick,
             }}
           >
-            PUNCH
             {props.onClearPunch && (
               <button
                 type="button"
@@ -104,6 +104,24 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
                 ×
               </button>
             )}
+            {props.onPunchHandle && (
+              <>
+                <span
+                  data-range-handle
+                  role="slider"
+                  aria-label="Punch start"
+                  className={`${styles.punchHandle} ${styles.punchHandleStart}`}
+                  onPointerDown={(event) => props.onPunchHandle?.(event, 'start')}
+                />
+                <span
+                  data-range-handle
+                  role="slider"
+                  aria-label="Punch end"
+                  className={`${styles.punchHandle} ${styles.punchHandleEnd}`}
+                  onPointerDown={(event) => props.onPunchHandle?.(event, 'end')}
+                />
+              </>
+            )}
           </div>
         )}
         {props.loopRange.enabled && (
@@ -114,7 +132,7 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
               width: (props.loopRange.endTick - props.loopRange.startTick) * props.pixelsPerTick,
             }}
           >
-            <span>LOOP</span>
+            <span className={styles.loopLabel}>LOOP</span>
             <button
               type="button"
               data-range-close
@@ -129,12 +147,16 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
               ×
             </button>
             <span
-              data-loop-handle
+              data-range-handle
+              role="slider"
+              aria-label="Loop start"
               className={`${styles.loopHandle} ${styles.loopHandleStart}`}
               onPointerDown={(event) => props.onLoopHandle(event, 'start')}
             />
             <span
-              data-loop-handle
+              data-range-handle
+              role="slider"
+              aria-label="Loop end"
               className={`${styles.loopHandle} ${styles.loopHandleEnd}`}
               onPointerDown={(event) => props.onLoopHandle(event, 'end')}
             />
