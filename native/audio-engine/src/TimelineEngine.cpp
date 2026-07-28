@@ -81,6 +81,8 @@ bool writePcmWave(
 
 class CaptureIsolationSink final : public ArrangementCaptureSink {
 public:
+    explicit CaptureIsolationSink(juce::File dir = {}) : testDirectory(std::move(dir)) {}
+
     bool beginAudioTrackCapture(
         const juce::String& trackId,
         const std::uint64_t audioClockStartSample,
@@ -93,6 +95,7 @@ public:
         }
         ++beginCount;
         currentRawSamples = 0;
+        segmentStartSample = rawBuffer.size();
         return true;
     }
     void writeAudioTrack(
@@ -106,6 +109,8 @@ public:
         currentRawSamples += std::max(0, rawSampleCount);
         totalRawSamples += std::max(0, rawSampleCount);
         totalProcessedSamples += std::max(0, processedSampleCount);
+        if (raw != nullptr && rawSampleCount > 0)
+            rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
         isolated = raw != nullptr && processed != nullptr
             && processed[0] != nullptr && processed[1] != nullptr
             && rawSampleCount == processedSampleCount;
@@ -124,6 +129,8 @@ public:
             endTimelineSamples[static_cast<std::size_t>(endCount)] = timelineEndSample;
             segmentRawSamples[static_cast<std::size_t>(endCount)] = currentRawSamples;
         }
+        segmentRanges.emplace_back(
+            segmentStartSample, rawBuffer.size());
         ++endCount;
         return true;
     }
@@ -145,6 +152,38 @@ public:
         std::uint64_t,
         std::uint64_t) noexcept override {}
 
+    juce::File prepareRawForReading(const juce::String&) noexcept override {
+        if (testDirectory == juce::File {} || rawBuffer.empty())
+            return {};
+        const auto file = testDirectory.getChildFile("capture-isolation-raw.wav");
+        file.deleteFile();
+        std::unique_ptr<juce::OutputStream> os(file.createOutputStream());
+        if (os == nullptr)
+            return {};
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor(
+            os,
+            juce::AudioFormatWriterOptions()
+                .withSampleRate(48000.0)
+                .withNumChannels(1)
+                .withBitsPerSample(32)
+                .withSampleFormat(
+                    juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+        if (writer == nullptr)
+            return {};
+        const auto numSamples = static_cast<int>(rawBuffer.size());
+        juce::AudioBuffer<float> writeBuffer(1, numSamples);
+        writeBuffer.copyFrom(0, 0, rawBuffer.data(), numSamples);
+        writer->writeFromAudioSampleBuffer(writeBuffer, 0, numSamples);
+        writer->flush();
+        return file;
+    }
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    getRawSegmentRanges(const juce::String&) noexcept override {
+        return segmentRanges;
+    }
+
     juce::String receivedTrack;
     int receivedSamples = 0;
     bool isolated = false;
@@ -160,15 +199,25 @@ public:
     std::array<std::uint64_t, 8> endTimelineSamples {};
     std::array<int, 8> segmentRawSamples {};
     std::array<std::uint64_t, 8> loopBoundarySamples {};
+
+private:
+    juce::File testDirectory;
+    std::vector<float> rawBuffer;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> segmentRanges;
+    std::uint64_t segmentStartSample = 0;
 };
 
 class LoopDataCaptureSink final : public ArrangementCaptureSink {
 public:
+    explicit LoopDataCaptureSink(juce::File dir, juce::String name = "loop-data")
+        : testDirectory(std::move(dir)), fileName(std::move(name)) {}
+
     bool beginAudioTrackCapture(
         const juce::String&,
         std::uint64_t,
         std::uint64_t) noexcept override {
         ++segmentCount;
+        segmentStartSample = rawBuffer.size();
         return true;
     }
     void writeAudioTrack(
@@ -178,13 +227,14 @@ public:
         const float* const* processed,
         int processedSampleCount) noexcept override {
         if (raw != nullptr && rawSampleCount > 0)
-            rawData.insert(rawData.end(), raw, raw + rawSampleCount);
+            rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
         if (processed != nullptr && processedSampleCount > 0
             && processed[0] != nullptr && processed[1] != nullptr) {
             processedLeft.insert(
                 processedLeft.end(), processed[0], processed[0] + processedSampleCount);
             processedRight.insert(
                 processedRight.end(), processed[1], processed[1] + processedSampleCount);
+            maxProcessedWriteSize = std::max(maxProcessedWriteSize, processedSampleCount);
         }
         totalRaw += std::max(0, rawSampleCount);
         totalProcessed += std::max(0, processedSampleCount);
@@ -192,7 +242,10 @@ public:
     bool endAudioTrackCapture(
         const juce::String&,
         std::uint64_t,
-        std::uint64_t) noexcept override { return true; }
+        std::uint64_t) noexcept override {
+        segmentRanges.emplace_back(segmentStartSample, rawBuffer.size());
+        return true;
+    }
     bool completeAudioTrackTail(const juce::String&) noexcept override { return true; }
     void markLoopBoundary(std::uint64_t) noexcept override { ++boundaryCount; }
     void writeMidiTrack(
@@ -206,13 +259,53 @@ public:
         std::uint64_t,
         std::uint64_t) noexcept override {}
 
-    std::vector<float> rawData;
+    juce::File prepareRawForReading(const juce::String&) noexcept override {
+        if (rawBuffer.empty())
+            return {};
+        const auto file = testDirectory.getChildFile(fileName + "-raw.wav");
+        file.deleteFile();
+        std::unique_ptr<juce::OutputStream> os(file.createOutputStream());
+        if (os == nullptr)
+            return {};
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor(
+            os,
+            juce::AudioFormatWriterOptions()
+                .withSampleRate(48000.0)
+                .withNumChannels(2)
+                .withBitsPerSample(32)
+                .withSampleFormat(
+                    juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+        if (writer == nullptr)
+            return {};
+        const auto numSamples = static_cast<int>(rawBuffer.size());
+        juce::AudioBuffer<float> writeBuffer(2, numSamples);
+        writeBuffer.copyFrom(0, 0, rawBuffer.data(), numSamples);
+        writeBuffer.copyFrom(1, 0, rawBuffer.data(), numSamples);
+        writer->writeFromAudioSampleBuffer(writeBuffer, 0, numSamples);
+        writer->flush();
+        return file;
+    }
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    getRawSegmentRanges(const juce::String&) noexcept override {
+        return segmentRanges;
+    }
+
+    std::vector<float> rawBuffer;
     std::vector<float> processedLeft;
     std::vector<float> processedRight;
     int totalRaw = 0;
     int totalProcessed = 0;
     int segmentCount = 0;
     int boundaryCount = 0;
+    int maxProcessedWriteSize = 0;
+
+private:
+    juce::File testDirectory;
+    juce::String fileName;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> segmentRanges;
+    std::uint64_t segmentStartSample = 0;
 };
 } // namespace
 
@@ -274,6 +367,7 @@ bool TimelineEngine::loadSnapshot(
     }
     prepared->ppq = static_cast<std::uint32_t>(ppq);
     prepared->outputSampleRate = outputSampleRate;
+    prepared->preparedBlockSize = maximumBlockSize;
     const auto denominator = static_cast<int>(timebase.getProperty("timeSignatureDenominator", 4));
     const auto numerator = static_cast<int>(timebase.getProperty("timeSignatureNumerator", 4));
     if (denominator <= 0 || numerator <= 0) {
@@ -788,16 +882,6 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
     drainingTailTracks.store(0, std::memory_order_release);
     recordingCaptureErrors.store(0, std::memory_order_release);
     recordingPassOrdinal.store(1, std::memory_order_release);
-    if (timeline->loopEnabled && timeline->loopEndSample > timeline->loopStartSample) {
-        const auto loopLength = static_cast<std::size_t>(
-            timeline->loopEndSample - timeline->loopStartSample);
-        for (auto& track : timeline->tracks) {
-            if (!track->instrument && track->armed) {
-                track->loopRawBuffer.resize(loopLength * 128);
-                track->loopRawBufferSamples = 0;
-            }
-        }
-    }
     const auto alreadyPlaying =
         state.load(std::memory_order_acquire) == State::playing;
     if (alreadyPlaying || countInBeats <= 0) {
@@ -998,47 +1082,84 @@ bool TimelineEngine::drainRecordingTails(
 bool TimelineEngine::generateLoopProcessedVariants(
     PreparedTimeline& prepared,
     ArrangementCaptureSink* const sink) noexcept {
-    const auto loopLength = static_cast<int>(
-        prepared.loopEndSample - prepared.loopStartSample);
-    if (loopLength <= 0)
-        return true;
+    const auto blockSize = std::max(1, prepared.preparedBlockSize);
+    juce::AudioFormatManager formatReader;
+    formatReader.registerBasicFormats();
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
-        if (track.instrument || !track.armed || track.loopRawBufferSamples <= 0)
+        if (track.instrument || !track.armed)
             continue;
-        const auto totalSamples = track.loopRawBufferSamples;
+        const auto rawFile = sink->prepareRawForReading(track.id);
+        if (rawFile == juce::File {})
+            continue;
+        const auto segments = sink->getRawSegmentRanges(track.id);
+        if (segments.empty())
+            continue;
+        std::unique_ptr<juce::AudioFormatReader> reader(
+            formatReader.createReaderFor(rawFile));
+        if (reader == nullptr)
+            return false;
         const auto delay = static_cast<int>(std::max<std::int64_t>(
             0, track.pluginDelaySamples));
-        // Process each pass independently with a fresh chain state
-        int offset = 0;
-        while (offset < totalSamples) {
-            const auto passSamples = std::min(loopLength, totalSamples - offset);
-            // Reset chain for each pass to prevent cross-pass contamination
+        for (const auto& [segStart, segEnd] : segments) {
+            const auto segmentSamples = static_cast<int>(segEnd - segStart);
+            if (segmentSamples <= 0)
+                continue;
             track.recordingEffectChain.reset();
-            // Feed raw pass + delay padding through the chain
-            const auto inputSamples = passSamples + delay;
-            juce::AudioBuffer<float> inputBuffer(2, inputSamples);
-            inputBuffer.clear();
-            for (int channel = 0; channel < 2; ++channel)
-                juce::FloatVectorOperations::copy(
-                    inputBuffer.getWritePointer(channel),
-                    track.loopRawBuffer.data() + offset,
-                    passSamples);
-            juce::AudioBuffer<float> outputBuffer(2, inputSamples);
+            // Output buffer holds segmentSamples + delay for latency alignment
+            const auto outputSize = segmentSamples + delay;
+            juce::AudioBuffer<float> outputBuffer(2, outputSize);
             outputBuffer.clear();
-            track.recordingEffectChain.process(
-                inputBuffer.getArrayOfReadPointers(),
-                2,
-                outputBuffer.getArrayOfWritePointers(),
-                2,
-                inputSamples);
-            // Discard first 'delay' samples (latency compensation), take passSamples
+            int outputOffset = 0;
+            // Process raw segment in block-sized chunks
+            juce::AudioBuffer<float> blockBuffer(2, blockSize);
+            int remaining = segmentSamples;
+            std::int64_t readPos = static_cast<std::int64_t>(segStart);
+            while (remaining > 0) {
+                const auto count = std::min(blockSize, remaining);
+                blockBuffer.clear();
+                reader->read(
+                    blockBuffer.getArrayOfWritePointers(), 2,
+                    readPos, count);
+                readPos += count;
+                const std::array<float*, 2> outPtrs {
+                    outputBuffer.getWritePointer(0) + outputOffset,
+                    outputBuffer.getWritePointer(1) + outputOffset,
+                };
+                track.recordingEffectChain.process(
+                    blockBuffer.getArrayOfReadPointers(),
+                    2,
+                    outPtrs.data(),
+                    2,
+                    count);
+                outputOffset += count;
+                remaining -= count;
+            }
+            // Feed delay zeros to flush plugin latency
+            int delayRemaining = delay;
+            while (delayRemaining > 0) {
+                const auto count = std::min(blockSize, delayRemaining);
+                blockBuffer.clear();
+                const std::array<float*, 2> outPtrs {
+                    outputBuffer.getWritePointer(0) + outputOffset,
+                    outputBuffer.getWritePointer(1) + outputOffset,
+                };
+                track.recordingEffectChain.process(
+                    blockBuffer.getArrayOfReadPointers(),
+                    2,
+                    outPtrs.data(),
+                    2,
+                    count);
+                outputOffset += count;
+                delayRemaining -= count;
+            }
+            // Discard first delay samples, write segmentSamples
             const std::array<const float*, 2> processed {
                 outputBuffer.getReadPointer(0) + delay,
                 outputBuffer.getReadPointer(1) + delay,
             };
-            sink->writeAudioTrack(track.id, nullptr, 0, processed.data(), passSamples);
-            offset += passSamples;
+            sink->writeAudioTrack(
+                track.id, nullptr, 0, processed.data(), segmentSamples);
         }
     }
     return true;
@@ -1747,17 +1868,9 @@ void TimelineEngine::processTracks(
                             const auto* rawPointer =
                                 track.liveInputBuffer.getReadPointer(0) + localOffset;
                             if (prepared.loopEnabled) {
-                                // Loop recording: write raw only, buffer for offline processed
+                                // Loop recording: write raw only (processed generated offline)
                                 sink->writeAudioTrack(
                                     track.id, rawPointer, writeCount, nullptr, 0);
-                                const auto bufferStart = track.loopRawBufferSamples;
-                                if (bufferStart + writeCount
-                                    <= static_cast<int>(track.loopRawBuffer.size())) {
-                                    std::copy(
-                                        rawPointer, rawPointer + writeCount,
-                                        track.loopRawBuffer.data() + bufferStart);
-                                    track.loopRawBufferSamples = bufferStart + writeCount;
-                                }
                             } else {
                                 // Normal recording: write raw + processed in real-time
                                 track.recordingProcessedBuffer.clear(0, writeCount);
@@ -1942,6 +2055,13 @@ void TimelineEngine::mix(
             chunk);
         position += chunk;
         consumed += chunk;
+        // Decrement the capture budget so recording stops at the window end
+        {
+            auto remaining = captureBlockSamples.load(std::memory_order_acquire);
+            if (remaining > 0)
+                captureBlockSamples.store(
+                    remaining - std::min(chunk, remaining), std::memory_order_release);
+        }
         if (timeline->loopEnabled && position >= timeline->loopEndSample) {
             if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::recording) {
                 recordingSinkReaders.fetch_add(1, std::memory_order_acq_rel);
@@ -2068,6 +2188,19 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     bool recordingTapIsolated = false;
     bool loopCaptureSegments = false;
     bool syntheticLoopPassed = false;
+    bool partialPassPassed = false;
+    bool blockSizePassed = false;
+    bool longRecordingPassed = false;
+    int diagPartialSegments = 0;
+    int diagPartialRaw = 0;
+    int diagPartialProcessed = 0;
+    int diagPartialWindowed = 0;
+    int diagBsRaw = 0;
+    int diagBsProcessed = 0;
+    int diagBsWindowed = 0;
+    int diagPartialFailIndex = -1;
+    float diagPartialFailValue = 0.0f;
+    float diagPartialRawAtFail = 0.0f;
     float automationEarlyLeft = 0.0f;
     float automationEarlyRight = 0.0f;
     float automationLateLeft = 0.0f;
@@ -2280,7 +2413,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             const auto seekStatus = engine.status();
             seeked = static_cast<juce::int64>(seekStatus.getProperty("timelineSample", -1)) == 24000;
 
-            CaptureIsolationSink captureSink;
+            CaptureIsolationSink captureSink(directory);
             engine.setRecordingSink(&captureSink);
             engine.seekToTick(0);
             int captureOffset = 0;
@@ -2361,7 +2494,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             const auto loopSnapshotLoaded = engine.loadSnapshot(
                 loopSnapshotValue, formats, 48000.0, 512, error);
             if (loopSnapshotLoaded) {
-                CaptureIsolationSink loopCaptureSink;
+                CaptureIsolationSink loopCaptureSink(directory);
                 engine.setRecordingSink(&loopCaptureSink);
                 engine.seekToTick(0);
                 int loopCaptureOffset = 0;
@@ -2448,7 +2581,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                         }
                     }
                 }
-                LoopDataCaptureSink synthSink;
+                LoopDataCaptureSink synthSink(directory, "synth");
                 engine.setRecordingSink(&synthSink);
                 engine.seekToTick(0);
                 int synthOffset = 0;
@@ -2511,7 +2644,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                 const bool synthLengthsOk =
                     synthSink.totalRaw == kSynthTotal
                     && synthSink.totalProcessed == kSynthTotal
-                    && static_cast<int>(synthSink.rawData.size()) == kSynthTotal
+                    && static_cast<int>(synthSink.rawBuffer.size()) == kSynthTotal
                     && static_cast<int>(synthSink.processedLeft.size()) == kSynthTotal;
                 // Verify: impulse positions and no cross-pass contamination
                 bool synthImpulseOk = true;
@@ -2520,8 +2653,8 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                     const auto base = static_cast<std::size_t>(pass * kSynthLoopLength);
                     const auto impulseAt = static_cast<std::size_t>(kImpulsePos[pass]);
                     // Raw impulse present at position P
-                    synthImpulseOk = base + impulseAt < synthSink.rawData.size()
-                        && std::abs(synthSink.rawData[base + impulseAt]
+                    synthImpulseOk = base + impulseAt < synthSink.rawBuffer.size()
+                        && std::abs(synthSink.rawBuffer[base + impulseAt]
                             - kImpulseAmplitude) < 0.001f;
                     // Processed impulse at P - delay (passthrough chain + delay compensation)
                     // For a real plugin with latency D, output aligns at P.
@@ -2545,6 +2678,225 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                 syntheticLoopPassed = synthWindowed && synthClockOk
                     && synthTimelineWrapped && synthSegmentsOk && synthLengthsOk
                     && synthImpulseOk && synthNoCrossPass;
+            }
+            // Partial Pass test: start recording from loop middle
+            if (loopSnapshotLoaded && engine.loadSnapshot(
+                    loopSnapshotValue, formats, 48000.0, 512, error)) {
+                constexpr int kPartialTotal = 60'000; // 12000 + 24000 + 24000
+                constexpr int kPartialBlock = 512;
+                // Reset delay (may have been set by a previous test with reuseRuntimeDevices)
+                {
+                    const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+                    if (engine.timeline != nullptr) {
+                        for (auto& trackPtr : engine.timeline->tracks) {
+                            if (!trackPtr->instrument && trackPtr->armed) {
+                                trackPtr->pluginDelaySamples = 0;
+                                trackPtr->pluginTailSamples = 0;
+                            }
+                        }
+                    }
+                }
+                LoopDataCaptureSink partialSink(directory, "partial");
+                engine.setRecordingSink(&partialSink);
+                engine.seekToTick(480); // tick 480 = sample 12000
+                int partialOffset = 0;
+                int partialSamples = 0;
+                const auto partialStarted = engine.startRecording(0, error);
+                const auto partialWindowed = partialStarted
+                    && engine.recordingWindow(
+                        kPartialTotal, partialOffset, partialSamples);
+                std::array<float, kPartialBlock> partialInput {};
+                partialInput.fill(0.05f);
+                std::array<float, kPartialBlock> partialOutL {};
+                std::array<float, kPartialBlock> partialOutR {};
+                const std::array<const float*, 1> partialInputs { partialInput.data() };
+                const std::array<float*, 2> partialOutputs {
+                    partialOutL.data(), partialOutR.data()
+                };
+                int partialMixed = 0;
+                while (partialWindowed && partialMixed < kPartialTotal) {
+                    const auto block = std::min(kPartialBlock, kPartialTotal - partialMixed);
+                    engine.mix(
+                        partialInputs.data(), 1,
+                        partialOutputs.data(), 2, block);
+                    partialMixed += block;
+                }
+                engine.stopRecording();
+                engine.flushRecordingTail(error);
+                engine.stop();
+                engine.clearRecordingSink();
+                // Expected: 3 segments (partial 12000, full 24000, full 24000)
+                const bool partialSegmentsOk = partialSink.segmentCount == 3;
+                const bool partialLengthsOk =
+                    partialSink.totalRaw == kPartialTotal
+                    && partialSink.totalProcessed == kPartialTotal
+                    && static_cast<int>(partialSink.processedLeft.size()) == kPartialTotal;
+                // Each segment independently reset (no cross-segment contamination)
+                // With constant 0.05 input and passthrough chain, all processed ≈ 0.05
+                bool partialDataOk = partialSink.processedLeft.size()
+                    == static_cast<std::size_t>(kPartialTotal);
+                int partialFailIndex = -1;
+                for (int i = 0; partialDataOk && i < kPartialTotal; ++i) {
+                    if (std::abs(partialSink.processedLeft[
+                            static_cast<std::size_t>(i)] - 0.05f) >= 0.02f) {
+                        partialDataOk = false;
+                        partialFailIndex = i;
+                    }
+                }
+                partialPassPassed = partialWindowed && partialSegmentsOk
+                    && partialLengthsOk && partialDataOk;
+                diagPartialSegments = partialSink.segmentCount;
+                diagPartialRaw = partialSink.totalRaw;
+                diagPartialProcessed = partialSink.totalProcessed;
+                diagPartialWindowed = partialWindowed ? 1 : 0;
+                diagPartialFailIndex = partialFailIndex;
+                if (partialFailIndex >= 0
+                    && static_cast<std::size_t>(partialFailIndex)
+                        < partialSink.processedLeft.size())
+                    diagPartialFailValue = partialSink.processedLeft[
+                        static_cast<std::size_t>(partialFailIndex)];
+                if (partialFailIndex >= 0
+                    && static_cast<std::size_t>(partialFailIndex)
+                        < partialSink.rawBuffer.size())
+                    diagPartialRawAtFail = partialSink.rawBuffer[
+                        static_cast<std::size_t>(partialFailIndex)];
+            }
+            // Block Size test: verify processing uses small blocks
+            if (loopSnapshotLoaded && engine.loadSnapshot(
+                    loopSnapshotValue, formats, 48000.0, 128, error)) {
+                // preparedBlockSize = 128; chain must be fed in <= 128 sample chunks
+                constexpr int kBsTotal = 24'000; // 1 pass
+                constexpr int kBsBlock = 128;
+                constexpr int kBsDelay = 64;
+                constexpr float kBsImpulse = 0.8f;
+                constexpr int kBsImpulsePos = 500;
+                {
+                    const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+                    if (engine.timeline != nullptr) {
+                        for (auto& trackPtr : engine.timeline->tracks) {
+                            if (!trackPtr->instrument && trackPtr->armed)
+                                trackPtr->pluginDelaySamples = kBsDelay;
+                        }
+                    }
+                }
+                LoopDataCaptureSink bsSink(directory, "blocksize");
+                engine.setRecordingSink(&bsSink);
+                engine.seekToTick(0);
+                int bsOffset = 0;
+                int bsSamples = 0;
+                const auto bsStarted = engine.startRecording(0, error);
+                const auto bsWindowed = bsStarted
+                    && engine.recordingWindow(kBsTotal, bsOffset, bsSamples);
+                std::array<float, kBsBlock> bsInput {};
+                std::array<float, kBsBlock> bsOutL {};
+                std::array<float, kBsBlock> bsOutR {};
+                const std::array<const float*, 1> bsInputs { bsInput.data() };
+                const std::array<float*, 2> bsOutputs {
+                    bsOutL.data(), bsOutR.data()
+                };
+                int bsMixed = 0;
+                while (bsWindowed && bsMixed < kBsTotal) {
+                    bsInput.fill(0.0f);
+                    if (bsMixed <= kBsImpulsePos
+                        && kBsImpulsePos < bsMixed + kBsBlock) {
+                        bsInput[static_cast<std::size_t>(
+                            kBsImpulsePos - bsMixed)] = kBsImpulse;
+                    }
+                    engine.mix(
+                        bsInputs.data(), 1,
+                        bsOutputs.data(), 2, kBsBlock);
+                    bsMixed += kBsBlock;
+                }
+                engine.stopRecording();
+                engine.flushRecordingTail(error);
+                engine.stop();
+                engine.clearRecordingSink();
+                // Verify: processed length matches raw, impulse at correct position
+                const bool bsLengthOk = bsSink.totalRaw == kBsTotal
+                    && bsSink.totalProcessed == kBsTotal;
+                const auto bsProcessedPos = kBsImpulsePos - kBsDelay;
+                const bool bsImpulseOk = bsProcessedPos >= 0
+                    && static_cast<std::size_t>(bsProcessedPos)
+                        < bsSink.processedLeft.size()
+                    && std::abs(bsSink.processedLeft[
+                        static_cast<std::size_t>(bsProcessedPos)]
+                        - kBsImpulse) < 0.01f;
+                blockSizePassed = bsWindowed && bsLengthOk && bsImpulseOk;
+                diagBsRaw = bsSink.totalRaw;
+                diagBsProcessed = bsSink.totalProcessed;
+                diagBsWindowed = bsWindowed ? 1 : 0;
+            }
+            // Long Recording test: 130 passes exceeds old 128x RAM limit
+            if (loopSnapshotLoaded && engine.loadSnapshot(
+                    loopSnapshotValue, formats, 48000.0, 512, error)) {
+                constexpr int kLongLoopLength = 4'800; // short loop
+                constexpr int kLongPasses = 130;
+                constexpr int kLongTotal = kLongLoopLength * kLongPasses;
+                constexpr int kLongBlock = 512;
+                // Reset delay (may have been set by a previous test with reuseRuntimeDevices)
+                {
+                    const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+                    if (engine.timeline != nullptr) {
+                        for (auto& trackPtr : engine.timeline->tracks) {
+                            if (!trackPtr->instrument && trackPtr->armed) {
+                                trackPtr->pluginDelaySamples = 0;
+                                trackPtr->pluginTailSamples = 0;
+                            }
+                        }
+                    }
+                }
+                // Use a snapshot with short loop (tick 0..192 = 4800 samples)
+                auto* longLoop = new juce::DynamicObject();
+                longLoop->setProperty("enabled", true);
+                longLoop->setProperty("startTick", 0);
+                longLoop->setProperty("endTick", 192);
+                loopSnapshot->setProperty("loopRange", juce::var(longLoop));
+                const auto longSnapshotValue = juce::var(loopSnapshot);
+                if (engine.loadSnapshot(
+                        longSnapshotValue, formats, 48000.0, 512, error)) {
+                    LoopDataCaptureSink longSink(directory, "longrec");
+                    engine.setRecordingSink(&longSink);
+                    engine.seekToTick(0);
+                    int longOffset = 0;
+                    int longSamples = 0;
+                    const auto longStarted = engine.startRecording(0, error);
+                    const auto longWindowed = longStarted
+                        && engine.recordingWindow(
+                            kLongTotal, longOffset, longSamples);
+                    std::array<float, kLongBlock> longInput {};
+                    longInput.fill(0.02f);
+                    std::array<float, kLongBlock> longOutL {};
+                    std::array<float, kLongBlock> longOutR {};
+                    const std::array<const float*, 1> longInputs { longInput.data() };
+                    const std::array<float*, 2> longOutputs {
+                        longOutL.data(), longOutR.data()
+                    };
+                    int longMixed = 0;
+                    while (longWindowed && longMixed < kLongTotal) {
+                        const auto block = std::min(kLongBlock, kLongTotal - longMixed);
+                        engine.mix(
+                            longInputs.data(), 1,
+                            longOutputs.data(), 2, block);
+                        longMixed += block;
+                    }
+                    engine.stopRecording();
+                    engine.flushRecordingTail(error);
+                    engine.stop();
+                    engine.clearRecordingSink();
+                    // Verify: all 130 passes recorded, raw/processed match
+                    longRecordingPassed = longWindowed
+                        && longSink.segmentCount == kLongPasses
+                        && longSink.totalRaw == kLongTotal
+                        && longSink.totalProcessed == kLongTotal
+                        && static_cast<int>(longSink.processedLeft.size())
+                            == kLongTotal;
+                }
+                // Restore original loop range for subsequent tests
+                auto* restoreLoop = new juce::DynamicObject();
+                restoreLoop->setProperty("enabled", true);
+                restoreLoop->setProperty("startTick", 0);
+                restoreLoop->setProperty("endTick", 960);
+                loopSnapshot->setProperty("loopRange", juce::var(restoreLoop));
             }
             if (loopSnapshotLoaded && engine.loadSnapshot(
                     punchSnapshot, formats, 48000.0, 512, error)) {
@@ -2679,8 +3031,27 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     addCheck(
         "Synthetic Plugin loop recording produces aligned Raw/Processed without stopping",
         syntheticLoopPassed);
+    addCheck(
+        "Partial Pass recording generates independent Processed segments",
+        partialPassPassed);
+    addCheck(
+        "Block Size processing respects prepared block size limit",
+        blockSizePassed);
+    addCheck(
+        "Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
+        longRecordingPassed);
     result->setProperty("checks", checks);
     result->setProperty("message", error);
+    result->setProperty("partialSegments", diagPartialSegments);
+    result->setProperty("partialRaw", diagPartialRaw);
+    result->setProperty("partialProcessed", diagPartialProcessed);
+    result->setProperty("partialWindowed", diagPartialWindowed);
+    result->setProperty("bsRaw", diagBsRaw);
+    result->setProperty("bsProcessed", diagBsProcessed);
+    result->setProperty("bsWindowed", diagBsWindowed);
+    result->setProperty("partialFailIndex", diagPartialFailIndex);
+    result->setProperty("partialFailValue", diagPartialFailValue);
+    result->setProperty("partialRawAtFail", diagPartialRawAtFail);
     result->setProperty("automationEarlyLeft", automationEarlyLeft);
     result->setProperty("automationEarlyRight", automationEarlyRight);
     result->setProperty("automationLateLeft", automationLateLeft);
@@ -2691,7 +3062,8 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             && metronomeMixed && automationRamped && offlineRangeRendered
             && offlineAudioRendered && graphUpdateReusedDevices
             && mutablePluginStateKeepsTopology && recordingTapIsolated
-            && loopCaptureSegments && syntheticLoopPassed);
+            && loopCaptureSegments && syntheticLoopPassed
+            && partialPassPassed && blockSizePassed && longRecordingPassed);
     mono.deleteFile();
     stereo.deleteFile();
     directory.getChildFile("offline-selection.wav").deleteFile();

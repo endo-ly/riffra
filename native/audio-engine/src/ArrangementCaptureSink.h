@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <cstdint>
+#include <vector>
 
 namespace riffra {
 
@@ -34,6 +35,20 @@ public:
         std::uint64_t endAudioSample,
         std::uint64_t startTimelineSample,
         std::uint64_t endTimelineSample) noexcept = 0;
+
+    /// Flush the raw writer and prepare for offline reading.
+    /// Returns the path to the raw WAV file, or empty on failure.
+    virtual juce::File prepareRawForReading(const juce::String& trackId) noexcept {
+        juce::ignoreUnused(trackId);
+        return {};
+    }
+
+    /// Returns the raw file segment boundaries [start, end) for a track.
+    virtual std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    getRawSegmentRanges(const juce::String& trackId) noexcept {
+        juce::ignoreUnused(trackId);
+        return {};
+    }
 };
 
 } // namespace riffra

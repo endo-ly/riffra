@@ -280,6 +280,34 @@ void ArrangeRecordingSession::setCaptureRange(
         recordEndTimelineSample.store(endTimelineSample, std::memory_order_release);
 }
 
+juce::File ArrangeRecordingSession::prepareRawForReading(
+    const juce::String& trackId) noexcept {
+    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
+        return track.trackId == trackId;
+    });
+    if (found == tracks.end() || found->audio == nullptr)
+        return {};
+    return found->audio->flushRaw();
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>>
+ArrangeRecordingSession::getRawSegmentRanges(
+    const juce::String& trackId) noexcept {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
+    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
+        return track.trackId == trackId;
+    });
+    if (found == tracks.end())
+        return result;
+    result.reserve(found->captureSegmentCount);
+    for (std::size_t i = 0; i < found->captureSegmentCount; ++i) {
+        const auto& segment = found->captureSegments[i];
+        if (segment.rawFileEndSample > segment.rawFileStartSample)
+            result.emplace_back(segment.rawFileStartSample, segment.rawFileEndSample);
+    }
+    return result;
+}
+
 bool ArrangeRecordingSession::finish(juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel))
         return true;

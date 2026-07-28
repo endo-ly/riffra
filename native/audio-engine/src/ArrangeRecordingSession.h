@@ -44,6 +44,9 @@ public:
         std::uint64_t endAudioSample,
         std::uint64_t startTimelineSample,
         std::uint64_t endTimelineSample) noexcept override;
+    juce::File prepareRawForReading(const juce::String& trackId) noexcept override;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    getRawSegmentRanges(const juce::String& trackId) noexcept override;
     bool finish(juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;

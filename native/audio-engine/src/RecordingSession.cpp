@@ -173,6 +173,13 @@ bool RecordingSession::writeProcessed(
     return true;
 }
 
+juce::File RecordingSession::flushRaw() noexcept {
+    rawWriter.reset();
+    if (rawPartial.existsAsFile())
+        return rawPartial;
+    return {};
+}
+
 bool RecordingSession::finish(juce::String& error) {
     if (finished)
         return true;

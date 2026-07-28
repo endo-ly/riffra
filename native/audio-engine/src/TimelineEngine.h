@@ -185,8 +185,6 @@ private:
         int recordingLatencyToDiscard = 0;
         CaptureState recordingCaptureState = CaptureState::idle;
         int recordingTailRemainingSamples = 0;
-        std::vector<float> loopRawBuffer;
-        int loopRawBufferSamples = 0;
     };
 
     struct PreparedTimeline final {
@@ -194,6 +192,7 @@ private:
         std::uint32_t ppq = 960;
         double bpm = 120.0;
         double outputSampleRate = 0.0;
+        int preparedBlockSize = 512;
         bool loopEnabled = false;
         std::int64_t loopStartSample = 0;
         std::int64_t loopEndSample = 0;

@@ -27,6 +27,9 @@ public:
         int numSamples) noexcept;
     bool writeRaw(const float* const* rawData, int numSamples) noexcept;
     bool writeProcessed(const float* const* processedData, int numSamples) noexcept;
+    /// Flush and close the raw writer so the file can be read back.
+    /// The processed writer remains active.
+    juce::File flushRaw() noexcept;
     bool finish(juce::String& error);
 
     [[nodiscard]] int getRawChannels() const noexcept { return rawChannelCount; }
