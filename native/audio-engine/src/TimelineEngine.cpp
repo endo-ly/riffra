@@ -2,6 +2,7 @@
 #include "ArrangeRecordingSession.h"
 #include "ArrangementGraph.h"
 #include "OfflineRenderer.h"
+#include "SafetyAudioCallback.h"
 
 #include <algorithm>
 #include <array>
@@ -2943,14 +2944,16 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                     constexpr int kProdBlock = 512;
 
                     // 3 full passes
+                    // SafetyAudioCallback owns stop, tail flush, sink clear and session finish.
                     engine.seekToTick(0);
-                    auto config = engine.recordingConfiguration();
-                    juce::String sessionError;
                     auto prodDir = directory.getChildFile("prod-writer");
-                    auto prodSession = ArrangeRecordingSession::create(
-                        prodDir, config, sessionError);
-                    if (prodSession != nullptr) {
-                        engine.setRecordingSink(prodSession.get());
+                    SafetyAudioCallback prodCallback;
+                    prodCallback.setTimelineEngine(&engine);
+                    juce::String sessionError;
+                    const auto prodArrangeStarted =
+                        prodCallback.startArrangeRecording(
+                            prodDir, engine, sessionError);
+                    if (prodArrangeStarted) {
                         int prodOffset = 0;
                         int prodSamples = 0;
                         const auto prodStarted = engine.startRecording(0, error);
@@ -2977,12 +2980,11 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                             prodMixed += block;
                             juce::Thread::sleep(10);
                         }
-                        engine.stopRecording();
-                        const auto tailOk = engine.flushRecordingTail(error);
+                        const auto preStopStatus = prodCallback.recordingStatus();
+                        juce::String stopError;
+                        const auto stopOk =
+                            prodCallback.stopArrangeRecording(engine, stopError);
                         engine.stop();
-                        engine.clearRecordingSink();
-                        juce::String finishError;
-                        const auto finished = prodSession->finish(finishError);
 
                         const auto rawFile =
                             prodDir.getChildFile("tracks/0000/raw.wav");
@@ -3011,17 +3013,16 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                             static_cast<std::uint64_t>(rawLength);
                         diagProductionProcessedSamples =
                             static_cast<std::uint64_t>(processedLength);
-                        if (prodSession->status().isObject()) {
+                        if (preStopStatus.isObject()) {
                             diagProductionMissing = static_cast<std::uint64_t>(
-                                static_cast<juce::int64>(prodSession->status().getProperty(
+                                static_cast<juce::int64>(preStopStatus.getProperty(
                                     "processedMissingSamples", 0)));
                             diagProductionDropped = static_cast<std::uint64_t>(
-                                static_cast<juce::int64>(prodSession->status().getProperty(
+                                static_cast<juce::int64>(preStopStatus.getProperty(
                                     "droppedBlocks", 0)));
                         }
 
-                        productionWriterPassed = prodWindowed && tailOk
-                            && finished
+                        productionWriterPassed = prodWindowed && stopOk
                             && rawFile.existsAsFile()
                             && processedFile.existsAsFile()
                             && rawLength == kProdTotal
@@ -3350,7 +3351,7 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
         "Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
         longRecordingPassed);
     addCheck(
-        "Production ThreadedWriter 4小節×3 Pass",
+        "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns stop, tail flush, sink clear and session finish)",
         productionWriterPassed);
     addCheck(
         "Production ThreadedWriter Partial Pass",

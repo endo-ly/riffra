@@ -1450,34 +1450,52 @@ int serve(
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
-            if (type == "stopRecording" || type == "stopArrangeRecording") {
-                auto cancelledCountIn = false;
-                if (type == "stopArrangeRecording") {
-                    cancelledCountIn = timelineEngine.cancelRecordingIfCountingIn();
-                    if (!cancelledCountIn)
-                        timelineEngine.stopRecording();
-                }
+            if (type == "stopRecording") {
                 juce::String recordingError;
-                const auto tailFlushed = type != "stopArrangeRecording"
-                    || cancelledCountIn
-                    || timelineEngine.flushRecordingTail(recordingError);
-                if (type == "stopArrangeRecording")
-                    timelineEngine.stop();
-                const auto stopped = type == "stopArrangeRecording"
-                    ? (cancelledCountIn
-                        ? callback.cancelArrangeRecording(timelineEngine, recordingError)
-                        : callback.stopArrangeRecording(timelineEngine, recordingError))
-                    : callback.stopRecording(recordingError);
-                if (!stopped || !tailFlushed) {
+                if (!callback.stopRecording(recordingError)) {
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }
-                if (type == "stopRecording"
-                    && !midiMonitor.finishRecording(recordingError)) {
+                if (!midiMonitor.finishRecording(recordingError)) {
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
+                continue;
+            }
+            if (type == "stopArrangeRecording") {
+                const auto cancelledCountIn =
+                    timelineEngine.cancelRecordingIfCountingIn();
+
+                juce::String recordingError;
+
+                if (cancelledCountIn) {
+                    timelineEngine.stop();
+
+                    if (!callback.cancelArrangeRecording(
+                            timelineEngine,
+                            recordingError)) {
+                        writeJson(makeError("recording", recordingError));
+                        continue;
+                    }
+                } else {
+                    if (!callback.stopArrangeRecording(
+                            timelineEngine,
+                            recordingError)) {
+                        writeJson(makeError("recording", recordingError));
+                        continue;
+                    }
+
+                    timelineEngine.stop();
+                }
+
+                writeJson(currentStatus(
+                    manager,
+                    callback,
+                    &rack,
+                    &midiMonitor,
+                    {},
+                    &timelineEngine));
                 continue;
             }
             if (type == "status") {
