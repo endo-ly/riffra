@@ -328,6 +328,14 @@
   letter-spacing: 0.1em;
   background: rgba(243, 140, 140, 0.8);
 }
+.punchRange::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  right: 0;
+  bottom: -8px;
+  left: 0;
+}
 
 .recordingPreview {
   position: absolute;
@@ -371,6 +379,44 @@
 }
 .loopHandle:hover {
   background: #f0c067;
+}
+
+.rangeClose {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-content: center;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 0;
+  border-radius: 2px;
+  opacity: 0;
+  cursor: pointer;
+}
+.loopClose {
+  top: 0;
+  right: 7px;
+  width: 14px;
+  height: 14px;
+  color: #1a1206;
+  background: #e7b55d;
+}
+.punchClose {
+  top: -4px;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  color: #2a0d0d;
+  background: #f38c8c;
+}
+.loopRange:hover .loopClose,
+.punchRange:hover .punchClose {
+  opacity: 1;
+}
+.rangeClose:hover {
+  filter: brightness(1.14);
 }
 
 .marker {
@@ -1087,35 +1133,55 @@
     monospace;
 }
 
-.selectionActions {
+.selectionChip {
   position: absolute;
-  z-index: 15;
-  right: 12px;
-  bottom: 10px;
+  z-index: 14;
+  top: 46px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 9px;
+  gap: 5px;
+  padding: 4px 6px 4px 9px;
   color: #aeb9c3;
   font-size: 8px;
-  background: rgba(12, 16, 20, 0.92);
+  white-space: nowrap;
+  background: rgba(12, 16, 20, 0.94);
   border: 1px solid #2a343d;
   border-radius: 5px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
+  transform: translateX(-50%);
 }
-.selectionActions span {
+.selectionChip span {
   color: #8a96a0;
   font:
     7px 'DM Mono',
     Consolas,
     monospace;
 }
-.selectionActions button {
-  padding: 4px 8px;
+.selectionChip button {
+  padding: 3px 7px;
   color: #c6f5f3;
   font-size: 8px;
   background: rgba(85, 217, 232, 0.1);
   border: 1px solid rgba(85, 217, 232, 0.3);
   border-radius: 3px;
+}
+.selectionChip button:hover {
+  background: rgba(85, 217, 232, 0.2);
+}
+.selectionChipClose {
+  width: 16px;
+  height: 16px;
+  padding: 0 !important;
+  display: grid;
+  place-content: center;
+  color: #8a96a0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  font-size: 10px;
+  line-height: 1;
+}
+.selectionChipClose:hover {
+  color: #eaf1f5 !important;
 }
 
 @media (max-width: 1180px) {

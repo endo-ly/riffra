@@ -16,6 +16,10 @@ interface ArrangeRulerProps {
   timeSelection: { startTick: number; endTick: number } | null;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onLoopHandle: (event: React.PointerEvent<HTMLSpanElement>, boundary: 'start' | 'end') => void;
+  onClearLoop?: () => void;
+  onClearPunch?: () => void;
+  onRulerContextMenu?: (event: React.MouseEvent<HTMLDivElement>, tick: number) => void;
+  onMarkerContextMenu?: (event: React.MouseEvent, marker: Marker) => void;
   onAddMarker: (tick: number) => void;
   onMoveMarker: (marker: Marker, tick: number) => void;
   onRenameMarker: (marker: Marker) => void;
@@ -43,8 +47,23 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
         aria-label="Timeline ruler"
         style={{ left: TRACK_HEADER_WIDTH, top: props.scrollTop, width: props.timelineWidth }}
         onPointerDown={props.onPointerDown}
+        onContextMenu={(event) => {
+          if (
+            props.onRulerContextMenu &&
+            !(event.target as HTMLElement).closest('[data-marker-id]')
+          ) {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const tick = Math.max(0, (event.clientX - bounds.left) / props.pixelsPerTick);
+            props.onRulerContextMenu(event, tick);
+          }
+        }}
         onDoubleClick={(event) => {
-          if ((event.target as HTMLElement).closest('[data-marker-id]')) return;
+          if (
+            (event.target as HTMLElement).closest(
+              '[data-marker-id], [data-loop-handle], [data-range-close]',
+            )
+          )
+            return;
           const bounds = event.currentTarget.getBoundingClientRect();
           const tick = Math.max(0, (event.clientX - bounds.left) / props.pixelsPerTick);
           props.onAddMarker(tick);
@@ -70,6 +89,21 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
             }}
           >
             PUNCH
+            {props.onClearPunch && (
+              <button
+                type="button"
+                data-range-close
+                className={`${styles.rangeClose} ${styles.punchClose}`}
+                aria-label="Clear punch range"
+                title="Clear punch range"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onClearPunch?.();
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
         )}
         {props.loopRange.enabled && (
@@ -81,6 +115,19 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
             }}
           >
             <span>LOOP</span>
+            <button
+              type="button"
+              data-range-close
+              className={`${styles.rangeClose} ${styles.loopClose}`}
+              aria-label="Disable loop"
+              title="Disable loop"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onClearLoop?.();
+              }}
+            >
+              ×
+            </button>
             <span
               data-loop-handle
               className={`${styles.loopHandle} ${styles.loopHandleStart}`}
@@ -144,9 +191,10 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              props.onRemoveMarker(marker);
+              if (props.onMarkerContextMenu) props.onMarkerContextMenu(event, marker);
+              else props.onRemoveMarker(marker);
             }}
-            title={`${marker.name} · right-click to delete`}
+            title={`${marker.name} · right-click for options`}
           >
             <span>{marker.name}</span>
           </div>

@@ -1,0 +1,48 @@
+.menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 176px;
+  display: grid;
+  padding: 4px;
+  background: #171d23;
+  border: 1px solid #394550;
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.menu button {
+  padding: 7px 10px;
+  color: #b7c2cc;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.menu button:hover:not(:disabled) {
+  color: #eaf1f5;
+  background: #252f38;
+}
+
+.menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu .danger {
+  color: #df827d;
+}
+
+.menu .danger:hover:not(:disabled) {
+  color: #ffaaa5;
+  background: rgba(205, 67, 60, 0.16);
+}
+
+.separator {
+  margin: 4px 2px;
+  border: 0;
+  border-top: 1px solid #2a343d;
+}

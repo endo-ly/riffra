@@ -196,4 +196,70 @@ describe('WorkspaceArrange', () => {
     expect((await screen.findAllByText('MISSING SOURCE')).length).toBeGreaterThan(0);
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
+
+  it('disables the timeline loop from the ruler context menu', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const ruler = screen.getByLabelText('Timeline ruler');
+    fireEvent.contextMenu(ruler, { clientX: 200, clientY: 8, button: 2 });
+    const clearLoop = await screen.findByRole('menuitem', { name: 'Clear Loop' });
+    fireEvent.click(clearLoop);
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('disables the loop from the band close button', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const closeButton = await screen.findByRole('button', { name: 'Disable loop' });
+    fireEvent.click(closeButton);
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('clears the punch range from the band close button without a time selection', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    expect(screen.queryByText(/Selection/)).not.toBeInTheDocument();
+    const closeButton = await screen.findByRole('button', { name: 'Clear punch range' });
+    fireEvent.click(closeButton);
+
+    await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Clear punch range' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('deletes the selected marker with the Delete key', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.markers.push({ id: 'marker:verse', name: 'Verse', tick: 0 });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const marker = await screen.findByText('Verse');
+    fireEvent.pointerDown(marker.closest('[data-marker-id]')!, { clientX: 0 });
+    fireEvent.keyDown(window, { key: 'Delete' });
+
+    await waitFor(() => expect(api.calls).toContain('removeMarker'));
+    await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
+  });
 });

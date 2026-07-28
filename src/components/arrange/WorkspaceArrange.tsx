@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { AutomationParameter, CreativeSession } from '@/lib/domain';
+import type { AutomationParameter, CreativeSession, Marker } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeRuler } from './ArrangeRuler';
 import { ArrangeToolbar } from './ArrangeToolbar';
 import { ArrangeTrack } from './ArrangeTrack';
 import { AutomationLaneView } from './AutomationLaneView';
 import { MidiEditorPanel } from './MidiEditorPanel';
+import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import {
   BASE_PIXELS_PER_QUARTER,
   timelineObjectEndTick,
@@ -35,6 +36,7 @@ interface WorkspaceArrangeProps {
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { arrangement } = props.session;
   const { timebase } = arrangement;
+  const { api, setSession } = props;
   const [tool, setTool] = useState<ArrangeTool>('select');
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [zoom, setZoom] = useState(1);
@@ -46,6 +48,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const [follow, setFollow] = useState(true);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    items: ContextMenuItem[];
+  } | null>(null);
   const [timeSelection, setTimeSelection] = useState<{ startTick: number; endTick: number } | null>(
     null,
   );
@@ -176,8 +183,49 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     };
   }, [transport?.state]);
 
+  // Keyboard: Delete removes the selected Marker (when no Clips are selected);
+  // Escape clears the Time Selection and Marker selection (deselect, not delete).
+  useEffect(() => {
+    const isEditable = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return (
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      );
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === 'Escape') {
+        if (isEditable(event.target)) return;
+        setTimeSelection(null);
+        setSelectedMarkerId(null);
+        return;
+      }
+      if (event.key === 'Delete' && selectedMarkerId && selectedClipIds.length === 0) {
+        if (isEditable(event.target)) return;
+        const marker = arrangement.markers.find((item) => item.id === selectedMarkerId);
+        if (!marker) return;
+        event.preventDefault();
+        void api.removeMarker(marker.id).then((next) => {
+          setSession(next);
+          setSelectedMarkerId(null);
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedMarkerId, selectedClipIds.length, arrangement.markers, api, setSession]);
+
   const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest('[data-marker-id], [data-loop-handle]')) return;
+    if (
+      (event.target as HTMLElement).closest(
+        '[data-marker-id], [data-loop-handle], [data-range-close]',
+      )
+    )
+      return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const originTick = editor.snapTick((event.clientX - bounds.left) / pixelsPerTick, event.altKey);
     const originX = event.clientX;
@@ -271,6 +319,75 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     void props.api
       .updateTimelinePunchRange(true, timeSelection.startTick, timeSelection.endTick)
       .then(props.setSession);
+  };
+
+  const clearLoop = () => {
+    void props.api
+      .updateTimelineLoopRange(
+        false,
+        arrangement.loopRange.startTick,
+        arrangement.loopRange.endTick,
+      )
+      .then(props.setSession);
+  };
+
+  const clearPunch = () => {
+    void props.api
+      .updateTimelinePunchRange(
+        false,
+        arrangement.punchRange?.startTick ?? 0,
+        arrangement.punchRange?.endTick ?? 0,
+      )
+      .then(props.setSession);
+  };
+
+  const addMarkerAt = (tick: number) => {
+    void editor.commit(
+      props.api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`),
+      'Marker added.',
+    );
+  };
+
+  const renameMarker = (marker: Marker) => {
+    const next = window.prompt('Marker name', marker.name)?.trim();
+    if (next && next !== marker.name)
+      void editor.commit(props.api.updateMarker(marker.id, { name: next }), 'Marker renamed.');
+  };
+
+  const removeMarker = (marker: Marker) => {
+    if (!window.confirm(`Delete marker "${marker.name}"?`)) return;
+    void editor.commit(props.api.removeMarker(marker.id), 'Marker removed.').then(() => {
+      if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
+    });
+  };
+
+  const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: 'Add Marker Here', onClick: () => addMarkerAt(tick) },
+        { label: 'Set Loop to Selection', onClick: setLoopToSelection, disabled: !timeSelection },
+        { label: 'Set Punch Range', onClick: setPunchToSelection, disabled: !timeSelection },
+        { separator: true },
+        { label: 'Clear Loop', onClick: clearLoop, disabled: !arrangement.loopRange.enabled },
+        { label: 'Clear Punch', onClick: clearPunch, disabled: !arrangement.punchRange },
+      ],
+    });
+  };
+
+  const openMarkerContextMenu = (event: React.MouseEvent, marker: Marker) => {
+    event.preventDefault();
+    setSelectedMarkerId(marker.id);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: 'Rename', onClick: () => renameMarker(marker) },
+        { label: 'Delete', danger: true, onClick: () => removeMarker(marker) },
+      ],
+    });
   };
 
   const deleteTrack = async (trackId: string, name: string, clipCount: number) => {
@@ -372,35 +489,19 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             timeSelection={timeSelection}
             onPointerDown={seekFromRuler}
             onLoopHandle={dragLoopHandle}
-            onAddMarker={(tick) =>
-              void editor.commit(
-                props.api.addMarker(
-                  editor.snapTick(tick),
-                  `Marker ${arrangement.markers.length + 1}`,
-                ),
-                'Marker added.',
-              )
-            }
+            onClearLoop={clearLoop}
+            onClearPunch={clearPunch}
+            onRulerContextMenu={openRulerContextMenu}
+            onMarkerContextMenu={openMarkerContextMenu}
+            onAddMarker={addMarkerAt}
             onMoveMarker={(marker, tick) =>
               void editor.commit(
                 props.api.updateMarker(marker.id, { tick: editor.snapTick(tick) }),
                 `${marker.name} moved.`,
               )
             }
-            onRenameMarker={(marker) => {
-              const next = window.prompt('Marker name', marker.name)?.trim();
-              if (next && next !== marker.name)
-                void editor.commit(
-                  props.api.updateMarker(marker.id, { name: next }),
-                  'Marker renamed.',
-                );
-            }}
-            onRemoveMarker={(marker) => {
-              if (!window.confirm(`Delete marker "${marker.name}"?`)) return;
-              void editor.commit(props.api.removeMarker(marker.id), 'Marker removed.').then(() => {
-                if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
-              });
-            }}
+            onRenameMarker={renameMarker}
+            onRemoveMarker={removeMarker}
             onSelectMarker={setSelectedMarkerId}
           />
           {transport && transport.recordingPhase !== 'idle' && (
@@ -429,6 +530,31 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           >
             <span />
           </div>
+          {timeSelection && (
+            <div
+              className={styles.selectionChip}
+              style={{
+                left:
+                  TRACK_HEADER_WIDTH +
+                  ((timeSelection.startTick + timeSelection.endTick) / 2) * pixelsPerTick,
+              }}
+            >
+              <span>
+                {formatMusicalPosition(timeSelection.startTick, timebase)} →{' '}
+                {formatMusicalPosition(timeSelection.endTick, timebase)}
+              </span>
+              <button onClick={setLoopToSelection}>Set Loop</button>
+              <button onClick={setPunchToSelection}>Set Punch</button>
+              <button
+                className={styles.selectionChipClose}
+                aria-label="Clear time selection"
+                title="Clear time selection (Esc)"
+                onClick={() => setTimeSelection(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
           {editor.snapGuide != null && (
             <div
               className={styles.snapGuide}
@@ -583,31 +709,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         <small>REV {arrangement.revision}</small>
       </div>
 
-      {timeSelection && (
-        <div className={styles.selectionActions}>
-          <span>
-            Selection · {formatMusicalPosition(timeSelection.startTick, timebase)} →{' '}
-            {formatMusicalPosition(timeSelection.endTick, timebase)}
-          </span>
-          <button onClick={setLoopToSelection}>Set Loop to Selection</button>
-          <button onClick={setPunchToSelection}>Set Punch Range</button>
-          {arrangement.punchRange && (
-            <button
-              onClick={() =>
-                void props.api
-                  .updateTimelinePunchRange(
-                    false,
-                    arrangement.punchRange?.startTick ?? 0,
-                    arrangement.punchRange?.endTick ?? 0,
-                  )
-                  .then(props.setSession)
-              }
-            >
-              Clear Punch
-            </button>
-          )}
-          <button onClick={() => setTimeSelection(null)}>Dismiss</button>
-        </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {midiEditorOpen && (
