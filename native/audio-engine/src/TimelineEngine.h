@@ -90,6 +90,8 @@ public:
     [[nodiscard]] juce::var status() const;
 
 private:
+    friend juce::var runTimelineSelfTest(const juce::File& directory);
+
     enum class State { stopped, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
     enum class CaptureState { idle, capturing, drainingTail, completed };
@@ -183,6 +185,8 @@ private:
         int recordingLatencyToDiscard = 0;
         CaptureState recordingCaptureState = CaptureState::idle;
         int recordingTailRemainingSamples = 0;
+        std::vector<float> loopRawBuffer;
+        int loopRawBufferSamples = 0;
     };
 
     struct PreparedTimeline final {
@@ -228,6 +232,9 @@ private:
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
     bool beginRecordingTailDrain(Track& track, ArrangementCaptureSink* sink) noexcept;
     bool drainRecordingTails(PreparedTimeline& timeline, int sampleCount) noexcept;
+    bool generateLoopProcessedVariants(
+        PreparedTimeline& timeline,
+        ArrangementCaptureSink* sink) noexcept;
 
     juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
     bool offlineMode = false;
@@ -261,7 +268,6 @@ private:
     std::atomic<unsigned int> recordingSinkReaders { 0 };
     std::atomic<unsigned int> drainingTailTracks { 0 };
     std::atomic<std::uint64_t> recordingCaptureErrors { 0 };
-    bool loopBoundaryPending = false;
 };
 
 [[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);

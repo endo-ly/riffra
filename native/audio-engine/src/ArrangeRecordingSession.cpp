@@ -109,9 +109,16 @@ bool ArrangeRecordingSession::beginAudioTrackCapture(
     segment.timelineStartSample = timelineStartSample;
     segment.rawFileStartSample = found->audio->getRawSamplesWritten();
     segment.rawFileEndSample = segment.rawFileStartSample;
-    segment.processedFileStartSample = found->audio->getProcessedSamplesWritten();
-    segment.processedFileEndSample = segment.processedFileStartSample;
-    segment.processedTailEndSample = segment.processedFileStartSample;
+    if (loopEnabled) {
+        // Loop recording: processed will be generated offline with same layout as raw
+        segment.processedFileStartSample = segment.rawFileStartSample;
+        segment.processedFileEndSample = segment.rawFileStartSample;
+        segment.processedTailEndSample = segment.rawFileStartSample;
+    } else {
+        segment.processedFileStartSample = found->audio->getProcessedSamplesWritten();
+        segment.processedFileEndSample = segment.processedFileStartSample;
+        segment.processedTailEndSample = segment.processedFileStartSample;
+    }
     found->captureActive = true;
     return true;
 }
@@ -156,12 +163,21 @@ bool ArrangeRecordingSession::endAudioTrackCapture(
     segment.audioClockEndSample = audioClockEndSample;
     segment.timelineEndSample = timelineEndSample;
     segment.rawFileEndSample = found->audio->getRawSamplesWritten();
-    segment.processedFileEndSample = segment.processedFileStartSample
-        + (segment.rawFileEndSample - segment.rawFileStartSample);
-    segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
-    found->captureActive = false;
-    found->tailActive = true;
-    found->tailSegmentIndex = found->captureSegmentCount - 1;
+    if (loopEnabled) {
+        // Loop recording: processed mirrors raw layout (generated offline after stop)
+        segment.processedFileStartSample = segment.rawFileStartSample;
+        segment.processedFileEndSample = segment.rawFileEndSample;
+        segment.processedTailEndSample = segment.rawFileEndSample;
+        found->captureActive = false;
+        found->tailActive = false;
+    } else {
+        segment.processedFileEndSample = segment.processedFileStartSample
+            + (segment.rawFileEndSample - segment.rawFileStartSample);
+        segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
+        found->captureActive = false;
+        found->tailActive = true;
+        found->tailSegmentIndex = found->captureSegmentCount - 1;
+    }
     return true;
 }
 
