@@ -223,6 +223,19 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedMarkerId, selectedClipIds.length, arrangement.markers, api, setSession]);
 
+  // Close the time selection chip when clicking outside the ruler or the chip itself.
+  useEffect(() => {
+    if (!timeSelection) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-time-selection-chip]')) return;
+      if (target.closest('[data-arrange-ruler]')) return;
+      setTimeSelection(null);
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, [timeSelection]);
+
   const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
     if (
       (event.target as HTMLElement).closest(
@@ -588,6 +601,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           </div>
           {timeSelection && (
             <div
+              data-time-selection-chip
               className={styles.selectionChip}
               style={{
                 left:

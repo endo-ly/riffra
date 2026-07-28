@@ -654,12 +654,16 @@
   top: 24px;
   right: 0;
   width: 112px;
-  display: grid;
+  display: none;
   padding: 4px;
   background: #171d23;
   border: 1px solid #394550;
   border-radius: 5px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
+}
+
+.trackMenu[open] > div {
+  display: grid;
 }
 .trackMenu button {
   padding: 6px 7px;

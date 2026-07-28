@@ -335,4 +335,38 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(api.calls).toContain('removeMarker'));
     await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
   });
+
+  it('clears the time selection chip when clicking outside the ruler', async () => {
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+    const ruler = screen.getByLabelText('Timeline ruler');
+    Object.defineProperty(ruler, 'getBoundingClientRect', {
+      value: () => ({ left: 0, width: 1472, top: 0, bottom: 30, right: 1472, height: 30 }),
+    });
+
+    fireEvent.pointerDown(ruler, { clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 200 });
+    fireEvent.pointerUp(window, { clientX: 200 });
+    fireEvent.click(ruler);
+
+    expect(screen.getByText('Set Loop')).toBeInTheDocument();
+
+    fireEvent.click(document.body);
+
+    await waitFor(() => expect(screen.queryByText('Set Loop')).not.toBeInTheDocument());
+  });
+
+  it('closes the track menu when clicking outside', async () => {
+    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audio Track' }));
+    fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
+
+    expect(screen.getByText('Delete')).toBeInTheDocument();
+
+    fireEvent.click(document.body);
+
+    await waitFor(() => expect(screen.getByText('Delete')).not.toBeVisible());
+  });
 });

@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, Track } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
@@ -57,6 +57,20 @@ interface ArrangeTrackProps {
 }
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      const details = detailsRef.current;
+      if (!details) return;
+      if (details.open && !details.contains(event.target as Node)) {
+        details.removeAttribute('open');
+      }
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, []);
+
   const layout = layoutClipLanes(
     props.clips.map((clip) => ({
       id: clip.id,
@@ -195,7 +209,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             </button>
           )}
         </div>
-        <details className={styles.trackMenu}>
+        <details ref={detailsRef} className={styles.trackMenu}>
           <summary aria-label={`${props.track.name} track menu`}>•••</summary>
           <div>
             <button
