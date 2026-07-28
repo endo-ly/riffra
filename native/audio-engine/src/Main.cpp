@@ -1543,14 +1543,6 @@ int runMain(const juce::StringArray& arguments) {
         writeJson(probeAudioDevices());
         return 0;
     }
-    if (command == "--timeline-self-test") {
-        if (arguments.size() != 3) {
-            writeJson(makeError("arguments", "Use --timeline-self-test <directory>."));
-            return 2;
-        }
-        writeJson(riffra::runTimelineSelfTest(juce::File(arguments[2])));
-        return 0;
-    }
     if (command == "--serve") {
         std::optional<std::uint32_t> parentPid;
         AudioConfiguration configuration;

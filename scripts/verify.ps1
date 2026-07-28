@@ -42,23 +42,6 @@ try {
             & '.\scripts\build-native.ps1' -Configuration Debug -WithTests
         }
 
-        $TimelineTestDirectory = Join-Path $ArtifactsRoot 'timeline-self-test'
-        $ResolvedArtifactsRoot = [System.IO.Path]::GetFullPath($ArtifactsRoot)
-        $ResolvedTimelineTestDirectory = [System.IO.Path]::GetFullPath($TimelineTestDirectory)
-        foreach ($TestDirectory in @(
-            $ResolvedTimelineTestDirectory
-        )) {
-            if (-not $TestDirectory.StartsWith($ResolvedArtifactsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                throw "The Native self-test directory escaped the repository artifact directory: $TestDirectory"
-            }
-        }
-        foreach ($TestDirectory in @(
-            $ResolvedTimelineTestDirectory
-        )) {
-            if (Test-Path -LiteralPath $TestDirectory) {
-                Remove-Item -LiteralPath $TestDirectory -Recurse -Force
-            }
-        }
         New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
 
         $CTest = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe'
@@ -67,11 +50,6 @@ try {
         }
         Invoke-Checked 'Native C++ tests' {
             & $CTest --test-dir 'native\audio-engine\build' -C Debug --output-on-failure
-        }
-
-        $AudioSidecar = Join-Path $Root 'src-tauri\binaries\riffra-audio-x86_64-pc-windows-msvc.exe'
-        Invoke-Checked 'Native Timeline self-test' {
-            & $AudioSidecar --timeline-self-test $ResolvedTimelineTestDirectory
         }
     }
 

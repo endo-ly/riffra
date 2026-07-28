@@ -72,10 +72,9 @@ Run the same checks plus a Native sidecar build and Native tests:
 npm run verify:native
 ```
 
-`npm run verify:native` also builds and runs the Native GoogleTest/CTest suite
-and the remaining Timeline self-test. It is the standard verification entry
-point for changes that affect the audio engine; run it instead of invoking a
-generated Native executable directly.
+`npm run verify:native` also builds and runs the Native GoogleTest/CTest suite.
+It is the standard verification entry point for changes that affect the audio
+engine; run it instead of invoking a generated Native executable directly.
 
 `build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
 

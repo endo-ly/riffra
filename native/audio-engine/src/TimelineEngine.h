@@ -14,6 +14,8 @@
 
 namespace riffra {
 
+class TimelineEngineTestPeer;
+
 class TimelineEngine final {
 public:
     explicit TimelineEngine(bool offline = false);
@@ -92,7 +94,7 @@ public:
     [[nodiscard]] juce::var status() const;
 
 private:
-    friend juce::var runTimelineSelfTest(const juce::File& directory);
+    friend class TimelineEngineTestPeer;
 
     enum class State { stopped, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
@@ -265,7 +267,5 @@ private:
     std::atomic<int> playbackBlockOffset { 0 };
     std::atomic<int> lastMixPlaybackOffset { 0 };
 };
-
-[[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);
 
 } // namespace riffra

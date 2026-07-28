@@ -178,6 +178,7 @@ if(BUILD_TESTING)
     tests/PluginChainTest.cpp
     tests/RecordingSessionTest.cpp
     tests/ArrangeRecordingSessionTest.cpp
+    tests/TimelineEngineTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core
