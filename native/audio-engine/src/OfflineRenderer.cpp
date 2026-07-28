@@ -1,6 +1,7 @@
 #include "OfflineRenderer.h"
 
 #include "TimelineEngine.h"
+#include "TimelineTimebase.h"
 
 #include <algorithm>
 #include <array>
@@ -10,18 +11,6 @@
 namespace riffra {
 
 namespace {
-
-std::int64_t tickToSample(
-    const std::uint64_t tick,
-    const std::uint32_t ppq,
-    const double bpm,
-    const double sampleRate) {
-    if (ppq == 0 || bpm <= 0.0 || sampleRate <= 0.0)
-        return 0;
-    return static_cast<std::int64_t>(std::llround(
-        static_cast<double>(tick) * sampleRate * 60.0
-        / (bpm * static_cast<double>(ppq))));
-}
 
 std::unique_ptr<juce::AudioFormatWriter> createWriter(
     const juce::File& file,
@@ -105,8 +94,9 @@ bool OfflineRenderer::render(
     const auto ppq = static_cast<std::uint32_t>(
         static_cast<int>(timebase.getProperty("ppq", 0)));
     const auto bpm = static_cast<double>(timebase.getProperty("bpm", 0.0));
-    const auto startSample = tickToSample(startTick, ppq, bpm, sampleRate);
-    const auto endSample = tickToSample(endTick, ppq, bpm, sampleRate);
+    const TimelineTimebase timelineTimebase { ppq, bpm };
+    const auto startSample = timelineTimebase.tickToSample(startTick, sampleRate);
+    const auto endSample = timelineTimebase.tickToSample(endTick, sampleRate);
     if (startSample < 0 || endSample <= startSample) {
         error = "Offline Render range has no samples.";
         return false;

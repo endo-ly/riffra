@@ -37,6 +37,9 @@ target_sources(riffra-audio PRIVATE
   src/SafetyAudioCallback.h
   src/TimelineEngine.cpp
   src/TimelineEngine.h
+  src/TimelineTimebase.h
+  src/RecordingCaptureRuntime.cpp
+  src/RecordingCaptureRuntime.h
   src/ArrangementGraph.cpp
   src/ArrangementGraph.h
   src/ArrangementGraphSelfTest.cpp

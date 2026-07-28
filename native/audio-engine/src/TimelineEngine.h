@@ -4,6 +4,8 @@
 #include "ArrangementCaptureSink.h"
 #include "ArrangementGraph.h"
 #include "PluginChain.h"
+#include "RecordingCaptureRuntime.h"
+#include "TimelineTimebase.h"
 
 #include <atomic>
 #include <cstdint>
@@ -94,7 +96,6 @@ private:
 
     enum class State { stopped, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
-    enum class CaptureState { idle, capturing, drainingTail, completed };
 
     struct Clip final {
         juce::String id;
@@ -155,12 +156,11 @@ private:
         bool instrumentStateChanged = false;
         PluginChain effectChain;
         PluginChain liveEffectChain;
-        PluginChain recordingEffectChain;
         juce::AudioBuffer<float> mixBuffer;
         juce::AudioBuffer<float> processedBuffer;
         juce::AudioBuffer<float> liveInputBuffer;
         juce::AudioBuffer<float> liveProcessedBuffer;
-        juce::AudioBuffer<float> recordingProcessedBuffer;
+        RecordingCaptureTrackState recordingCapture;
         juce::AudioBuffer<float> delayBuffer;
         std::int64_t delayWritePosition = 0;
         std::int64_t compensationDelaySamples = 0;
@@ -180,17 +180,11 @@ private:
         juce::String midiDeviceId;
         int midiChannel = 0;
         juce::MidiBuffer midiBuffer;
-        std::uint64_t recordingCaptureEndAudioSample = 0;
-        std::uint64_t recordingCaptureEndTimelineSample = 0;
-        int recordingLatencyToDiscard = 0;
-        CaptureState recordingCaptureState = CaptureState::idle;
-        int recordingTailRemainingSamples = 0;
     };
 
     struct PreparedTimeline final {
         std::uint64_t revision = 0;
-        std::uint32_t ppq = 960;
-        double bpm = 120.0;
+        TimelineTimebase timebase;
         double outputSampleRate = 0.0;
         int preparedBlockSize = 512;
         bool loopEnabled = false;
@@ -207,11 +201,15 @@ private:
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
-    static std::int64_t tickToSample(
-        std::uint64_t tick,
-        std::uint32_t ppq,
-        double bpm,
-        double sampleRate) noexcept;
+    bool prepareSnapshot(
+        const juce::var& snapshot,
+        juce::AudioFormatManager& formats,
+        double outputSampleRate,
+        int maximumBlockSize,
+        std::unique_ptr<PreparedTimeline>& prepared,
+        bool& monitorLiveInputState,
+        bool& armedInstrumentTrackState,
+        juce::String& error);
     void mixRange(
         Track& track,
         std::int64_t rangeStart,
@@ -226,11 +224,13 @@ private:
         std::int64_t rangeStart,
         int destinationStart,
         int sampleCount) noexcept;
-    void scheduleMidi(Track& track, std::int64_t rangeStart, int sampleCount) noexcept;
+    void scheduleMidi(
+        const PreparedTimeline& prepared,
+        Track& track,
+        std::int64_t rangeStart,
+        int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
-    bool beginRecordingTailDrain(Track& track, ArrangementCaptureSink* sink) noexcept;
-    bool drainRecordingTails(PreparedTimeline& timeline, int sampleCount) noexcept;
     bool generateLoopProcessedVariants(
         PreparedTimeline& timeline,
         ArrangementCaptureSink* sink) noexcept;
@@ -242,6 +242,7 @@ private:
     std::unique_ptr<PreparedTimeline> pendingTimeline;
     bool pendingMonitorLiveInput = false;
     bool pendingArmedInstrumentTrack = false;
+    std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
     std::atomic<State> state { State::stopped };
     std::atomic<std::int64_t> timelineSample { 0 };
     std::atomic<std::int64_t> lastMixStartSample { 0 };
@@ -263,10 +264,6 @@ private:
     std::atomic<int> captureBlockSamples { 0 };
     std::atomic<int> playbackBlockOffset { 0 };
     std::atomic<int> lastMixPlaybackOffset { 0 };
-    std::atomic<ArrangementCaptureSink*> recordingSink { nullptr };
-    std::atomic<unsigned int> recordingSinkReaders { 0 };
-    std::atomic<unsigned int> drainingTailTracks { 0 };
-    std::atomic<std::uint64_t> recordingCaptureErrors { 0 };
 };
 
 [[nodiscard]] juce::var runTimelineSelfTest(const juce::File& directory);
