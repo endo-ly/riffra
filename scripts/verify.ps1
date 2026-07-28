@@ -42,17 +42,10 @@ try {
             & '.\scripts\build-native.ps1' -Configuration Debug -WithTests
         }
 
-        $RecordingTestDirectory = Join-Path $ArtifactsRoot 'recording-self-test'
-        $ArrangeRecordingTestDirectory = Join-Path $ArtifactsRoot 'arrange-recording-self-test'
         $TimelineTestDirectory = Join-Path $ArtifactsRoot 'timeline-self-test'
         $ResolvedArtifactsRoot = [System.IO.Path]::GetFullPath($ArtifactsRoot)
-        $ResolvedRecordingTestDirectory = [System.IO.Path]::GetFullPath($RecordingTestDirectory)
-        $ResolvedArrangeRecordingTestDirectory =
-            [System.IO.Path]::GetFullPath($ArrangeRecordingTestDirectory)
         $ResolvedTimelineTestDirectory = [System.IO.Path]::GetFullPath($TimelineTestDirectory)
         foreach ($TestDirectory in @(
-            $ResolvedRecordingTestDirectory,
-            $ResolvedArrangeRecordingTestDirectory,
             $ResolvedTimelineTestDirectory
         )) {
             if (-not $TestDirectory.StartsWith($ResolvedArtifactsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -60,8 +53,6 @@ try {
             }
         }
         foreach ($TestDirectory in @(
-            $ResolvedRecordingTestDirectory,
-            $ResolvedArrangeRecordingTestDirectory,
             $ResolvedTimelineTestDirectory
         )) {
             if (Test-Path -LiteralPath $TestDirectory) {
@@ -79,17 +70,8 @@ try {
         }
 
         $AudioSidecar = Join-Path $Root 'src-tauri\binaries\riffra-audio-x86_64-pc-windows-msvc.exe'
-        Invoke-Checked 'Native safety self-test' {
-            & $AudioSidecar --safety-self-test
-        }
         Invoke-Checked 'Native Timeline self-test' {
             & $AudioSidecar --timeline-self-test $ResolvedTimelineTestDirectory
-        }
-        Invoke-Checked 'Native Arrange recording self-test' {
-            & $AudioSidecar --arrange-recording-self-test $ResolvedArrangeRecordingTestDirectory
-        }
-        Invoke-Checked 'Native recording self-test' {
-            & $AudioSidecar --recording-self-test $ResolvedRecordingTestDirectory
         }
     }
 

@@ -7,6 +7,8 @@
 
 namespace riffra {
 
+class PluginChainTestPeer;
+
 class PluginChain final {
 public:
     bool load(
@@ -43,7 +45,7 @@ public:
     [[nodiscard]] const PluginRack* findDevice(const juce::String& deviceId) const noexcept;
 
 private:
-    friend juce::Array<juce::var> runPluginChainSelfTests();
+    friend class PluginChainTestPeer;
 
     struct Device final {
         juce::String id;
@@ -54,7 +56,5 @@ private:
     juce::AudioBuffer<float> firstBuffer;
     juce::AudioBuffer<float> secondBuffer;
 };
-
-[[nodiscard]] juce::Array<juce::var> runPluginChainSelfTests();
 
 } // namespace riffra

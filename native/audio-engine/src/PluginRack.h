@@ -10,6 +10,7 @@
 namespace riffra {
 
 class PluginEditorHost;
+class PluginRackTestPeer;
 
 struct PluginLoadError final {
     juce::String scope;
@@ -49,8 +50,7 @@ public:
 
 private:
     friend class PluginEditorHost;
-    friend juce::Array<juce::var> runPluginRackSelfTests();
-    friend juce::Array<juce::var> runPluginChainSelfTests();
+    friend class PluginRackTestPeer;
 
     struct CachedParameter {
         int index = 0;
@@ -95,7 +95,5 @@ private:
     std::unique_ptr<std::atomic<bool>[]> pendingParameterDirty;
     std::atomic<std::size_t> pendingParameterCapacity { 0 };
 };
-
-[[nodiscard]] juce::Array<juce::var> runPluginRackSelfTests();
 
 }  // namespace riffra

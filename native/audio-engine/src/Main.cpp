@@ -1,8 +1,7 @@
 #include <JuceHeader.h>
 
 #include "SafetyAudioCallback.h"
-#include "AudioSafetyDsp.h"
-#include "RecordingSelfTest.h"
+#include "AudioRuntimeStatus.h"
 #include "PluginEditorHost.h"
 #include "PluginRack.h"
 #include "TimelineEngine.h"
@@ -531,13 +530,6 @@ juce::String initialiseConfiguredAudio(
     return error;
 }
 
-/// Decides whether a device change should fault the engine. We only fault
-/// when audio was actually live (playing or recording); a silent/muted device
-/// reconfiguration is not a safety event.
-inline bool deviceLossRequiresFault(const bool devicePresent, const bool audioActive) {
-    return !devicePresent && audioActive;
-}
-
 /// Watches the AudioDeviceManager for device loss. JUCE fires a change when a
 /// device disappears mid-session; we then mute the engine, mark it faulted, and
 /// finalize any in-progress recording so the partial take is preserved.
@@ -553,7 +545,7 @@ public:
         const bool present = deviceManager.getCurrentAudioDevice() != nullptr;
         const bool audioActive = !audioCallback.isEmergencyMuted()
             || audioCallback.recordingStatus().getProperty("active", false);
-        if (!deviceLossRequiresFault(present, audioActive))
+        if (!riffra::deviceLossRequiresFault(present, audioActive))
             return;
         if (audioCallback.isDeviceFaulted())
             return;
@@ -1538,120 +1530,6 @@ int serve(
     return 0;
 }
 
-juce::var runSafetySelfTest() {
-    constexpr int blockSize = 256;
-
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "safetySelfTest");
-    juce::Array<juce::var> checks;
-
-    {
-        SafetyAudioCallback callback;
-        callback.setEmergencyMuted(true);
-        std::array<float, blockSize> signal {};
-        std::array<float, blockSize> silence {};
-        std::array<float, blockSize> output {};
-        signal.fill(0.5f);
-        const std::array<const float*, 1> signalInput { signal.data() };
-        const std::array<const float*, 1> silentInput { silence.data() };
-        const std::array<float*, 1> outputs { output.data() };
-        const juce::AudioIODeviceCallbackContext context {};
-        callback.audioDeviceIOCallbackWithContext(
-            signalInput.data(), 1, outputs.data(), 1, blockSize, context);
-        callback.audioDeviceIOCallbackWithContext(
-            silentInput.data(), 1, outputs.data(), 1, blockSize, context);
-
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Input meter holds transients until status collection");
-        check->setProperty("passed", callback.getInputPeak() >= 0.5f);
-        checks.add(juce::var(check));
-    }
-
-    {
-        PluginRack rack;
-        std::array<float, blockSize> mono {};
-        std::array<float, blockSize> left {};
-        std::array<float, blockSize> right {};
-        mono.fill(0.25f);
-        const std::array<const float*, 1> inputs { mono.data() };
-        const std::array<float*, 2> outputs { left.data(), right.data() };
-        rack.process(inputs.data(), 1, outputs.data(), 2, blockSize);
-
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Mono input is duplicated to stereo output");
-        check->setProperty(
-            "passed",
-            left.front() == mono.front() && right.front() == mono.front()
-                && left.back() == mono.back() && right.back() == mono.back());
-        checks.add(juce::var(check));
-    }
-
-    for (const auto& check : riffra::runPluginRackSelfTests())
-        checks.add(check);
-    for (const auto& check : riffra::runPluginChainSelfTests())
-        checks.add(check);
-
-    {
-        PluginRack rack;
-        const auto status = rack.status();
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Runtime plugin status excludes persisted state");
-        check->setProperty(
-            "passed", !status.hasProperty("stateData") && !status.hasProperty("parameters"));
-        checks.add(juce::var(check));
-    }
-
-    {
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Device loss during playback faults the engine");
-        check->setProperty("passed", deviceLossRequiresFault(false, true));
-        checks.add(juce::var(check));
-    }
-
-    {
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Device present keeps the engine running");
-        check->setProperty("passed", !deviceLossRequiresFault(true, true));
-        checks.add(juce::var(check));
-    }
-
-    {
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Muted idle device reconfiguration is not a fault");
-        check->setProperty("passed", !deviceLossRequiresFault(false, false));
-        checks.add(juce::var(check));
-    }
-
-    {
-        // The faulted flag must actually surface as a "faulted" status line so
-        // the bridge, UI, and native reconfirmation observe the faulted state.
-        SafetyAudioCallback faultedCallback;
-        faultedCallback.setDeviceFaulted(true);
-        faultedCallback.setEmergencyMuted(true);
-        juce::AudioDeviceManager emptyManager;
-        const auto status = currentStatus(emptyManager, faultedCallback, nullptr, nullptr);
-        const auto* statusObject = status.getDynamicObject();
-        const juce::String state =
-            statusObject ? statusObject->getProperty("state").toString() : juce::String();
-        const juce::String message =
-            statusObject ? statusObject->getProperty("message").toString() : juce::String();
-        auto* check = new juce::DynamicObject();
-        check->setProperty("name", "Device fault is reported as a faulted status");
-        check->setProperty(
-            "passed",
-            state == "faulted" && message.contains("disconnected"));
-        checks.add(juce::var(check));
-    }
-
-    const bool allPassed = std::all_of(checks.begin(), checks.end(),
-        [](const juce::var& check) {
-            return static_cast<bool>(check.getProperty("passed", false));
-        });
-    result->setProperty("checks", checks);
-    result->setProperty("passed", allPassed);
-    return juce::var(result);
-}
-
 } // namespace
 
 int runMain(const juce::StringArray& arguments) {
@@ -1665,33 +1543,12 @@ int runMain(const juce::StringArray& arguments) {
         writeJson(probeAudioDevices());
         return 0;
     }
-    if (command == "--recording-self-test") {
-        if (arguments.size() < 3) {
-            writeJson(makeError("arguments", "Use --recording-self-test <directory>."));
-            return 1;
-        }
-        writeJson(riffra::runRecordingSelfTest(juce::File(arguments[2])));
-        return 0;
-    }
-    if (command == "--safety-self-test") {
-        writeJson(runSafetySelfTest());
-        return 0;
-    }
     if (command == "--timeline-self-test") {
         if (arguments.size() != 3) {
             writeJson(makeError("arguments", "Use --timeline-self-test <directory>."));
             return 2;
         }
         writeJson(riffra::runTimelineSelfTest(juce::File(arguments[2])));
-        return 0;
-    }
-    if (command == "--arrange-recording-self-test") {
-        if (arguments.size() != 3) {
-            writeJson(makeError(
-                "arguments", "Use --arrange-recording-self-test <directory>."));
-            return 2;
-        }
-        writeJson(riffra::runArrangeRecordingSelfTest(juce::File(arguments[2])));
         return 0;
     }
     if (command == "--serve") {

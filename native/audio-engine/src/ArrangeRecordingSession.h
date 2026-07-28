@@ -141,6 +141,4 @@ private:
     std::atomic<bool> finished { false };
 };
 
-[[nodiscard]] juce::var runArrangeRecordingSelfTest(const juce::File& directory);
-
 } // namespace riffra

@@ -66,16 +66,16 @@ directory. This is intentionally separate from the Tauri development target,
 so Rust tests and Clippy can run while `npm run dev:tauri` is active without
 competing for Cargo's build lock.
 
-Run the same checks plus a Native sidecar build and Native self-tests:
+Run the same checks plus a Native sidecar build and Native tests:
 
 ```powershell
 npm run verify:native
 ```
 
-`npm run verify:native` also runs the Native Timeline, Arrangement Graph,
-Track-isolated Arrange recording, legacy recording, and safety self-tests. It
-is the standard verification entry point for changes that affect the audio
-engine; run it instead of invoking a generated Native executable directly.
+`npm run verify:native` also builds and runs the Native GoogleTest/CTest suite
+and the remaining Timeline self-test. It is the standard verification entry
+point for changes that affect the audio engine; run it instead of invoking a
+generated Native executable directly.
 
 `build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
 

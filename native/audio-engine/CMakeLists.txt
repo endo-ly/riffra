@@ -45,6 +45,8 @@ target_sources(riffra-audio-core PRIVATE
   src/OfflineRenderer.cpp
   src/OfflineRenderer.h
   src/AudioSafetyDsp.h
+  src/AudioRuntimeStatus.cpp
+  src/AudioRuntimeStatus.h
   src/RecordingSession.cpp
   src/RecordingSession.h
   src/ArrangeRecordingSession.cpp
@@ -60,10 +62,6 @@ target_sources(riffra-audio-core PRIVATE
 
 target_sources(riffra-audio PRIVATE
   src/Main.cpp
-  src/PluginChainSelfTest.cpp
-  src/PluginRackSelfTest.cpp
-  src/RecordingSelfTest.cpp
-  src/RecordingSelfTest.h
 )
 
 target_sources(riffra-plugin-scan PRIVATE
@@ -175,6 +173,11 @@ if(BUILD_TESTING)
   target_sources(riffra-audio-tests PRIVATE
     tests/ArrangementGraphTest.cpp
     tests/AudioSafetyDspTest.cpp
+    tests/SafetyAudioCallbackTest.cpp
+    tests/PluginRackTest.cpp
+    tests/PluginChainTest.cpp
+    tests/RecordingSessionTest.cpp
+    tests/ArrangeRecordingSessionTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core
@@ -183,6 +186,9 @@ if(BUILD_TESTING)
   target_compile_definitions(riffra-audio-tests PRIVATE
     ${RIFFRA_AUDIO_JUCE_DEFINITIONS}
   )
+  if(MSVC)
+    target_compile_options(riffra-audio-tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+  endif()
 
   include(GoogleTest)
   gtest_discover_tests(riffra-audio-tests)
