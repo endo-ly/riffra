@@ -47,6 +47,11 @@ public:
     juce::File prepareRawForReading(const juce::String& trackId) noexcept override;
     std::vector<std::pair<std::uint64_t, std::uint64_t>>
     getRawSegmentRanges(const juce::String& trackId) noexcept override;
+    bool writeProcessedAudioTrackOffline(
+        const juce::String& trackId,
+        const float* const* processed,
+        int sampleCount,
+        int timeoutMs) noexcept override;
     bool finish(juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;

@@ -308,6 +308,27 @@ ArrangeRecordingSession::getRawSegmentRanges(
     return result;
 }
 
+bool ArrangeRecordingSession::writeProcessedAudioTrackOffline(
+    const juce::String& trackId,
+    const float* const* processed,
+    const int sampleCount,
+    const int timeoutMs) noexcept {
+    if (finished.load(std::memory_order_acquire)
+        || processed == nullptr || sampleCount <= 0)
+        return false;
+
+    const auto found = std::find_if(
+        tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
+            return track.trackId == trackId;
+        });
+
+    if (found == tracks.end() || found->audio == nullptr)
+        return false;
+
+    return found->audio->writeProcessedOffline(
+        processed, sampleCount, timeoutMs);
+}
+
 bool ArrangeRecordingSession::finish(juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel))
         return true;

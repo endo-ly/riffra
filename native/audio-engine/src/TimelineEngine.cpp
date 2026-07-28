@@ -1,4 +1,5 @@
 #include "TimelineEngine.h"
+#include "ArrangeRecordingSession.h"
 #include "ArrangementGraph.h"
 #include "OfflineRenderer.h"
 
@@ -119,6 +120,20 @@ public:
                 && std::abs(processed[0][sample] - 0.05f) < 0.0001f
                 && std::abs(processed[1][sample] - 0.05f) < 0.0001f;
     }
+    bool writeProcessedAudioTrackOffline(
+        const juce::String&,
+        const float* const* processed,
+        const int sampleCount,
+        int) noexcept override {
+        if (processed != nullptr && sampleCount > 0
+            && processed[0] != nullptr && processed[1] != nullptr) {
+            totalProcessedSamples += sampleCount;
+            maxOfflineProcessedWriteSize =
+                std::max(maxOfflineProcessedWriteSize, sampleCount);
+            ++offlineProcessedWriteCalls;
+        }
+        return true;
+    }
 
     bool endAudioTrackCapture(
         const juce::String&,
@@ -193,6 +208,8 @@ public:
     int currentRawSamples = 0;
     int totalRawSamples = 0;
     int totalProcessedSamples = 0;
+    int maxOfflineProcessedWriteSize = 0;
+    int offlineProcessedWriteCalls = 0;
     std::array<std::uint64_t, 8> beginAudioSamples {};
     std::array<std::uint64_t, 8> beginTimelineSamples {};
     std::array<std::uint64_t, 8> endAudioSamples {};
@@ -238,6 +255,24 @@ public:
         }
         totalRaw += std::max(0, rawSampleCount);
         totalProcessed += std::max(0, processedSampleCount);
+    }
+    bool writeProcessedAudioTrackOffline(
+        const juce::String&,
+        const float* const* processed,
+        const int sampleCount,
+        int) noexcept override {
+        if (processed != nullptr && sampleCount > 0
+            && processed[0] != nullptr && processed[1] != nullptr) {
+            processedLeft.insert(
+                processedLeft.end(), processed[0], processed[0] + sampleCount);
+            processedRight.insert(
+                processedRight.end(), processed[1], processed[1] + sampleCount);
+            maxOfflineProcessedWriteSize =
+                std::max(maxOfflineProcessedWriteSize, sampleCount);
+            ++offlineProcessedWriteCalls;
+        }
+        totalProcessed += std::max(0, sampleCount);
+        return true;
     }
     bool endAudioTrackCapture(
         const juce::String&,
@@ -300,6 +335,8 @@ public:
     int segmentCount = 0;
     int boundaryCount = 0;
     int maxProcessedWriteSize = 0;
+    int maxOfflineProcessedWriteSize = 0;
+    int offlineProcessedWriteCalls = 0;
 
 private:
     juce::File testDirectory;
@@ -1052,8 +1089,13 @@ bool TimelineEngine::generateLoopProcessedVariants(
         const auto segments = sink->getRawSegmentRanges(track.id);
         if (segments.empty())
             continue;
+        // Open the flushed raw file as a stream so that non-.wav extensions
+        // (e.g. .partial) are accepted by the AudioFormatManager readers.
+        auto rawStream = rawFile.createInputStream();
+        if (rawStream == nullptr || !rawStream->openedOk())
+            return false;
         std::unique_ptr<juce::AudioFormatReader> reader(
-            formatReader.createReaderFor(rawFile));
+            formatReader.createReaderFor(std::move(rawStream)));
         if (reader == nullptr)
             return false;
         const auto delay = static_cast<int>(std::max<std::int64_t>(
@@ -1110,13 +1152,26 @@ bool TimelineEngine::generateLoopProcessedVariants(
                 outputOffset += count;
                 delayRemaining -= count;
             }
-            // Discard first delay samples, write segmentSamples
-            const std::array<const float*, 2> processed {
-                outputBuffer.getReadPointer(0) + delay,
-                outputBuffer.getReadPointer(1) + delay,
-            };
-            sink->writeAudioTrack(
-                track.id, nullptr, 0, processed.data(), segmentSamples);
+            // Discard first delay samples, write segmentSamples in block-sized chunks
+            constexpr int kOfflineWriterTimeoutMs = 5000;
+            int writeOffset = 0;
+            while (writeOffset < segmentSamples) {
+                const auto count = std::min(
+                    blockSize,
+                    segmentSamples - writeOffset);
+                const std::array<const float*, 2> processedBlock {
+                    outputBuffer.getReadPointer(0) + delay + writeOffset,
+                    outputBuffer.getReadPointer(1) + delay + writeOffset,
+                };
+                if (!sink->writeProcessedAudioTrackOffline(
+                        track.id,
+                        processedBlock.data(),
+                        count,
+                        kOfflineWriterTimeoutMs)) {
+                    return false;
+                }
+                writeOffset += count;
+            }
         }
     }
     return true;
@@ -2119,6 +2174,8 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     bool partialPassPassed = false;
     bool blockSizePassed = false;
     bool longRecordingPassed = false;
+    bool productionWriterPassed = false;
+    bool productionWriterPartialPassed = false;
     int diagPartialSegments = 0;
     int diagPartialRaw = 0;
     int diagPartialProcessed = 0;
@@ -2133,6 +2190,12 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     float automationEarlyRight = 0.0f;
     float automationLateLeft = 0.0f;
     float automationLateRight = 0.0f;
+    std::uint64_t diagProductionRawSamples = 0;
+    std::uint64_t diagProductionProcessedSamples = 0;
+    std::uint64_t diagProductionMissing = 0;
+    std::uint64_t diagProductionDropped = 0;
+    std::uint64_t diagProductionPartialRaw = 0;
+    std::uint64_t diagProductionPartialProcessed = 0;
     juce::String error;
     {
         auto* first = new juce::DynamicObject();
@@ -2470,7 +2533,9 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                     && loopCaptureSink.endCount == 3
                     && loopCaptureSink.loopBoundaryCount == 3
                     && loopCaptureSink.totalRawSamples == loopTotalSamples
-                    && loopCaptureSink.totalProcessedSamples == loopTotalSamples;
+                    && loopCaptureSink.totalProcessedSamples == loopTotalSamples
+                    && loopCaptureSink.offlineProcessedWriteCalls > 1
+                    && loopCaptureSink.maxOfflineProcessedWriteSize <= loopBlockSamples;
                 for (int index = 0; loopCaptureSegments && index < 3; ++index) {
                     const auto offset = static_cast<std::size_t>(index);
                     loopCaptureSegments = loopCaptureSink.segmentRawSamples[offset] > 0
@@ -2605,7 +2670,9 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                 }
                 syntheticLoopPassed = synthWindowed && synthClockOk
                     && synthTimelineWrapped && synthSegmentsOk && synthLengthsOk
-                    && synthImpulseOk && synthNoCrossPass;
+                    && synthImpulseOk && synthNoCrossPass
+                    && synthSink.offlineProcessedWriteCalls > 1
+                    && synthSink.maxOfflineProcessedWriteSize <= kSynthBlock;
             }
             // Partial Pass test: start recording from loop middle
             if (loopSnapshotLoaded && engine.loadSnapshot(
@@ -2672,7 +2739,9 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                     }
                 }
                 partialPassPassed = partialWindowed && partialSegmentsOk
-                    && partialLengthsOk && partialDataOk;
+                    && partialLengthsOk && partialDataOk
+                    && partialSink.offlineProcessedWriteCalls > 1
+                    && partialSink.maxOfflineProcessedWriteSize <= kPartialBlock;
                 diagPartialSegments = partialSink.segmentCount;
                 diagPartialRaw = partialSink.totalRaw;
                 diagPartialProcessed = partialSink.totalProcessed;
@@ -2749,7 +2818,9 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                     && std::abs(bsSink.processedLeft[
                         static_cast<std::size_t>(bsProcessedPos)]
                         - kBsImpulse) < 0.01f;
-                blockSizePassed = bsWindowed && bsLengthOk && bsImpulseOk;
+                blockSizePassed = bsWindowed && bsLengthOk && bsImpulseOk
+                    && bsSink.offlineProcessedWriteCalls > 1
+                    && bsSink.maxOfflineProcessedWriteSize <= kBsBlock;
                 diagBsRaw = bsSink.totalRaw;
                 diagBsProcessed = bsSink.totalProcessed;
                 diagBsWindowed = bsWindowed ? 1 : 0;
@@ -2817,7 +2888,9 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                         && longSink.totalRaw == kLongTotal
                         && longSink.totalProcessed == kLongTotal
                         && static_cast<int>(longSink.processedLeft.size())
-                            == kLongTotal;
+                            == kLongTotal
+                        && longSink.offlineProcessedWriteCalls > 1
+                        && longSink.maxOfflineProcessedWriteSize <= kLongBlock;
                 }
                 // Restore original loop range for subsequent tests
                 auto* restoreLoop = new juce::DynamicObject();
@@ -2825,6 +2898,314 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
                 restoreLoop->setProperty("startTick", 0);
                 restoreLoop->setProperty("endTick", 960);
                 loopSnapshot->setProperty("loopRange", juce::var(restoreLoop));
+            }
+            // Production Writer Integration Test: 4 bars x 3 passes (384,000 x 3)
+            {
+                auto* prodTimebase = new juce::DynamicObject();
+                prodTimebase->setProperty("ppq", 960);
+                prodTimebase->setProperty("bpm", 120.0);
+                prodTimebase->setProperty("timeSignatureNumerator", 4);
+                prodTimebase->setProperty("timeSignatureDenominator", 4);
+                auto* prodLoop = new juce::DynamicObject();
+                prodLoop->setProperty("enabled", true);
+                prodLoop->setProperty("startTick", 0);
+                prodLoop->setProperty("endTick", 15360);
+                auto* prodTrack = new juce::DynamicObject();
+                prodTrack->setProperty("id", "track:prod");
+                prodTrack->setProperty("gainDb", 0.0);
+                prodTrack->setProperty("pan", 0.0);
+                prodTrack->setProperty("muted", false);
+                prodTrack->setProperty("solo", false);
+                prodTrack->setProperty("armed", true);
+                prodTrack->setProperty("monitoring", "off");
+                auto* prodInput = new juce::DynamicObject();
+                prodInput->setProperty("channelIndex", 0);
+                prodTrack->setProperty("audioInput", juce::var(prodInput));
+                auto* prodRack = new juce::DynamicObject();
+                prodRack->setProperty("devices", juce::Array<juce::var> {});
+                prodTrack->setProperty("rack", juce::var(prodRack));
+                prodTrack->setProperty("audioClips", juce::Array<juce::var> {});
+                prodTrack->setProperty("midiClips", juce::Array<juce::var> {});
+                juce::Array<juce::var> prodTracks;
+                prodTracks.add(juce::var(prodTrack));
+                auto* prodSnapshot = new juce::DynamicObject();
+                prodSnapshot->setProperty("revision", 10);
+                prodSnapshot->setProperty("timebase", juce::var(prodTimebase));
+                prodSnapshot->setProperty("loopRange", juce::var(prodLoop));
+                prodSnapshot->setProperty("tracks", prodTracks);
+                const auto prodSnapshotValue = juce::var(prodSnapshot);
+
+                if (engine.loadSnapshot(
+                        prodSnapshotValue, formats, 48000.0, 512, error)) {
+                    constexpr int kProdLoopLength = 384'000;
+                    constexpr int kProdPasses = 3;
+                    constexpr int kProdTotal = kProdLoopLength * kProdPasses;
+                    constexpr int kProdBlock = 512;
+
+                    // 3 full passes
+                    engine.seekToTick(0);
+                    auto config = engine.recordingConfiguration();
+                    juce::String sessionError;
+                    auto prodDir = directory.getChildFile("prod-writer");
+                    auto prodSession = ArrangeRecordingSession::create(
+                        prodDir, config, sessionError);
+                    if (prodSession != nullptr) {
+                        engine.setRecordingSink(prodSession.get());
+                        int prodOffset = 0;
+                        int prodSamples = 0;
+                        const auto prodStarted = engine.startRecording(0, error);
+                        const auto prodWindowed = prodStarted
+                            && engine.recordingWindow(
+                                kProdTotal, prodOffset, prodSamples);
+                        std::array<float, kProdBlock> prodIn {};
+                        prodIn.fill(0.06f);
+                        std::array<float, kProdBlock> prodOutL {};
+                        std::array<float, kProdBlock> prodOutR {};
+                        const std::array<const float*, 1> prodInputs {
+                            prodIn.data()
+                        };
+                        const std::array<float*, 2> prodOutputs {
+                            prodOutL.data(), prodOutR.data()
+                        };
+                        int prodMixed = 0;
+                        while (prodWindowed && prodMixed < kProdTotal) {
+                            const auto block = std::min(
+                                kProdBlock, kProdTotal - prodMixed);
+                            engine.mix(
+                                prodInputs.data(), 1,
+                                prodOutputs.data(), 2, block);
+                            prodMixed += block;
+                            juce::Thread::sleep(10);
+                        }
+                        engine.stopRecording();
+                        const auto tailOk = engine.flushRecordingTail(error);
+                        engine.stop();
+                        engine.clearRecordingSink();
+                        juce::String finishError;
+                        const auto finished = prodSession->finish(finishError);
+
+                        const auto rawFile =
+                            prodDir.getChildFile("tracks/0000/raw.wav");
+                        const auto processedFile =
+                            prodDir.getChildFile("tracks/0000/processed.wav");
+                        const auto manifestFile =
+                            prodDir.getChildFile("manifest.json");
+                        const auto manifestText =
+                            manifestFile.loadFileAsString();
+                        const auto manifestValue =
+                            juce::JSON::parse(manifestText);
+                        auto rawReader = std::unique_ptr<juce::AudioFormatReader>(
+                            formats.createReaderFor(rawFile));
+                        auto processedReader =
+                            std::unique_ptr<juce::AudioFormatReader>(
+                                formats.createReaderFor(processedFile));
+
+                        const auto rawLength = rawReader != nullptr
+                            ? rawReader->lengthInSamples : 0;
+                        const auto processedLength = processedReader != nullptr
+                            ? processedReader->lengthInSamples : 0;
+                        const auto completed = manifestText.contains(
+                            "\"state\": \"completed\"");
+
+                        diagProductionRawSamples =
+                            static_cast<std::uint64_t>(rawLength);
+                        diagProductionProcessedSamples =
+                            static_cast<std::uint64_t>(processedLength);
+                        if (prodSession->status().isObject()) {
+                            diagProductionMissing = static_cast<std::uint64_t>(
+                                static_cast<juce::int64>(prodSession->status().getProperty(
+                                    "processedMissingSamples", 0)));
+                            diagProductionDropped = static_cast<std::uint64_t>(
+                                static_cast<juce::int64>(prodSession->status().getProperty(
+                                    "droppedBlocks", 0)));
+                        }
+
+                        productionWriterPassed = prodWindowed && tailOk
+                            && finished
+                            && rawFile.existsAsFile()
+                            && processedFile.existsAsFile()
+                            && rawLength == kProdTotal
+                            && processedLength == kProdTotal
+                            && completed
+                            && diagProductionMissing == 0
+                            && diagProductionDropped == 0;
+
+                        // Verify capture segment ranges match
+                        if (productionWriterPassed && manifestValue.isObject()) {
+                            const auto manifestTracks = manifestValue.getProperty(
+                                "tracks", {});
+                            if (manifestTracks.isArray() && manifestTracks.size() > 0) {
+                                const auto trackObj = manifestTracks[0];
+                                const auto segments = trackObj.getProperty(
+                                    "captureSegments", {});
+                                if (segments.isArray()
+                                    && segments.size() == kProdPasses) {
+                                    for (int i = 0; i < kProdPasses; ++i) {
+                                        const auto seg = segments[i];
+                                        const auto rawStart = static_cast<juce::int64>(
+                                            seg.getProperty(
+                                                "rawFileStartSample", -1));
+                                        const auto rawEnd = static_cast<juce::int64>(
+                                            seg.getProperty(
+                                                "rawFileEndSample", -1));
+                                        const auto procStart =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "processedFileStartSample",
+                                                    -1));
+                                        const auto procEnd =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "processedFileEndSample",
+                                                    -1));
+                                        if (rawStart != procStart
+                                            || rawEnd != procEnd) {
+                                            productionWriterPassed = false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    productionWriterPassed = false;
+                                }
+                            } else {
+                                productionWriterPassed = false;
+                            }
+                        }
+                    }
+
+                    // Partial pass: start mid-loop, record partial+full+partial
+                    engine.seekToTick(7680);
+                    auto partialConfig = engine.recordingConfiguration();
+                    juce::String partialSessionError;
+                    auto partialDir =
+                        directory.getChildFile("prod-writer-partial");
+                    auto partialSession = ArrangeRecordingSession::create(
+                        partialDir, partialConfig, partialSessionError);
+                    if (partialSession != nullptr) {
+                        engine.setRecordingSink(partialSession.get());
+                        constexpr int kPartialTotal = 768'000;
+                        int partialOffset = 0;
+                        int partialSamples = 0;
+                        const auto partialStarted = engine.startRecording(
+                            0, error);
+                        const auto partialWindowed = partialStarted
+                            && engine.recordingWindow(
+                                kPartialTotal, partialOffset, partialSamples);
+                        std::array<float, kProdBlock> partIn {};
+                        partIn.fill(0.06f);
+                        std::array<float, kProdBlock> partOutL {};
+                        std::array<float, kProdBlock> partOutR {};
+                        const std::array<const float*, 1> partInputs {
+                            partIn.data()
+                        };
+                        const std::array<float*, 2> partOutputs {
+                            partOutL.data(), partOutR.data()
+                        };
+                        int partMixed = 0;
+                        while (partialWindowed && partMixed < kPartialTotal) {
+                            const auto block = std::min(
+                                kProdBlock, kPartialTotal - partMixed);
+                            engine.mix(
+                                partInputs.data(), 1,
+                                partOutputs.data(), 2, block);
+                            partMixed += block;
+                            juce::Thread::sleep(10);
+                        }
+                        engine.stopRecording();
+                        const auto tailOk = engine.flushRecordingTail(error);
+                        engine.stop();
+                        engine.clearRecordingSink();
+                        juce::String finishError;
+                        const auto finished = partialSession->finish(
+                            finishError);
+
+                        const auto rawFile = partialDir.getChildFile(
+                            "tracks/0000/raw.wav");
+                        const auto processedFile = partialDir.getChildFile(
+                            "tracks/0000/processed.wav");
+                        const auto manifestFile = partialDir.getChildFile(
+                            "manifest.json");
+                        const auto manifestText =
+                            manifestFile.loadFileAsString();
+                        const auto manifestValue =
+                            juce::JSON::parse(manifestText);
+                        auto rawReader =
+                            std::unique_ptr<juce::AudioFormatReader>(
+                                formats.createReaderFor(rawFile));
+                        auto processedReader =
+                            std::unique_ptr<juce::AudioFormatReader>(
+                                formats.createReaderFor(processedFile));
+
+                        const auto rawLength = rawReader != nullptr
+                            ? rawReader->lengthInSamples : 0;
+                        const auto processedLength =
+                            processedReader != nullptr
+                            ? processedReader->lengthInSamples : 0;
+                        const auto completed = manifestText.contains(
+                            "\"state\": \"completed\"");
+
+                        diagProductionPartialRaw =
+                            static_cast<std::uint64_t>(rawLength);
+                        diagProductionPartialProcessed =
+                            static_cast<std::uint64_t>(processedLength);
+
+                        productionWriterPartialPassed = partialWindowed
+                            && tailOk && finished
+                            && rawFile.existsAsFile()
+                            && processedFile.existsAsFile()
+                            && rawLength == kPartialTotal
+                            && processedLength == kPartialTotal
+                            && completed;
+
+                        // Verify 3 segments and raw/processed ranges
+                        if (productionWriterPartialPassed
+                            && manifestValue.isObject()) {
+                            const auto manifestTracks = manifestValue.getProperty(
+                                "tracks", {});
+                            if (manifestTracks.isArray() && manifestTracks.size() > 0) {
+                                const auto trackObj = manifestTracks[0];
+                                const auto segments = trackObj.getProperty(
+                                    "captureSegments", {});
+                                if (segments.isArray()
+                                    && segments.size() == 3) {
+                                    for (int i = 0; i < 3; ++i) {
+                                        const auto seg = segments[i];
+                                        const auto rawStart =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "rawFileStartSample",
+                                                    -1));
+                                        const auto rawEnd =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "rawFileEndSample",
+                                                    -1));
+                                        const auto procStart =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "processedFileStartSample",
+                                                    -1));
+                                        const auto procEnd =
+                                            static_cast<juce::int64>(
+                                                seg.getProperty(
+                                                    "processedFileEndSample",
+                                                    -1));
+                                        if (rawStart != procStart
+                                            || rawEnd != procEnd) {
+                                            productionWriterPartialPassed =
+                                                false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    productionWriterPartialPassed = false;
+                                }
+                            } else {
+                                productionWriterPartialPassed = false;
+                            }
+                        }
+                    }
+                }
             }
             if (loopSnapshotLoaded && engine.loadSnapshot(
                     punchSnapshot, formats, 48000.0, 512, error)) {
@@ -2968,6 +3349,12 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     addCheck(
         "Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
         longRecordingPassed);
+    addCheck(
+        "Production ThreadedWriter 4小節×3 Pass",
+        productionWriterPassed);
+    addCheck(
+        "Production ThreadedWriter Partial Pass",
+        productionWriterPartialPassed);
     result->setProperty("checks", checks);
     result->setProperty("message", error);
     result->setProperty("partialSegments", diagPartialSegments);
@@ -2984,6 +3371,12 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
     result->setProperty("automationEarlyRight", automationEarlyRight);
     result->setProperty("automationLateLeft", automationLateLeft);
     result->setProperty("automationLateRight", automationLateRight);
+    result->setProperty("productionRawSamples", static_cast<juce::int64>(diagProductionRawSamples));
+    result->setProperty("productionProcessedSamples", static_cast<juce::int64>(diagProductionProcessedSamples));
+    result->setProperty("productionMissingSamples", static_cast<juce::int64>(diagProductionMissing));
+    result->setProperty("productionDroppedBlocks", static_cast<juce::int64>(diagProductionDropped));
+    result->setProperty("productionPartialRaw", static_cast<juce::int64>(diagProductionPartialRaw));
+    result->setProperty("productionPartialProcessed", static_cast<juce::int64>(diagProductionPartialProcessed));
     result->setProperty(
         "passed", sourcesWritten && loaded && mixed && seeked && looped && punchWindowed
             && immediateRecordStarted && countInAligned && countInAudible && countInCancelled
@@ -2991,7 +3384,8 @@ juce::var runTimelineSelfTest(const juce::File& directory) {
             && offlineAudioRendered && graphUpdateReusedDevices
             && mutablePluginStateKeepsTopology && recordingTapIsolated
             && loopCaptureSegments && syntheticLoopPassed
-            && partialPassPassed && blockSizePassed && longRecordingPassed);
+            && partialPassPassed && blockSizePassed && longRecordingPassed
+            && productionWriterPassed && productionWriterPartialPassed);
     mono.deleteFile();
     stereo.deleteFile();
     directory.getChildFile("offline-selection.wav").deleteFile();

@@ -49,6 +49,18 @@ public:
         juce::ignoreUnused(trackId);
         return {};
     }
+
+    /// Offline processed audio track writer used after loop recording stops.
+    /// Unlike writeAudioTrack(), this method may wait for the writer FIFO,
+    /// and returns true only when all samples are successfully committed.
+    virtual bool writeProcessedAudioTrackOffline(
+        const juce::String& trackId,
+        const float* const* processed,
+        int sampleCount,
+        int timeoutMs) noexcept {
+        juce::ignoreUnused(trackId, processed, sampleCount, timeoutMs);
+        return false;
+    }
 };
 
 } // namespace riffra

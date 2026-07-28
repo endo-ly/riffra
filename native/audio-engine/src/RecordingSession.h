@@ -27,6 +27,10 @@ public:
         int numSamples) noexcept;
     bool writeRaw(const float* const* rawData, int numSamples) noexcept;
     bool writeProcessed(const float* const* processedData, int numSamples) noexcept;
+    bool writeProcessedOffline(
+        const float* const* processedData,
+        int numSamples,
+        int timeoutMs) noexcept;
     /// Flush and close the raw writer so the file can be read back.
     /// The processed writer remains active.
     juce::File flushRaw() noexcept;
@@ -63,6 +67,7 @@ private:
 
     bool initialise(juce::String& error);
     bool writeManifest(const juce::String& state, juce::String& error) const;
+    void recordProcessedDropout(std::uint64_t attemptedStart, int numSamples) noexcept;
     static std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> createWriter(
         const juce::File& file,
         double sampleRate,

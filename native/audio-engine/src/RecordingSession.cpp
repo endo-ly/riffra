@@ -157,20 +157,59 @@ bool RecordingSession::writeProcessed(
     const auto attemptedStart = processedAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     if (!processedWriter->write(processedData, numSamples)) {
-        processedDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
-        processedMissingSamples.fetch_add(
-            static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
-        auto expected = std::numeric_limits<std::uint64_t>::max();
-        processedFirstMissingSample.compare_exchange_strong(
-            expected, attemptedStart, std::memory_order_relaxed);
-        processedLastMissingSample.store(
-            attemptedStart + static_cast<std::uint64_t>(numSamples),
-            std::memory_order_relaxed);
+        recordProcessedDropout(attemptedStart, numSamples);
         return false;
     }
     processedSamplesWritten.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     return true;
+}
+
+bool RecordingSession::writeProcessedOffline(
+    const float* const* processedData,
+    const int numSamples,
+    const int timeoutMs) noexcept {
+    if (finished || processedWriter == nullptr || numSamples <= 0
+        || processedData == nullptr || timeoutMs < 0)
+        return false;
+
+    const auto attemptedStart = processedAttemptedSamples.fetch_add(
+        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+
+    const auto deadline =
+        juce::Time::getMillisecondCounter()
+        + static_cast<std::uint32_t>(timeoutMs);
+
+    do {
+        if (processedWriter->write(processedData, numSamples)) {
+            processedSamplesWritten.fetch_add(
+                static_cast<std::uint64_t>(numSamples),
+                std::memory_order_relaxed);
+            return true;
+        }
+
+        if (juce::Time::getMillisecondCounter() >= deadline)
+            break;
+
+        juce::Thread::sleep(1);
+    } while (true);
+
+    recordProcessedDropout(attemptedStart, numSamples);
+    return false;
+}
+
+void RecordingSession::recordProcessedDropout(
+    const std::uint64_t attemptedStart,
+    const int numSamples) noexcept {
+    processedDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
+    processedMissingSamples.fetch_add(
+        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    auto expected = std::numeric_limits<std::uint64_t>::max();
+    processedFirstMissingSample.compare_exchange_strong(
+        expected, attemptedStart, std::memory_order_relaxed);
+    processedLastMissingSample.store(
+        attemptedStart + static_cast<std::uint64_t>(numSamples),
+        std::memory_order_relaxed);
 }
 
 juce::File RecordingSession::flushRaw() noexcept {
