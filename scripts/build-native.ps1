@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+    [switch]$WithTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +19,8 @@ if (-not (Test-Path -LiteralPath $CMake)) {
     throw "Visual Studio CMake was not found at $CMake"
 }
 
-& $CMake -S $Source -B $Build -G 'Visual Studio 17 2022' -A x64
+$BuildTesting = if ($WithTests) { 'ON' } else { 'OFF' }
+& $CMake -S $Source -B $Build -G 'Visual Studio 17 2022' -A x64 "-DBUILD_TESTING=$BuildTesting"
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
 & $CMake --build $Build --config $Configuration --parallel 1

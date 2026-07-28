@@ -38,7 +38,9 @@ try {
     Invoke-Checked 'Rust tests' { cargo test --manifest-path 'src-tauri\Cargo.toml' }
 
     if ($Native) {
-        Invoke-Checked 'Native sidecar build' { & '.\scripts\build-native.ps1' -Configuration Debug }
+        Invoke-Checked 'Native sidecar build' {
+            & '.\scripts\build-native.ps1' -Configuration Debug -WithTests
+        }
 
         $RecordingTestDirectory = Join-Path $ArtifactsRoot 'recording-self-test'
         $ArrangeRecordingTestDirectory = Join-Path $ArtifactsRoot 'arrange-recording-self-test'
@@ -68,15 +70,20 @@ try {
         }
         New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
 
+        $CTest = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe'
+        if (-not (Test-Path -LiteralPath $CTest)) {
+            throw "CTest was not found at $CTest"
+        }
+        Invoke-Checked 'Native C++ tests' {
+            & $CTest --test-dir 'native\audio-engine\build' -C Debug --output-on-failure
+        }
+
         $AudioSidecar = Join-Path $Root 'src-tauri\binaries\riffra-audio-x86_64-pc-windows-msvc.exe'
         Invoke-Checked 'Native safety self-test' {
             & $AudioSidecar --safety-self-test
         }
         Invoke-Checked 'Native Timeline self-test' {
             & $AudioSidecar --timeline-self-test $ResolvedTimelineTestDirectory
-        }
-        Invoke-Checked 'Native Arrangement Graph self-test' {
-            & $AudioSidecar --arrangement-graph-self-test
         }
         Invoke-Checked 'Native Arrange recording self-test' {
             & $AudioSidecar --arrange-recording-self-test $ResolvedArrangeRecordingTestDirectory

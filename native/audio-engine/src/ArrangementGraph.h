@@ -45,6 +45,4 @@ public:
         float fallback) noexcept;
 };
 
-[[nodiscard]] juce::var runArrangementGraphSelfTest();
-
 } // namespace riffra
