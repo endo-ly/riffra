@@ -29,6 +29,7 @@ native/**/out/
 .artifacts/
 *.tsbuildinfo
 src-tauri/gen/
+src-tauri/binaries/
 src-tauri/err.txt
 src-tauri/out.txt
 .husky/_

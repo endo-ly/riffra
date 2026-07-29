@@ -32,60 +32,97 @@ The target VST3 folder defaults to `C:\Program Files\Common Files\VST3` and is u
 
 ## Development
 
+Riffra has three independent build domains. Use the standard toolchain for each:
+
+| Domain              | Toolchain     | Entry point                                   |
+| ------------------- | ------------- | --------------------------------------------- |
+| Frontend            | Vite / npm    | `npm run dev`                                 |
+| Application host    | Cargo / Tauri | `npm run tauri dev`                           |
+| Native audio engine | CMake         | `native/audio-engine/build.ps1` or `build.sh` |
+
+The domains are kept separate so the C++ engine can be built and tested without
+npm, and the frontend can be developed without a full Tauri build.
+
+### 1. Native audio engine (C++)
+
+Build the sidecars first. They are required by the Tauri application.
+
+Windows:
+
 ```powershell
-$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+cd native/audio-engine
+.\build.ps1 -Configuration Debug
+```
+
+macOS / Linux:
+
+```bash
+cd native/audio-engine
+./build.sh Debug
+```
+
+Each script configures CMake, builds `riffra-audio` and `riffra-plugin-scan`,
+runs CTest, and installs the binaries to `src-tauri/binaries/` using
+`cmake --install`.
+
+The sidecars are intentionally ignored by Git because they are platform-specific
+build outputs. Rebuild them after a fresh checkout or after changing Native code.
+
+### 2. Tauri application
+
+After the sidecars are built, install Node dependencies and start the desktop
+application:
+
+```powershell
 npm install
 npm run dev:tauri
 ```
 
-`npm run dev:tauri` is the standard Tauri development entry point. It builds the
-Debug Native sidecars before starting Tauri and uses a dedicated Cargo target
-directory at `.artifacts/cargo-tauri-dev`.
+`npm run dev:tauri` is just `npm run tauri dev`. It does **not** rebuild the
+Native sidecars, so remember to run the C++ build step when Native code changes.
 
-Do not use `npm run tauri dev` for normal development after changing Native
-code: it bypasses the sidecar build wrapper and can run an older sidecar.
-
-To open a project in recovery-oriented Safe Mode, pass the explicit flag (or set
-`RIFFRA_SAFE_MODE=1`). Safe Mode keeps VST3 discovery, MIDI input, driver
-changes, live sample preview, and new hardware recordings isolated while still
-allowing project open, library access, offline analysis/render, and manifest
-export/import:
+To open a project in recovery-oriented Safe Mode, pass the flag or set the
+environment variable:
 
 ```powershell
 npm run dev:tauri -- --safe-mode
 ```
 
-Run the non-GUI checks with:
+```powershell
+$env:RIFFRA_SAFE_MODE = 1
+npm run dev:tauri
+```
+
+Safe Mode keeps VST3 discovery, MIDI input, driver changes, live sample preview,
+and new hardware recordings isolated while still allowing project open, library
+access, offline analysis/render, and manifest export/import.
+
+### 3. Frontend only
+
+To work on the React UI without starting Tauri:
+
+```powershell
+npm run dev
+```
+
+### Verification
+
+Run the non-GUI checks:
 
 ```powershell
 npm run verify
 ```
 
-The verification script uses `.artifacts/verify/cargo` as its Cargo target
-directory. This is intentionally separate from the Tauri development target,
-so Rust tests and Clippy can run while `npm run dev:tauri` is active without
-competing for Cargo's build lock.
-
-Run the same checks plus a Native sidecar build and Native tests:
+Add `--native` to also build and test the C++ engine:
 
 ```powershell
 npm run verify:native
 ```
 
-`npm run verify:native` also builds and runs the Native GoogleTest/CTest suite.
-It is the standard verification entry point for changes that affect the audio
-engine; run it instead of invoking a generated Native executable directly.
-
-`npm run dev:tauri` and `npm run verify:native` use `scripts/build-native.ps1` to place the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
-
-To build the audio engine directly without npm, run:
-
-```powershell
-cd native/audio-engine
-.\build.ps1
-```
-
-On macOS or Linux, use `./build.sh` instead. Both scripts configure, build, test, and install the sidecars to `src-tauri/binaries/` using CMake install.
+The verification script uses `.artifacts/verify/cargo` as its Cargo target
+directory. This is intentionally separate from the Tauri development target, so
+Rust tests and Clippy can run while `npm run dev:tauri` is active without
+competing for Cargo's build lock.
 
 ## Licensing note
 

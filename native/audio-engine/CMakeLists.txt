@@ -75,18 +75,20 @@ set(RIFFRA_AUDIO_JUCE_DEFINITIONS
   JUCE_WEB_BROWSER=0
 )
 
+set(RIFFRA_PLUGIN_SCAN_JUCE_DEFINITIONS
+  JUCE_PLUGINHOST_VST3=1
+  JUCE_USE_CURL=0
+  JUCE_WEB_BROWSER=0
+)
+
 target_compile_definitions(riffra-audio-core PUBLIC
   ${RIFFRA_AUDIO_JUCE_DEFINITIONS}
 )
 
-target_compile_definitions(riffra-audio PRIVATE
-  ${RIFFRA_AUDIO_JUCE_DEFINITIONS}
-)
-
+# riffra-audio only consumes the public interface of riffra-audio-core, so the
+# JUCE compile definitions and libraries are already propagated.
 target_compile_definitions(riffra-plugin-scan PRIVATE
-  JUCE_PLUGINHOST_VST3=1
-  JUCE_USE_CURL=0
-  JUCE_WEB_BROWSER=0
+  ${RIFFRA_PLUGIN_SCAN_JUCE_DEFINITIONS}
 )
 
 set(RIFFRA_AUDIO_JUCE_LIBRARIES
@@ -102,22 +104,25 @@ set(RIFFRA_AUDIO_JUCE_LIBRARIES
   juce::juce_recommended_warning_flags
 )
 
-target_link_libraries(riffra-audio-core PUBLIC
-  ${RIFFRA_AUDIO_JUCE_LIBRARIES}
-)
-
-target_link_libraries(riffra-audio PRIVATE
-  riffra-audio-core
-  ${RIFFRA_AUDIO_JUCE_LIBRARIES}
-)
-
-target_link_libraries(riffra-plugin-scan PRIVATE
+set(RIFFRA_PLUGIN_SCAN_JUCE_LIBRARIES
   juce::juce_audio_processors
   juce::juce_core
   juce::juce_events
   juce::juce_recommended_config_flags
   juce::juce_recommended_lto_flags
   juce::juce_recommended_warning_flags
+)
+
+target_link_libraries(riffra-audio-core PUBLIC
+  ${RIFFRA_AUDIO_JUCE_LIBRARIES}
+)
+
+target_link_libraries(riffra-audio PRIVATE
+  riffra-audio-core
+)
+
+target_link_libraries(riffra-plugin-scan PRIVATE
+  ${RIFFRA_PLUGIN_SCAN_JUCE_LIBRARIES}
 )
 
 juce_generate_juce_header(riffra-audio)
@@ -128,9 +133,10 @@ target_include_directories(riffra-audio-core PUBLIC
 )
 
 if(MSVC)
-  target_compile_options(riffra-audio-core PRIVATE /W4 /permissive- /EHsc /utf-8)
-  target_compile_options(riffra-audio PRIVATE /W4 /permissive- /EHsc /utf-8)
-  target_compile_options(riffra-plugin-scan PRIVATE /W4 /permissive- /EHsc /utf-8)
+  set(RIFFRA_MSVC_WARNINGS /W4 /permissive- /EHsc /utf-8)
+  foreach(target IN ITEMS riffra-audio-core riffra-audio riffra-plugin-scan)
+    target_compile_options(${target} PRIVATE ${RIFFRA_MSVC_WARNINGS})
+  endforeach()
 endif()
 
 # The existing production headers use JUCE's generated JuceHeader.h. JUCE only
@@ -184,12 +190,10 @@ if(BUILD_TESTING)
     riffra-audio-core
     GTest::gtest_main
   )
-  target_compile_definitions(riffra-audio-tests PRIVATE
-    ${RIFFRA_AUDIO_JUCE_DEFINITIONS}
-  )
+  # JUCE definitions come through riffra-audio-core's PUBLIC interface.
   if(MSVC)
-    target_compile_options(riffra-audio-tests PRIVATE /W4 /permissive- /EHsc /utf-8)
-endif()
+    target_compile_options(riffra-audio-tests PRIVATE ${RIFFRA_MSVC_WARNINGS})
+  endif()
 
 include(GoogleTest)
 gtest_discover_tests(riffra-audio-tests)
@@ -207,14 +211,10 @@ else()
     set(RIFFRA_BINARY_SUFFIX "")
 endif()
 
-install(FILES $<TARGET_FILE:riffra-audio>
-    DESTINATION "src-tauri/binaries"
-    RENAME "riffra-audio-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
-    COMPONENT riffra-sidecars
-)
-
-install(FILES $<TARGET_FILE:riffra-plugin-scan>
-    DESTINATION "src-tauri/binaries"
-    RENAME "riffra-plugin-scan-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
-    COMPONENT riffra-sidecars
-)
+foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan)
+  install(FILES $<TARGET_FILE:${sidecar}>
+      DESTINATION "src-tauri/binaries"
+      RENAME "${sidecar}-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
+      COMPONENT riffra-sidecars
+  )
+endforeach()
