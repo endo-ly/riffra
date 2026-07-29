@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml export_types && node scripts/gen-barrel.js",
     "dev:tauri": "npm run tauri dev",
+    "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml export_types && node scripts/gen-barrel.js",
     "check": "npm run build && npm run test",
     "typecheck": "tsc -b",
     "lint": "eslint .",
@@ -23,7 +23,7 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "**/*.{ts,tsx}": [
+    "**/*.{ts,tsx,mjs}": [
       "eslint --fix",
       "prettier --write"
     ],

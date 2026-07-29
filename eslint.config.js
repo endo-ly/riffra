@@ -17,7 +17,6 @@ export default tseslint.config(
       'native',
       'src/lib/generated',
       '*.config.ts',
-      'vite.config.ts',
     ],
   },
   js.configs.recommended,

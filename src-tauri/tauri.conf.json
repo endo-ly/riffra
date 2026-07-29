@@ -32,7 +32,7 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
     "externalBin": ["binaries/riffra-audio", "binaries/riffra-plugin-scan"],
     "shortDescription": "Hear, shape, capture, compare, and reuse.",

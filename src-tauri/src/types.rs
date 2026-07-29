@@ -2,7 +2,7 @@
 //!
 //! Every Rust struct or enum that crosses the Tauri IPC boundary derives
 //! `ts_rs::TS`. This module regenerates the TypeScript declaration files under
-//! `src/lib/generated/` from those types. `scripts/verify.ps1` runs this export
+//! `src/lib/generated/` from those types. `scripts/verify.mjs` runs this export
 //! before the TypeScript build and fails when the committed bindings differ
 //! from the freshly generated output, so the two sides cannot drift.
 

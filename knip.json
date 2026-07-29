@@ -1,5 +1,5 @@
 {
-  "project": ["src/**/*.{ts,tsx}"],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs}"],
   "ignore": ["src/lib/generated/**"],
   "vitest": true
 }
