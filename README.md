@@ -76,7 +76,16 @@ npm run verify:native
 It is the standard verification entry point for changes that affect the audio
 engine; run it instead of invoking a generated Native executable directly.
 
-`build-native.ps1` places the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
+`npm run dev:tauri` and `npm run verify:native` use `scripts/build-native.ps1` to place the two debug sidecars under `src-tauri/binaries/`. The sidecars are intentionally ignored by Git because they are platform-specific build outputs; rebuild them after a fresh checkout before running a Tauri build.
+
+To build the audio engine directly without npm, run:
+
+```powershell
+cd native/audio-engine
+.\build.ps1
+```
+
+On macOS or Linux, use `./build.sh` instead. Both scripts configure, build, test, and install the sidecars to `src-tauri/binaries/` using CMake install.
 
 ## Licensing note
 

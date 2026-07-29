@@ -189,8 +189,32 @@ if(BUILD_TESTING)
   )
   if(MSVC)
     target_compile_options(riffra-audio-tests PRIVATE /W4 /permissive- /EHsc /utf-8)
-  endif()
-
-  include(GoogleTest)
-  gtest_discover_tests(riffra-audio-tests)
 endif()
+
+include(GoogleTest)
+gtest_discover_tests(riffra-audio-tests)
+endif()
+
+# Sidecar names must match Tauri's externalBin resolution:
+# binaries/<name>-<target-triple>(.exe). Default to Windows MSVC target;
+# override with -DRIFFRA_TARGET_TRIPLE=<triple> when cross-compiling.
+if(NOT DEFINED RIFFRA_TARGET_TRIPLE)
+    set(RIFFRA_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(RIFFRA_BINARY_SUFFIX ".exe")
+else()
+    set(RIFFRA_BINARY_SUFFIX "")
+endif()
+
+install(FILES $<TARGET_FILE:riffra-audio>
+    DESTINATION "src-tauri/binaries"
+    RENAME "riffra-audio-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
+    COMPONENT riffra-sidecars
+)
+
+install(FILES $<TARGET_FILE:riffra-plugin-scan>
+    DESTINATION "src-tauri/binaries"
+    RENAME "riffra-plugin-scan-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
+    COMPONENT riffra-sidecars
+)

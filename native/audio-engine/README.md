@@ -38,3 +38,10 @@ Status replies include `feedbackSuspected` when the detector has engaged emergen
 When an input is open, `startRecording` also captures note-on/note-off events to
 `midi.json` beside the Raw and Processed WAV files. The sidecar caps the event
 journal at 200,000 events and finalizes it on `stopRecording`.
+
+## Building
+
+Run `./build.ps1` on Windows or `./build.sh` on macOS/Linux from this directory.
+Both scripts configure CMake, build the sidecars, run CTest, and install the
+binaries to `src-tauri/binaries/` using CMake install. See the root
+[README.md](../../README.md) for the full development workflow.
