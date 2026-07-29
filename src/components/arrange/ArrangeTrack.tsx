@@ -54,6 +54,7 @@ interface ArrangeTrackProps {
   onDelete: () => void;
   onReorder: (sourceTrackId: string) => void;
   onResize: () => void;
+  onSetTrackSize?: (size: TrackSize) => void;
   automationOpen: boolean;
   onToggleAutomation: () => void;
 }
@@ -61,6 +62,7 @@ interface ArrangeTrackProps {
 export function ArrangeTrack(props: ArrangeTrackProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -95,6 +97,42 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     { length: Math.ceil(props.timelineTicks / barTicks) },
     (_, index) => index,
   );
+  const showMix = props.trackSize !== 'compact';
+
+  const onResizePointerDown = (event: React.PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!props.onSetTrackSize) return;
+    const sizes: TrackSize[] = ['compact', 'normal', 'large'];
+    const startIndex = sizes.indexOf(props.trackSize);
+    const startY = event.clientY;
+    let lastIndex = startIndex;
+    const onMove = (e: PointerEvent) => {
+      const delta = e.clientY - startY;
+      const targetIndex = Math.max(
+        0,
+        Math.min(sizes.length - 1, startIndex + Math.round(delta / 25)),
+      );
+      if (targetIndex !== lastIndex) {
+        lastIndex = targetIndex;
+        props.onSetTrackSize!(sizes[targetIndex]);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const monitoringClass =
+    props.track.monitoring === 'auto'
+      ? styles.monAuto
+      : props.track.monitoring === 'on'
+        ? styles.monOn
+        : '';
+
   return (
     <div
       className={styles.trackRow}
@@ -139,7 +177,38 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             >
               ⠿
             </span>
-            <strong>{props.track.name}</strong>
+            {renaming ? (
+              <input
+                autoFocus
+                className={styles.trackNameInput}
+                defaultValue={props.track.name}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={(event) => {
+                  const name = event.currentTarget.value.trim();
+                  if (name && name !== props.track.name) props.onRename(name);
+                  setRenaming(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    const name = event.currentTarget.value.trim();
+                    if (name && name !== props.track.name) props.onRename(name);
+                    setRenaming(false);
+                  }
+                  if (event.key === 'Escape') setRenaming(false);
+                }}
+              />
+            ) : (
+              <span
+                className={styles.trackName}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  setRenaming(true);
+                }}
+                title="Double-click to rename"
+              >
+                {props.track.name}
+              </span>
+            )}
           </div>
           <small>
             {props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO'} ·{' '}
@@ -149,8 +218,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         </div>
         <div className={styles.trackSwitches}>
           <button
-            className={props.track.muted ? styles.active : ''}
+            className={props.track.muted ? styles.muteActive : ''}
             aria-label={`Mute ${props.track.name}`}
+            title="Mute"
             onClick={() =>
               void props.onCommit(
                 props.api.updateTrack(props.track.id, { muted: !props.track.muted }),
@@ -161,8 +231,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             M
           </button>
           <button
-            className={props.track.solo ? styles.active : ''}
+            className={props.track.solo ? styles.soloActive : ''}
             aria-label={`Solo ${props.track.name}`}
+            title="Solo"
             onClick={() =>
               void props.onCommit(
                 props.api.updateTrack(props.track.id, { solo: !props.track.solo }),
@@ -173,7 +244,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             S
           </button>
           <button
-            className={`${styles.armButton} ${props.track.armed ? styles.active : ''}`}
+            className={`${styles.armButton} ${props.track.armed ? styles.armActive : ''}`}
             aria-pressed={props.track.armed}
             aria-label={`${props.track.armed ? 'Disarm' : 'Arm'} ${props.track.name} for recording`}
             title={props.track.armed ? 'Disarm for recording' : 'Arm for recording'}
@@ -188,9 +259,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </button>
           {props.track.kind === 'audio' && (
             <button
-              className={props.track.monitoring !== 'off' ? styles.active : ''}
+              className={`${styles.monitoringButton} ${monitoringClass}`}
               aria-label={`Cycle input monitoring for ${props.track.name}`}
-              title={`Input monitoring: ${props.track.monitoring.toUpperCase()}`}
+              title={`Input monitoring: ${props.track.monitoring.toUpperCase()} (click to cycle)`}
               onClick={() => {
                 const next =
                   props.track.monitoring === 'off'
@@ -205,9 +276,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               }}
             >
               {props.track.monitoring === 'off'
-                ? 'M-IN'
+                ? 'IN'
                 : props.track.monitoring === 'auto'
-                  ? 'A-IN'
+                  ? 'A'
                   : 'ON'}
             </button>
           )}
@@ -217,8 +288,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           <div>
             <button
               onClick={(event) => {
-                const name = window.prompt('Track name', props.track.name)?.trim();
-                if (name && name !== props.track.name) props.onRename(name);
+                setRenaming(true);
                 event.currentTarget.closest('details')?.removeAttribute('open');
               }}
             >
@@ -253,50 +323,56 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             </button>
           </div>
         </details>
-        <label className={styles.trackControl}>
-          <span>VOL</span>
-          <input
-            key={`${props.track.id}:gain:${props.track.gainDb}`}
-            aria-label={`${props.track.name} gain`}
-            type="range"
-            min="-60"
-            max="12"
-            step="0.5"
-            defaultValue={props.track.gainDb}
-            onPointerUp={(event) =>
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, {
-                  gainDb: Number(event.currentTarget.value),
-                }),
-                `${props.track.name} gain updated.`,
-              )
-            }
-          />
-          <output>{props.track.gainDb.toFixed(1)}</output>
-        </label>
-        <label className={styles.trackControl}>
-          <span>PAN</span>
-          <input
-            key={`${props.track.id}:pan:${props.track.pan}`}
-            aria-label={`${props.track.name} pan`}
-            type="range"
-            min="-1"
-            max="1"
-            step="0.05"
-            defaultValue={props.track.pan}
-            onPointerUp={(event) =>
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, { pan: Number(event.currentTarget.value) }),
-                `${props.track.name} pan updated.`,
-              )
-            }
-          />
-          <output>
-            {Math.abs(props.track.pan) < 0.01
-              ? 'C'
-              : `${props.track.pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(props.track.pan) * 100)}`}
-          </output>
-        </label>
+        {showMix && (
+          <>
+            <label className={styles.trackControl}>
+              <span>VOL</span>
+              <input
+                key={`${props.track.id}:gain:${props.track.gainDb}`}
+                aria-label={`${props.track.name} gain`}
+                type="range"
+                min="-60"
+                max="12"
+                step="0.5"
+                defaultValue={props.track.gainDb}
+                onPointerUp={(event) =>
+                  void props.onCommit(
+                    props.api.updateTrack(props.track.id, {
+                      gainDb: Number(event.currentTarget.value),
+                    }),
+                    `${props.track.name} gain updated.`,
+                  )
+                }
+              />
+              <output>{props.track.gainDb.toFixed(1)}</output>
+            </label>
+            <label className={styles.trackControl}>
+              <span>PAN</span>
+              <input
+                key={`${props.track.id}:pan:${props.track.pan}`}
+                aria-label={`${props.track.name} pan`}
+                type="range"
+                min="-1"
+                max="1"
+                step="0.05"
+                defaultValue={props.track.pan}
+                onPointerUp={(event) =>
+                  void props.onCommit(
+                    props.api.updateTrack(props.track.id, {
+                      pan: Number(event.currentTarget.value),
+                    }),
+                    `${props.track.name} pan updated.`,
+                  )
+                }
+              />
+              <output>
+                {Math.abs(props.track.pan) < 0.01
+                  ? 'C'
+                  : `${props.track.pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(props.track.pan) * 100)}`}
+              </output>
+            </label>
+          </>
+        )}
       </aside>
       <div
         className={`${styles.lane} ${dragOver ? styles.laneDragOver : ''}`}
@@ -357,6 +433,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           />
         ))}
       </div>
+      <div className={styles.resizeHandle} onPointerDown={onResizePointerDown} />
     </div>
   );
 }

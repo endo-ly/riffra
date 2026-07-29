@@ -535,6 +535,7 @@
 
 .trackRow {
   --track-height: 70px;
+  position: relative;
   height: var(--track-height);
   display: grid;
   grid-template-columns: var(--header-width) auto;
@@ -552,11 +553,11 @@
   left: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto auto;
-  grid-template-rows: auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-auto-rows: auto;
   align-content: center;
-  gap: 5px 8px;
-  padding: 8px 9px 8px 0;
+  gap: 4px 6px;
+  padding: 6px 8px 6px 12px;
   background: linear-gradient(90deg, #151b21, #13181e);
   border-right: 1px solid #303943;
   box-shadow: 5px 0 12px rgba(0, 0, 0, 0.13);
@@ -573,40 +574,51 @@
 }
 
 .trackColor {
-  grid-column: 1;
-  grid-row: 1 / 4;
-  align-self: stretch;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 3px;
   background: #4eb5c9;
   border-radius: 0 2px 2px 0;
 }
 
 .trackIdentity {
-  grid-column: 2;
+  grid-column: 1;
   min-width: 0;
 }
 .trackNameRow {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
-.trackNameRow strong {
+.trackName {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #d2dbe2;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: default;
 }
-.trackIdentity strong,
+.trackNameInput {
+  min-width: 0;
+  flex: 1;
+  padding: 1px 4px;
+  color: #d2dbe2;
+  font: 600 10px inherit;
+  background: #0a0e12;
+  border: 1px solid #2d3a44;
+  border-radius: 2px;
+  outline: none;
+}
 .trackIdentity small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.trackIdentity strong {
-  color: #d2dbe2;
-  font-size: 9px;
-  font-weight: 600;
-}
-.trackIdentity small {
   margin-top: 2px;
   color: #55616c;
   font:
@@ -617,14 +629,14 @@
 }
 
 .trackSwitches {
-  grid-column: 3;
+  grid-column: 2;
   display: flex;
   gap: 3px;
 }
 
 .trackMenu {
   position: relative;
-  grid-column: 4;
+  grid-column: 3;
 }
 .trackMenu summary {
   width: 25px;
@@ -690,34 +702,53 @@
 }
 .trackSwitches button {
   width: 22px;
-  height: 20px;
+  height: 22px;
   padding: 0;
   color: #74808b;
   font:
-    700 7px 'DM Mono',
+    700 8px 'DM Mono',
     Consolas,
     monospace;
   background: #0d1216;
   border: 1px solid #29323b;
   border-radius: 3px;
+  cursor: pointer;
 }
 .trackSwitches .armButton {
   color: #d56359;
 }
-.trackSwitches .armButton.active {
+.trackSwitches .muteActive {
+  color: #071216;
+  background: #e8a83a;
+  border-color: #f0c067;
+}
+.trackSwitches .soloActive {
+  color: #071216;
+  background: #4eb5c9;
+  border-color: #6fd3e6;
+}
+.trackSwitches .armActive {
   color: #ffeae6;
   background: #c43a30;
   border-color: #e15044;
   box-shadow: 0 0 8px rgba(231, 84, 76, 0.5);
 }
-.trackSwitches .active {
+.trackSwitches .monitoringButton {
+  font-size: 7px;
+}
+.trackSwitches .monAuto {
   color: #071216;
-  background: var(--amber);
-  border-color: var(--amber);
+  background: #e8a83a;
+  border-color: #f0c067;
+}
+.trackSwitches .monOn {
+  color: #071216;
+  background: #5cb85c;
+  border-color: #7dd17d;
 }
 
 .trackControl {
-  grid-column: 2 / 5;
+  grid-column: 1 / 4;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 31px;
   align-items: center;
@@ -738,6 +769,19 @@
     Consolas,
     monospace;
   text-align: right;
+}
+
+.resizeHandle {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 6px;
+  cursor: ns-resize;
+}
+.resizeHandle:hover {
+  background: rgba(85, 183, 197, 0.4);
 }
 
 .lane {

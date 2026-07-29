@@ -481,6 +481,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       [trackId]: sizes[(sizes.indexOf(current) + 1) % sizes.length],
     }));
   };
+  const setTrackSizeForTrack = (trackId: string, size: TrackSize) => {
+    setTrackSizes((value) => ({ ...value, [trackId]: size }));
+  };
+  const setGlobalTrackSize = (size: TrackSize) => {
+    setTrackSize(size);
+    setTrackSizes({});
+  };
   const toggleAutomation = (trackId: string) =>
     setAutomationParameters((current) => ({
       ...current,
@@ -560,7 +567,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onTool={setTool}
         onSnap={setSnap}
         onZoom={applyZoom}
-        onTrackSize={setTrackSize}
+        onTrackSize={setGlobalTrackSize}
         onRulerMode={setRulerMode}
         onFollow={setFollow}
         onTimebase={(bpm, numerator, denominator) =>
@@ -804,6 +811,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     )
                   }
                   onResize={() => cycleTrackSize(track.id)}
+                  onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
                   automationOpen={Boolean(automationParameters[track.id])}
                   onToggleAutomation={() => toggleAutomation(track.id)}
                 />
