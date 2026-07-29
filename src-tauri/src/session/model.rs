@@ -650,6 +650,12 @@ pub struct MidiClipPatch {
     pub duration_ticks: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub notes: Option<Vec<MidiNote>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub events: Option<Vec<MidiEvent>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub muted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -956,6 +962,12 @@ impl Arrangement {
         }
         if let Some(duration_ticks) = patch.duration_ticks {
             clip.duration_ticks = duration_ticks.max(1);
+        }
+        if let Some(notes) = patch.notes {
+            clip.notes = notes;
+        }
+        if let Some(events) = patch.events {
+            clip.events = events;
         }
         if let Some(muted) = patch.muted {
             clip.muted = muted;

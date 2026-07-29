@@ -26,6 +26,7 @@ interface ClipInteractionOptions {
   commit: ArrangeCommit;
   setMessage: (message: string) => void;
   setSnapGuide: (tick: number | null) => void;
+  onSplitToolUsed?: () => void;
 }
 
 export function useClipInteractions(options: ClipInteractionOptions) {
@@ -69,7 +70,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     if ((event.target as HTMLElement).closest('[data-clip-handle]')) return;
     if (options.tool === 'split') {
       const bounds = event.currentTarget.getBoundingClientRect();
-      void splitClip(clip, clip.startTick + (event.clientX - bounds.left) / options.pixelsPerTick);
+      void splitClip(
+        clip,
+        clip.startTick + (event.clientX - bounds.left) / options.pixelsPerTick,
+      ).then(() => options.onSplitToolUsed?.());
       return;
     }
     let movingIds = options.selectedClipIds.includes(clip.id) ? options.selectedClipIds : [clip.id];
@@ -149,7 +153,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       void splitMidiClip(
         clip,
         clip.startTick + (event.clientX - bounds.left) / options.pixelsPerTick,
-      );
+      ).then(() => options.onSplitToolUsed?.());
       return;
     }
     let movingIds = options.selectedClipIds.includes(clip.id)
@@ -351,6 +355,147 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     handle.addEventListener('pointerup', finish);
   };
 
+  const mergeAudioClipWithNext = useCallback(
+    async (clip: AudioClip) => {
+      const endTick = clip.startTick + clipDurationTicks(clip, timebase);
+      const next = arrangement.audioClips.find(
+        (item) =>
+          item.id !== clip.id &&
+          item.trackId === clip.trackId &&
+          item.assetId === clip.assetId &&
+          item.startTick === endTick &&
+          item.sourceRange.start === clip.sourceRange.end,
+      );
+      if (!next) {
+        options.setMessage('No adjacent clip to merge with.');
+        return;
+      }
+      const sourceRange = { start: clip.sourceRange.start, end: next.sourceRange.end };
+      const timelineDuration = {
+        frames: next.sourceRange.end - clip.sourceRange.start,
+        sampleRate: clip.sourceSampleRate,
+      };
+      const updated = await options.commit(
+        options.api.updateAudioClip(clip.id, { sourceRange, timelineDuration }),
+        `${clip.name} merged.`,
+      );
+      if (updated) {
+        await options.commit(
+          options.api.removeTimelineClips([next.id], []),
+          `${clip.name} merged.`,
+        );
+      }
+    },
+    [arrangement.audioClips, options, timebase],
+  );
+
+  const mergeMidiClipWithNext = useCallback(
+    async (clip: MidiClip) => {
+      const endTick = clip.startTick + midiClipDurationTicks(clip);
+      const next = arrangement.midiClips.find(
+        (item) =>
+          item.id !== clip.id && item.trackId === clip.trackId && item.startTick === endTick,
+      );
+      if (!next) {
+        options.setMessage('No adjacent MIDI clip to merge with.');
+        return;
+      }
+      const durationTicks = midiClipDurationTicks(clip) + midiClipDurationTicks(next);
+      const shiftedNotes = next.notes.map((note) => ({
+        ...note,
+        startTick: note.startTick + endTick - clip.startTick,
+      }));
+      const notes = [...clip.notes, ...shiftedNotes];
+      const shiftedEvents = next.events.map((event) => ({
+        ...event,
+        tick: event.tick + endTick - clip.startTick,
+      }));
+      const events = [...clip.events, ...shiftedEvents];
+      const updated = await options.commit(
+        options.api.updateMidiClip(clip.id, { durationTicks, notes, events }),
+        `${clip.name} merged.`,
+      );
+      if (updated) {
+        await options.commit(
+          options.api.removeTimelineClips([], [next.id]),
+          `${clip.name} merged.`,
+        );
+      }
+    },
+    [arrangement.midiClips, options],
+  );
+
+  const mergeAudioClipWithPrevious = useCallback(
+    async (clip: AudioClip) => {
+      const prev = arrangement.audioClips.find(
+        (item) =>
+          item.id !== clip.id &&
+          item.trackId === clip.trackId &&
+          item.assetId === clip.assetId &&
+          item.startTick + clipDurationTicks(item, timebase) === clip.startTick &&
+          item.sourceRange.end === clip.sourceRange.start,
+      );
+      if (!prev) {
+        options.setMessage('No adjacent clip to merge with.');
+        return;
+      }
+      const sourceRange = { start: prev.sourceRange.start, end: clip.sourceRange.end };
+      const timelineDuration = {
+        frames: clip.sourceRange.end - prev.sourceRange.start,
+        sampleRate: clip.sourceSampleRate,
+      };
+      const updated = await options.commit(
+        options.api.updateAudioClip(prev.id, { sourceRange, timelineDuration }),
+        `${clip.name} merged.`,
+      );
+      if (updated) {
+        await options.commit(
+          options.api.removeTimelineClips([clip.id], []),
+          `${clip.name} merged.`,
+        );
+      }
+    },
+    [arrangement.audioClips, options, timebase],
+  );
+
+  const mergeMidiClipWithPrevious = useCallback(
+    async (clip: MidiClip) => {
+      const prev = arrangement.midiClips.find(
+        (item) =>
+          item.id !== clip.id &&
+          item.trackId === clip.trackId &&
+          item.startTick + midiClipDurationTicks(item) === clip.startTick,
+      );
+      if (!prev) {
+        options.setMessage('No adjacent MIDI clip to merge with.');
+        return;
+      }
+      const prevEnd = prev.startTick + midiClipDurationTicks(prev);
+      const durationTicks = midiClipDurationTicks(prev) + midiClipDurationTicks(clip);
+      const shiftedNotes = clip.notes.map((note) => ({
+        ...note,
+        startTick: note.startTick + prevEnd - prev.startTick,
+      }));
+      const notes = [...prev.notes, ...shiftedNotes];
+      const shiftedEvents = clip.events.map((event) => ({
+        ...event,
+        tick: event.tick + prevEnd - prev.startTick,
+      }));
+      const events = [...prev.events, ...shiftedEvents];
+      const updated = await options.commit(
+        options.api.updateMidiClip(prev.id, { durationTicks, notes, events }),
+        `${clip.name} merged.`,
+      );
+      if (updated) {
+        await options.commit(
+          options.api.removeTimelineClips([], [clip.id]),
+          `${clip.name} merged.`,
+        );
+      }
+    },
+    [arrangement.midiClips, options],
+  );
+
   const beginFade = (
     event: React.PointerEvent<HTMLSpanElement>,
     clip: AudioClip,
@@ -398,5 +543,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
     beginMidiTrim,
     beginTrim,
     beginFade,
+    mergeAudioClipWithNext,
+    mergeMidiClipWithNext,
+    mergeAudioClipWithPrevious,
+    mergeMidiClipWithPrevious,
   };
 }

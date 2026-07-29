@@ -25,6 +25,7 @@ interface UseArrangeEditorOptions {
   pixelsPerTick: number;
   displayTick: number;
   analyses: Record<string, AudioAnalysis | null>;
+  onSplitToolUsed?: () => void;
 }
 
 export function useArrangeEditor(options: UseArrangeEditorOptions) {
@@ -172,6 +173,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     commit,
     setMessage,
     setSnapGuide,
+    onSplitToolUsed: options.onSplitToolUsed,
   });
 
   const selectClip = useCallback(

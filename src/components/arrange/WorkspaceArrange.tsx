@@ -1,18 +1,28 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { AutomationParameter, CreativeSession, Marker } from '@/lib/domain';
+import type {
+  AudioClip,
+  AutomationParameter,
+  CreativeSession,
+  Marker,
+  MidiClip,
+  PluginEntry,
+} from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeRuler } from './ArrangeRuler';
 import { ArrangeToolbar } from './ArrangeToolbar';
 import { ArrangeTrack } from './ArrangeTrack';
 import { AutomationLaneView } from './AutomationLaneView';
 import { MidiEditorPanel } from './MidiEditorPanel';
+import { PluginPicker } from './PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import {
   BASE_PIXELS_PER_QUARTER,
   timelineObjectEndTick,
+  clipDurationTicks,
   formatClock,
   formatMusicalPosition,
   ticksPerBar,
+  snapGridTicks,
   TRACK_HEADER_WIDTH,
   type ArrangeTool,
   type SnapGrid,
@@ -30,6 +40,7 @@ interface WorkspaceArrangeProps {
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
   api: NativeApi;
+  plugins?: PluginEntry[];
   onRecord?: () => void;
   recordingActive?: boolean;
 }
@@ -70,6 +81,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
   const [emptyDragOver, setEmptyDragOver] = useState(false);
+  const [pluginPicker, setPluginPicker] = useState<{
+    trackId: string;
+    kind: 'effect' | 'instrument';
+  } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
@@ -108,6 +123,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     pixelsPerTick,
     displayTick,
     analyses,
+    onSplitToolUsed: () => setTool('select'),
   });
   const playbackOutOfSync =
     editor.runtimeOutOfSync || Boolean(transport && transport.revision !== arrangement.revision);
@@ -473,6 +489,185 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     }
   };
 
+  const openAudioClipContextMenu = (event: React.MouseEvent, clip: AudioClip) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: 'Split at Playhead',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.splitClip(clip, displayTick);
+          },
+        },
+        {
+          label: 'Duplicate',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(api.duplicateAudioClip(clip.id), `${clip.name} duplicated.`);
+          },
+        },
+        {
+          label: clip.muted ? 'Unmute' : 'Mute',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(
+              api.updateAudioClip(clip.id, { muted: !clip.muted }),
+              `${clip.name} ${clip.muted ? 'unmuted' : 'muted'}.`,
+            );
+          },
+        },
+        {
+          label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(
+              api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
+              `${clip.name} loop ${clip.loopEnabled ? 'disabled' : 'enabled'}.`,
+            );
+          },
+        },
+        {
+          label: 'Merge with Previous',
+          disabled: !arrangement.audioClips.some(
+            (item) =>
+              item.id !== clip.id &&
+              item.trackId === clip.trackId &&
+              item.assetId === clip.assetId &&
+              item.startTick + clipDurationTicks(item, timebase) === clip.startTick &&
+              item.sourceRange.end === clip.sourceRange.start,
+          ),
+          onClick: () => {
+            setContextMenu(null);
+            void editor.mergeAudioClipWithPrevious(clip);
+          },
+        },
+        {
+          label: 'Merge with Next',
+          disabled: !arrangement.audioClips.some(
+            (item) =>
+              item.id !== clip.id &&
+              item.trackId === clip.trackId &&
+              item.assetId === clip.assetId &&
+              item.startTick === clip.startTick + clipDurationTicks(clip, timebase) &&
+              item.sourceRange.start === clip.sourceRange.end,
+          ),
+          onClick: () => {
+            setContextMenu(null);
+            void editor.mergeAudioClipWithNext(clip);
+          },
+        },
+        { separator: true },
+        {
+          label: 'Delete',
+          danger: true,
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(api.removeTimelineClips([clip.id], []), `${clip.name} deleted.`);
+          },
+        },
+      ],
+    });
+  };
+
+  const openMidiClipContextMenu = (event: React.MouseEvent, clip: MidiClip) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const gridTicks = snapGridTicks(snap, timebase);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: 'Split at Playhead',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.splitMidiClip(clip, displayTick);
+          },
+        },
+        {
+          label: 'Duplicate',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(api.duplicateMidiClip(clip.id), `${clip.name} duplicated.`);
+          },
+        },
+        {
+          label: clip.muted ? 'Unmute' : 'Mute',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(
+              api.updateMidiClip(clip.id, { muted: !clip.muted }),
+              `${clip.name} ${clip.muted ? 'unmuted' : 'muted'}.`,
+            );
+          },
+        },
+        {
+          label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(
+              api.updateMidiClip(clip.id, { loopEnabled: !clip.loopEnabled }),
+              `${clip.name} loop ${clip.loopEnabled ? 'disabled' : 'enabled'}.`,
+            );
+          },
+        },
+        {
+          label: 'Quantize',
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(
+              api.quantizeMidiNotes(
+                clip.id,
+                clip.notes.map((note) => note.id),
+                gridTicks,
+              ),
+              `${clip.name} quantized.`,
+            );
+          },
+        },
+        {
+          label: 'Merge with Previous',
+          disabled: !arrangement.midiClips.some(
+            (item) =>
+              item.id !== clip.id &&
+              item.trackId === clip.trackId &&
+              item.startTick + item.durationTicks === clip.startTick,
+          ),
+          onClick: () => {
+            setContextMenu(null);
+            void editor.mergeMidiClipWithPrevious(clip);
+          },
+        },
+        {
+          label: 'Merge with Next',
+          disabled: !arrangement.midiClips.some(
+            (item) =>
+              item.id !== clip.id &&
+              item.trackId === clip.trackId &&
+              item.startTick === clip.startTick + clip.durationTicks,
+          ),
+          onClick: () => {
+            setContextMenu(null);
+            void editor.mergeMidiClipWithNext(clip);
+          },
+        },
+        { separator: true },
+        {
+          label: 'Delete',
+          danger: true,
+          onClick: () => {
+            setContextMenu(null);
+            void editor.commit(api.removeTimelineClips([], [clip.id]), `${clip.name} deleted.`);
+          },
+        },
+      ],
+    });
+  };
+
   const cycleTrackSize = (trackId: string) => {
     const sizes: TrackSize[] = ['compact', 'normal', 'large'];
     const current = trackSizes[trackId] ?? trackSize;
@@ -538,6 +733,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         },
         { separator: true },
         {
+          label: track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument',
+          onClick: () =>
+            setPluginPicker({
+              trackId: track.id,
+              kind: track.kind === 'audio' ? 'effect' : 'instrument',
+            }),
+        },
+        { separator: true },
+        {
           label: 'Delete Track',
           danger: true,
           onClick: () =>
@@ -596,6 +800,30 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           if (selectedTrackId) toggleAutomation(selectedTrackId);
         }}
       />
+
+      {pluginPicker && (
+        <PluginPicker
+          api={props.api}
+          plugins={props.plugins}
+          title={pluginPicker.kind === 'effect' ? 'Add Effect' : 'Choose Instrument'}
+          onSelect={(plugin) => {
+            const { trackId, kind } = pluginPicker;
+            setPluginPicker(null);
+            if (kind === 'effect') {
+              void editor.commit(
+                props.api.addTrackEffect(trackId, plugin.path),
+                `Effect ${plugin.name} added.`,
+              );
+            } else {
+              void editor.commit(
+                props.api.setTrackInstrument(trackId, plugin.path),
+                'Instrument updated.',
+              );
+            }
+          }}
+          onClose={() => setPluginPicker(null)}
+        />
+      )}
 
       <div
         ref={scrollerRef}
@@ -785,6 +1013,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     setActiveMidiClipId(clip.id);
                     setMidiEditorOpen(true);
                   }}
+                  onAudioClipContextMenu={openAudioClipContextMenu}
+                  onMidiClipContextMenu={openMidiClipContextMenu}
                   onRename={(name) =>
                     void editor.commit(
                       props.api.updateTrack(track.id, { name }),

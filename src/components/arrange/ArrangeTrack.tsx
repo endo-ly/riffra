@@ -49,6 +49,8 @@ interface ArrangeTrackProps {
   ) => void;
   onFade: (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'in' | 'out') => void;
   onOpenMidiEditor?: (clip: MidiClip) => void;
+  onAudioClipContextMenu?: (event: React.MouseEvent, clip: AudioClip) => void;
+  onMidiClipContextMenu?: (event: React.MouseEvent, clip: MidiClip) => void;
   onRename: (name: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -323,6 +325,21 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             </button>
           </div>
         </details>
+        {props.trackSize === 'large' && (
+          <div className={styles.trackPlugins}>
+            {props.track.kind === 'instrument' ? (
+              <span>INSTRUMENT · {props.track.instrument?.name ?? 'None'}</span>
+            ) : (
+              <>
+                <span>FX · {props.track.rack.devices.length}</span>
+                {props.track.rack.devices.slice(0, 3).map((device) => (
+                  <span key={device.id}>{device.name}</span>
+                ))}
+                {props.track.rack.devices.length > 3 && <span>...</span>}
+              </>
+            )}
+          </div>
+        )}
         {showMix && (
           <>
             <label className={styles.trackControl}>
@@ -416,6 +433,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             onMove={props.onMove}
             onTrim={props.onTrim}
             onFade={props.onFade}
+            onContextMenu={props.onAudioClipContextMenu}
           />
         ))}
         {props.midiClips.map((clip) => (
@@ -430,6 +448,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             onMove={props.onMoveMidi}
             onTrim={props.onTrimMidi}
             onOpenEditor={props.onOpenMidiEditor}
+            onContextMenu={props.onMidiClipContextMenu}
           />
         ))}
       </div>

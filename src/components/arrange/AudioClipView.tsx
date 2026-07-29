@@ -20,6 +20,7 @@ interface AudioClipViewProps {
     side: 'left' | 'right',
   ) => void;
   onFade: (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'in' | 'out') => void;
+  onContextMenu?: (event: React.MouseEvent, clip: AudioClip) => void;
 }
 
 export function AudioClipView(props: AudioClipViewProps) {
@@ -44,6 +45,10 @@ export function AudioClipView(props: AudioClipViewProps) {
       onPointerDown={(event) => props.onMove(event, clip)}
       onClick={(event) => {
         if (!event.ctrlKey && !props.selected) props.onSelect(clip.id);
+      }}
+      onContextMenu={(event) => {
+        if ((event.target as HTMLElement).closest('[data-clip-handle]')) return;
+        props.onContextMenu?.(event, clip);
       }}
       title={`Click to select · Drag to move · ${clip.name} · ${(clip.timelineDuration.frames / clip.sourceSampleRate).toFixed(2)} s`}
     >

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AudioStatus, CreativeSession, Track } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, PluginEntry, Track } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
+import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
 
 interface TrackInspectorProps {
@@ -10,6 +11,7 @@ interface TrackInspectorProps {
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
   missingDeviceIds: string[];
+  plugins: PluginEntry[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -20,6 +22,11 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [name, setName] = useState(props.track.name);
   const [gainDb, setGainDb] = useState(props.track.gainDb);
   const [pan, setPan] = useState(props.track.pan);
+  const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState<{
+    deviceId: string;
+    currentPath?: string;
+  } | null>(null);
   const { operationMessage, runOperation } = useInspectorOperation();
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
@@ -30,17 +37,14 @@ export function TrackInspector(props: TrackInspectorProps) {
     },
     [props.setSession, runOperation],
   );
-  const setInstrument = () => {
-    const path = window.prompt('VST3 instrument path', props.track.instrument?.path ?? '')?.trim();
-    if (path) commit(props.api.setTrackInstrument(props.track.id, path), 'Instrument updated.');
+  const setInstrument = (plugin: PluginEntry) => {
+    commit(props.api.setTrackInstrument(props.track.id, plugin.path), 'Instrument updated.');
   };
   const instrumentUnavailable =
     props.track.instrument?.disabledPlaceholder ||
     (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
   const replaceMissing = (deviceId: string, currentPath?: string) => {
-    const path = window.prompt('Replacement VST3 path', currentPath ?? '')?.trim();
-    if (path)
-      runOperation(props.onReplaceMissingPlugin(deviceId, path), 'Missing Plugin replaced.');
+    setReplaceTarget({ deviceId, currentPath });
   };
   return (
     <>
@@ -151,6 +155,29 @@ export function TrackInspector(props: TrackInspectorProps) {
             <header>
               <strong>INSTRUMENT</strong>
             </header>
+            {(instrumentPickerOpen || replaceTarget) && (
+              <PluginPicker
+                api={props.api}
+                plugins={props.plugins}
+                title={replaceTarget ? 'Replace Plugin' : 'Choose Instrument'}
+                onSelect={(plugin) => {
+                  if (replaceTarget) {
+                    runOperation(
+                      props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path),
+                      'Missing Plugin replaced.',
+                    );
+                    setReplaceTarget(null);
+                  } else {
+                    setInstrument(plugin);
+                    setInstrumentPickerOpen(false);
+                  }
+                }}
+                onClose={() => {
+                  setInstrumentPickerOpen(false);
+                  setReplaceTarget(null);
+                }}
+              />
+            )}
             <p>{props.track.instrument?.name ?? 'None'}</p>
             {instrumentUnavailable && (
               <strong>
@@ -160,7 +187,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               </strong>
             )}
             {!instrumentUnavailable && (
-              <button onClick={setInstrument}>
+              <button onClick={() => setInstrumentPickerOpen(true)}>
                 {props.track.instrument ? 'Change' : 'Choose Instrument'}
               </button>
             )}
@@ -239,6 +266,7 @@ export function TrackInspector(props: TrackInspectorProps) {
       <TrackPluginChainEditor
         track={props.track}
         api={props.api}
+        plugins={props.plugins}
         commit={commit}
         missingDeviceIds={props.missingDeviceIds}
         onDisableMissingPlugin={props.onDisableMissingPlugin}

@@ -1,4 +1,10 @@
-import type { AudioStatus, BootstrapState, CreativeSession, MissingDependency } from '@/lib/domain';
+import type {
+  AudioStatus,
+  BootstrapState,
+  CreativeSession,
+  MissingDependency,
+  PluginEntry,
+} from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeClipInspector } from '../arrange/ArrangeClipInspector';
 import { MidiClipInspector } from '../arrange/MidiClipInspector';
@@ -20,6 +26,7 @@ interface InspectorPanelProps {
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
   missingDependencies: MissingDependency[];
+  plugins: PluginEntry[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -52,6 +59,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
               onDisableMissingPlugin={props.onDisableMissingPlugin}
               onReplaceMissingPlugin={props.onReplaceMissingPlugin}
               onRescanMissingPlugins={props.onRescanMissingPlugins}
+              plugins={props.plugins}
               api={props.api}
             />
             <TakeInspector

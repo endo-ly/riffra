@@ -116,6 +116,7 @@ describe('Arrange Inspectors', () => {
         setSession={() => undefined}
         audio={fakeAudioStatus()}
         missingDeviceIds={[]}
+        plugins={[]}
         onDisableMissingPlugin={async () => undefined}
         onReplaceMissingPlugin={async () => undefined}
         onRescanMissingPlugins={async () => undefined}

@@ -15,6 +15,7 @@ interface MidiClipViewProps {
     side: 'left' | 'right',
   ) => void;
   onOpenEditor?: (clip: MidiClip) => void;
+  onContextMenu?: (event: React.MouseEvent, clip: MidiClip) => void;
 }
 
 const PITCH_RANGE = 96;
@@ -53,6 +54,10 @@ export function MidiClipView(props: MidiClipViewProps) {
         }
       }}
       onPointerDown={(event) => props.onMove(event, clip)}
+      onContextMenu={(event) => {
+        if ((event.target as HTMLElement).closest('[data-clip-handle]')) return;
+        props.onContextMenu?.(event, clip);
+      }}
       onDoubleClick={() => props.onOpenEditor?.(clip)}
       title={`${clip.name} · ${clip.notes.length} notes · double-click to open MIDI editor`}
     >

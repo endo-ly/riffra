@@ -283,6 +283,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             selection={arrangeSelection}
             setSelection={setArrangeSelection}
             api={nativeApi}
+            plugins={plugins}
             onRecord={() => void toggleRecording()}
             recordingActive={audio.recording.active}
           />
@@ -369,6 +370,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         arrangeSelection={arrangeSelection}
         setArrangeSelection={setArrangeSelection}
         missingDependencies={missingDependencies}
+        plugins={plugins}
         onDisableMissingPlugin={disableMissingPluginDevice}
         onReplaceMissingPlugin={replaceMissingPluginDevice}
         onRescanMissingPlugins={rescanMissingPlugins}
