@@ -488,8 +488,8 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         return;
     }
 
-    const auto requiredInputs = pluginInputChannels.load(std::memory_order_acquire);
-    for (int channel = requiredInputs; channel < numOutputChannels; ++channel)
+    const auto requiredOutputs = pluginOutputChannels.load(std::memory_order_acquire);
+    for (int channel = requiredOutputs; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
 
