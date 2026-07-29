@@ -3,6 +3,7 @@ import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/d
 import { toAssetId } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
+import { writeAssetDrag } from '@/lib/arrange-drag';
 import { Icon } from '../shared/ui';
 import styles from './LibraryPanel.module.css';
 import { InboxOperations } from './InboxOperations';
@@ -75,16 +76,21 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           <section className={styles.librarySearchResults}>
             <span className="eyebrow">CROSS-ASSET SEARCH · {library.results.length}</span>
             {library.results.slice(0, 8).map((asset) => (
-              <button
+              <div
                 className={styles.librarySearchRow}
                 key={asset.id}
-                draggable={asset.kind === 'audio'}
+                draggable={asset.kind === 'audio' || asset.kind === 'midi'}
                 onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = 'copy';
-                  event.dataTransfer.setData(
-                    'application/x-riffra-asset',
-                    JSON.stringify({ id: asset.id, name: asset.name, kind: asset.kind }),
-                  );
+                  if (asset.kind !== 'audio' && asset.kind !== 'midi') {
+                    event.preventDefault();
+                    return;
+                  }
+                  writeAssetDrag(event.dataTransfer, {
+                    version: 1,
+                    assetId: asset.id as AssetId,
+                    name: asset.name,
+                    kind: asset.kind,
+                  });
                 }}
                 onClick={() => void library.onSelectAsset(asset)}
               >
@@ -96,7 +102,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                     {asset.tag ? ` · ${asset.tag}` : ''}
                   </small>
                 </div>
-              </button>
+              </div>
             ))}
             {library.results.length === 0 && (
               <small className={styles.librarySearchEmpty}>No indexed asset matches yet.</small>
@@ -231,23 +237,29 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                   inbox.duplicateIds.has(recording.id) && ['duplicate', styles.duplicate],
                 )}
                 key={recording.id}
-                draggable={Boolean(recording.processedAssetId ?? recording.rawAssetId)}
                 title={recording.error ?? undefined}
-                onDragStart={(event) => {
-                  const assetId = recording.processedAssetId ?? recording.rawAssetId;
-                  if (!assetId) return;
-                  event.dataTransfer.effectAllowed = 'copy';
-                  event.dataTransfer.setData(
-                    'application/x-riffra-asset',
-                    JSON.stringify({ id: assetId, name: recording.name, kind: 'audio' }),
-                  );
-                }}
               >
-                <button
-                  className={styles.recordingSelect}
+                <div
+                  className={`${styles.recordingSelect} ${recording.error ? styles.recordingSelectDisabled : ''}`}
                   aria-label={`Select ${recording.name}`}
-                  disabled={Boolean(recording.error)}
-                  onClick={() => inbox.setSelectedId(recording.id)}
+                  aria-disabled={Boolean(recording.error)}
+                  draggable={Boolean(recording.processedAssetId ?? recording.rawAssetId)}
+                  onDragStart={(event) => {
+                    const assetId = recording.processedAssetId ?? recording.rawAssetId;
+                    if (!assetId || recording.error) {
+                      event.preventDefault();
+                      return;
+                    }
+                    writeAssetDrag(event.dataTransfer, {
+                      version: 1,
+                      assetId,
+                      name: recording.name,
+                      kind: 'audio',
+                    });
+                  }}
+                  onClick={() => {
+                    if (!recording.error) inbox.setSelectedId(recording.id);
+                  }}
                   title={recording.error ?? recording.path}
                 >
                   <span>{recording.state === 'completed' ? '✓' : '!'}</span>
@@ -277,7 +289,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                       ],
                     )}
                   />
-                </button>
+                </div>
               </div>
             ))}
             {recordings.visibleRecordings.length === 0 && (

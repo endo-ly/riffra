@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Icon } from '../shared/ui';
 import type { ArrangeTool, SnapGrid, TrackSize } from '@/lib/arrange-timeline';
+import type { TrackKind } from '@/lib/domain';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeToolbarProps {
@@ -21,7 +21,7 @@ interface ArrangeToolbarProps {
   onRulerMode: (mode: 'bars' | 'time') => void;
   onFollow: (follow: boolean) => void;
   onTimebase: (bpm: number, numerator: number, denominator: number) => void;
-  onAddTrack: () => void;
+  onAddTrack: (kind: TrackKind) => void;
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
@@ -177,9 +177,22 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           <option value="normal">Normal</option>
           <option value="large">Large</option>
         </select>
-        <button className={styles.addTrackButton} onClick={props.onAddTrack}>
-          <Icon name="plus" /> Audio Track
-        </button>
+        <select
+          aria-label="Add track"
+          className={styles.addTrackButton}
+          value=""
+          onChange={(event) => {
+            const kind = event.target.value as TrackKind;
+            if (kind) props.onAddTrack(kind);
+            event.target.value = '';
+          }}
+        >
+          <option value="" disabled>
+            ＋ Track
+          </option>
+          <option value="audio">Audio Track</option>
+          <option value="instrument">Instrument Track</option>
+        </select>
       </div>
     </header>
   );

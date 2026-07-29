@@ -23,7 +23,8 @@
         "fullscreen": false,
         "decorations": true,
         "backgroundColor": "#090b0e",
-        "useHttpsScheme": true
+        "useHttpsScheme": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

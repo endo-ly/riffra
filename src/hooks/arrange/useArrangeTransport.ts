@@ -7,19 +7,27 @@ export function useArrangeTransport(api: NativeApi, timebase: ProjectTimebase) {
   const [displayTick, setDisplayTick] = useState(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
 
-  useEffect(
-    () =>
-      api.onTransportStatus((status) => {
-        setTransport(status);
-        anchor.current = {
-          tick: status.timelineTick,
-          at: performance.now(),
-          playing: status.state === 'playing',
-        };
-        setDisplayTick(status.timelineTick);
-      }),
-    [api],
-  );
+  useEffect(() => {
+    api
+      .getAudioStatus()
+      .then((status) => {
+        if (status.timelineTick != null) {
+          anchor.current.tick = status.timelineTick;
+          anchor.current.at = performance.now();
+          setDisplayTick(status.timelineTick);
+        }
+      })
+      .catch(() => undefined);
+    return api.onTransportStatus((status) => {
+      setTransport(status);
+      anchor.current = {
+        tick: status.timelineTick,
+        at: performance.now(),
+        playing: status.state === 'playing',
+      };
+      setDisplayTick(status.timelineTick);
+    });
+  }, [api]);
 
   useEffect(() => {
     let frame = 0;

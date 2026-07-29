@@ -18,6 +18,7 @@ import {
   type SnapGrid,
   type TrackSize,
 } from '@/lib/arrange-timeline';
+import { RIFFRA_ASSET_MIME } from '@/lib/arrange-drag';
 import { useArrangeEditor, type ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { useArrangeTransport } from '@/hooks/arrange/useArrangeTransport';
 import { useWaveformAnalyses } from '@/hooks/arrange/useWaveformAnalyses';
@@ -68,6 +69,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
   const [midiEditorOpen, setMidiEditorOpen] = useState(false);
+  const [emptyDragOver, setEmptyDragOver] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
@@ -485,6 +487,63 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       [trackId]: current[trackId] ? undefined : 'volume',
     }));
 
+  const openTrackLaneContextMenu = (event: React.MouseEvent, trackId: string, _tick: number) => {
+    event.preventDefault();
+    const track = arrangement.tracks.find((item) => item.id === trackId);
+    if (!track) return;
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: 'Import Audio Asset here',
+          onClick: () =>
+            editor.setMessage('Drag an Audio Asset from the Library and drop it on this Track.'),
+        },
+        {
+          label: 'Import MIDI Asset here',
+          onClick: () =>
+            editor.setMessage('Drag a MIDI Asset from the Library and drop it on this Track.'),
+        },
+        {
+          label: 'Create MIDI Clip',
+          onClick: () =>
+            editor.setMessage(
+              'Create a MIDI Clip by recording from a MIDI keyboard or dragging a MIDI Asset from the Library.',
+            ),
+        },
+        { separator: true },
+        {
+          label: 'Add Audio Track',
+          onClick: () =>
+            void editor.commit(
+              props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`, 'audio'),
+              'Audio Track added.',
+            ),
+        },
+        {
+          label: 'Add Instrument Track',
+          onClick: () =>
+            void editor.commit(
+              props.api.addTrack(`Instrument ${arrangement.tracks.length + 1}`, 'instrument'),
+              'Instrument Track added.',
+            ),
+        },
+        { separator: true },
+        {
+          label: 'Delete Track',
+          danger: true,
+          onClick: () =>
+            void deleteTrack(
+              track.id,
+              track.name,
+              arrangement.audioClips.filter((clip) => clip.trackId === track.id).length,
+            ),
+        },
+      ],
+    });
+  };
+
   return (
     <section className={styles.workspace} aria-label="Arrange timeline">
       <ArrangeToolbar
@@ -515,10 +574,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             'Project timebase updated.',
           )
         }
-        onAddTrack={() =>
+        onAddTrack={(kind) =>
           void editor.commit(
-            props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`, 'audio'),
-            'Audio Track added.',
+            props.api.addTrack(
+              `${kind === 'audio' ? 'Audio' : 'Instrument'} ${arrangement.tracks.length + 1}`,
+              kind,
+            ),
+            `${kind === 'audio' ? 'Audio' : 'Instrument'} Track added.`,
           )
         }
         automationAvailable={selectedTrackId !== null}
@@ -635,9 +697,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
 
           {arrangement.tracks.length === 0 ? (
             <div
-              className={styles.empty}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => void editor.dropAsset(event)}
+              className={`${styles.empty} ${emptyDragOver ? styles.emptyDragOver : ''}`}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+              }}
+              onDragEnter={() => setEmptyDragOver(true)}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node))
+                  setEmptyDragOver(false);
+              }}
+              onDrop={(event) => {
+                setEmptyDragOver(false);
+                void editor.dropAsset(event);
+              }}
             >
               <span className={styles.emptyIcon}>≋</span>
               <strong>Start arranging</strong>
@@ -693,6 +767,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   api={props.api}
                   onCommit={editor.commit}
                   onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
+                  onContextMenu={openTrackLaneContextMenu}
                   onMove={editor.beginMove}
                   onMoveMidi={editor.beginMidiMove}
                   onTrimMidi={editor.beginMidiTrim}

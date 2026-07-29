@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, Track } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
@@ -10,6 +10,7 @@ import {
   trackLaneHeight,
   type TrackSize,
 } from '@/lib/arrange-timeline';
+import { RIFFRA_ASSET_MIME } from '@/lib/arrange-drag';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
@@ -31,6 +32,7 @@ interface ArrangeTrackProps {
     success: string,
   ) => Promise<CreativeSession | null>;
   onDrop: (event: React.DragEvent, trackId: string) => void;
+  onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
   onMoveMidi: (event: React.PointerEvent<HTMLButtonElement>, clip: MidiClip) => void;
   onTrimMidi: (
@@ -58,6 +60,7 @@ interface ArrangeTrackProps {
 
 export function ArrangeTrack(props: ArrangeTrackProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -295,7 +298,30 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </output>
         </label>
       </aside>
-      <div className={styles.lane} style={{ width: props.timelineWidth }}>
+      <div
+        className={`${styles.lane} ${dragOver ? styles.laneDragOver : ''}`}
+        style={{ width: props.timelineWidth }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragEnter={() => setDragOver(true)}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={(event) => {
+          event.stopPropagation();
+          setDragOver(false);
+          props.onDrop(event, props.track.id);
+        }}
+        onContextMenu={(event) => {
+          if ((event.target as HTMLElement).closest('[data-clip-id]')) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const tick = Math.max(0, (event.clientX - bounds.left) / props.pixelsPerTick);
+          props.onContextMenu?.(event, props.track.id, tick);
+        }}
+      >
         {bars.map((bar) => (
           <i key={bar} style={{ left: bar * barTicks * props.pixelsPerTick }} />
         ))}

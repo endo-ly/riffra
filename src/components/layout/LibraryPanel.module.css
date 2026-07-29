@@ -51,14 +51,25 @@
   border-right: 0;
   border-bottom: 0;
   border-left: 0;
+  cursor: pointer;
 }
 .librarySearchRow:hover {
   background: rgba(85, 217, 232, 0.08);
 }
-.librarySearchRow[draggable='true'],
-.recordingRow[draggable='true'],
-.recordingRow[draggable='true'] .recordingSelect {
+
+.librarySearchRow[draggable='true']:active,
+.recordingSelect[draggable='true'],
+.librarySearchRow[draggable='true'] {
   cursor: grab;
+  user-select: none;
+}
+.recordingSelect[draggable='true']:active,
+.librarySearchRow[draggable='true']:active {
+  cursor: grabbing;
+}
+.recordingSelect[draggable='true'] *,
+.librarySearchRow[draggable='true'] * {
+  -webkit-user-drag: none;
 }
 .librarySearchRow:first-of-type {
   margin-top: 6px;
@@ -205,8 +216,10 @@
   color: inherit;
   cursor: pointer;
 }
-.recordingSelect:disabled {
+.recordingSelect:disabled,
+.recordingSelectDisabled {
   cursor: not-allowed;
+  opacity: 0.5;
 }
 .recordingSelect > span {
   width: 28px;

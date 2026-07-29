@@ -53,7 +53,8 @@ describe('WorkspaceArrange', () => {
       dataTransfer: {
         getData: () =>
           JSON.stringify({
-            id: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
+            version: 1,
+            assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
             name: 'Take',
             kind: 'audio',
           }),
@@ -93,7 +94,7 @@ describe('WorkspaceArrange', () => {
     const userConfirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<Harness api={api} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Audio Track' }));
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
@@ -106,7 +107,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Audio Track' }));
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
     fireEvent.click(await screen.findByText('Audio 1'));
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
     const lane = screen.getByLabelText('Audio 1 volume automation');
@@ -360,7 +361,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Audio Track' }));
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
 
     expect(screen.getByText('Delete')).toBeInTheDocument();

@@ -184,7 +184,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
         inbox={inbox}
       />,
     );
-    expect(screen.getByLabelText(`Select ${broken.name}`)).toBeDisabled();
+    expect(screen.getByLabelText(`Select ${broken.name}`)).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('shows an Inbox operation error instead of a success message', () => {
@@ -219,13 +219,13 @@ describe('Inbox preservation zone (LIB-003)', () => {
       />,
     );
 
-    const row = screen.getByLabelText(`Select ${recording.name}`).closest('.recording-row')!;
+    const row = screen.getByLabelText(`Select ${recording.name}`);
     expect(row).toHaveAttribute('draggable', 'true');
     fireEvent.dragStart(row, { dataTransfer: { effectAllowed: '', setData } });
 
     expect(setData).toHaveBeenCalledWith(
       'application/x-riffra-asset',
-      expect.stringContaining(recording.processedAssetId!),
+      expect.stringContaining(`"assetId":"${recording.processedAssetId}"`),
     );
   });
 });

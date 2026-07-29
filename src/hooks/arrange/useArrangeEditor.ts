@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetId, AudioAnalysis, CreativeSession } from '@/lib/domain';
+import type { AudioAnalysis, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
@@ -8,9 +8,8 @@ import {
   type ArrangeTool,
   type SnapGrid,
 } from '@/lib/arrange-timeline';
+import { readAssetDrag } from '@/lib/arrange-drag';
 import { useClipInteractions } from './useClipInteractions';
-
-const ASSET_MIME = 'application/x-riffra-asset';
 
 export type ArrangeSelection =
   { kind: 'none' } | { kind: 'track'; trackId: string } | { kind: 'clips'; clipIds: string[] };
@@ -142,30 +141,23 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
 
   const dropAsset = async (event: React.DragEvent, trackId?: string) => {
     event.preventDefault();
-    const raw = event.dataTransfer.getData(ASSET_MIME);
-    if (!raw) return;
-    try {
-      const asset = JSON.parse(raw) as { id: string; name: string; kind: string };
-      if (asset.kind !== 'audio' && asset.kind !== 'midi') {
-        setMessage('Only Audio or MIDI Assets can be placed on the Timeline.');
-        return;
-      }
-      const timeline = event.currentTarget.closest('[data-arrange-timeline]');
-      const bounds =
-        timeline?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
-      const tick = snapTick(
-        (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
-        event.altKey,
-      );
-      await commit(
-        asset.kind === 'audio'
-          ? api.addAudioClipToArrangement(asset.id as AssetId, asset.name, tick, trackId)
-          : api.addMidiClipToArrangement(asset.id as AssetId, asset.name, tick, trackId),
-        `${asset.name} added. Click it to select it; press Delete to remove it.`,
-      );
-    } catch {
-      setMessage('The dragged Library item is not a valid Audio Asset.');
+    const asset = readAssetDrag(event.dataTransfer);
+    if (!asset) {
+      setMessage('The dragged Library item is not a valid Audio or MIDI Asset.');
+      return;
     }
+    const timeline = event.currentTarget.closest('[data-arrange-timeline]');
+    const bounds = timeline?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
+    const tick = snapTick(
+      (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
+      event.altKey,
+    );
+    await commit(
+      asset.kind === 'audio'
+        ? api.addAudioClipToArrangement(asset.assetId, asset.name, tick, trackId)
+        : api.addMidiClipToArrangement(asset.assetId, asset.name, tick, trackId),
+      `${asset.name} added. Click it to select it; press Delete to remove it.`,
+    );
   };
 
   const clipInteractions = useClipInteractions({

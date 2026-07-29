@@ -36,7 +36,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = options.snapTick(tick);
       const end = clip.startTick + clipDurationTicks(clip, timebase);
       if (target <= clip.startTick || target >= end) {
-        options.setMessage('Place the playhead inside the selected clip before splitting.');
+        options.setMessage('Click inside the selected clip to split it.');
         return;
       }
       const next = await options.commit(
@@ -57,7 +57,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const target = options.snapTick(tick);
       const end = clip.startTick + midiClipDurationTicks(clip);
       if (target <= clip.startTick || target >= end) {
-        options.setMessage('Place the playhead inside the selected MIDI clip before splitting.');
+        options.setMessage('Click inside the selected MIDI clip to split it.');
         return;
       }
       await options.commit(options.api.splitMidiClip(clip.id, target), `${clip.name} split.`);
