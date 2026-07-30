@@ -9,6 +9,28 @@
 
 namespace riffra {
 
+void PluginRack::PendingMidi::reset() {
+    const juce::ScopedLock guard(lock);
+    messages.clear();
+    messages.ensureSize(2048);
+}
+
+void PluginRack::PendingMidi::add(const juce::MidiMessage& message) {
+    const juce::ScopedLock guard(lock);
+    messages.addEvent(message, 0);
+}
+
+void PluginRack::PendingMidi::appendTo(
+    juce::MidiBuffer& destination,
+    const int sampleCount) {
+    const juce::ScopedLock guard(lock);
+    for (const auto metadata : messages)
+        destination.addEvent(
+            metadata.getMessage(),
+            juce::jlimit(0, std::max(0, sampleCount - 1), metadata.samplePosition));
+    messages.clear();
+}
+
 namespace {
 
 class AtomicFlagReset final {
@@ -85,7 +107,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
 
     updateParameterCache(*candidate);
     const auto candidateParameterCount = static_cast<std::size_t>(candidate->getParameters().size());
-    midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
+    pendingMidi.reset();
     const auto inputChannels = candidate->getMainBusNumInputChannels();
     const auto outputChannels = candidate->getMainBusNumOutputChannels();
     const juce::SpinLock::ScopedLockType lock(pluginLock);
@@ -217,7 +239,7 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
     preparedSampleRate.store(sampleRate, std::memory_order_release);
     preparedBlockSize.store(blockSize, std::memory_order_release);
     if (sampleRate > 0.0)
-        midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
+        pendingMidi.reset();
     if (plugin != nullptr) {
         plugin->setRateAndBufferSizeDetails(sampleRate, blockSize);
         plugin->prepareToPlay(sampleRate, blockSize);
@@ -408,9 +430,7 @@ juce::var PluginRack::persistedState(juce::String& error) const {
 void PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
     if (!loaded.load(std::memory_order_acquire))
         return;
-    auto stamped = message;
-    stamped.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
-    midiCollector.addMessageToQueue(stamped);
+    pendingMidi.add(message);
 }
 
 void PluginRack::allNotesOff() noexcept {
@@ -500,7 +520,7 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
             midi.addEvent(metadata.getMessage(), metadata.samplePosition);
         }
     }
-    midiCollector.removeNextBlockOfMessages(midi, numSamples);
+    pendingMidi.appendTo(midi, numSamples);
     if (panicPending.exchange(false, std::memory_order_acq_rel)) {
         for (int channel = 1; channel <= 16; ++channel)
             midi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);

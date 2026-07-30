@@ -1,11 +1,11 @@
-use crate::{AudioRuntime, session::CreativeSession};
+use crate::session::CreativeSession;
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
 /// Platform-independent state shared by Riffra application hosts.
-pub struct AppCore<A: AudioRuntime> {
+pub struct AppCore<A> {
     data_root: PathBuf,
     session: Mutex<CreativeSession>,
     audio: A,
@@ -13,7 +13,7 @@ pub struct AppCore<A: AudioRuntime> {
     safe_mode: bool,
 }
 
-impl<A: AudioRuntime> AppCore<A> {
+impl<A> AppCore<A> {
     /// Creates application state from an already-loaded canonical session.
     pub fn new(
         data_root: PathBuf,
@@ -41,7 +41,7 @@ impl<A: AudioRuntime> AppCore<A> {
         &self.session
     }
 
-    /// Returns the host-provided audio runtime.
+    /// Returns the host-provided live audio service.
     pub fn audio(&self) -> &A {
         &self.audio
     }
@@ -60,15 +60,9 @@ impl<A: AudioRuntime> AppCore<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OfflineRenderRequest, session::CreativeSession};
+    use crate::session::CreativeSession;
 
     struct OfflineRuntime;
-
-    impl AudioRuntime for OfflineRuntime {
-        fn render_timeline_offline(&self, _request: OfflineRenderRequest) -> Result<(), String> {
-            Err("offline runtime has no render worker".into())
-        }
-    }
 
     #[test]
     fn owns_canonical_state_without_platform_services() {

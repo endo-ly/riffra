@@ -30,42 +30,56 @@ juce_add_console_app(riffra-plugin-scan
   VERSION "${PROJECT_VERSION}"
 )
 
+juce_add_console_app(riffra-render
+  PRODUCT_NAME "Riffra Offline Renderer"
+  COMPANY_NAME "Riffra"
+  VERSION "${PROJECT_VERSION}"
+)
+
+add_library(riffra-render-core STATIC)
 add_library(riffra-audio-core STATIC)
 
+target_sources(riffra-render-core PRIVATE
+  src/processing/TimelineEngine.cpp
+  src/processing/TimelineEngine.h
+  src/processing/TimelineTimebase.h
+  src/processing/RecordingCaptureRuntime.cpp
+  src/processing/RecordingCaptureRuntime.h
+  src/processing/ArrangementGraph.cpp
+  src/processing/ArrangementGraph.h
+  src/processing/OfflineRenderer.cpp
+  src/processing/OfflineRenderer.h
+  src/processing/ArrangementCaptureSink.h
+  src/processing/PluginRack.cpp
+  src/processing/PluginRack.h
+  src/processing/PluginChain.cpp
+  src/processing/PluginChain.h
+)
+
 target_sources(riffra-audio-core PRIVATE
-  src/SafetyAudioCallback.cpp
-  src/SafetyAudioCallback.h
-  src/TimelineEngine.cpp
-  src/TimelineEngine.h
-  src/TimelineTimebase.h
-  src/RecordingCaptureRuntime.cpp
-  src/RecordingCaptureRuntime.h
-  src/ArrangementGraph.cpp
-  src/ArrangementGraph.h
-  src/OfflineRenderer.cpp
-  src/OfflineRenderer.h
-  src/AudioSafetyDsp.h
-  src/AudioRuntimeStatus.cpp
-  src/AudioRuntimeStatus.h
-  src/RecordingSession.cpp
-  src/RecordingSession.h
-  src/ArrangeRecordingSession.cpp
-  src/ArrangeRecordingSession.h
-  src/ArrangementCaptureSink.h
-  src/PluginRack.cpp
-  src/PluginRack.h
-  src/PluginChain.cpp
-  src/PluginChain.h
-  src/PluginEditorHost.cpp
-  src/PluginEditorHost.h
+  src/realtime/SafetyAudioCallback.cpp
+  src/realtime/SafetyAudioCallback.h
+  src/realtime/AudioSafetyDsp.h
+  src/realtime/AudioRuntimeStatus.cpp
+  src/realtime/AudioRuntimeStatus.h
+  src/realtime/RecordingSession.cpp
+  src/realtime/RecordingSession.h
+  src/realtime/ArrangeRecordingSession.cpp
+  src/realtime/ArrangeRecordingSession.h
+  src/realtime/PluginEditorHost.cpp
+  src/realtime/PluginEditorHost.h
 )
 
 target_sources(riffra-audio PRIVATE
-  src/Main.cpp
+  src/AudioMain.cpp
 )
 
 target_sources(riffra-plugin-scan PRIVATE
-  src/PluginScanner.cpp
+  src/PluginScannerMain.cpp
+)
+
+target_sources(riffra-render PRIVATE
+  src/RenderMain.cpp
 )
 
 set(RIFFRA_AUDIO_JUCE_DEFINITIONS
@@ -81,24 +95,41 @@ set(RIFFRA_PLUGIN_SCAN_JUCE_DEFINITIONS
   JUCE_WEB_BROWSER=0
 )
 
-target_compile_definitions(riffra-audio-core PUBLIC
+set(RIFFRA_RENDER_JUCE_DEFINITIONS
+  JUCE_PLUGINHOST_VST3=1
+  JUCE_USE_CURL=0
+  JUCE_WEB_BROWSER=0
+)
+
+target_compile_definitions(riffra-render-core PUBLIC
+  ${RIFFRA_RENDER_JUCE_DEFINITIONS}
+)
+
+target_compile_definitions(riffra-audio-core PRIVATE
+  JUCE_ASIO=1
+)
+
+target_compile_definitions(riffra-audio PRIVATE
   ${RIFFRA_AUDIO_JUCE_DEFINITIONS}
 )
 
-# riffra-audio only consumes the public interface of riffra-audio-core, so the
-# JUCE compile definitions and libraries are already propagated.
 target_compile_definitions(riffra-plugin-scan PRIVATE
   ${RIFFRA_PLUGIN_SCAN_JUCE_DEFINITIONS}
 )
 
-set(RIFFRA_AUDIO_JUCE_LIBRARIES
-  juce::juce_audio_devices
+set(RIFFRA_RENDER_JUCE_LIBRARIES
   juce::juce_audio_formats
   juce::juce_audio_processors
-  juce::juce_audio_utils
   juce::juce_core
   juce::juce_dsp
   juce::juce_events
+  juce::juce_recommended_config_flags
+  juce::juce_recommended_lto_flags
+  juce::juce_recommended_warning_flags
+)
+
+set(RIFFRA_AUDIO_JUCE_LIBRARIES
+  juce::juce_audio_devices
   juce::juce_recommended_config_flags
   juce::juce_recommended_lto_flags
   juce::juce_recommended_warning_flags
@@ -113,7 +144,12 @@ set(RIFFRA_PLUGIN_SCAN_JUCE_LIBRARIES
   juce::juce_recommended_warning_flags
 )
 
+target_link_libraries(riffra-render-core PUBLIC
+  ${RIFFRA_RENDER_JUCE_LIBRARIES}
+)
+
 target_link_libraries(riffra-audio-core PUBLIC
+  riffra-render-core
   ${RIFFRA_AUDIO_JUCE_LIBRARIES}
 )
 
@@ -125,46 +161,56 @@ target_link_libraries(riffra-plugin-scan PRIVATE
   ${RIFFRA_PLUGIN_SCAN_JUCE_LIBRARIES}
 )
 
+target_link_libraries(riffra-render PRIVATE
+  riffra-render-core
+)
+
 juce_generate_juce_header(riffra-audio)
 juce_generate_juce_header(riffra-plugin-scan)
+juce_generate_juce_header(riffra-render)
+
+target_include_directories(riffra-render-core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
+)
 
 target_include_directories(riffra-audio-core PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
 if(MSVC)
   set(RIFFRA_MSVC_WARNINGS /W4 /permissive- /EHsc /utf-8)
-  foreach(target IN ITEMS riffra-audio-core riffra-audio riffra-plugin-scan)
+  foreach(target IN ITEMS
+      riffra-render-core
+      riffra-audio-core
+      riffra-audio
+      riffra-plugin-scan
+      riffra-render)
     target_compile_options(${target} PRIVATE ${RIFFRA_MSVC_WARNINGS})
   endforeach()
 endif()
 
-# The existing production headers use JUCE's generated JuceHeader.h. JUCE only
-# generates that header for its app targets, so generate a matching shared
-# header for the reusable core library from the audio target's module list.
-get_target_property(RIFFRA_AUDIO_JUCE_DEFS_FILE riffra-audio JUCE_DEFS_FILE)
-set(RIFFRA_AUDIO_CORE_JUCE_DIRECTORY
-  ${CMAKE_CURRENT_BINARY_DIR}/riffra-audio-core_artefacts/JuceLibraryCode)
-set(RIFFRA_AUDIO_CORE_JUCE_HEADER
-  ${RIFFRA_AUDIO_CORE_JUCE_DIRECTORY}/JuceHeader.h)
+function(riffra_generate_core_juce_header core_target app_target)
+  get_target_property(juce_defs_file ${app_target} JUCE_DEFS_FILE)
+  set(juce_directory
+    ${CMAKE_CURRENT_BINARY_DIR}/${core_target}_artefacts/JuceLibraryCode)
+  set(juce_header ${juce_directory}/JuceHeader.h)
+  set(header_target ${core_target}-juce-header)
 
-add_custom_command(
-  OUTPUT ${RIFFRA_AUDIO_CORE_JUCE_HEADER}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${RIFFRA_AUDIO_CORE_JUCE_DIRECTORY}
-  COMMAND juce::juceaide header
-    ${RIFFRA_AUDIO_JUCE_DEFS_FILE}
-    ${RIFFRA_AUDIO_CORE_JUCE_HEADER}
-  DEPENDS ${RIFFRA_AUDIO_JUCE_DEFS_FILE}
-  VERBATIM
-)
+  add_custom_command(
+    OUTPUT ${juce_header}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${juce_directory}
+    COMMAND juce::juceaide header ${juce_defs_file} ${juce_header}
+    DEPENDS ${juce_defs_file}
+    VERBATIM
+  )
+  add_custom_target(${header_target} DEPENDS ${juce_header})
+  add_dependencies(${core_target} ${header_target})
+  target_sources(${core_target} PRIVATE ${juce_header})
+  target_include_directories(${core_target} PUBLIC ${juce_directory})
+endfunction()
 
-add_custom_target(riffra-audio-core-juce-header
-  DEPENDS ${RIFFRA_AUDIO_CORE_JUCE_HEADER})
-add_dependencies(riffra-audio-core riffra-audio-core-juce-header)
-target_sources(riffra-audio-core PRIVATE ${RIFFRA_AUDIO_CORE_JUCE_HEADER})
-target_include_directories(riffra-audio-core PUBLIC
-  ${RIFFRA_AUDIO_CORE_JUCE_DIRECTORY}
-)
+riffra_generate_core_juce_header(riffra-render-core riffra-render)
+riffra_generate_core_juce_header(riffra-audio-core riffra-audio)
 
 if(BUILD_TESTING)
   FetchContent_Declare(
@@ -211,7 +257,7 @@ else()
     set(RIFFRA_BINARY_SUFFIX "")
 endif()
 
-foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan)
+foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
   install(FILES $<TARGET_FILE:${sidecar}>
       DESTINATION "apps/desktop/src-tauri/binaries"
       RENAME "${sidecar}-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"

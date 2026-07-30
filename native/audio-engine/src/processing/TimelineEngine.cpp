@@ -1,8 +1,5 @@
 #include "TimelineEngine.h"
-#include "ArrangeRecordingSession.h"
 #include "ArrangementGraph.h"
-#include "OfflineRenderer.h"
-#include "SafetyAudioCallback.h"
 
 #include <algorithm>
 #include <array>
@@ -391,14 +388,23 @@ bool TimelineEngine::prepareSnapshot(
             clip->loop = static_cast<bool>(value.getProperty("loopEnabled", false));
             clip->muted = static_cast<bool>(value.getProperty("muted", false));
             clip->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
-            clip->transport.setSource(
-                clip->readerSource.get(),
-                offlineMode ? 0 : kReadAheadSamples,
-                offlineMode ? nullptr : &readAheadThread,
-                clip->sourceSampleRate,
+            clip->positionableSource = clip->readerSource.get();
+            if (!offlineMode) {
+                clip->bufferingSource = std::make_unique<juce::BufferingAudioSource>(
+                    clip->readerSource.get(),
+                    readAheadThread,
+                    false,
+                    kReadAheadSamples,
+                    2);
+                clip->positionableSource = clip->bufferingSource.get();
+            }
+            clip->resamplingSource = std::make_unique<juce::ResamplingAudioSource>(
+                clip->positionableSource,
+                false,
                 2);
-            clip->transport.prepareToPlay(maximumBlockSize, outputSampleRate);
-            clip->transport.start();
+            clip->resamplingSource->setResamplingRatio(
+                clip->sourceSampleRate / outputSampleRate);
+            clip->resamplingSource->prepareToPlay(maximumBlockSize, outputSampleRate);
             clip->scratch.setSize(2, maximumBlockSize, false, true, false);
             track->clips.push_back(std::move(clip));
         }
@@ -1328,11 +1334,11 @@ void TimelineEngine::mixRange(
             const auto chunk = std::min(remaining, std::max(1, outputUntilSourceEnd));
             if (clip.expectedSourceFrame < 0 ||
                 std::abs(clip.expectedSourceFrame - sourceFrame) > 2) {
-                clip.transport.setPosition(
-                    static_cast<double>(sourceFrame) / clip.sourceSampleRate);
+                clip.positionableSource->setNextReadPosition(sourceFrame);
+                clip.resamplingSource->flushBuffers();
             }
             clip.scratch.clear();
-            clip.transport.getNextAudioBlock(
+            clip.resamplingSource->getNextAudioBlock(
                 juce::AudioSourceChannelInfo(&clip.scratch, 0, chunk));
             for (int sample = 0; sample < chunk; ++sample) {
                 const auto position = localSample + sample;

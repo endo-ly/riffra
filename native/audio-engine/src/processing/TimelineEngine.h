@@ -102,7 +102,9 @@ private:
     struct Clip final {
         juce::String id;
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-        juce::AudioTransportSource transport;
+        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
+        juce::PositionableAudioSource* positionableSource = nullptr;
+        std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
         juce::AudioBuffer<float> scratch;
         std::int64_t startSample = 0;
         std::int64_t sourceStartFrame = 0;

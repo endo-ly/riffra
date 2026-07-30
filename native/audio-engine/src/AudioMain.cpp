@@ -5,7 +5,6 @@
 #include "PluginEditorHost.h"
 #include "PluginRack.h"
 #include "TimelineEngine.h"
-#include "OfflineRenderer.h"
 
 #include <iostream>
 #include <map>
@@ -34,7 +33,6 @@ namespace {
 using riffra::SafetyAudioCallback;
 using riffra::PluginEditorHost;
 using riffra::PluginRack;
-using riffra::OfflineRenderer;
 using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
@@ -777,41 +775,6 @@ int serve(
                     continue;
                 }
                 writeJson(timelineEngine.status());
-                continue;
-            }
-            if (type == "renderTimelineOffline") {
-                if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
-                    writeJson(makeError(
-                        "offlineRender", "Unsupported Offline Render protocol version."));
-                    continue;
-                }
-                OfflineRenderer renderer;
-                OfflineRenderer::Result renderResult;
-                juce::String renderError;
-                if (!renderer.render(
-                        command.getProperty("snapshot", {}),
-                        formatManager,
-                        juce::File(command.getProperty("destination", {}).toString()),
-                        static_cast<std::uint64_t>(static_cast<juce::int64>(
-                            command.getProperty("startTick", 0))),
-                        static_cast<std::uint64_t>(static_cast<juce::int64>(
-                            command.getProperty("endTick", 0))),
-                        static_cast<double>(command.getProperty("sampleRate", 48000.0)),
-                        static_cast<int>(command.getProperty("blockSize", 512)),
-                        static_cast<float>(command.getProperty("masterGainDb", -18.0)),
-                        static_cast<bool>(command.getProperty("normalize", false)),
-                        renderResult,
-                        renderError)) {
-                    writeJson(makeError("offlineRender", renderError));
-                    continue;
-                }
-                writeJson(currentStatus(
-                    manager,
-                    callback,
-                    &rack,
-                    &midiMonitor,
-                    "Offline Render completed through the Arrangement Graph.",
-                    &timelineEngine));
                 continue;
             }
             if (type == "discardTimelineSnapshot") {

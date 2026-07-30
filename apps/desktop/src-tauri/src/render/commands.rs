@@ -15,7 +15,7 @@ pub async fn render_timeline(
         let state = app.state::<AppState>();
         let session = state.core.session().lock().map_err(lock_error)?.clone();
         render::render_timeline_with_options(
-            state.core.audio(),
+            &state.render_worker,
             state.core.data_root(),
             &session,
             now_ms(),

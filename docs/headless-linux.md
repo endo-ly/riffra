@@ -37,19 +37,20 @@ apps/
     src-tauri/                  # Tauriデスクトップホスト
 crates/
   riffra-core/                 # Tauri / OS非依存
+  riffra-render-worker/        # riffra-render process adapter
 native/
   audio-engine/                # CMake / C++
 ```
 
-`riffra-core`はAsset、Rack、`CreativeSession`の正準モデルと`AppCore<A>`を持つ。`AppCore`が保持するAudio Runtimeは`AudioRuntime` portを実装したホスト注入型であり、Tauriの`AppHandle`、sidecar process、イベント配信を参照しない。オフラインレンダーは共有の`OfflineRenderRequest`を通して実行し、制作処理は具体的な`AudioSupervisor`型へ依存しない。
+`riffra-core`はAsset、Rack、`CreativeSession`の正準モデルと`AppCore<A>`を持つ。オフラインレンダー要求は`AudioRuntime` portで定義し、`riffra-render-worker`が独立workerのprocess adapterとして実装する。
 
-デスクトップホストでは`AudioSupervisor`が`AudioRuntime`を実装する。CLIホストは同じportに、オフラインレンダーworkerまたはLinuxリアルタイムworkerとの接続を注入する。オーディオ設定、バックグラウンドジョブ、プロセス監視は、それを必要とするホスト側に置く。
+デスクトップホストとCLIホストは同じ`RenderWorker`を利用する。リアルタイム音声の`AudioSupervisor`、オーディオ設定、バックグラウンドジョブはデスクトップホスト側に置く。
 
 ### ネイティブエンジンの変更
 
 ネイティブ処理は、音声デバイスを開かないオフライン経路と、デバイスを所有するリアルタイム経路を分ける。
 
-- `riffra-render`: Timelineと音声ファイルだけを扱い、AudioDeviceManager、GUI、VST3に依存しない
+- `riffra-render`: Timelineと音声ファイルを扱い、AudioDeviceManagerを初期化しない
 - `riffra-audio`: ライブ再生、録音、MIDI、デバイス管理を扱う
 
 Linux対応は`riffra-render`を先に成立させ、その後で`riffra-audio`へALSA / JACKを追加する。PipeWire環境ではJACK互換層を利用する。
@@ -122,7 +123,7 @@ Linux 版の `riffra-audio` は VST3 プラグインホスティングを含ま�
 - `SafetyAudioCallback`
 - `TimelineEngine`
 - `PluginChain`
-- `Main.cpp`
+- `AudioMain.cpp`
 
 オフラインMVPでは、VST3 Deviceを含むTrackを明示的な未対応依存として報告する。`PluginRack`をno-op化して無音レンダーを成功扱いにはしない。
 
@@ -173,7 +174,7 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 CMake targetは機能別に分ける。
 
-- render coreは`juce_audio_formats`、DSP、Timeline処理だけをリンクする
+- render coreは`juce_audio_formats`、`juce_audio_processors`、DSP、Timeline処理をリンクする
 - `riffra-render`はrender coreとJSON Linesの入出力だけをリンクする
 - `riffra-audio`だけが`juce_audio_devices`をリンクする
 - `JUCE_ASIO=1`とUI付き`JUCE_PLUGINHOST_VST3=1`はWindowsデスクトップtargetに限定する
@@ -186,8 +187,7 @@ CMake targetは機能別に分ける。
 
 ### オフラインレンダー基盤
 
-- Timelineとオフラインレンダー処理をAudioDeviceManager、GUI、VST3から分離する
-- `riffra-render` workerを作る
+- Linux targetでGUIとVST3ホストをrender coreから分離する
 - 音声デバイスとX ServerのないLinuxコンテナでレンダーを検証する
 - VST3 Deviceを含むTrackを構造化された未対応依存として報告する
 
@@ -248,7 +248,7 @@ cmake --build build-linux --target riffra-render
 
 ### ヘッドレス実行
 
-`riffra-render`はJUCE GUI moduleと`juce_audio_devices`をリンクせず、X Serverとオーディオデバイスのない環境で実行する。X11へのリンクが検出された場合は実行環境へX11を追加せず、render targetへGUI moduleが混入した依存違反として扱う。
+Linux版`riffra-render`はJUCE GUI moduleと`juce_audio_devices`をリンクせず、X Serverとオーディオデバイスのない環境で実行する。X11へのリンクが検出された場合は実行環境へX11を追加せず、render targetへGUI moduleが混入した依存違反として扱う。
 
 ---
 

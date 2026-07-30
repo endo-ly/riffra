@@ -49,6 +49,7 @@ use model::{
 };
 use native_audio::AudioSupervisor;
 use riffra_core::AppCore;
+use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
 use session::CreativeSession;
 use std::sync::Mutex;
@@ -60,6 +61,7 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
+    render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
     jobs: jobs::JobRegistry,
 }
@@ -416,6 +418,7 @@ pub fn run() {
                     recovered_from_generation,
                     safe_mode,
                 ),
+                render_worker: RenderWorker::bundled()?,
                 audio_preferences: Mutex::new(effective_preferences),
                 jobs: jobs::JobRegistry::default(),
             });

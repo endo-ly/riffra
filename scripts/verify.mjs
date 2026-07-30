@@ -7,6 +7,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
+import { readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -96,6 +97,15 @@ function buildNative({ config = 'Debug', buildDir, withTests = false } = {}) {
   }
 }
 
+function findInstalledRenderWorker() {
+  const directory = join(root, 'apps', 'desktop', 'src-tauri', 'binaries');
+  const name = readdirSync(directory).find(
+    (entry) => entry.startsWith('riffra-render-') && entry.endsWith(isWin ? '.exe' : ''),
+  );
+  if (!name) throw new Error('Installed riffra-render worker was not found.');
+  return join(directory, name);
+}
+
 function main() {
   const native = process.argv.slice(2).includes('--native');
   const artifactsRoot = join(root, '.artifacts', 'verify');
@@ -137,6 +147,27 @@ function main() {
       buildDir: join(artifactsRoot, 'native'),
       withTests: true,
     });
+    run(
+      'Rust to native offline render',
+      'cargo',
+      [
+        'test',
+        '--manifest-path',
+        'Cargo.toml',
+        '-p',
+        'riffra-render-worker',
+        '--test',
+        'native_worker',
+        '--',
+        '--ignored',
+      ],
+      {
+        env: {
+          ...process.env,
+          RIFFRA_RENDER_WORKER: findInstalledRenderWorker(),
+        },
+      },
+    );
   }
 
   const clangFormat = findOnPath('clang-format');

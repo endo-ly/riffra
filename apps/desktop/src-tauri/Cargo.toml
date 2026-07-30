@@ -22,6 +22,7 @@ ipc-integration = ["tauri/test"]
 
 [dependencies]
 riffra-core = { path = "../../../crates/riffra-core" }
+riffra-render-worker = { path = "../../../crates/riffra-render-worker" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

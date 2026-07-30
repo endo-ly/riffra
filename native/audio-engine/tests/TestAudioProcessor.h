@@ -227,7 +227,7 @@ public:
         if (!rack->allocateParameterQueue(
                 static_cast<std::size_t>(processor->getParameters().size()), error))
             return {};
-        rack->midiCollector.reset(static_cast<int>(std::lround(sampleRate)));
+        rack->pendingMidi.reset();
         rack->preparedSampleRate.store(sampleRate, std::memory_order_release);
         rack->preparedBlockSize.store(blockSize, std::memory_order_release);
         rack->pluginInputChannels.store(

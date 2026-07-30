@@ -189,4 +189,29 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor)
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 60);
 }
 
+TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock)
+{
+    // Arrange
+    InstrumentTrace trace;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(
+        std::make_unique<TestInstrumentProcessor>(trace),
+        kSampleRate,
+        kBlockSize,
+        error);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> outputLeft {};
+    std::array<float, kBlockSize> outputRight {};
+    const std::array<float*, 2> outputs { outputLeft.data(), outputRight.data() };
+    rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f));
+
+    // Act
+    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+    // Assert
+    ASSERT_EQ(trace.midiMessageCount, 1);
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 64);
+}
+
 } // namespace riffra

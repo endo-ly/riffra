@@ -2514,6 +2514,7 @@ name = "riffra-desktop"
 version = "0.1.0"
 dependencies = [
  "riffra-core",
+ "riffra-render-worker",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2525,6 +2526,16 @@ dependencies = [
  "ts-rs",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "riffra-render-worker"
+version = "0.1.0"
+dependencies = [
+ "riffra-core",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

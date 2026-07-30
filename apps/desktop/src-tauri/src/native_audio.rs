@@ -3,7 +3,6 @@ use crate::model::{
     AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
 };
 use crate::session::AudioTakeVariant;
-use riffra_core::{AudioRuntime, OfflineRenderRequest};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -27,12 +26,6 @@ pub struct AudioSupervisor {
     pending_request_id: Arc<AtomicU64>,
     child: Mutex<Option<CommandChild>>,
     restart_preferences: Mutex<AudioPreferences>,
-}
-
-impl AudioRuntime for AudioSupervisor {
-    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
-        AudioSupervisor::render_timeline_offline(self, request)
-    }
 }
 
 #[derive(Default)]
@@ -464,26 +457,6 @@ impl AudioSupervisor {
 
     pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
         self.send_command(serde_json::json!({"type": "discardTimelineSnapshot"}), "")?;
-        Ok(())
-    }
-
-    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
-        self.send_command_with_timeout(
-            serde_json::json!({
-                "type": "renderTimelineOffline",
-                "protocolVersion": 1,
-                "snapshot": request.snapshot,
-                "destination": request.destination.to_string_lossy(),
-                "startTick": request.start_tick,
-                "endTick": request.end_tick,
-                "sampleRate": request.sample_rate,
-                "blockSize": request.block_size,
-                "masterGainDb": request.master_gain_db,
-                "normalize": request.normalize,
-            }),
-            "",
-            Duration::from_secs(31 * 60),
-        )?;
         Ok(())
     }
 

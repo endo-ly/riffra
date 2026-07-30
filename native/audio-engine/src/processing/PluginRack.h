@@ -69,9 +69,20 @@ private:
     void applyQueuedParameterChanges() noexcept;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 
+    class PendingMidi final {
+    public:
+        void reset();
+        void add(const juce::MidiMessage& message);
+        void appendTo(juce::MidiBuffer& destination, int sampleCount);
+
+    private:
+        juce::CriticalSection lock;
+        juce::MidiBuffer messages;
+    };
+
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
-    juce::MidiMessageCollector midiCollector;
+    PendingMidi pendingMidi;
     mutable juce::SpinLock pluginLock;
     mutable juce::CriticalSection statusLock;
     std::vector<CachedParameter> cachedParameters;

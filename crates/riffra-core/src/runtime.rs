@@ -20,11 +20,10 @@ pub struct OfflineRenderRequest {
     pub normalize: bool,
 }
 
-/// Host-provided audio runtime port owned by [`crate::AppCore`].
+/// Port for rendering a Timeline without a real-time audio device.
 ///
-/// Platform adapters implement the concrete command surface. The core only
-/// depends on the runtime's availability so it never needs to know how a
-/// process is spawned, how events are emitted, or which audio devices exist.
+/// Process adapters implement the concrete command surface. The production
+/// domain does not need to know how a worker is spawned.
 pub trait AudioRuntime: Send + Sync {
     /// Renders a prepared Timeline without requiring a real-time audio device.
     ///

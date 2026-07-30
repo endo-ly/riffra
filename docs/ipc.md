@@ -135,7 +135,7 @@ DomainError::InvalidRecordingTransition { from: String, to: String }
 
 ## 4. sidecar JSON Lines プロトコル
 
-C++ sidecar（`riffra-audio.exe`）はRustプロセスの子プロセスで、stdin/stdoutでJSON Lines（1行=1JSON）をやり取りする。Rust側の `AudioSupervisor`（`apps/desktop/src-tauri/src/native_audio.rs`）が単一のオーケストレータであり、C++側のエントリポイントは `native/audio-engine/src/Main.cpp`。
+C++子プロセスはstdin/stdoutでJSON Lines（1行=1JSON）をやり取りする。`riffra-audio`は常駐してリアルタイム処理を担い、Rustの`AudioSupervisor`が管理する。`riffra-render`は`renderTimelineOffline`を一件処理して終了し、Rustの`RenderWorker`が起動と結果判定を担う。
 
 ### 4.1 メッセージの基本構造
 
@@ -171,7 +171,7 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 ### 4.3 コマンドカタログ（Rust → C++）
 
-真実源は `apps/desktop/src-tauri/src/native_audio.rs` の `AudioSupervisor` 各メソッドと、`Main.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
+真実源は `apps/desktop/src-tauri/src/native_audio.rs` の `AudioSupervisor` 各メソッドと、`AudioMain.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
 
 - **状態照会**: `status` / `meterStatus`
 - **オーディオ設定**: `setEmergencyMute` / `setMasterGainDb` / `setAudioDriver` / `recoverAudioDevice`
@@ -286,8 +286,8 @@ connect-src ipc: http://ipc.localhost
 ### 5.4 ウィンドウ・バンドル
 
 - 単一ウィンドウ（label: `main`）、既定 1440x900、最小 1000x700
-- `bundle.active: false`（現在は配布ビルド無効）
-- `bundle.externalBin`: `binaries/riffra-audio`、`binaries/riffra-plugin-scan`
+- `bundle.active: true`
+- `bundle.externalBin`: `binaries/riffra-audio`、`binaries/riffra-plugin-scan`、`binaries/riffra-render`
 
 ---
 

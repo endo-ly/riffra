@@ -113,7 +113,7 @@ Native C++自動テストはGoogleTestで記述し、CTestから実行する。
 テストコードはnative/audio-engine/testsへ置き、実行ファイルは
 riffra-audio-testsへまとめる。通常テストは実VST3、実機器、外部プロセス、
 利用者領域へ依存せず、ファイルテストはテスト専用一時領域を使用する。
-riffra-audio.exeとのJSON Lines通信はRust結合テストで確認し、
+riffra-audioとriffra-renderのJSON Lines通信はRust結合テストで確認し、
 テストのためだけにpublic APIやCLIコマンドを追加しない。
 
 内部関数を直接呼ぶためだけに公開範囲を広げない。入力、結果、不変条件を公開された責務の単位で確認する。
@@ -150,7 +150,7 @@ Native APIは本番と同じ契約を実装する差替えへ置き換え、次�
 
 ### 6.1 Rustと音声子プロセス
 
-実際の`riffra-audio.exe`を起動し、標準入出力のJSON Linesで通信する。
+実際の`riffra-audio.exe`または`riffra-render.exe`を起動し、標準入出力のJSON Linesで通信する。
 
 確認する内容:
 

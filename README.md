@@ -7,7 +7,8 @@ Riffra is a music production workbench built around a short creative loop: hear,
 - `riffra-core` owns the platform-independent Asset, Rack, and CreativeSession domain plus shared `AppCore` state.
 - `apps/desktop/src-tauri` owns the Tauri desktop lifecycle, recovery, jobs, permissions, sidecar supervision, and native integration.
 - `apps/desktop/src` contains the React and TypeScript single-window workbench.
-- A native C++20/JUCE sidecar owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, recording, and render paths.
+- `riffra-audio` owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, and recording.
+- `riffra-render` owns one-shot offline rendering without opening an audio device; `riffra-render-worker` is its Rust process adapter.
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
 - Arrange uses a separate native graph per Track: physical input routing, playback/live plugin instances, MIDI routing, PDC, and Track-isolated recording taps never pass through the Play workspace's global rack.
@@ -62,7 +63,7 @@ cd native/audio-engine
 ./build.sh Debug
 ```
 
-Each script configures CMake, builds `riffra-audio` and `riffra-plugin-scan`,
+Each script configures CMake, builds `riffra-audio`, `riffra-plugin-scan`, and `riffra-render`,
 runs CTest, and installs the binaries to `apps/desktop/src-tauri/binaries/` using
 `cmake --install`.
 

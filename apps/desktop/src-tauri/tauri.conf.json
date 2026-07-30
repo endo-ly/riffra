@@ -34,7 +34,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/riffra-audio", "binaries/riffra-plugin-scan"],
+    "externalBin": [
+      "binaries/riffra-audio",
+      "binaries/riffra-plugin-scan",
+      "binaries/riffra-render"
+    ],
     "shortDescription": "Hear, shape, capture, compare, and reuse.",
     "longDescription": "A Windows-first integrated music production workbench."
   }
