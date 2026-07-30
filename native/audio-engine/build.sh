@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the native audio engine, run tests, and install sidecar binaries
-# to src-tauri/binaries.
+# to apps/desktop/src-tauri/binaries.
 set -euo pipefail
 
 CONFIG="${1:-Release}"
@@ -29,4 +29,4 @@ if [ "$SKIP_TESTS" -ne 1 ]; then
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"
 
-echo "Audio engine built, tested, and installed to src-tauri/binaries"
+echo "Audio engine built, tested, and installed to apps/desktop/src-tauri/binaries"

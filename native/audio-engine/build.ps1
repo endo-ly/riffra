@@ -1,5 +1,5 @@
 # Build the native audio engine, run tests, and install sidecar binaries
-# to src-tauri/binaries.
+# to apps/desktop/src-tauri/binaries.
 param(
     [ValidateSet('Release', 'Debug')]
     [string] $Configuration = 'Release',
@@ -46,4 +46,4 @@ if (-not $SkipTests) {
 & $cmake --install $buildDir --prefix $repoRoot --component riffra-sidecars --config $Configuration
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine install failed.' }
 
-Write-Host "Audio engine built, tested, and installed to src-tauri/binaries" -ForegroundColor Green
+Write-Host "Audio engine built, tested, and installed to apps/desktop/src-tauri/binaries" -ForegroundColor Green

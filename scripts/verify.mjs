@@ -105,9 +105,8 @@ function main() {
   run('TypeScript bindings staleness', 'git', [
     'diff',
     '--exit-code',
-    'HEAD',
     '--',
-    'src/lib/generated',
+    'apps/desktop/src/lib/generated',
   ]);
   run('TypeScript build and tests', resolveCommand('npm'), ['run', 'check']);
   run('ESLint', resolveCommand('npm'), ['run', 'lint']);
@@ -115,7 +114,7 @@ function main() {
   run('Knip', resolveCommand('npx'), [
     'knip',
     '--tsConfig',
-    'tsconfig.app.json',
+    'apps/desktop/tsconfig.app.json',
     '--include=files,dependencies',
     '--no-config-hints',
   ]);

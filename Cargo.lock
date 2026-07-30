@@ -2500,7 +2500,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "riffra"
+name = "riffra-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
+name = "riffra-desktop"
 version = "0.1.0"
 dependencies = [
  "riffra-core",
@@ -2515,16 +2525,6 @@ dependencies = [
  "ts-rs",
  "uuid",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "riffra-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "ts-rs",
- "uuid",
 ]
 
 [[package]]

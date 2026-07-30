@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$manifest = Join-Path $repoRoot 'src-tauri/Cargo.toml'
+$manifest = Join-Path $repoRoot 'apps/desktop/src-tauri/Cargo.toml'
 if ([string]::IsNullOrWhiteSpace($LoaderDll)) {
     throw 'Set WEBVIEW2_LOADER_DLL or pass -LoaderDll with the matching WebView2Loader.dll path.'
 }
@@ -23,8 +23,8 @@ if ($CompileOnly) {
     exit 0
 }
 
-$deps = Join-Path $repoRoot 'src-tauri/target/debug/deps'
-$binaries = Get-ChildItem -LiteralPath $deps -Filter 'riffra_lib-*.exe' -File
+$deps = Join-Path $repoRoot 'target/debug/deps'
+$binaries = Get-ChildItem -LiteralPath $deps -Filter 'riffra_desktop_lib-*.exe' -File
 if ($binaries.Count -eq 0) {
     throw "No IPC test binary was produced in $deps"
 }

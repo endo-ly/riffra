@@ -51,7 +51,7 @@ Tauri命令の一部は「runtime（sidecar）への反映」と「session（永
 
 ## 2. Tauri 命令のカタログ
 
-Tauri命令はRustの `#[tauri::command]` で定義し、`src-tauri/src/lib.rs` の `generate_handler!` マクロで一括登録する。真実源は各featureモジュールの `commands.rs`。以下はfeatureモジュール別の代表命令。
+Tauri命令はRustの `#[tauri::command]` で定義し、`apps/desktop/src-tauri/src/lib.rs` の `generate_handler!` マクロで一括登録する。真実源は各featureモジュールの `commands.rs`。以下はfeatureモジュール別の代表命令。
 
 ### 2.1 トップレベル（`lib.rs`）
 
@@ -92,7 +92,7 @@ Timelineの複数選択操作は `paste_timeline_clips` と `remove_timeline_cli
 
 ### 2.9 エラー型
 
-Tauri命令の戻り値は `Result<T, String>`。文字列は利用者向けの表示メッセージ。構造化エラーは `src-tauri/src/errors.rs` の `DomainError` enum で定義し、`Display` 経由で小文字のメッセージに変換する。
+Tauri命令の戻り値は `Result<T, String>`。文字列は利用者向けの表示メッセージ。構造化エラーは `apps/desktop/src-tauri/src/errors.rs` の `DomainError` enum で定義し、`Display` 経由で小文字のメッセージに変換する。
 
 ```
 DomainError::InvalidAssetId(String)
@@ -108,14 +108,14 @@ DomainError::InvalidRecordingTransition { from: String, to: String }
 
 ## 3. NativeApi TS契約
 
-`src/native/native-api.ts` の `NativeApi` interface がTS側の単一窓口。コンポーネントは `useApp` フック経由でこのAPIを呼び、直接 `@tauri-apps/api/core` の `invoke` は呼ばない。
+`apps/desktop/src/native/native-api.ts` の `NativeApi` interface がTS側の単一窓口。コンポーネントは `useApp` フック経由でこのAPIを呼び、直接 `@tauri-apps/api/core` の `invoke` は呼ばない。
 
 ### 3.1 対応規則
 
 - `NativeApi` の各メソッドは1つのTauri命令と1:1で対応する
 - メソッド名はcamelCase、対応するTauri命令名はsnake_case（例: `loadPluginIntoRack()` ↔ `load_plugin_into_rack`）
 - 戻り値が `CreativeSession` と `AudioStatus` の組の場合、Rust側はタプル `[CreativeSession, AudioStatus]` を返し、TS側でオブジェクト `{ session, audio }` に詰め替える
-- 真実源は `src/native/native-api.ts`（契約）と `src/native/native.ts`（invoke 実装）
+- 真実源は `apps/desktop/src/native/native-api.ts`（契約）と `apps/desktop/src/native/native.ts`（invoke 実装）
 
 ### 3.2 ブラウザプレビュー時の振る舞い
 
@@ -123,7 +123,7 @@ DomainError::InvalidRecordingTransition { from: String, to: String }
 
 ### 3.3 差替え実装
 
-`src/native/native-api-fake.ts` の `FakeNativeApi` がテスト用の差替え。以下の規則を守る:
+`apps/desktop/src/native/native-api-fake.ts` の `FakeNativeApi` がテスト用の差替え。以下の規則を守る:
 
 - **本番に存在しない成功経路を作らない**。フォールト状態・保存失敗・ロールバック失敗等のエラーシナリオを再現する
 - 決定的な振る舞い（カウンターベースのID・固定状態）でテストの再現性を保証する
@@ -135,7 +135,7 @@ DomainError::InvalidRecordingTransition { from: String, to: String }
 
 ## 4. sidecar JSON Lines プロトコル
 
-C++ sidecar（`riffra-audio.exe`）はRustプロセスの子プロセスで、stdin/stdoutでJSON Lines（1行=1JSON）をやり取りする。Rust側の `AudioSupervisor`（`src-tauri/src/native_audio.rs`）が単一のオーケストレータであり、C++側のエントリポイントは `native/audio-engine/src/Main.cpp`。
+C++ sidecar（`riffra-audio.exe`）はRustプロセスの子プロセスで、stdin/stdoutでJSON Lines（1行=1JSON）をやり取りする。Rust側の `AudioSupervisor`（`apps/desktop/src-tauri/src/native_audio.rs`）が単一のオーケストレータであり、C++側のエントリポイントは `native/audio-engine/src/Main.cpp`。
 
 ### 4.1 メッセージの基本構造
 
@@ -171,7 +171,7 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 ### 4.3 コマンドカタログ（Rust → C++）
 
-真実源は `src-tauri/src/native_audio.rs` の `AudioSupervisor` 各メソッドと、`Main.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
+真実源は `apps/desktop/src-tauri/src/native_audio.rs` の `AudioSupervisor` 各メソッドと、`Main.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
 
 - **状態照会**: `status` / `meterStatus`
 - **オーディオ設定**: `setEmergencyMute` / `setMasterGainDb` / `setAudioDriver` / `recoverAudioDevice`
@@ -262,7 +262,7 @@ Safe Modeでも「失敗を成功として表示しない」契約は維持す�
 
 ## 5. 権限・ケイパビリティ
 
-`src-tauri/capabilities/default.json` と `src-tauri/tauri.conf.json` で以下を設定する。
+`apps/desktop/src-tauri/capabilities/default.json` と `apps/desktop/src-tauri/tauri.conf.json` で以下を設定する。
 
 ### 5.1 外部プロセス許可（`shell:allow-spawn`）
 

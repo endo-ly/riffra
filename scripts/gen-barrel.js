@@ -1,7 +1,9 @@
 import { readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const directory = 'src/lib/generated';
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const directory = join(repositoryRoot, 'apps/desktop/src/lib/generated');
 const types = readdirSync(directory)
   .filter((file) => file.endsWith('.ts') && file !== 'index.ts')
   .map((file) => file.slice(0, -3))

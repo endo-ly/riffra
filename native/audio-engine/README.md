@@ -58,10 +58,10 @@ Both scripts do the following:
 1. Configure CMake.
 2. Build `riffra-audio` and `riffra-plugin-scan`.
 3. Run CTest.
-4. Install the sidecars to `src-tauri/binaries/` with `cmake --install`.
+4. Install the sidecars to `apps/desktop/src-tauri/binaries/` with `cmake --install`.
 
 This directory can be built independently of npm. The Tauri application expects
-the sidecars to exist under `src-tauri/binaries/` before it starts.
+the sidecars to exist under `apps/desktop/src-tauri/binaries/` before it starts.
 
 For a full project verification that also runs TypeScript and Rust checks, run
 `npm run verify:native` from the repository root. See the root

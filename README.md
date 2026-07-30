@@ -5,8 +5,8 @@ Riffra is a music production workbench built around a short creative loop: hear,
 ## Architecture
 
 - `riffra-core` owns the platform-independent Asset, Rack, and CreativeSession domain plus shared `AppCore` state.
-- Tauri 2 owns the desktop lifecycle, recovery, jobs, permissions, sidecar supervision, and native integration.
-- React and TypeScript render the single-window workbench.
+- `apps/desktop/src-tauri` owns the Tauri desktop lifecycle, recovery, jobs, permissions, sidecar supervision, and native integration.
+- `apps/desktop/src` contains the React and TypeScript single-window workbench.
 - A native C++20/JUCE sidecar owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, recording, and render paths.
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
 - SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
@@ -38,7 +38,7 @@ Riffra has three independent build domains. Use the standard toolchain for each:
 | Domain              | Toolchain     | Entry point                                   |
 | ------------------- | ------------- | --------------------------------------------- |
 | Frontend            | Vite / npm    | `npm run dev`                                 |
-| Application host    | Cargo / Tauri | `npm run tauri dev`                           |
+| Application host    | Cargo / Tauri | `npm run dev:tauri`                           |
 | Native audio engine | CMake         | `native/audio-engine/build.ps1` or `build.sh` |
 
 The domains are kept separate so the C++ engine can be built and tested without
@@ -63,7 +63,7 @@ cd native/audio-engine
 ```
 
 Each script configures CMake, builds `riffra-audio` and `riffra-plugin-scan`,
-runs CTest, and installs the binaries to `src-tauri/binaries/` using
+runs CTest, and installs the binaries to `apps/desktop/src-tauri/binaries/` using
 `cmake --install`.
 
 The sidecars are intentionally ignored by Git because they are platform-specific

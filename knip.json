@@ -1,5 +1,5 @@
 {
-  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs}"],
-  "ignore": ["src/lib/generated/**"],
+  "project": ["apps/desktop/src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs}"],
+  "ignore": ["apps/desktop/src/lib/generated/**"],
   "vitest": true
 }

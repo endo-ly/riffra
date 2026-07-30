@@ -31,12 +31,14 @@ Rust のアプリケーションロジックを `riffra-core` に切り出して
 
 ```text
 Cargo.toml                     # Rust workspace
+apps/
+  desktop/
+    src/                        # React / TypeScript
+    src-tauri/                  # Tauriデスクトップホスト
 crates/
   riffra-core/                 # Tauri / OS非依存
-  riffra-cli/                  # ヘッドレスCLI
-src-tauri/
-  Cargo.toml                   # Tauriデスクトップホスト
-  src/
+native/
+  audio-engine/                # CMake / C++
 ```
 
 `riffra-core`はAsset、Rack、`CreativeSession`の正準モデルと`AppCore<A>`を持つ。`AppCore`が保持するAudio Runtimeは`AudioRuntime` portを実装したホスト注入型であり、Tauriの`AppHandle`、sidecar process、イベント配信を参照しない。オフラインレンダーは共有の`OfflineRenderRequest`を通して実行し、制作処理は具体的な`AudioSupervisor`型へ依存しない。
@@ -236,8 +238,7 @@ Linux上でネイティブビルドする場合、既定のRust targetを使用�
 
 ```bash
 # Rust 側
-cd src-tauri
-cargo build -p riffra-cli --release
+cargo build -p riffra-desktop --release
 
 # ネイティブ側
 cd native/audio-engine

@@ -43,77 +43,77 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 
 ### 2.1 制作状態（CreativeSession 中心）
 
-| エンティティ                      | 役割                                                                                                             | TS                  | Rust                             | C++                                               |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------- | ------------------------------------------------- |
-| CreativeSession                   | 制作中の状態の正準モデル。ワークスペース、デザイン文脈、Play状態、アレンジ、ラック、スナップショット、設定を所有 | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| Workspace                         | 4つの固定制作領域（home / play / design / arrange）                                                              | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| DesignTool                        | Design workspace内の3つのツール（sample / analyze / separate）                                                   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| DesignContext                     | Design workspaceの現在の対象（active_tool + target_asset_id）                                                    | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| PlayState                         | Play側のライブ状態（sample_instrument）                                                                          | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| SampleInstrumentState / SamplePad | MIDIキーにマップされたサンプルスライスのパッドセット                                                             | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `native/audio-engine/src/Main.cpp`（MidiMonitor） |
-| SessionSettings                   | master / loop / countIn / note / AI関連設定                                                                      | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| SessionSnapshot                   | A/B比較用のラック+マスタ状態キャプチャ                                                                           | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
-| AiChangeSet                       | AI提案の変更履歴エントリ                                                                                         | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                                 |
+| エンティティ                      | 役割                                                                                                             | TS                               | Rust                                | C++                                               |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------- | ------------------------------------------------- |
+| CreativeSession                   | 制作中の状態の正準モデル。ワークスペース、デザイン文脈、Play状態、アレンジ、ラック、スナップショット、設定を所有 | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| Workspace                         | 4つの固定制作領域（home / play / design / arrange）                                                              | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| DesignTool                        | Design workspace内の3つのツール（sample / analyze / separate）                                                   | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| DesignContext                     | Design workspaceの現在の対象（active_tool + target_asset_id）                                                    | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| PlayState                         | Play側のライブ状態（sample_instrument）                                                                          | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| SampleInstrumentState / SamplePad | MIDIキーにマップされたサンプルスライスのパッドセット                                                             | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `native/audio-engine/src/Main.cpp`（MidiMonitor） |
+| SessionSettings                   | master / loop / countIn / note / AI関連設定                                                                      | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| SessionSnapshot                   | A/B比較用のラック+マスタ状態キャプチャ                                                                           | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
+| AiChangeSet                       | AI提案の変更履歴エントリ                                                                                         | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                 |
 
 ### 2.2 アレンジメント
 
-| エンティティ                                 | 役割                                                                           | TS                  | Rust                             | C++                                             |
-| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------- | -------------------------------- | ----------------------------------------------- |
-| Arrangement                                  | revision・timebase・loopRange・Track・Clipを所有する正準タイムライン           | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
-| ProjectTimebase / TimelineTick               | PPQ 960の音楽時間と単一テンポ・拍子                                            | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
-| FrameRange / FrameDuration                   | 半開区間のSource Frame範囲とSample Rate付き実時間                              | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::Clip`（派生）                  |
-| TimelineLoopRange                            | 有効状態を含む音楽時間上のLoop範囲                                             | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
-| TimelinePunchRange                           | 非破壊Punch Recordingの開始・終了Tick。未設定時は通常録音                      | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
-| Track / TrackKind                            | audio / instrumentのタイムライントラック。Track固有Rack、Arm、Monitoringを所有 | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | Runtime SnapshotでTrack単位のmix/MIDI経路へ解決 |
-| AudioClip / AudioClipPatch                   | AssetId、開始Tick、Source Frame範囲、実時間長を持つ非破壊編集                  | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `native/audio-engine/src/TimelineEngine.h`      |
-| MidiClip / MidiNote                          | Tickだけで位置と長さを保持するMIDIクリップとノート                             | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine`のMIDI scheduler                |
-| MidiEvent / MidiEventKind                    | Note以外のCC、Pitch Bend、Channel Pressureを保持するイベント                   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | `TimelineEngine`からInstrument Rackへ送信       |
-| RecordingSessionRecord / RecordingTakeRecord | 録音SessionとTake、Raw/Processed/MIDI Asset、Active状態、Timeline Clipの関係   | `src/lib/domain.ts` | `src-tauri/src/session/model.rs` | —                                               |
+| エンティティ                                 | 役割                                                                           | TS                               | Rust                                | C++                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------- | ----------------------------------------------- |
+| Arrangement                                  | revision・timebase・loopRange・Track・Clipを所有する正準タイムライン           | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
+| ProjectTimebase / TimelineTick               | PPQ 960の音楽時間と単一テンポ・拍子                                            | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
+| FrameRange / FrameDuration                   | 半開区間のSource Frame範囲とSample Rate付き実時間                              | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine::Clip`（派生）                  |
+| TimelineLoopRange                            | 有効状態を含む音楽時間上のLoop範囲                                             | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
+| TimelinePunchRange                           | 非破壊Punch Recordingの開始・終了Tick。未設定時は通常録音                      | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine::PreparedTimeline`（派生）      |
+| Track / TrackKind                            | audio / instrumentのタイムライントラック。Track固有Rack、Arm、Monitoringを所有 | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | Runtime SnapshotでTrack単位のmix/MIDI経路へ解決 |
+| AudioClip / AudioClipPatch                   | AssetId、開始Tick、Source Frame範囲、実時間長を持つ非破壊編集                  | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `native/audio-engine/src/TimelineEngine.h`      |
+| MidiClip / MidiNote                          | Tickだけで位置と長さを保持するMIDIクリップとノート                             | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine`のMIDI scheduler                |
+| MidiEvent / MidiEventKind                    | Note以外のCC、Pitch Bend、Channel Pressureを保持するイベント                   | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | `TimelineEngine`からInstrument Rackへ送信       |
+| RecordingSessionRecord / RecordingTakeRecord | 録音SessionとTake、Raw/Processed/MIDI Asset、Active状態、Timeline Clipの関係   | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                               |
 
 Track削除は、そのTrackに属するClip参照をArrangementから同時に削除する。Clipが参照していたAsset本体は削除しない。Trackの並べ替えではClipのTrack所有関係を変更しない。
 
 ### 2.3 ラック
 
-| エンティティ   | 役割                                                                  | TS                            | Rust                          | C++                                    |
-| -------------- | --------------------------------------------------------------------- | ----------------------------- | ----------------------------- | -------------------------------------- |
-| RackInstance   | セッションで使用中のライブララック全体                                | `src/lib/domain.ts`           | `src-tauri/src/rack/model.rs` | —                                      |
-| RackDevice     | ラック内の1スロット（input / plugin / utility / output）              | `src/lib/domain.ts`           | `src-tauri/src/rack/model.rs` | `native/audio-engine/src/PluginRack.h` |
-| RackMacro      | 1操作を複数パラメータへ割り当てるマクロ                               | `src/lib/domain.ts`           | `src-tauri/src/rack/model.rs` | —                                      |
-| RackDefinition | RackInstanceの保存済み形態。AssetKind=RackDefinitionのAssetとして保存 | `src/lib/domain.ts`（含まず） | `src-tauri/src/rack/model.rs` | —                                      |
-| DeviceKind     | ラックスロットの役割（input / plugin / utility / output）             | `src/lib/domain.ts`           | `src-tauri/src/rack/model.rs` | —                                      |
+| エンティティ   | 役割                                                                  | TS                                         | Rust                             | C++                                    |
+| -------------- | --------------------------------------------------------------------- | ------------------------------------------ | -------------------------------- | -------------------------------------- |
+| RackInstance   | セッションで使用中のライブララック全体                                | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                      |
+| RackDevice     | ラック内の1スロット（input / plugin / utility / output）              | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | `native/audio-engine/src/PluginRack.h` |
+| RackMacro      | 1操作を複数パラメータへ割り当てるマクロ                               | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                      |
+| RackDefinition | RackInstanceの保存済み形態。AssetKind=RackDefinitionのAssetとして保存 | `apps/desktop/src/lib/domain.ts`（含まず） | `crates/riffra-core/src/rack.rs` | —                                      |
+| DeviceKind     | ラックスロットの役割（input / plugin / utility / output）             | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                      |
 
 ### 2.4 録音
 
-| エンティティ           | 役割                                                                  | TS                                         | Rust                               | C++                                          |
-| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------- | -------------------------------------------- |
-| RecordingCapture       | 1回の録音イベントと生成物参照。状態遷移を所有                         | `src/lib/domain.ts`（RecordingCaptureDto） | `src-tauri/src/recording/model.rs` | `native/audio-engine/src/RecordingSession.h` |
-| RecordingCaptureStatus | 録音状態（recording / completing / completed / recoverable / failed） | `src/lib/domain.ts`                        | `src-tauri/src/recording/model.rs` | —                                            |
-| DropoutInformation     | 録音中のドロップアウト診断情報                                        | `src/lib/domain.ts`                        | `src-tauri/src/recording/model.rs` | —                                            |
+| エンティティ           | 役割                                                                  | TS                                                      | Rust                                            | C++                                          |
+| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------- |
+| RecordingCapture       | 1回の録音イベントと生成物参照。状態遷移を所有                         | `apps/desktop/src/lib/domain.ts`（RecordingCaptureDto） | `apps/desktop/src-tauri/src/recording/model.rs` | `native/audio-engine/src/RecordingSession.h` |
+| RecordingCaptureStatus | 録音状態（recording / completing / completed / recoverable / failed） | `apps/desktop/src/lib/domain.ts`                        | `apps/desktop/src-tauri/src/recording/model.rs` | —                                            |
+| DropoutInformation     | 録音中のドロップアウト診断情報                                        | `apps/desktop/src/lib/domain.ts`                        | `apps/desktop/src-tauri/src/recording/model.rs` | —                                            |
 
 ### 2.5 素材・資産
 
-| エンティティ        | 役割                                                                                     | TS                                  | Rust                           | C++ |
-| ------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------ | --- |
-| Asset               | 再利用可能な素材の正準モデル。ID・種類・コンテンツ場所・由来を所有                       | `src/lib/domain.ts`（LibraryAsset） | `src-tauri/src/asset/model.rs` | —   |
-| AssetId             | `asset:<UUIDv7>` 形式のみの識別子。newtype                                               | `src/lib/domain.ts`（string）       | `src-tauri/src/asset/model.rs` | —   |
-| AssetKind           | 素材種別（audio / midi / sample / rackDefinition / generationDefinition）                | `src/lib/domain.ts`                 | `src-tauri/src/asset/model.rs` | —   |
-| Provenance          | 素材の由来関係（source_asset_ids + operation + parameters）                              | —                                   | `src-tauri/src/asset/model.rs` | —   |
-| ProvenanceOperation | 由来操作（recorded / processed / sampled / separated / rendered / generated / imported） | —                                   | `src-tauri/src/asset/model.rs` | —   |
+| エンティティ        | 役割                                                                                     | TS                                               | Rust                              | C++ |
+| ------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------- | --- |
+| Asset               | 再利用可能な素材の正準モデル。ID・種類・コンテンツ場所・由来を所有                       | `apps/desktop/src/lib/domain.ts`（LibraryAsset） | `crates/riffra-core/src/asset.rs` | —   |
+| AssetId             | `asset:<UUIDv7>` 形式のみの識別子。newtype                                               | `apps/desktop/src/lib/domain.ts`（string）       | `crates/riffra-core/src/asset.rs` | —   |
+| AssetKind           | 素材種別（audio / midi / sample / rackDefinition / generationDefinition）                | `apps/desktop/src/lib/domain.ts`                 | `crates/riffra-core/src/asset.rs` | —   |
+| Provenance          | 素材の由来関係（source_asset_ids + operation + parameters）                              | —                                                | `crates/riffra-core/src/asset.rs` | —   |
+| ProvenanceOperation | 由来操作（recorded / processed / sampled / separated / rendered / generated / imported） | —                                                | `crates/riffra-core/src/asset.rs` | —   |
 
 ### 2.6 ランタイム状態（C++起点・Rust経由でTSへ伝播）
 
-| エンティティ                                           | 役割                                                  | TS                  | Rust                     | C++                                                                |
-| ------------------------------------------------------ | ----------------------------------------------------- | ------------------- | ------------------------ | ------------------------------------------------------------------ |
-| AudioStatus                                            | オーディオランタイムの状態・メーター・MIDI状況        | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（currentStatus）                |
-| AudioState                                             | 5状態（offline / starting / ready / muted / faulted） | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
-| PluginStatus                                           | ロード済みプラグインのパラメータ・状態                | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`（status / parameterStatus） |
-| PluginParameter                                        | プラグインの単一パラメータ                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`                             |
-| RecordingStatus                                        | 録音中の進捗・サンプル数・欠落情報                    | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/RecordingSession.h`（status）             |
-| AudioDeviceProbe                                       | オーディオ/MIDIデバイスのprobing結果                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（probeAudioDevices）            |
-| AudioDriverInfo / AudioAccessMode / AudioDevicePairing | ドライバ情報とアクセス特性                            | `src/lib/domain.ts` | `src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
-| MidiProbe                                              | MIDIデバイスのprobing結果                             | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
-| BootstrapState / RecoveryCandidate                     | 起動時状態・復旧候補                                  | `src/lib/domain.ts` | `src-tauri/src/model.rs` | —                                                                  |
-| TransportStatus                                        | Engine Clock、Timeline位置、revision、不連続通知      | `src/lib/domain.ts` | JSON event relay         | `native/audio-engine/src/TimelineEngine.cpp`                       |
+| エンティティ                                           | 役割                                                  | TS                               | Rust                                  | C++                                                                |
+| ------------------------------------------------------ | ----------------------------------------------------- | -------------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| AudioStatus                                            | オーディオランタイムの状態・メーター・MIDI状況        | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（currentStatus）                |
+| AudioState                                             | 5状態（offline / starting / ready / muted / faulted） | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
+| PluginStatus                                           | ロード済みプラグインのパラメータ・状態                | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`（status / parameterStatus） |
+| PluginParameter                                        | プラグインの単一パラメータ                            | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/PluginRack.h`                             |
+| RecordingStatus                                        | 録音中の進捗・サンプル数・欠落情報                    | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/RecordingSession.h`（status）             |
+| AudioDeviceProbe                                       | オーディオ/MIDIデバイスのprobing結果                  | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`（probeAudioDevices）            |
+| AudioDriverInfo / AudioAccessMode / AudioDevicePairing | ドライバ情報とアクセス特性                            | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | `native/audio-engine/src/Main.cpp`                                 |
+| MidiProbe                                              | MIDIデバイスのprobing結果                             | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | —                                                                  |
+| BootstrapState / RecoveryCandidate                     | 起動時状態・復旧候補                                  | `apps/desktop/src/lib/domain.ts` | `apps/desktop/src-tauri/src/model.rs` | —                                                                  |
+| TransportStatus                                        | Engine Clock、Timeline位置、revision、不連続通知      | `apps/desktop/src/lib/domain.ts` | JSON event relay                      | `native/audio-engine/src/TimelineEngine.cpp`                       |
 
 ---
 
@@ -158,7 +158,7 @@ Track削除は、そのTrackに属するClip参照をArrangementから同時に�
 
 ## 4. 不変条件と制約
 
-`CreativeSession::validate_and_normalize()`（`session/model.rs`）が保存・読込時に強制する。各エンティティが常に満たす条件を以下に示す。
+`CreativeSession::validate_and_normalize()`（`crates/riffra-core/src/session.rs`）が保存・読込時に強制する。各エンティティが常に満たす条件を以下に示す。
 
 ### 4.1 由来と素材
 

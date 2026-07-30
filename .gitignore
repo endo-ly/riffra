@@ -28,10 +28,10 @@ native/**/out/
 
 .artifacts/
 *.tsbuildinfo
-src-tauri/gen/
-src-tauri/binaries/
-src-tauri/err.txt
-src-tauri/out.txt
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/err.txt
+apps/desktop/src-tauri/out.txt
 .husky/_
 .codex/
 .agents/

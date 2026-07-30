@@ -10,13 +10,14 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
+      'apps/desktop/dist',
       'coverage',
       'node_modules',
       'target',
       '.artifacts',
-      'src-tauri',
+      'apps/desktop/src-tauri',
       'native',
-      'src/lib/generated',
+      'apps/desktop/src/lib/generated',
       '*.config.ts',
     ],
   },

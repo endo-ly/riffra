@@ -213,7 +213,7 @@ endif()
 
 foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan)
   install(FILES $<TARGET_FILE:${sidecar}>
-      DESTINATION "src-tauri/binaries"
+      DESTINATION "apps/desktop/src-tauri/binaries"
       RENAME "${sidecar}-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
       COMPONENT riffra-sidecars
   )

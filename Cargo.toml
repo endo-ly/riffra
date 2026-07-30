@@ -1,6 +1,6 @@
 [workspace]
 members = [
   "crates/riffra-core",
-  "src-tauri",
+  "apps/desktop/src-tauri",
 ]
 resolver = "2"

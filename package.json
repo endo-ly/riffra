@@ -1,23 +1,26 @@
 {
-  "name": "riffra",
+  "name": "riffra-workspace",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "workspaces": [
+    "apps/desktop"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "npm run typecheck && vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "tauri": "tauri",
-    "dev:tauri": "npm run tauri dev",
-    "gen:types": "cargo test --manifest-path Cargo.toml -p riffra export_types && node scripts/gen-barrel.js",
-    "check": "npm run build && npm run test",
-    "typecheck": "tsc -b",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "dev": "npm run dev --workspace @riffra/desktop",
+    "build": "npm run build --workspace @riffra/desktop",
+    "preview": "npm run preview --workspace @riffra/desktop",
+    "test": "npm run test --workspace @riffra/desktop",
+    "tauri": "npm run tauri --workspace @riffra/desktop",
+    "dev:tauri": "npm run dev:tauri --workspace @riffra/desktop",
+    "gen:types": "npm run gen:types --workspace @riffra/desktop",
+    "check": "npm run check --workspace @riffra/desktop",
+    "typecheck": "npm run typecheck --workspace @riffra/desktop",
+    "lint": "eslint apps/desktop",
+    "lint:fix": "eslint apps/desktop --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "knip": "knip --tsConfig tsconfig.app.json",
+    "knip": "knip --tsConfig apps/desktop/tsconfig.app.json --include=files,dependencies --no-config-hints",
     "verify": "node scripts/verify.mjs",
     "verify:native": "node scripts/verify.mjs --native",
     "prepare": "husky"
@@ -31,23 +34,8 @@
       "prettier --write"
     ]
   },
-  "dependencies": {
-    "@tauri-apps/api": "2.11.1",
-    "clsx": "^2.1.1",
-    "react": "19.2.7",
-    "react-dom": "19.2.7"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "2.11.4",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^26.1.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "6.0.3",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -55,13 +43,9 @@
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^17.7.0",
     "husky": "^9.1.7",
-    "jsdom": "^29.1.1",
     "knip": "^6.27.0",
     "lint-staged": "^17.0.8",
     "prettier": "^3.9.5",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.64.0",
-    "vite": "8.1.4",
-    "vitest": "^4.1.10"
+    "typescript-eslint": "^8.64.0"
   }
 }
