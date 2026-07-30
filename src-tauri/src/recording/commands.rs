@@ -17,10 +17,10 @@ use crate::recording::application::{self, RecordingContext};
 
 fn context<'a>(state: &'a State<'_, AppState>) -> RecordingContext<'a> {
     RecordingContext {
-        audio: &state.audio,
-        data_root: &state.data_root,
-        session: &state.session,
-        safe_mode: state.safe_mode,
+        audio: state.core.audio(),
+        data_root: state.core.data_root(),
+        session: state.core.session(),
+        safe_mode: state.core.safe_mode(),
     }
 }
 

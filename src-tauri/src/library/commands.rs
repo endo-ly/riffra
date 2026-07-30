@@ -15,7 +15,7 @@ pub async fn search_library(
     query: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<LibraryAsset>, String> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || library::search(&data_root, &query))
         .await
         .map_err(|error| format!("Library search task failed: {error}"))?
@@ -28,7 +28,7 @@ pub async fn update_library_asset(
     note: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<LibraryAsset, String> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         library::update_metadata(&data_root, &id, tag, note)
     })
@@ -41,7 +41,7 @@ pub async fn related_library_assets(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<LibraryAsset>, String> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || library::related(&data_root, &id))
         .await
         .map_err(|error| format!("Related asset task failed: {error}"))?

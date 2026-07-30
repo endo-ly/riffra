@@ -3,6 +3,7 @@ use crate::model::{
     AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
 };
 use crate::session::AudioTakeVariant;
+use riffra_core::{AudioRuntime, OfflineRenderRequest};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -28,15 +29,10 @@ pub struct AudioSupervisor {
     restart_preferences: Mutex<AudioPreferences>,
 }
 
-pub struct NativeOfflineRenderRequest {
-    pub snapshot: serde_json::Value,
-    pub destination: std::path::PathBuf,
-    pub start_tick: u64,
-    pub end_tick: u64,
-    pub sample_rate: u32,
-    pub block_size: u32,
-    pub master_gain_db: f64,
-    pub normalize: bool,
+impl AudioRuntime for AudioSupervisor {
+    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
+        AudioSupervisor::render_timeline_offline(self, request)
+    }
 }
 
 #[derive(Default)]
@@ -471,10 +467,7 @@ impl AudioSupervisor {
         Ok(())
     }
 
-    pub fn render_timeline_offline(
-        &self,
-        request: NativeOfflineRenderRequest,
-    ) -> Result<(), String> {
+    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
         self.send_command_with_timeout(
             serde_json::json!({
                 "type": "renderTimelineOffline",

@@ -1,4 +1,4 @@
-//! Rack domain model.
+//! Canonical Rack domain model.
 //!
 //! A running rack on a [`crate::session::CreativeSession`] is a
 //! [`RackInstance`]: the live device order, plugin state, parameters, bypass,

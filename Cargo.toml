@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/riffra-core",
+  "src-tauri",
+]
+resolver = "2"

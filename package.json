@@ -10,7 +10,7 @@
     "test": "vitest run",
     "tauri": "tauri",
     "dev:tauri": "npm run tauri dev",
-    "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml export_types && node scripts/gen-barrel.js",
+    "gen:types": "cargo test --manifest-path Cargo.toml -p riffra export_types && node scripts/gen-barrel.js",
     "check": "npm run build && npm run test",
     "typecheck": "tsc -b",
     "lint": "eslint .",

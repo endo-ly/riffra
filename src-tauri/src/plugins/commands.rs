@@ -22,7 +22,7 @@ pub async fn scan_vst3_folder(
     path: Option<String>,
 ) -> Result<ScanReport, String> {
     let root = PathBuf::from(path.unwrap_or_else(|| DEFAULT_VST3_ROOT.into()));
-    if state.safe_mode {
+    if state.core.safe_mode() {
         let now = crate::storage::now_ms();
         return Ok(ScanReport {
             root: root.to_string_lossy().into_owned(),
@@ -36,7 +36,7 @@ pub async fn scan_vst3_folder(
             }],
         });
     }
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     let report = tauri::async_runtime::spawn_blocking(move || plugins::discover(&root))
         .await
         .map_err(|error| {
@@ -60,9 +60,9 @@ pub async fn start_scan_job(
 ) -> Result<BackgroundJobStatus, String> {
     let (id, status) = state.jobs.start(JobKind::Scan);
     let registry = state.jobs.clone();
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     let root = PathBuf::from(path.unwrap_or_else(|| DEFAULT_VST3_ROOT.into()));
-    if state.safe_mode {
+    if state.core.safe_mode() {
         let report = plugins::ScanReport {
             root: root.to_string_lossy().into_owned(),
             started_at_ms: crate::storage::now_ms(),

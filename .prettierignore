@@ -2,6 +2,7 @@ dist
 coverage
 node_modules
 .artifacts
+target
 src-tauri/target
 native/audio-engine/build
 src/lib/generated

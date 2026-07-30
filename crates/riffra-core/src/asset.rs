@@ -1,6 +1,6 @@
 //! Asset domain model.
 //!
-//! An `Asset` is the canonical production material used across Riffra. It owns
+//! An `Asset` is canonical production material used across Riffra. It owns
 //! a stable identity ([`AssetId`]), a production kind, the location of its
 //! content file, and the [`Provenance`] that describes how it was produced.
 //!
@@ -10,7 +10,7 @@
 //!   instead of mutating an existing one;
 //! * only management metadata (name, tag, note) may change for a kept id.
 
-use crate::errors::DomainError;
+use crate::DomainError;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;

@@ -30,30 +30,27 @@ Riffra は現在 Windows 向けの Tauri + React + C++/JUCE sidecar 構成。AI 
 Rust のアプリケーションロジックを `riffra-core` に切り出して、デスクトップ版と CLI 版で共有する。デスクトップ版では Tauri と React を使う。ヘッドレス CLI ではこれらを使わない。
 
 ```text
+Cargo.toml                     # Rust workspace
+crates/
+  riffra-core/                 # Tauri / OS非依存
+  riffra-cli/                  # ヘッドレスCLI
 src-tauri/
-  crates/
-    riffra-core/      # Tauri 非依存ドメイン層
-    riffra-tauri/     # 既存デスクトップ
-    riffra-cli/       # ヘッドレス CLI
+  Cargo.toml                   # Tauriデスクトップホスト
+  src/
 ```
 
-`riffra-core` が持つ状態：
+`riffra-core`はAsset、Rack、`CreativeSession`の正準モデルと`AppCore<A>`を持つ。`AppCore`が保持するAudio Runtimeは`AudioRuntime` portを実装したホスト注入型であり、Tauriの`AppHandle`、sidecar process、イベント配信を参照しない。オフラインレンダーは共有の`OfflineRenderRequest`を通して実行し、制作処理は具体的な`AudioSupervisor`型へ依存しない。
 
-- `CreativeSession`
-- `AudioSupervisor`（sidecar 抽象層）
-- オーディオ設定
-- バックグラウンドジョブレジストリ
-
-Tauri command は `riffra-core` の操作を薄くラップする。
+デスクトップホストでは`AudioSupervisor`が`AudioRuntime`を実装する。CLIホストは同じportに、オフラインレンダーworkerまたはLinuxリアルタイムworkerとの接続を注入する。オーディオ設定、バックグラウンドジョブ、プロセス監視は、それを必要とするホスト側に置く。
 
 ### ネイティブエンジンの変更
 
-`native/audio-engine` を Linux 向けにビルドできるようにする。
+ネイティブ処理は、音声デバイスを開かないオフライン経路と、デバイスを所有するリアルタイム経路を分ける。
 
-- ASIO / WASAPI 非依存にする
-- ALSA / JACK / PipeWire 対応を追加する
-- VST3 ホスティングを無効にする
-- `MessageManager` による GUI イベントループを不要にする
+- `riffra-render`: Timelineと音声ファイルだけを扱い、AudioDeviceManager、GUI、VST3に依存しない
+- `riffra-audio`: ライブ再生、録音、MIDI、デバイス管理を扱う
+
+Linux対応は`riffra-render`を先に成立させ、その後で`riffra-audio`へALSA / JACKを追加する。PipeWire環境ではJACK互換層を利用する。
 
 ### AI エージェントとの接続
 
@@ -65,8 +62,8 @@ AI Agent
    ▼
 riffra-cli --interactive
    │ stdin / stdout JSON Lines
-   ▼
-riffra-audio (Linux ヘッドレス版)
+   ├───────────────► riffra-render
+   └───────────────► riffra-audio（ライブ機能を使う場合）
 ```
 
 既存の sidecar と同じく JSON Lines プロトコルを使う。
@@ -82,8 +79,8 @@ riffra-audio (Linux ヘッドレス版)
 1 コマンド実行してすぐ終了する。シェルスクリプトやバッチ処理に向く。
 
 ```bash
-riffra-cli add-track --project ./project.riffra --name drums
-riffra-cli render --project ./project.riffra --out ./output.wav
+riffra-cli add-track --project ./project/project.json --name drums
+riffra-cli render --project ./project/project.json --out ./output.wav
 ```
 
 ### 対話モード
@@ -91,17 +88,16 @@ riffra-cli render --project ./project.riffra --out ./output.wav
 プロセスを常駐させて、標準入力から JSON Lines 形式のコマンドを受け付ける。状態をメモリ上に保つので、連続操作が速い。
 
 ```bash
-riffra-cli --interactive --project ./project.riffra
+riffra-cli --interactive --project ./project/project.json
 ```
 
 入力例：
 
 ```json
-{"command":"addTrack","name":"synth-1","kind":"instrument"}
-{"command":"loadInstrument","trackId":"track-1","engine":"basic-synth"}
-{"command":"addMidiClip","trackId":"track-1","startTick":0,"durationTicks":3840,"notes":[]}
-{"command":"render","outPath":"./output.wav"}
-{"command":"getStatus"}
+{"protocolVersion":1,"requestId":"1","type":"addTrack","params":{"name":"audio-1","kind":"audio"}}
+{"protocolVersion":1,"requestId":"2","type":"addAudioClip","params":{"trackId":"track-1","startTick":0}}
+{"protocolVersion":1,"requestId":"3","type":"render","params":{"outPath":"./output.wav"}}
+{"protocolVersion":1,"requestId":"4","type":"getStatus","params":{}}
 ```
 
 ---
@@ -126,7 +122,9 @@ Linux 版の `riffra-audio` は VST3 プラグインホスティングを含ま�
 - `PluginChain`
 - `Main.cpp`
 
-Linux ビルドでは `RIFFRA_ENABLE_VST3` 定義を無効にして `PluginRack` を no-op スタブにする。Instrument Track は内蔵音源エンジンで処理するか、MIDI データのみ出力する。
+オフラインMVPでは、VST3 Deviceを含むTrackを明示的な未対応依存として報告する。`PluginRack`をno-op化して無音レンダーを成功扱いにはしない。
+
+Instrument Trackの音声化を追加する場合は、Track processor graphに内蔵音源processorを実装する。内蔵音源が存在しない状態では、MIDIデータの保存・編集・書出しまでを対応範囲とする。
 
 必要になれば後から追加できる：
 
@@ -164,32 +162,32 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 ## ネイティブエンジンの変更点
 
-| 項目               | Windows       | Linux                  |
-| ------------------ | ------------- | ---------------------- |
-| 音声バックエンド   | ASIO / WASAPI | ALSA / JACK / PipeWire |
-| VST3 ホスティング  | 有効          | 無効                   |
-| GUI イベントループ | 必要          | 不要                   |
-| エントリポイント   | `wmain`       | `main`                 |
+| 項目               | Windows       | Linux       |
+| ------------------ | ------------- | ----------- |
+| 音声バックエンド   | ASIO / WASAPI | ALSA / JACK |
+| VST3 ホスティング  | 有効          | 無効        |
+| GUI イベントループ | 必要          | 不要        |
+| エントリポイント   | `wmain`       | `main`      |
 
-CMakeLists.txt の主な変更点：
+CMake targetは機能別に分ける。
 
-- `JUCE_ASIO=1` を Windows 限定にする
-- Linux では `JUCE_ALSA=1`, `JUCE_JACK=1` を追加する
-- `PluginEditorHost.cpp` / `.h` を Linux ビルドから除外する
-- `RIFFRA_ENABLE_VST3` 定義を Windows 限定にする
+- render coreは`juce_audio_formats`、DSP、Timeline処理だけをリンクする
+- `riffra-render`はrender coreとJSON Linesの入出力だけをリンクする
+- `riffra-audio`だけが`juce_audio_devices`をリンクする
+- `JUCE_ASIO=1`とUI付き`JUCE_PLUGINHOST_VST3=1`はWindowsデスクトップtargetに限定する
+- Linuxリアルタイムtargetでは`JUCE_ALSA=1`、`JUCE_JACK=1`を使用する
+- `PluginEditorHost.cpp` / `.h`はUI付きデスクトップtargetだけへ含める
 
 ---
 
 ## ロードマップ
 
-### Rust コアの分離
+### オフラインレンダー基盤
 
-- `src-tauri` を workspace 化する
-- `riffra-core` crate を作る
-- `AppState` を `AppCore` に移す
-- Tauri command を `riffra-core` のラッパーにする
-- sidecar 起動を `tauri_plugin_shell` から抽象化する
-- 既存テストが通ることを確認する
+- Timelineとオフラインレンダー処理をAudioDeviceManager、GUI、VST3から分離する
+- `riffra-render` workerを作る
+- 音声デバイスとX ServerのないLinuxコンテナでレンダーを検証する
+- VST3 Deviceを含むTrackを構造化された未対応依存として報告する
 
 ### CLI 実装
 
@@ -199,12 +197,12 @@ CMakeLists.txt の主な変更点：
 - JSON Lines コマンドディスパッチを実装する
 - 最小コマンドセットを動かす
 
-### Linux ネイティブビルド
+### Linux リアルタイム音声
 
 - CMakeLists.txt の Linux 分岐を追加する
-- VST3 / GUI 依存をコンパイル条件で切り離す
-- Docker 内でビルド検証をする
-- PipeWire / JACK 環境で smoke test をする
+- AudioDeviceManagerをリアルタイムworkerだけへリンクする
+- ALSA / JACK環境でデバイス列挙、再生、録音を検証する
+- PipeWireのJACK互換環境でsmoke testをする
 
 ### AI エージェント連携検証
 
@@ -218,24 +216,21 @@ CMakeLists.txt の主な変更点：
 
 ### 開発環境
 
-Debian / Ubuntu を想定。
+Debian / Ubuntuを想定する。`riffra-core`とCLIに追加のネイティブパッケージは不要である。オフラインレンダーworkerのビルド環境は次を基準とする。
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential cmake ninja-build pkg-config \
-  libasound2-dev libjack-jackd2-dev \
-  libfreetype6-dev libfontconfig1-dev \
-  libx11-dev libxcomposite-dev libxext-dev \
-  libxrandr-dev libxrender-dev libxcursor-dev \
-  libxinerama-dev libgl1-mesa-dev
+  build-essential cmake ninja-build pkg-config
 ```
 
-Rust toolchain：
+リアルタイムworkerをビルドする環境だけにALSA / JACKの開発パッケージを追加する。
 
 ```bash
-rustup target add x86_64-unknown-linux-gnu
+sudo apt-get install -y libasound2-dev libjack-jackd2-dev
 ```
+
+Linux上でネイティブビルドする場合、既定のRust targetを使用する。別OSから`x86_64-unknown-linux-gnu`へクロスコンパイルする場合は、Rust targetだけでなく対応するリンカーとsysrootも必要になる。
 
 ### ビルド例
 
@@ -247,14 +242,12 @@ cargo build -p riffra-cli --release
 # ネイティブ側
 cd native/audio-engine
 cmake -B build-linux -S . -DCMAKE_BUILD_TYPE=Release
-cmake --build build-linux --target riffra-audio
+cmake --build build-linux --target riffra-render
 ```
 
 ### ヘッドレス実行
 
-X サーバーは不要。ただし JUCE の一部モジュールが X11 ライブラリにリンクを要求する場合があるので、ビルド時には上記の X11 開発パッケージが必要。実行時に実際のディスプレイは不要。
-
-オーディオデバイスがない環境では、最初からオフライン・レンダリング専用モードを優先して検証する。
+`riffra-render`はJUCE GUI moduleと`juce_audio_devices`をリンクせず、X Serverとオーディオデバイスのない環境で実行する。X11へのリンクが検出された場合は実行環境へX11を追加せず、render targetへGUI moduleが混入した依存違反として扱う。
 
 ---
 
@@ -265,7 +258,7 @@ X サーバーは不要。ただし JUCE の一部モジュールが X11 ライ�
 - VST3 プラグインは使えない
 - プラグインエディタは表示できない
 - 既存の React UI はヘッドレスモードでは使えない
-- ライブ音声入出力は ALSA / JACK / PipeWire 対応後に使える
+- ライブ音声入出力はALSA / JACK対応後に使える
 
 ### 後から追加できる機能
 

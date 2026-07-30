@@ -119,17 +119,18 @@ function main() {
     '--include=files,dependencies',
     '--no-config-hints',
   ]);
-  run('Rust formatting', 'cargo', ['fmt', '--manifest-path', 'src-tauri/Cargo.toml', '--check']);
+  run('Rust formatting', 'cargo', ['fmt', '--manifest-path', 'Cargo.toml', '--all', '--check']);
   run('Rust clippy', 'cargo', [
     'clippy',
     '--manifest-path',
-    'src-tauri/Cargo.toml',
+    'Cargo.toml',
+    '--workspace',
     '--all-targets',
     '--',
     '-D',
     'warnings',
   ]);
-  run('Rust tests', 'cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml']);
+  run('Rust tests', 'cargo', ['test', '--manifest-path', 'Cargo.toml', '--workspace']);
 
   if (native) {
     buildNative({

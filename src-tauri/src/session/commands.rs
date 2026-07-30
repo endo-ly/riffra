@@ -22,10 +22,10 @@ use crate::session::{
 
 fn context<'a>(state: &'a State<'_, AppState>) -> SessionContext<'a> {
     SessionContext {
-        audio: &state.audio,
-        data_root: &state.data_root,
-        session: &state.session,
-        safe_mode: state.safe_mode,
+        audio: state.core.audio(),
+        data_root: state.core.data_root(),
+        session: state.core.session(),
+        safe_mode: state.core.safe_mode(),
     }
 }
 
@@ -723,8 +723,11 @@ pub fn replace_missing_track_plugin(
 pub fn get_missing_dependencies(
     state: State<'_, AppState>,
 ) -> Result<Vec<MissingDependency>, String> {
-    let session = state.session.lock().map_err(lock_error)?.clone();
-    Ok(crate::missing::collect_missing(&state.data_root, &session))
+    let session = state.core.session().lock().map_err(lock_error)?.clone();
+    Ok(crate::missing::collect_missing(
+        state.core.data_root(),
+        &session,
+    ))
 }
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {

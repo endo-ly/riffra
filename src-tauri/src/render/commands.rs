@@ -13,10 +13,10 @@ pub async fn render_timeline(
 ) -> Result<RenderResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let session = state.session.lock().map_err(lock_error)?.clone();
+        let session = state.core.session().lock().map_err(lock_error)?.clone();
         render::render_timeline_with_options(
-            &state.audio,
-            &state.data_root,
+            state.core.audio(),
+            state.core.data_root(),
             &session,
             now_ms(),
             options.unwrap_or_default(),

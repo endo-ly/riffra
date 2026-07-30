@@ -232,10 +232,10 @@ pub async fn set_audio_driver(
     apply_audio_preferences(
         &AudioPreferencesContext {
             app: &app,
-            audio: &state.audio,
-            data_root: &state.data_root,
+            audio: state.core.audio(),
+            data_root: state.core.data_root(),
             preferences: &state.audio_preferences,
-            safe_mode: state.safe_mode,
+            safe_mode: state.core.safe_mode(),
         },
         config,
     )

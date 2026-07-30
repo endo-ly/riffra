@@ -18,10 +18,10 @@ use crate::rack::application::{self, RackContext};
 
 fn context<'a>(state: &'a State<'_, AppState>) -> RackContext<'a> {
     RackContext {
-        audio: &state.audio,
-        data_root: &state.data_root,
-        session: &state.session,
-        safe_mode: state.safe_mode,
+        audio: state.core.audio(),
+        data_root: state.core.data_root(),
+        session: state.core.session(),
+        safe_mode: state.core.safe_mode(),
     }
 }
 
@@ -119,7 +119,10 @@ pub fn save_rack_definition(
 
 #[tauri::command]
 pub fn list_rack_definitions(state: State<'_, AppState>) -> Result<Vec<LibraryAsset>, String> {
-    let assets = asset::list_by_kind(&state.data_root, crate::asset::AssetKind::RackDefinition)?;
+    let assets = asset::list_by_kind(
+        state.core.data_root(),
+        crate::asset::AssetKind::RackDefinition,
+    )?;
     Ok(assets
         .into_iter()
         .map(|asset| LibraryAsset {

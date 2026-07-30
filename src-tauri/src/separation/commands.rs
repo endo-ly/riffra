@@ -19,11 +19,11 @@ pub fn start_separation_job(
 ) -> Result<BackgroundJobStatus, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    asset::load(&state.data_root, &asset_id)
+    asset::load(state.core.data_root(), &asset_id)
         .ok_or_else(|| format!("Source asset is not registered: {asset_id}"))?;
     let (id, status) = state.jobs.start(JobKind::Separation);
     let registry = state.jobs.clone();
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         registry.set_running(&id, "Separating stereo channels in the background.");
         let Some(cancelled) = registry.cancellation_flag(&id) else {
@@ -48,5 +48,5 @@ pub fn start_separation_job(
 
 #[tauri::command]
 pub fn list_separations(state: State<'_, AppState>) -> Result<Vec<SeparationResult>, String> {
-    separation::list(&state.data_root)
+    separation::list(state.core.data_root())
 }

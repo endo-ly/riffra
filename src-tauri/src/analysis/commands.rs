@@ -16,10 +16,10 @@ pub fn start_analysis_job(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<BackgroundJobStatus, String> {
-    let path = asset::resolve_audio_path(&state.data_root, &asset_id)?;
+    let path = asset::resolve_audio_path(state.core.data_root(), &asset_id)?;
     let (id, status) = state.jobs.start(JobKind::Analysis);
     let registry = state.jobs.clone();
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         registry.set_running(&id, "Analyzing audio in the background.");
         let Some(cancelled) = registry.cancellation_flag(&id) else {
@@ -42,7 +42,7 @@ pub async fn analyze_asset(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<AudioAnalysis, String> {
-    let path = asset::resolve_audio_path(&state.data_root, &asset_id)?;
+    let path = asset::resolve_audio_path(state.core.data_root(), &asset_id)?;
     tauri::async_runtime::spawn_blocking(move || analysis::analyze(&path))
         .await
         .map_err(|error| format!("Audio analysis task failed: {error}"))?

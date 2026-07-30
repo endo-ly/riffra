@@ -4,7 +4,8 @@ Riffra is a music production workbench built around a short creative loop: hear,
 
 ## Architecture
 
-- Tauri 2 and Rust own the desktop lifecycle, durable session state, recovery, jobs, permissions, and native integration.
+- `riffra-core` owns the platform-independent Asset, Rack, and CreativeSession domain plus shared `AppCore` state.
+- Tauri 2 owns the desktop lifecycle, recovery, jobs, permissions, sidecar supervision, and native integration.
 - React and TypeScript render the single-window workbench.
 - A native C++20/JUCE sidecar owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, recording, and render paths.
 - Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.

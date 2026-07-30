@@ -48,9 +48,10 @@ use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
 };
 use native_audio::AudioSupervisor;
+use riffra_core::AppCore;
 use serde::Deserialize;
 use session::CreativeSession;
-use std::{path::PathBuf, sync::Mutex};
+use std::sync::Mutex;
 use storage::SessionStore;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
@@ -58,12 +59,8 @@ use tauri_plugin_shell::ShellExt;
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
 struct AppState {
-    data_root: PathBuf,
-    session: Mutex<CreativeSession>,
-    audio: AudioSupervisor,
+    core: AppCore<AudioSupervisor>,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
-    recovered_from_generation: bool,
-    safe_mode: bool,
     jobs: jobs::JobRegistry,
 }
 
@@ -81,11 +78,11 @@ pub(crate) fn queue_session_index(data_root: &std::path::Path, session: &Creativ
 #[tauri::command]
 fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, String> {
     Ok(BootstrapState {
-        session: state.session.lock().map_err(lock_error)?.clone(),
-        recovered_from_generation: state.recovered_from_generation,
-        safe_mode: state.safe_mode,
+        session: state.core.session().lock().map_err(lock_error)?.clone(),
+        recovered_from_generation: state.core.recovered_from_generation(),
+        safe_mode: state.core.safe_mode(),
         native_available: true,
-        recovery_candidates: SessionStore::new(&state.data_root)
+        recovery_candidates: SessionStore::new(state.core.data_root())
             .recovery_candidates()
             .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
             .into_iter()
@@ -97,15 +94,15 @@ fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, Str
                 note: candidate.note,
             })
             .collect(),
-        data_root: state.data_root.to_string_lossy().into_owned(),
+        data_root: state.core.data_root().to_string_lossy().into_owned(),
         vst3_root: DEFAULT_VST3_ROOT.into(),
     })
 }
 
 #[tauri::command]
 fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::ProjectExport, String> {
-    let session = state.session.lock().map_err(lock_error)?.clone();
-    projects::export(&state.data_root, &session, storage::now_ms())
+    let session = state.core.session().lock().map_err(lock_error)?.clone();
+    projects::export(state.core.data_root(), &session, storage::now_ms())
 }
 
 #[tauri::command]
@@ -168,7 +165,7 @@ async fn probe_midi_devices(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<MidiProbe, String> {
-    if state.safe_mode {
+    if state.core.safe_mode() {
         return Ok(MidiProbe {
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -195,7 +192,7 @@ async fn probe_audio_devices(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AudioDeviceProbe, String> {
-    if state.safe_mode {
+    if state.core.safe_mode() {
         return Ok(AudioDeviceProbe {
             drivers: Vec::new(),
             midi_inputs: Vec::new(),
@@ -273,7 +270,7 @@ fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
 
 #[tauri::command]
 async fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.refresh_meters()
+    state.core.audio().refresh_meters()
 }
 
 #[tauri::command]
@@ -281,56 +278,56 @@ fn preview_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<Au
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }
-    state.audio.set_master_gain_db(gain_db)
+    state.core.audio().set_master_gain_db(gain_db)
 }
 
 #[tauri::command]
 fn set_emergency_mute(muted: bool, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.set_emergency_mute(muted)
+    state.core.audio().set_emergency_mute(muted)
 }
 
 #[tauri::command]
 fn recover_audio_device(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.safe_mode {
+    if state.core.safe_mode() {
         return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
     }
-    state.audio.recover_audio_device(&app)
+    state.core.audio().recover_audio_device(&app)
 }
 
 #[tauri::command]
 fn enable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.safe_mode {
+    if state.core.safe_mode() {
         return Err(
             "Safe Mode blocks MIDI input; offline MIDI and audio export remain available.".into(),
         );
     }
-    state.audio.enable_midi_listening()
+    state.core.audio().enable_midi_listening()
 }
 
 #[tauri::command]
 fn disable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.disable_midi_listening()
+    state.core.audio().disable_midi_listening()
 }
 
 #[tauri::command]
 fn send_midi_to_plugin(bytes: Vec<u8>, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.safe_mode {
+    if state.core.safe_mode() {
         return Err(
             "Safe Mode blocks outgoing MIDI; offline MIDI and audio export remain available."
                 .into(),
         );
     }
-    state.audio.send_midi(&bytes)
+    state.core.audio().send_midi(&bytes)
 }
 
 #[tauri::command]
 fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.stop_preview()
+    state.core.audio().stop_preview()
 }
 
 #[tauri::command]
 fn stop_preview_for_key(voice_key: i32, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.audio.stop_preview_for_key(voice_key)
+    state.core.audio().stop_preview_for_key(voice_key)
 }
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
@@ -412,12 +409,14 @@ pub fn run() {
             SessionStore::new(&data_root).save(&session)?;
             let _ = library::sync_session(&data_root, &session);
             app.manage(AppState {
-                data_root,
-                session: Mutex::new(session),
-                audio,
+                core: AppCore::new(
+                    data_root,
+                    session,
+                    audio,
+                    recovered_from_generation,
+                    safe_mode,
+                ),
                 audio_preferences: Mutex::new(effective_preferences),
-                recovered_from_generation,
-                safe_mode,
                 jobs: jobs::JobRegistry::default(),
             });
             Ok(())

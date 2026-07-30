@@ -1,8 +1,5 @@
-use crate::{
-    asset,
-    native_audio::{AudioSupervisor, NativeOfflineRenderRequest},
-    session::CreativeSession,
-};
+use crate::{asset, session::CreativeSession};
+use riffra_core::{AudioRuntime, OfflineRenderRequest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -74,7 +71,7 @@ struct RenderPlan {
 }
 
 pub fn render_timeline_with_options(
-    audio: &AudioSupervisor,
+    audio: &impl AudioRuntime,
     data_root: &Path,
     session: &CreativeSession,
     created_at_ms: u64,
@@ -86,7 +83,7 @@ pub fn render_timeline_with_options(
             .map_err(|error| format!("Render output folder could not be created: {error}"))?;
     }
 
-    audio.render_timeline_offline(NativeOfflineRenderRequest {
+    audio.render_timeline_offline(OfflineRenderRequest {
         snapshot: plan.snapshot,
         destination: plan.output_path.clone(),
         start_tick: plan.start_tick,

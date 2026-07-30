@@ -1,4 +1,4 @@
-//! CreativeSession and the production state it owns.
+//! Canonical CreativeSession and the production state it owns.
 //!
 //! [`CreativeSession`] is the canonical production-state model. It holds the
 //! active workspace, design context, play state (including the live sample
@@ -6,8 +6,8 @@
 //! settings. It deliberately does not own audio/MIDI file bodies, the Library
 //! index, recording files, or background-job state.
 
+use crate::DomainError;
 use crate::asset::AssetId;
-use crate::errors::DomainError;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -65,12 +65,13 @@ impl Default for ProjectTimebase {
 
 impl ProjectTimebase {
     /// Converts a real-time millisecond offset to the nearest timeline tick.
-    pub(crate) fn milliseconds_to_ticks(self, milliseconds: f64) -> TimelineTick {
+    pub fn milliseconds_to_ticks(self, milliseconds: f64) -> TimelineTick {
         let ticks = milliseconds.max(0.0) * self.bpm * f64::from(self.ppq) / 60_000.0;
         TimelineTick(ticks.round().max(0.0) as u64)
     }
 
-    pub(crate) fn frames_to_ticks(self, frames: u64, sample_rate: u32) -> TimelineTick {
+    /// Converts source frames at `sample_rate` to the nearest Timeline tick.
+    pub fn frames_to_ticks(self, frames: u64, sample_rate: u32) -> TimelineTick {
         self.milliseconds_to_ticks(frames as f64 * 1000.0 / f64::from(sample_rate))
     }
 
@@ -511,7 +512,7 @@ pub struct AudioClip {
 
 impl AudioClip {
     /// Creates a clip that references an entire source at its native rate.
-    pub(crate) fn full_source(
+    pub fn full_source(
         id: String,
         name: String,
         track_id: String,
@@ -558,7 +559,7 @@ impl AudioClip {
     /// This is the single canonical place where clip gain, pan, and fade
     /// limits live; callers supply raw values and rely on this method instead
     /// of replicating the rule.
-    pub(crate) fn normalize_fields(&mut self) {
+    pub fn normalize_fields(&mut self) {
         if !self.gain_db.is_finite() {
             self.gain_db = 0.0;
         }
@@ -1860,7 +1861,10 @@ pub struct CreativeSession {
 /// the persistence boundary. The returned value contains only the canonical
 /// Session / Pass / Track Slot / Take representation and therefore serializes
 /// without legacy fields.
-pub(crate) fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
+///
+/// # Errors
+/// Returns a JSON error when the payload cannot be decoded as a valid session.
+pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
     let value = serde_json::from_slice::<serde_json::Value>(payload)?;
     let mut session = serde_json::from_value::<CreativeSession>(value.clone())?;
     let Some(arrangement) = value.get("arrangement") else {
