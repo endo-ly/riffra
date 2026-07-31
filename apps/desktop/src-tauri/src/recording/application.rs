@@ -1748,7 +1748,7 @@ mod tests {
         let root = temp_root("rename");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
         // Relocation requires the Library Read Model row to already exist, so
         // sync the Inbox before any rename/archive/promote just like production.
@@ -1766,7 +1766,7 @@ mod tests {
         let root = temp_root("delete");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
         let ctx = context_for(&root, &session, &audio, &runtime, false);
         delete_recording(&ctx, &id).unwrap();
@@ -1779,7 +1779,7 @@ mod tests {
         let root = temp_root("relocate");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let archive_id = seed_take(&root, "take-archive", b"a");
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
         let ctx = context_for(&root, &session, &audio, &runtime, false);
@@ -1793,7 +1793,7 @@ mod tests {
         let root = temp_root("safe");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let ctx = context_for(&root, &session, &audio, &runtime, true);
         let error = start_recording(&ctx).unwrap_err();
         assert!(error.contains("Safe Mode"));
@@ -2058,7 +2058,7 @@ mod tests {
         let root = temp_root("list");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"processed");
         let ctx = context_for(&root, &session, &audio, &runtime, false);
         let recordings = list_recordings(&ctx, None).unwrap();
@@ -2071,7 +2071,7 @@ mod tests {
         let root = temp_root("dupes");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"identical");
         let _ = seed_take(&root, "take-b", b"identical");
         let _ = seed_take(&root, "take-c", b"different");

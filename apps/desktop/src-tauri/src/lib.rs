@@ -570,8 +570,15 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle(), preferences.clone())
             };
+            let runtime_audio = audio.clone();
+            let runtime_app = app.handle().clone();
+            let runtime_recovery: runtime_reconciler::RuntimeRecovery =
+                std::sync::Arc::new(move || {
+                    runtime_audio.restart_sidecar_for_runtime(&runtime_app)
+                });
             let runtime = runtime_reconciler::RuntimeReconciler::new(
                 std::sync::Arc::new(audio.clone()),
+                Some(runtime_recovery),
             )?;
             let effective_preferences = preferences.clone();
             audio.set_restart_preferences(effective_preferences.clone())?;

@@ -14,6 +14,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+pub type RuntimeRecovery = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 pub trait RuntimeDriver: Send + Sync + 'static {
     fn load_timeline_snapshot(&self, snapshot: Value) -> Result<(), String>;
     fn play_timeline(&self) -> Result<(), String>;
@@ -43,6 +45,7 @@ struct RuntimeTarget {
     operation_id: u64,
     session_revision: u64,
     snapshot: Value,
+    recovery_attempts: u8,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -68,7 +71,7 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
-    pub fn new(driver: Arc<D>) -> Result<Self, String> {
+    pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, String> {
         let generation = driver.runtime_generation();
         let state = Arc::new((
             Mutex::new(ReconcilerState {
@@ -87,9 +90,10 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         ));
         let worker_state = Arc::clone(&state);
         let worker_driver = Arc::clone(&driver);
+        let worker_recovery = recovery.clone();
         let worker = thread::Builder::new()
             .name("riffra-runtime-reconciler".into())
-            .spawn(move || worker_loop(worker_driver, worker_state))
+            .spawn(move || worker_loop(worker_driver, worker_state, worker_recovery))
             .map_err(|error| format!("Runtime Reconciler could not start: {error}"))?;
         Ok(Self {
             driver,
@@ -108,6 +112,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             operation_id,
             session_revision,
             snapshot,
+            recovery_attempts: 0,
         });
         state.status = RuntimeProjectionStatus {
             state: RuntimeProjectionState::Queued,
@@ -245,7 +250,11 @@ impl<D: RuntimeDriver> Drop for RuntimeReconciler<D> {
     }
 }
 
-fn worker_loop<D: RuntimeDriver>(driver: Arc<D>, state: Arc<(Mutex<ReconcilerState>, Condvar)>) {
+fn worker_loop<D: RuntimeDriver>(
+    driver: Arc<D>,
+    state: Arc<(Mutex<ReconcilerState>, Condvar)>,
+    recovery: Option<RuntimeRecovery>,
+) {
     loop {
         let target = {
             let (lock, wake) = &*state;
@@ -271,7 +280,45 @@ fn worker_loop<D: RuntimeDriver>(driver: Arc<D>, state: Arc<(Mutex<ReconcilerSta
         };
 
         let generation = driver.runtime_generation();
-        let result = driver.load_timeline_snapshot(target.snapshot);
+        let mut result = driver.load_timeline_snapshot(target.snapshot.clone());
+        if is_native_timeout(&result)
+            && target.recovery_attempts == 0
+            && let Some(recovery) = recovery.as_ref()
+        {
+            match recovery() {
+                Ok(()) => {
+                    let (lock, wake) = &*state;
+                    let mut state = lock.lock().expect("runtime reconciler lock poisoned");
+                    state.running_operation_id = None;
+                    state.status.running_operation_id = None;
+                    if state.status.operation_id == target.operation_id
+                        && state.latest_target.is_none()
+                    {
+                        state.latest_target = Some(RuntimeTarget {
+                            recovery_attempts: 1,
+                            ..target
+                        });
+                        state.status.state = RuntimeProjectionState::Queued;
+                        state.status.runtime_generation = driver.runtime_generation();
+                        state.status.started_at_ms = None;
+                        state.status.completed_at_ms = None;
+                        state.status.last_error = None;
+                        wake.notify_one();
+                    }
+                    continue;
+                }
+                Err(recovery_error) => {
+                    result = Err(format!(
+                        "{error}; Sidecar recovery failed: {recovery_error}",
+                        error = result
+                            .as_ref()
+                            .err()
+                            .cloned()
+                            .unwrap_or_else(|| "Audio Runtime timed out.".into())
+                    ));
+                }
+            }
+        }
         let current_generation = driver.runtime_generation();
         let result = if generation == current_generation {
             result
@@ -334,6 +381,13 @@ fn worker_loop<D: RuntimeDriver>(driver: Arc<D>, state: Arc<(Mutex<ReconcilerSta
     }
 }
 
+fn is_native_timeout(result: &Result<(), String>) -> bool {
+    result
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.contains("did not acknowledge the command within"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +398,7 @@ mod tests {
         generation: AtomicU64,
         loaded: Mutex<Vec<u64>>,
         load_delay: Duration,
+        timeout_once: AtomicU64,
         played: AtomicU64,
         stopped: AtomicU64,
     }
@@ -354,6 +409,7 @@ mod tests {
                 generation: AtomicU64::new(1),
                 loaded: Mutex::new(Vec::new()),
                 load_delay,
+                timeout_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
             }
@@ -363,6 +419,15 @@ mod tests {
     impl RuntimeDriver for FakeDriver {
         fn load_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
             thread::sleep(self.load_delay);
+            if self
+                .timeout_once
+                .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Err(
+                    "Native audio did not acknowledge the command within 15 seconds.".into(),
+                );
+            }
             self.loaded
                 .lock()
                 .unwrap()
@@ -402,7 +467,7 @@ mod tests {
     #[test]
     fn keeps_only_the_latest_queued_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(1), 1);
         reconciler.submit(snapshot(2), 2);
         reconciler.submit(snapshot(3), 3);
@@ -416,7 +481,7 @@ mod tests {
     #[test]
     fn play_waits_for_the_latest_graph_without_blocking_the_request() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(7), 7);
 
         let status = reconciler.play().unwrap();
@@ -431,7 +496,7 @@ mod tests {
     #[test]
     fn stop_clears_pending_play_intent() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(9), 9);
         reconciler.play().unwrap();
         reconciler.stop().unwrap();
@@ -439,5 +504,23 @@ mod tests {
         thread::sleep(Duration::from_millis(40));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn retries_once_after_native_deadline_through_recovery_callback() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver.timeout_once.store(1, Ordering::Release);
+        let recoveries = Arc::new(AtomicU64::new(0));
+        let recovery_count = Arc::clone(&recoveries);
+        let recovery: RuntimeRecovery = Arc::new(move || {
+            recovery_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        });
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
+        reconciler.submit(snapshot(11), 11);
+
+        wait_until(|| reconciler.status().active_session_revision == Some(11));
+        assert_eq!(recoveries.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);
     }
 }

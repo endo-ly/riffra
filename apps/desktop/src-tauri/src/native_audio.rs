@@ -439,6 +439,16 @@ impl AudioSupervisor {
         Ok(())
     }
 
+    pub(crate) fn restart_sidecar_for_runtime<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+    ) -> Result<(), String> {
+        self.restart_sidecar(
+            app,
+            "The isolated audio runtime exceeded its lifecycle deadline and is restarting.",
+        )
+    }
+
     pub fn refresh_status(&self) -> Result<AudioStatus, String> {
         self.send_command(
             serde_json::json!({"type": "status"}),
