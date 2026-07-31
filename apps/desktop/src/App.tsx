@@ -6,6 +6,7 @@ import { useApp } from '@/hooks/useApp';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { workspaces } from '@/constants';
 import { isOutputMuted } from '@/lib/audio-safety';
+import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
 import {
   AudioDriverPicker,
   Icon,
@@ -134,6 +135,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     toggleRecording,
     api: nativeApi,
   } = useApp(api);
+  const liveFeedbackSuspected = useAudioFeedbackSuspected();
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
@@ -143,7 +145,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       </div>
     );
 
-  const isMuted = isOutputMuted(audio);
+  const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
+  const isMuted = isOutputMuted(audio) || feedbackSuspected;
   return (
     <main className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''}`}>
       <GlobalBar
@@ -404,7 +407,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         <div className={styles.muteBanner}>
           <Icon name="stop" />
           EMERGENCY MUTE ENGAGED —{' '}
-          {audio.feedbackSuspected
+          {feedbackSuspected
             ? 'acoustic feedback suspected; output silenced automatically'
             : 'audio output is forced silent'}
         </div>

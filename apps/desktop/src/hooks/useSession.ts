@@ -30,6 +30,15 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const historySkip = useRef(false);
   const sessionRef = useRef<CreativeSession | null>(null);
   sessionRef.current = session;
+  const applyNativeSession = useCallback((nextSession: CreativeSession) => {
+    const current = sessionRef.current;
+    const guarded =
+      current != null && current.workspace !== nextSession.workspace
+        ? { ...nextSession, workspace: current.workspace }
+        : nextSession;
+    sessionRef.current = guarded;
+    setSession(guarded);
+  }, []);
 
   const undo = useCallback(async () => {
     if (!session || undoStack.length === 0) return;
@@ -40,12 +49,12 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       historySkip.current = true;
       setUndoStack(undoStack.slice(0, -1));
       setRedoStack([...redoStack, session].slice(-40));
-      setSession(canonical);
+      applyNativeSession(canonical);
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
+  }, [applyNativeSession, redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
 
   const redo = useCallback(async () => {
     if (!session || redoStack.length === 0) return;
@@ -56,20 +65,20 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       historySkip.current = true;
       setRedoStack(redoStack.slice(0, -1));
       setUndoStack([...undoStack, session].slice(-40));
-      setSession(canonical);
+      applyNativeSession(canonical);
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
+  }, [applyNativeSession, redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
 
   const captureSnapshot = useCallback(
     async (slot: 'A' | 'B') => {
       const { session: nextSession, audio: nextAudio } = await captureSnapshotApi(slot);
-      setSession(nextSession);
+      applyNativeSession(nextSession);
       setAudio(nextAudio);
     },
-    [captureSnapshotApi, setAudio],
+    [applyNativeSession, captureSnapshotApi, setAudio],
   );
 
   const recallSnapshot = useCallback(
@@ -78,16 +87,20 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       // restore + session rack/macros/master commit happen together, so React
       // never re-derives the rack or sequences low-level plugin calls itself.
       const { session: nextSession, audio: nextAudio } = await recallSnapshotApi(slot);
-      setSession(nextSession);
+      applyNativeSession(nextSession);
       setAudio(nextAudio);
     },
-    [recallSnapshotApi, setAudio, setSession],
+    [applyNativeSession, recallSnapshotApi, setAudio],
   );
 
   useEffect(() => {
     if (!session) return;
     const previous = previousSession.current;
-    if (previous && JSON.stringify(previous) !== JSON.stringify(session)) {
+    // Native application operations return a fresh canonical object for an
+    // actual session mutation. Comparing object identity is enough here and
+    // avoids serializing the entire arrangement/rack on every edit just to
+    // decide whether to push an undo entry.
+    if (previous && previous !== session) {
       if (historySkip.current) historySkip.current = false;
       else {
         setUndoStack((stack) => [...stack, previous].slice(-40));
@@ -102,8 +115,8 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
     if (next == null) return;
     const name = next.trim().slice(0, 160);
-    setSession(await updateSessionSettings({ projectName: name || null }));
-  }, [session, updateSessionSettings]);
+    applyNativeSession(await updateSessionSettings({ projectName: name || null }));
+  }, [applyNativeSession, session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
     const result = await exportSessionApi();

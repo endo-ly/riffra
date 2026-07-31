@@ -4,11 +4,13 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
+static SESSION_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Result of loading the active session, including how the load resolved.
 #[derive(Debug, Clone)]
@@ -135,6 +137,13 @@ impl SessionStore {
     }
 
     pub fn save(&self, session: &CreativeSession) -> io::Result<()> {
+        // Multiple async Tauri commands can now reach the persistence boundary
+        // at the same time. Serialize the generation/current swap so two
+        // saves cannot copy, replace, or prune each other's files.
+        let _save_guard = SESSION_SAVE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|error| io::Error::other(format!("session save lock poisoned: {error}")))?;
         crate::asset::validate_session_references(&self.data_root, session)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         self.ensure_layout()?;

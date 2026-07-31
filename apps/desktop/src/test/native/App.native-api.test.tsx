@@ -40,14 +40,30 @@ describe('App driven by FakeNativeApi', () => {
     await waitForAppShell();
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
     expect(fake.calls).toContain('bootstrap');
-    expect(fake.calls).toContain('getAudioStatus');
-    expect(fake.calls).toContain('restoreCurrentRack');
+    await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
+    expect(fake.calls).not.toContain('restoreCurrentRack');
     expect(fake.calls).toContain('setEmergencyMute');
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(fake.audio.state).toBe('muted');
+  });
+
+  it('restores the Play rack when entering Play instead of during Home startup', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+
+    await waitForAppShell();
+    expect(fake.calls).not.toContain('restoreCurrentRack');
+
+    const user = userEvent.setup();
+    await user.click(
+      within(screen.getByRole('navigation', { name: /Workspace/ })).getByRole('button', {
+        name: /Play/,
+      }),
+    );
+    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
   });
 
   it('re-engages emergency mute when the audio driver changes', async () => {
@@ -58,6 +74,9 @@ describe('App driven by FakeNativeApi', () => {
     const user = userEvent.setup();
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
 
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /96,000 Hz/ })).toBeInTheDocument(),
+    );
     await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
     await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
@@ -222,7 +241,7 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
     await waitForAppShell();
 
-    expect(fake.calls).toContain('scanVst3Folder');
+    await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
 
@@ -255,6 +274,9 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi({ plugins: [examplePlugin], pluginLoadFaulted: true });
     renderApp(fake);
     await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
+    );
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
@@ -270,6 +292,9 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi({ plugins: [examplePlugin] });
     renderApp(fake);
     await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
+    );
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
@@ -295,6 +320,9 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi({ plugins: [examplePlugin] });
     renderApp(fake);
     await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
+    );
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
@@ -313,6 +341,9 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
     await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /96,000 Hz/ })).toBeInTheDocument(),
+    );
     const savesBeforeSelection = fake.savedSessions.length;
 
     const user = userEvent.setup();
@@ -327,6 +358,7 @@ describe('App driven by FakeNativeApi', () => {
   it('restores plugin parameters into the rack through the injected api', async () => {
     const bootSession = {
       ...defaultSession(),
+      workspace: 'play' as const,
       rack: {
         ...defaultSession().rack,
         devices: [

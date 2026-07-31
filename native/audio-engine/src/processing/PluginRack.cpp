@@ -389,9 +389,23 @@ bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error
     if (values.isArray()) {
         const auto available = parameterStatus().getProperty("parameters", {});
         const auto count = available.isArray() ? available.size() : 0;
-        for (int index = 0; index < std::min(values.size(), count); ++index)
-            if (!setParameter(index, static_cast<float>(values[index]), error))
+        for (int index = 0; index < std::min(values.size(), count); ++index) {
+            const auto target = static_cast<float>(values[index]);
+            const auto availableIndex = static_cast<int>(
+                available[index].getProperty("index", -1));
+            const auto current = static_cast<float>(
+                available[index].getProperty("value", target));
+            // VST instruments often expose thousands of parameters, most of
+            // which are already at their saved/default value immediately
+            // after construction. Avoid calling third-party automation hooks
+            // for those entries; applying them all can turn a normal restore
+            // into a multi-second operation even though no state changes.
+            if (availableIndex == index && std::isfinite(target) && std::isfinite(current)
+                && std::abs(target - current) <= 0.000001f)
+                continue;
+            if (!setParameter(index, target, error))
                 return false;
+        }
     }
     setBypassed(static_cast<bool>(state.getProperty("bypassed", false)));
     return true;

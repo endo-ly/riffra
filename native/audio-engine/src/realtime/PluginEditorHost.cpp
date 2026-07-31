@@ -75,13 +75,26 @@ void PluginEditorHost::close() {
 
 std::optional<PluginLoadError> PluginEditorHost::load(const juce::String& path,
                                                        const double sampleRate,
-                                                       const int blockSize) {
+                                                       const int blockSize,
+                                                       const juce::var& persistedState) {
     std::optional<PluginLoadError> result;
     juce::String dispatchError;
     if (!runOnMessageThread(
-            [this, &path, sampleRate, blockSize, &result] {
+            [this, path, sampleRate, blockSize, persistedState, &result] {
                 closeOnMessageThread();
                 result = rack.load(path, sampleRate, blockSize);
+                if (!result.has_value() && persistedState.isObject()) {
+                    juce::String stateError;
+                    if (!rack.applyPersistedState(persistedState, stateError)) {
+                        rack.clear();
+                        result = PluginLoadError{
+                            "pluginState",
+                            stateError.isNotEmpty()
+                                ? stateError
+                                : "The VST3 persisted state could not be applied.",
+                        };
+                    }
+                }
                 if (!result.has_value())
                     resizeParameterQueue();
             },

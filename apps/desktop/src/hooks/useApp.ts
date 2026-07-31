@@ -22,6 +22,8 @@ import { toAssetId } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { audioCommandSucceeded } from '@/lib/audio-safety';
 import { startingAudioStatus } from '@/lib/audio-defaults';
+import type { AudioMeters } from '@/lib/audio-meters';
+import { publishAudioMeters } from '@/lib/audio-meters';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
@@ -75,6 +77,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     loadRackDefinitionAsset,
     sendMidiToPlugin,
     onAudioStatus,
+    onAudioMeters,
     onTransportStatus,
     onTrackPluginStateChanged,
     onTrackPluginParameterChanged,
@@ -127,6 +130,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
+  const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
+  const sessionRef = useRef<CreativeSession | null>(null);
+  const workspaceSwitchPromise = useRef<Promise<void> | null>(null);
+  const workspaceSwitchTarget = useRef<Workspace | null>(null);
   const pendingPluginChanges = useRef(
     new Map<
       string,
@@ -138,6 +145,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       }
     >(),
   );
+  const playRackRestorePromise = useRef<Promise<AudioStatus> | null>(null);
+  const arrangeRuntimeSyncPromise = useRef<Promise<void> | null>(null);
+  const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
+  const transportOperationPromise = useRef<Promise<void> | null>(null);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -164,7 +175,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const sessionHook = useSession(api, { setBoot, setAudio, setMissingPluginPaths });
   const {
     session,
-    setSession,
+    setSession: setSessionState,
     undoStack,
     setUndoStack,
     redoStack,
@@ -185,6 +196,30 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
+  sessionRef.current = session;
+  // Arrangement/Inspector operations can spend seconds in native VST
+  // construction. If the user navigates away while such an operation is in
+  // flight, its older session response must not move the UI back to the
+  // workspace that started the operation. Keep the newest visible workspace
+  // and merge the operation's canonical data into it.
+  const setSessionFromChildOperation = useCallback(
+    (nextSession: CreativeSession) => {
+      const current = sessionRef.current;
+      const guarded =
+        current != null && current.workspace !== nextSession.workspace
+          ? { ...nextSession, workspace: current.workspace }
+          : nextSession;
+      sessionRef.current = guarded;
+      setSessionState(guarded);
+    },
+    [setSessionState],
+  );
+  // Every session response that crosses an async native boundary goes through
+  // the same workspace guard. This includes internal App work (startup,
+  // plugin-state flushes, and rack operations), not only setters passed to
+  // child components. A slow Arrange/VST response must not overwrite a newer
+  // optimistic Play/Home navigation.
+  const setSession = setSessionFromChildOperation;
   // UI helper for applying a Rust Session Operation and surfacing a rejected
   // intent. Production state is never assembled or flushed from React here.
   const runSessionOp = useCallback(
@@ -199,12 +234,126 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
+  const enqueueRuntimeReconciliation = useCallback(<T>(operation: () => Promise<T>): Promise<T> => {
+    const current = runtimeReconciliationTail.current.catch(() => undefined).then(operation);
+    runtimeReconciliationTail.current = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    return current;
+  }, []);
+  const restorePlayRack = useCallback((): Promise<AudioStatus> => {
+    const pending = playRackRestorePromise.current;
+    if (pending) return pending;
+
+    const operation = enqueueRuntimeReconciliation(() => restoreCurrentRack())
+      .then((nextAudio) => {
+        setAudio(nextAudio);
+        return nextAudio;
+      })
+      .catch((error: unknown) => {
+        setScanMessage(
+          `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      })
+      .finally(() => {
+        if (playRackRestorePromise.current === operation) playRackRestorePromise.current = null;
+      });
+    playRackRestorePromise.current = operation;
+    return operation;
+  }, [enqueueRuntimeReconciliation, restoreCurrentRack, setAudio]);
+  const syncArrangeRuntime = useCallback((): Promise<void> => {
+    const pending = arrangeRuntimeSyncPromise.current;
+    if (pending) return pending;
+
+    const operation = enqueueRuntimeReconciliation(() => syncArrangementRuntime()).finally(() => {
+      if (arrangeRuntimeSyncPromise.current === operation) {
+        arrangeRuntimeSyncPromise.current = null;
+      }
+    });
+    arrangeRuntimeSyncPromise.current = operation;
+    return operation;
+  }, [enqueueRuntimeReconciliation, syncArrangementRuntime]);
   const switchWorkspace = useCallback(
     async (workspace: Workspace) => {
-      const next = await runSessionOp(() => switchWorkspaceApi(workspace), 'Workspace switch');
-      if (next) setSession(next);
+      workspaceSwitchTarget.current = workspace;
+      const pending = workspaceSwitchPromise.current;
+      if (pending) return pending;
+
+      const operation = (async () => {
+        try {
+          while (workspaceSwitchTarget.current != null) {
+            const target = workspaceSwitchTarget.current;
+            workspaceSwitchTarget.current = null;
+            if (target === sessionRef.current?.workspace) continue;
+
+            const previous = sessionRef.current;
+            if (!previous) continue;
+
+            // The canonical switch command is still serialized with other
+            // session mutations, but a preceding VST operation may take tens
+            // of seconds. Paint the requested workspace immediately so a
+            // navigation click never waits for third-party plugin code. The
+            // Rust response remains authoritative and replaces this optimistic
+            // projection when it arrives.
+            const optimistic = { ...previous, workspace: target };
+            sessionRef.current = optimistic;
+            setSession(optimistic);
+
+            const next = await runSessionOp(() => switchWorkspaceApi(target), 'Workspace switch');
+            if (!next) {
+              if (sessionRef.current?.workspace === target) {
+                sessionRef.current = previous;
+                setSession(previous);
+              }
+              continue;
+            }
+            if (sessionRef.current?.workspace !== target) continue;
+            sessionRef.current = next;
+            setSession(next);
+            if (boot?.safeMode) continue;
+            if (target === 'play') {
+              // Rack construction may execute third-party VST code for an
+              // unbounded amount of time. It is a runtime reconciliation, not
+              // a prerequisite for painting the new workspace, so navigation
+              // must not wait for it. A later workspace request can proceed
+              // while the isolated audio process finishes the restore.
+              void restorePlayRack()
+                .then(async (nextAudio) => {
+                  if (
+                    sessionRef.current?.workspace === 'play' &&
+                    audioCommandSucceeded(nextAudio) &&
+                    !nextAudio.feedbackSuspected
+                  ) {
+                    setAudio(await setEmergencyMute(false));
+                  }
+                })
+                .catch(logNativeError('Play rack restore'));
+            } else if (target === 'arrange') {
+              // Arrangement VST construction is likewise deferred. The Play
+              // command performs its own synchronized runtime load, and the
+              // editor can render while this background reconciliation runs.
+              void syncArrangeRuntime().catch(logNativeError('Arrange runtime sync'));
+            }
+          }
+        } finally {
+          workspaceSwitchPromise.current = null;
+        }
+      })();
+      workspaceSwitchPromise.current = operation;
+      return operation;
     },
-    [runSessionOp, setSession, switchWorkspaceApi],
+    [
+      boot?.safeMode,
+      restorePlayRack,
+      runSessionOp,
+      setAudio,
+      setEmergencyMute,
+      setSession,
+      switchWorkspaceApi,
+      syncArrangeRuntime,
+    ],
   );
   const openAssetInDesign = useCallback(
     async (assetId: AssetId, tool: DesignTool): Promise<void> => {
@@ -290,9 +439,19 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const sendMidi = useCallback(
     async (bytes: number[]) => {
-      setAudio(await sendMidiToPlugin(bytes));
+      const nextAudio = await sendMidiToPlugin(bytes);
+      // Successful keyboard notes are a high-rate realtime path. Their
+      // acknowledgement must not rebuild the whole App tree or carry a full
+      // plugin state payload; safety/error states still surface immediately.
+      if (
+        nextAudio != null &&
+        (!audioCommandSucceeded(nextAudio) ||
+          /failed|could not|unavailable|blocked/i.test(nextAudio.message))
+      ) {
+        setAudio(nextAudio);
+      }
     },
-    [sendMidiToPlugin],
+    [sendMidiToPlugin, setAudio],
   );
 
   const togglePluginBypass = useCallback(
@@ -532,47 +691,85 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     [addAudioClipToArrangement, runSessionOp, session, setSession],
   );
 
-  const playTransport = useCallback(async () => {
-    if (!session) return;
-    if (session.workspace === 'arrange') {
-      await playTimeline();
-      setTransportPlaying(true);
-      return;
-    }
-    let result = renderResult;
-    if (!result) {
-      result = await renderTimeline({
-        range: { kind: 'entireArrangement' },
-        normalize: false,
-        trackId: null,
+  const runTransportOperation = useCallback((operation: () => Promise<void>): Promise<void> => {
+    const pending = transportOperationPromise.current;
+    if (pending) return pending;
+
+    const current = operation()
+      .catch((error: unknown) => {
+        logNativeError('Transport operation')(error);
+        setTransportPlaying(false);
+      })
+      .finally(() => {
+        if (transportOperationPromise.current === current) {
+          transportOperationPromise.current = null;
+        }
       });
-      if (!result) return;
-      setRenderResult(result);
-    }
-    setAudio(await previewAssetApi(result.assetId, { looped: session.settings.loopEnabled }));
-    setTransportPlaying(true);
-  }, [playTimeline, previewAssetApi, renderResult, renderTimeline, session]);
+    transportOperationPromise.current = current;
+    return current;
+  }, []);
 
-  const stopTransport = useCallback(async () => {
-    if (session?.workspace === 'arrange') {
-      await stopTimeline();
-      setTransportPlaying(false);
-      return;
-    }
-    setAudio(await stopSamplePreview());
-    setTransportPlaying(false);
-    setRenderPreviewing(false);
-  }, [session?.workspace, stopSamplePreview, stopTimeline]);
+  const playTransport = useCallback(
+    () =>
+      runTransportOperation(async () => {
+        const currentSession = sessionRef.current;
+        if (!currentSession) return;
+        const requestedWorkspace = currentSession.workspace;
+        if (requestedWorkspace === 'arrange') {
+          await playTimeline();
+          if (sessionRef.current?.workspace === requestedWorkspace) setTransportPlaying(true);
+          return;
+        }
+        let result = renderResult;
+        if (!result) {
+          result = await renderTimeline({
+            range: { kind: 'entireArrangement' },
+            normalize: false,
+            trackId: null,
+          });
+          if (!result) return;
+          setRenderResult(result);
+        }
+        const nextAudio = await previewAssetApi(result.assetId, {
+          looped: currentSession.settings.loopEnabled,
+        });
+        if (sessionRef.current?.workspace !== requestedWorkspace) return;
+        setAudio(nextAudio);
+        setTransportPlaying(true);
+      }),
+    [playTimeline, previewAssetApi, renderResult, renderTimeline, runTransportOperation],
+  );
 
-  const goToStart = useCallback(async () => {
-    if (session?.workspace === 'arrange') {
-      await stopTimeline();
-      await seekTimeline(0);
-      setTransportPlaying(false);
-      return;
-    }
-    await stopTransport();
-  }, [seekTimeline, session?.workspace, stopTimeline, stopTransport]);
+  const stopTransport = useCallback(
+    () =>
+      runTransportOperation(async () => {
+        if (sessionRef.current?.workspace === 'arrange') {
+          await stopTimeline();
+          setTransportPlaying(false);
+          return;
+        }
+        setAudio(await stopSamplePreview());
+        setTransportPlaying(false);
+        setRenderPreviewing(false);
+      }),
+    [runTransportOperation, stopSamplePreview, stopTimeline],
+  );
+
+  const goToStart = useCallback(
+    () =>
+      runTransportOperation(async () => {
+        if (sessionRef.current?.workspace === 'arrange') {
+          await stopTimeline();
+          await seekTimeline(0);
+          setTransportPlaying(false);
+          return;
+        }
+        setAudio(await stopSamplePreview());
+        setTransportPlaying(false);
+        setRenderPreviewing(false);
+      }),
+    [runTransportOperation, seekTimeline, stopSamplePreview, stopTimeline],
+  );
 
   const previewSamplePad = useCallback(
     async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
@@ -592,7 +789,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const stopPreview = useCallback(async () => {
     setAudio(await stopSamplePreview());
     setPreviewPadId(null);
-  }, []);
+  }, [setAudio, stopSamplePreview]);
 
   const relinkMissing = useCallback(async (item: MissingDependency, newPath: string) => {
     if (!item.assetId) return;
@@ -631,17 +828,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     );
     if (!completed) return;
     try {
-      await syncArrangementRuntime();
+      await syncArrangeRuntime();
     } finally {
       setMissingDependencies(await getMissingDependencies());
     }
-  }, [
-    boot?.vst3Root,
-    getMissingDependencies,
-    runBackgroundJob,
-    startScanJob,
-    syncArrangementRuntime,
-  ]);
+  }, [boot?.vst3Root, getMissingDependencies, runBackgroundJob, startScanJob, syncArrangeRuntime]);
 
   const ignoreMissing = useCallback((item: MissingDependency) => {
     setMissingDependencies((current) =>
@@ -691,63 +882,108 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   );
 
   useEffect(() => {
-    void bootstrap()
+    let disposed = false;
+    let deferredStartupTimer: ReturnType<typeof setTimeout> | null = null;
+    const bootstrapOperation = bootstrapPromise.current ?? (bootstrapPromise.current = bootstrap());
+    void bootstrapOperation
       .then((state) => {
+        if (disposed) return;
         setBoot(state);
         setSession(state.session);
         void getMissingDependencies()
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
-        if (!state.safeMode)
-          void (async () => {
-            const result = await setMasterGainDb(state.session.settings.masterDb);
-            setAudio(result.audio);
-            setSession(result.session);
-            let startupAudio = result.audio;
+        void (async () => {
+          let startupAudio: AudioStatus | null = null;
+          let runtimeReady = state.safeMode;
+          if (!state.safeMode) {
             try {
-              startupAudio = await restoreCurrentRack();
-              setAudio(startupAudio);
+              const result = await setMasterGainDb(state.session.settings.masterDb);
+              startupAudio = result.audio;
+              setAudio(result.audio);
+              setSession(result.session);
+              if (state.session.workspace === 'play') {
+                startupAudio = await restorePlayRack();
+              }
+              runtimeReady = true;
             } catch (error) {
               setScanMessage(
-                `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
+                `Startup audio initialization failed: ${error instanceof Error ? error.message : String(error)}`,
               );
             }
-            if (audioCommandSucceeded(startupAudio) && !startupAudio.feedbackSuspected) {
+            if (
+              runtimeReady &&
+              startupAudio &&
+              audioCommandSucceeded(startupAudio) &&
+              !startupAudio.feedbackSuspected
+            ) {
               setAudio(await setEmergencyMute(false));
             }
-          })().catch(logNativeError('startup rack restore'));
-        void runBackgroundJob(
-          () => startScanJob(state.vst3Root),
-          (report) => {
-            setPlugins(report.plugins);
-            setMissingPluginPaths(
-              state.session.rack.devices
-                .filter((device) => device.kind === 'plugin' && device.path)
-                .filter(
-                  (device) =>
-                    !report.plugins.some(
-                      (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
-                    ),
-                )
-                .map((device) => device.path as string),
+          }
+          if (disposed) return;
+
+          // Let the first workspace paint before starting filesystem/device
+          // discovery. These jobs are useful, but none is required to render
+          // the initial shell and they can otherwise compete with VST setup.
+          deferredStartupTimer = setTimeout(() => {
+            if (disposed) return;
+            void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
+            void listSeparations().then(setSeparations).catch(logNativeError('listSeparations'));
+            void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
+            void probeAudioDevices()
+              .then(setDeviceProbe)
+              .catch(logNativeError('probeAudioDevices'));
+            void enableMidi().catch(logNativeError('enableMidi'));
+            void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
+            void runBackgroundJob(
+              () => startScanJob(state.vst3Root),
+              (report) => {
+                setPlugins(report.plugins);
+                setMissingPluginPaths(
+                  state.session.rack.devices
+                    .filter((device) => device.kind === 'plugin' && device.path)
+                    .filter(
+                      (device) =>
+                        !report.plugins.some(
+                          (plugin) =>
+                            plugin.path === device.path && plugin.scanState === 'validated',
+                        ),
+                    )
+                    .map((device) => device.path as string),
+                );
+                setScanMessage(
+                  report.issues.length
+                    ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+                    : `${report.plugins.length}件を検出`,
+                );
+              },
+              (message) => setScanMessage(`VST3 scan failed: ${message}`),
             );
-            setScanMessage(
-              report.issues.length
-                ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-                : `${report.plugins.length}件を検出`,
-            );
-          },
-          (message) => setScanMessage(`VST3 scan failed: ${message}`),
-        );
+          }, 150);
+        })().catch(logNativeError('startup runtime initialization'));
       })
       .catch(logNativeError('bootstrap'));
-    void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
-    void listSeparations().then(setSeparations).catch(logNativeError('listSeparations'));
-    void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
-    void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
-    void enableMidi();
-    void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
-    const unlistenAudio = onAudioStatus((status) => setAudio(status));
+    let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingAudioStatus: AudioStatus | null = null;
+    const unlistenAudio = onAudioStatus((status) => {
+      publishAudioMeters({
+        inputPeak: status.inputPeak,
+        outputPeak: status.outputPeak,
+        invalidSamples: status.invalidSamples,
+        feedbackSuspected: status.feedbackSuspected,
+      });
+      pendingAudioStatus = status;
+      if (audioStatusTimer != null) return;
+      audioStatusTimer = setTimeout(() => {
+        audioStatusTimer = null;
+        const next = pendingAudioStatus;
+        pendingAudioStatus = null;
+        if (!disposed && next != null) setAudio(next);
+      }, 100);
+    });
+    const unlistenMeters = onAudioMeters((meters: AudioMeters) => {
+      publishAudioMeters(meters);
+    });
     const unlistenTransport = onTransportStatus((status) =>
       setTransportPlaying(status.state === 'playing'),
     );
@@ -755,6 +991,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     let pluginSaveRunning = false;
     let pluginSaveFlushRequested = false;
     let pluginSaveCompletion: Promise<boolean> | null = null;
+    let closeRequested = false;
     type PluginChangeBatch = [
       string,
       {
@@ -845,7 +1082,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       return completion;
     };
     const schedulePluginSave = () => {
-      if (pluginSaveTimer != null || pluginSaveRunning) return;
+      if (closeRequested || pluginSaveTimer != null || pluginSaveRunning) return;
       pluginSaveTimer = setTimeout(() => {
         pluginSaveTimer = null;
         void flushPluginChanges().then(() => {
@@ -859,6 +1096,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       parameterIndex: number;
       value: number;
     }) => {
+      if (closeRequested) return;
       const key = `${change.trackId}\u0000${change.deviceId}`;
       const pending = pendingPluginChanges.current.get(key) ?? {
         trackId: change.trackId,
@@ -872,6 +1110,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     };
     const unlistenTrackPluginParameter = onTrackPluginParameterChanged(enqueuePluginParameter);
     const unlistenTrackPluginState = onTrackPluginStateChanged((change) => {
+      if (closeRequested) return;
       const key = `${change.trackId}\u0000${change.deviceId}`;
       // A full final snapshot already contains every parameter, so older
       // intermediate parameter events are intentionally coalesced away.
@@ -884,30 +1123,61 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       void flushPluginChanges();
     });
     let unlistenClose: (() => void) | null = null;
+    let closeListenerCancelled = false;
     try {
       const currentWindow = getCurrentWindow();
       void currentWindow
         .onCloseRequested(async (event) => {
+          if (closeRequested) {
+            event.preventDefault();
+            return;
+          }
+          closeRequested = true;
+          // Take control of the close request while the last debounced plugin
+          // batch gets one bounded flush attempt. Calling destroy() below is
+          // intentional: it bypasses this close-request event and avoids
+          // relying on a second close dispatch while the WebView is shutting
+          // down.
           event.preventDefault();
-          const saved = await flushPluginChanges();
-          if (saved) {
+          if (pluginSaveTimer != null) {
+            clearTimeout(pluginSaveTimer);
+            pluginSaveTimer = null;
+          }
+          let saved = false;
+          try {
+            saved = await Promise.race([
+              flushPluginChanges(),
+              new Promise<boolean>((resolve) => window.setTimeout(() => resolve(false), 3000)),
+            ]);
+          } catch (error) {
+            console.error('[native] final Plugin State flush failed', error);
+          }
+          if (!saved) console.error('[native] final Plugin State flush timed out or failed');
+          try {
             await currentWindow.destroy();
-          } else {
-            setAutosaveError('最終Plugin Stateを保存できなかったため、終了を保留しました。');
+          } catch (error) {
+            console.error('[native] window close failed', error);
+            closeRequested = false;
           }
         })
         .then((unlisten) => {
-          unlistenClose = unlisten;
+          if (closeListenerCancelled) unlisten();
+          else unlistenClose = unlisten;
         })
         .catch(() => undefined);
     } catch {
       // The browser test/runtime has no Tauri window; native builds register it.
     }
     return () => {
+      disposed = true;
+      closeListenerCancelled = true;
+      if (deferredStartupTimer != null) clearTimeout(deferredStartupTimer);
       if (pluginSaveTimer != null) clearTimeout(pluginSaveTimer);
+      if (audioStatusTimer != null) clearTimeout(audioStatusTimer);
       unlistenClose?.();
-      void flushPluginChanges();
+      if (!closeRequested) void flushPluginChanges();
       unlistenAudio();
+      unlistenMeters();
       unlistenTransport();
       unlistenTrackPluginParameter();
       unlistenTrackPluginState();
@@ -1012,7 +1282,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     boot,
     setBoot,
     session,
-    setSession,
+    setSession: setSessionFromChildOperation,
     audio,
     setAudio,
     audioPreferenceMessage,

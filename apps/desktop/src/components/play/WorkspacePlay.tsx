@@ -8,6 +8,7 @@ import {
 import { drumPadByNote } from '@/lib/drum-map';
 import { useMusicalTyping } from '@/hooks/useMusicalTyping';
 import { useDrumPads } from '@/hooks/useDrumPads';
+import { useAudioMeters } from '@/lib/audio-meters';
 import { Icon, Meter } from '../shared/ui';
 import { MidiInputPanel, MIDI_INPUT_DEFAULT_OCTAVE, type InstrumentMode } from './MidiInputPanel';
 
@@ -34,11 +35,12 @@ export function WorkspacePlay({
   onRecallSnapshot,
   onSendMidi,
 }: WorkspacePlayProps) {
+  const meters = useAudioMeters();
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [octave, setOctave] = useState(MIDI_INPUT_DEFAULT_OCTAVE);
   const [instrumentMode, setInstrumentMode] = useState<InstrumentMode>('melodic');
   const inputChannel = audio.inputChannels.find((channel) => channel.index === audio.inputChannel);
-  const inputDb = audio.inputPeak > 0 ? 20 * Math.log10(audio.inputPeak) : -90;
+  const inputDb = meters.inputPeak > 0 ? 20 * Math.log10(meters.inputPeak) : -90;
   const missingPaths = new Set(missingPluginPaths);
   const loadedPlugins = session.rack.devices
     .filter((device) => device.kind === 'plugin')
@@ -145,7 +147,7 @@ export function WorkspacePlay({
             <span className="device-order">IN</span>
             <div className="device-face live-meter-face">
               <span className="meter-label">INPUT LEVEL</span>
-              <Meter value={Math.round(audio.inputPeak * 100)} />
+              <Meter value={Math.round(meters.inputPeak * 100)} />
             </div>
             <h3>{inputChannel?.name ?? 'No input channel'}</h3>
             <small>{inputDb.toFixed(1)} dBFS</small>
@@ -230,7 +232,7 @@ export function WorkspacePlay({
         <article className="rack-device output-device">
           <span className="device-order">OUT</span>
           <div className="device-face">
-            <Meter value={Math.round(audio.outputPeak * 100)} />
+            <Meter value={Math.round(meters.outputPeak * 100)} />
           </div>
           <h3>Output</h3>
           <small>

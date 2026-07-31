@@ -1,13 +1,26 @@
 //! Thin Tauri command boundary for Asset Application Operations.
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::AppState;
 use crate::asset::AssetId;
 use crate::asset::application::{self, AssetPreviewContext, AssetPreviewOptions};
 use crate::model::AudioStatus;
 
-fn context<'a>(state: &'a State<'_, AppState>) -> AssetPreviewContext<'a> {
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Asset blocking operation failed: {error}"))?
+}
+
+fn app_context(state: &AppState) -> AssetPreviewContext<'_> {
     AssetPreviewContext {
         audio: state.core.audio(),
         data_root: state.core.data_root(),
@@ -16,14 +29,17 @@ fn context<'a>(state: &'a State<'_, AppState>) -> AssetPreviewContext<'a> {
 }
 
 #[tauri::command]
-pub fn preview_asset(
+pub async fn preview_asset(
     asset_id: String,
     options: AssetPreviewOptions,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AudioStatus, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    application::preview_asset(&context(&state), asset_id, options)
+    run_blocking(app, move |state| {
+        application::preview_asset(&app_context(state), asset_id, options)
+    })
+    .await
 }
 
 /// Imports an external Standard MIDI File as a canonical MIDI Asset. Runs on a

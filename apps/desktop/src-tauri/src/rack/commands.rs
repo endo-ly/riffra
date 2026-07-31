@@ -7,7 +7,7 @@
 //! RackDefinition Asset round-trip) lives entirely in
 //! [`super::application`]; nothing here re-implements it.
 
-use tauri::State;
+use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::asset;
@@ -16,7 +16,20 @@ use crate::library::LibraryAsset;
 use crate::model::{AudioStatus, SessionAudioPair};
 use crate::rack::application::{self, RackContext};
 
-fn context<'a>(state: &'a State<'_, AppState>) -> RackContext<'a> {
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Rack blocking operation failed: {error}"))?
+}
+
+fn app_context(state: &AppState) -> RackContext<'_> {
     RackContext {
         audio: state.core.audio(),
         data_root: state.core.data_root(),
@@ -26,125 +39,158 @@ fn context<'a>(state: &'a State<'_, AppState>) -> RackContext<'a> {
 }
 
 #[tauri::command]
-pub fn load_plugin_into_rack(
+pub async fn load_plugin_into_rack(
     path: String,
     parameter_values: Vec<f32>,
     bypassed: bool,
     state_data: Option<String>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
-    application::load_plugin_into_rack(
-        &context(&state),
-        &path,
-        &parameter_values,
-        bypassed,
-        state_data.as_deref(),
-    )
+    run_blocking(app, move |state| {
+        application::load_plugin_into_rack(
+            &app_context(state),
+            &path,
+            &parameter_values,
+            bypassed,
+            state_data.as_deref(),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn clear_plugin_from_rack(state: State<'_, AppState>) -> Result<SessionAudioPair, String> {
-    application::clear_plugin_from_rack(&context(&state))
+pub async fn clear_plugin_from_rack(app: AppHandle) -> Result<SessionAudioPair, String> {
+    run_blocking(app, |state| {
+        application::clear_plugin_from_rack(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn open_plugin_editor(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    application::open_plugin_editor(&context(&state))
+pub async fn open_plugin_editor(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::open_plugin_editor(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_rack_plugin_bypassed(
+pub async fn set_rack_plugin_bypassed(
     bypassed: bool,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
-    application::set_rack_plugin_bypassed(&context(&state), bypassed)
+    run_blocking(app, move |state| {
+        application::set_rack_plugin_bypassed(&app_context(state), bypassed)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_rack_plugin_parameter(
+pub async fn set_rack_plugin_parameter(
     index: u32,
     value: f32,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
-    application::set_rack_plugin_parameter(&context(&state), index, value)
+    run_blocking(app, move |state| {
+        application::set_rack_plugin_parameter(&app_context(state), index, value)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_rack_macro_value(
+pub async fn set_rack_macro_value(
     macro_id: String,
     value: f32,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
-    application::set_rack_macro_value(&context(&state), &macro_id, value)
+    run_blocking(app, move |state| {
+        application::set_rack_macro_value(&app_context(state), &macro_id, value)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn map_rack_macro(
+pub async fn map_rack_macro(
     macro_id: String,
     parameter_index: Option<u32>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
-    application::map_rack_macro(&context(&state), &macro_id, parameter_index)
+    run_blocking(app, move |state| {
+        application::map_rack_macro(&app_context(state), &macro_id, parameter_index)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_current_rack(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    application::restore_current_rack(&context(&state))
+pub async fn restore_current_rack(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::restore_current_rack(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn recall_snapshot(
-    slot: String,
-    state: State<'_, AppState>,
-) -> Result<SessionAudioPair, String> {
-    application::recall_snapshot(&context(&state), &slot)
+pub async fn recall_snapshot(slot: String, app: AppHandle) -> Result<SessionAudioPair, String> {
+    run_blocking(app, move |state| {
+        application::recall_snapshot(&app_context(state), &slot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn capture_snapshot(
-    slot: String,
-    state: State<'_, AppState>,
-) -> Result<SessionAudioPair, String> {
-    application::capture_snapshot(&context(&state), &slot)
+pub async fn capture_snapshot(slot: String, app: AppHandle) -> Result<SessionAudioPair, String> {
+    run_blocking(app, move |state| {
+        application::capture_snapshot(&app_context(state), &slot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_rack_definition(
+pub async fn save_rack_definition(
     name: String,
     path: String,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AssetId, String> {
-    application::save_rack_definition(&context(&state), &name, &path)
+    run_blocking(app, move |state| {
+        application::save_rack_definition(&app_context(state), &name, &path)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_rack_definitions(state: State<'_, AppState>) -> Result<Vec<LibraryAsset>, String> {
-    let assets = asset::list_by_kind(
-        state.core.data_root(),
-        crate::asset::AssetKind::RackDefinition,
-    )?;
-    Ok(assets
-        .into_iter()
-        .map(|asset| LibraryAsset {
-            id: asset.id.as_str().to_owned(),
-            name: asset.name,
-            kind: "rackDefinition".into(),
-            path: Some(asset.content_location),
-            tag: asset.tag,
-            note: asset.note,
-            created_at_ms: Some(asset.created_at_ms),
-            updated_at_ms: Some(asset.updated_at_ms),
-            stability: "saved".into(),
-        })
-        .collect())
+pub async fn list_rack_definitions(app: AppHandle) -> Result<Vec<LibraryAsset>, String> {
+    run_blocking(app, |state| {
+        let assets = asset::list_by_kind(
+            state.core.data_root(),
+            crate::asset::AssetKind::RackDefinition,
+        )?;
+        Ok(assets
+            .into_iter()
+            .map(|asset| LibraryAsset {
+                id: asset.id.as_str().to_owned(),
+                name: asset.name,
+                kind: "rackDefinition".into(),
+                path: Some(asset.content_location),
+                tag: asset.tag,
+                note: asset.note,
+                created_at_ms: Some(asset.created_at_ms),
+                updated_at_ms: Some(asset.updated_at_ms),
+                stability: "saved".into(),
+            })
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn load_rack_definition_asset(
+pub async fn load_rack_definition_asset(
     asset_id: String,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    application::load_rack_definition_asset(&context(&state), asset_id)
+    run_blocking(app, move |state| {
+        application::load_rack_definition_asset(&app_context(state), asset_id)
+    })
+    .await
 }

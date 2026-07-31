@@ -1149,6 +1149,7 @@
   pointer-events: none;
 }
 .playhead {
+  left: 0;
   z-index: 9;
   background: #f06f65;
   box-shadow: 0 0 6px rgba(240, 111, 101, 0.48);

@@ -57,6 +57,25 @@ fn active_plugin_device(session: &CreativeSession) -> Option<RackDevice> {
         .cloned()
 }
 
+fn runtime_plugin_matches(device: &RackDevice, status: &AudioStatus) -> bool {
+    let Some(path) = device.path.as_deref() else {
+        return false;
+    };
+    let Some(runtime_path) = status
+        .plugin
+        .as_ref()
+        .and_then(|plugin| plugin.path.as_deref())
+    else {
+        return false;
+    };
+    status.plugin.as_ref().is_some_and(|plugin| plugin.loaded)
+        && if cfg!(windows) {
+            runtime_path.eq_ignore_ascii_case(path)
+        } else {
+            runtime_path == path
+        }
+}
+
 /// Replaces any existing plugin device with a freshly described one, leaving
 /// every non-plugin device untouched. This is the canonical rack projection the
 /// React `rackWithPluginLoaded` helper used to perform.
@@ -109,48 +128,18 @@ fn apply_plugin_to_runtime(
             "Rack references a missing or invalid plugin bundle: {path}"
         ));
     }
-    let mut status = audio.load_plugin(plugin_path)?;
+    let mut status = audio.load_plugin(plugin_path, parameter_values, bypassed, state_data)?;
     if !audio_command_succeeded(&status) {
         return Ok(status);
     }
-    status = audio.plugin_parameter_status()?;
-    // A saved state blob supersedes individual parameter restoration, matching
-    // the previous React `shouldRestoreIndividualParameters` rule.
-    let has_state = matches!(state_data, Some(value) if !value.is_empty());
-    if let Some(value) = state_data
-        && !value.is_empty()
-    {
-        status = audio.set_plugin_state(value)?;
-        if !audio_command_succeeded(&status) {
-            return Ok(status);
-        }
+    // Fresh loads need a parameter snapshot so the canonical rack can retain
+    // the plugin's defaults. Restores with saved parameters/state already have
+    // their authoritative values and must not request the 2,000+ element
+    // parameter list merely to replay it again.
+    if parameter_values.is_empty() && !state_data.is_some_and(|value| !value.is_empty()) {
+        status = audio.plugin_parameter_status()?;
     }
-    if !has_state {
-        let addressable = status
-            .plugin
-            .as_ref()
-            .map(|plugin| plugin.parameters.len())
-            .unwrap_or(0);
-        for (index, value) in parameter_values.iter().enumerate() {
-            if index >= addressable {
-                break;
-            }
-            let index = u32::try_from(index).map_err(|_| {
-                "Rack exposes more parameters than the runtime can address.".to_string()
-            })?;
-            status = audio.set_plugin_parameter(index, *value)?;
-            if !audio_command_succeeded(&status) {
-                return Ok(status);
-            }
-        }
-    }
-    if bypassed {
-        let bypass_status = audio.set_plugin_bypassed(true)?;
-        if !audio_command_succeeded(&bypass_status) {
-            return Ok(bypass_status);
-        }
-    }
-    audio.plugin_parameter_status()
+    Ok(status)
 }
 
 /// Restores the runtime to a previously captured plugin device, or clears it
@@ -256,12 +245,18 @@ pub fn load_plugin_into_rack(
     let device_params = status
         .plugin
         .as_ref()
-        .map(|plugin| {
-            plugin
-                .parameters
-                .iter()
-                .map(|p| p.value)
-                .collect::<Vec<_>>()
+        .and_then(|plugin| {
+            // A configured restore intentionally returns the lightweight
+            // runtime status without asking the sidecar to serialize every
+            // parameter again. Keep the caller's canonical values in that
+            // case; a fresh load below still supplies the discovered defaults.
+            (!plugin.parameters.is_empty()).then(|| {
+                plugin
+                    .parameters
+                    .iter()
+                    .map(|p| p.value)
+                    .collect::<Vec<_>>()
+            })
         })
         .unwrap_or_else(|| parameter_values.to_vec());
     rack_with_plugin_device(
@@ -380,7 +375,8 @@ pub fn set_rack_plugin_parameter(
     commit_with_rollback(context, session, previous_plugin, status)
 }
 
-/// Synchronizes the current session rack into the Audio Runtime at startup.
+/// Synchronizes the current session rack into the Audio Runtime at startup or
+/// when Play becomes active.
 ///
 /// The session is already the canonical state, so a normal restore does not
 /// rewrite it; only the runtime is brought into agreement and the resulting
@@ -391,14 +387,26 @@ pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, St
     if context.safe_mode {
         return context.audio.refresh_status();
     }
-    let cleared = context.audio.clear_plugin()?;
-    if !audio_command_succeeded(&cleared) {
+    let current = context.audio.refresh_status()?;
+    if !audio_command_succeeded(&current) {
         return Err(format!(
-            "Runtime rejected startup rack clear: {}",
-            cleared.message
+            "Runtime rejected rack status refresh: {}",
+            current.message
         ));
     }
     let Some(device) = active_plugin_device(&session) else {
+        // There is no persisted Play plugin. Only tear down a stale runtime
+        // plugin; an already empty rack needs no sidecar mutation.
+        if current.plugin.as_ref().is_none_or(|plugin| !plugin.loaded) {
+            return Ok(current);
+        }
+        let cleared = context.audio.clear_plugin()?;
+        if !audio_command_succeeded(&cleared) {
+            return Err(format!(
+                "Runtime rejected stale rack plugin clear: {}",
+                cleared.message
+            ));
+        }
         return Ok(cleared);
     };
     let Some(path) = device.path.as_deref() else {
@@ -408,11 +416,33 @@ pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, St
     if !plugin_path.exists()
         || plugin_path.extension().and_then(|value| value.to_str()) != Some("vst3")
     {
-        // The persisted plugin is unavailable. The runtime is left cleared and
-        // the session is not rewritten; missing-dependency handling owns the
-        // session-level relink/disable decision separately.
+        // The persisted plugin is unavailable. The runtime is left unchanged
+        // and the session is not rewritten; missing-dependency handling owns
+        // the session-level relink/disable decision separately. If another
+        // plugin is currently live, it remains available because replacement
+        // is intentionally attempted only after this validation succeeds.
         return Err(format!("The saved rack plugin is unavailable: {path}"));
     }
+
+    if runtime_plugin_matches(&device, &current) {
+        // Workspace navigation is a runtime reconciliation, not a request to
+        // recreate a third-party plugin. Reusing the live instance preserves
+        // editor/plugin state and, critically, avoids paying VST construction
+        // time on every Play -> Home -> Play transition.
+        if current
+            .plugin
+            .as_ref()
+            .is_some_and(|plugin| plugin.bypassed != device.bypassed)
+        {
+            return context.audio.set_plugin_bypassed(device.bypassed);
+        }
+        return Ok(current);
+    }
+
+    // `loadPlugin` creates and prepares the candidate before swapping it into
+    // the rack. Do not clear first: that extra command creates an avoidable
+    // silent gap and throws away the currently usable plugin if construction
+    // of the replacement fails.
     apply_plugin_to_runtime(
         context.audio,
         path,

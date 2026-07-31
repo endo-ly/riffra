@@ -13,7 +13,7 @@ use crate::separation::{self, SeparationResult};
 use crate::storage::now_ms;
 
 #[tauri::command]
-pub fn start_separation_job(
+pub async fn start_separation_job(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<BackgroundJobStatus, String> {
@@ -47,6 +47,6 @@ pub fn start_separation_job(
 }
 
 #[tauri::command]
-pub fn list_separations(state: State<'_, AppState>) -> Result<Vec<SeparationResult>, String> {
+pub async fn list_separations(state: State<'_, AppState>) -> Result<Vec<SeparationResult>, String> {
     separation::list(state.core.data_root())
 }

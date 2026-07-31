@@ -25,7 +25,8 @@ public:
     bool open(juce::String& error);
     void close();
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
-                                                      int blockSize);
+                                                      int blockSize,
+                                                      const juce::var& persistedState = {});
     bool clear(juce::String& error);
 
 private:

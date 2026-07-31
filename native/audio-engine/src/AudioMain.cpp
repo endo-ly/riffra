@@ -686,7 +686,7 @@ int serve(
     });
 
     // Meter push thread: periodically writes peak/dropout meters to stdout so
-    // the Rust supervisor can emit audio-status events to the frontend without
+    // the Rust supervisor can emit compact audio-meter events to the frontend without
     // React polling. 50 ms ≈ 20 fps, smooth enough for meter UI.
     std::atomic<bool> meterPushRunning { true };
     std::thread meterPushThread([&] {
@@ -714,6 +714,13 @@ int serve(
     std::atomic<bool> timelineOperationRunning { false };
     std::atomic<bool> timelineEditorClosePending { false };
     std::thread timelineOperationThread;
+    // Play-rack and Arrangement Graph operations use separate worker threads
+    // so the command reader remains responsive, but both eventually enter
+    // third-party VST lifecycle code in the same sidecar. Keep that lifecycle
+    // ownership single-threaded; otherwise a Play navigation can construct a
+    // plugin while Arrangement is constructing another one through the same
+    // JUCE/vendor host machinery.
+    std::mutex runtimeGraphMutex;
 
     std::thread commandThread([&] {
         std::string line;
@@ -783,6 +790,7 @@ int serve(
                 timelineOperationRunning.store(true, std::memory_order_release);
                 timelineOperationThread = std::thread(
                     [&, snapshot, requestId, sampleRate, blockSize, commitImmediately, editorWasOpen, editorTrackId] {
+                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         juce::String timelineError;
                         bool loaded = false;
                         try {
@@ -830,6 +838,13 @@ int serve(
                         "The Arrangement Graph is still loading a VST3 and cannot be committed yet."));
                     continue;
                 }
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still changing a VST3 and the Arrangement Graph cannot be committed yet."));
+                    continue;
+                }
+                const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                 juce::String timelineError;
                 if (!timelineEngine.commitPreparedSnapshot(timelineError)) {
                     writeJson(makeError("timeline", timelineError));
@@ -845,6 +860,13 @@ int serve(
                         "The Arrangement Graph is still loading a VST3 and cannot be discarded yet."));
                     continue;
                 }
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still changing a VST3 and the Arrangement Graph cannot be discarded yet."));
+                    continue;
+                }
+                const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                 timelineEngine.discardPreparedSnapshot();
                 writeJson(timelineEngine.status());
                 continue;
@@ -1024,12 +1046,18 @@ int serve(
                 if (pluginOperationThread.joinable())
                     pluginOperationThread.join();
                 const auto requestId = currentRequestId;
+                const auto persistedState = command.getProperty("persistedState", {});
                 pluginOperationRunning.store(true, std::memory_order_release);
                 pluginOperationThread = std::thread(
-                    [&, path, requestId, sampleRate, blockSize] {
+                    [&, path, requestId, sampleRate, blockSize, persistedState] {
+                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         std::optional<riffra::PluginLoadError> pluginError;
                         try {
-                            pluginError = pluginEditor.load(path, sampleRate, blockSize);
+                            pluginError = pluginEditor.load(
+                                path,
+                                sampleRate,
+                                blockSize,
+                                persistedState);
                         } catch (const std::exception& exception) {
                             pluginError = riffra::PluginLoadError {
                                 "pluginInstance",
@@ -1060,6 +1088,7 @@ int serve(
                 const auto requestId = currentRequestId;
                 pluginOperationRunning.store(true, std::memory_order_release);
                 pluginOperationThread = std::thread([&, requestId] {
+                    const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                     juce::String clearError;
                     bool cleared = false;
                     try {
@@ -1459,7 +1488,11 @@ int serve(
                     bytesArray.size() > 2 ? bytes[2] : 0,
                     bytesArray.size());
                 callback.enqueuePluginMidi(message);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                // MIDI keyboard input can arrive many times per second. The
+                // command only needs an acknowledgement and current meters;
+                // serializing the entire device/plugin status for every note
+                // needlessly taxes both the sidecar and the WebView.
+                writeJson(currentMeters(callback));
                 continue;
             }
             if (type == "recoverAudioDevice") {

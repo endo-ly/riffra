@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, CreativeSession } from '@/lib/domain';
 import clsx from 'clsx';
 import type { NativeApi } from '@/native/native-api';
+import { useAudioMeters } from '@/lib/audio-meters';
 import { Icon, Meter } from '../shared/ui';
 import styles from './TransportBar.module.css';
 
@@ -37,6 +38,7 @@ export function TransportBar(props: TransportBarProps) {
     audioPreferenceMessage,
     api,
   } = props;
+  const meters = useAudioMeters();
   const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
   const masterEditing = useRef(false);
   const previewTimer = useRef<number | null>(null);
@@ -61,7 +63,7 @@ export function TransportBar(props: TransportBarProps) {
       previewTimer.current = null;
       previewChain.current = previewChain.current
         .catch(() => undefined)
-        .then(async () => setAudio(await api.previewMasterGainDb(gainDb)));
+        .then(() => api.previewMasterGainDb(gainDb));
     }, 40);
   };
 
@@ -176,9 +178,9 @@ export function TransportBar(props: TransportBarProps) {
       </div>
       <div className={styles.transportMeter}>
         <span>IN</span>
-        <Meter value={audio.inputPeak * 100} danger={audio.inputPeak >= 0.98} />
+        <Meter value={meters.inputPeak * 100} danger={meters.inputPeak >= 0.98} />
         <span>OUT</span>
-        <Meter value={audio.outputPeak * 100} danger={audio.outputPeak >= 0.98} />
+        <Meter value={meters.outputPeak * 100} danger={meters.outputPeak >= 0.98} />
       </div>
       <div className={styles.master}>
         <span>MASTER</span>

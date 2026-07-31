@@ -5,7 +5,32 @@ import type { NativeApi } from '@/native/native-api';
 export function useArrangeTransport(api: NativeApi, timebase: ProjectTimebase) {
   const [transport, setTransport] = useState<TransportStatus | null>(null);
   const [displayTick, setDisplayTick] = useState(0);
+  const displayTickRef = useRef(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
+
+  const publishTick = (tick: number) => {
+    displayTickRef.current = tick;
+    setDisplayTick(tick);
+  };
+
+  const transportMeaningfullyChanged = (
+    previous: TransportStatus | null,
+    next: TransportStatus,
+  ): boolean => {
+    if (!previous) return true;
+    return (
+      previous.state !== next.state ||
+      previous.revision !== next.revision ||
+      previous.recordingPhase !== next.recordingPhase ||
+      previous.recordingStartTick !== next.recordingStartTick ||
+      previous.recordingPassOrdinal !== next.recordingPassOrdinal ||
+      previous.clockGeneration !== next.clockGeneration ||
+      previous.discontinuity !== next.discontinuity ||
+      previous.unavailableClipIds.join('\u0000') !== next.unavailableClipIds.join('\u0000') ||
+      previous.missingDeviceIds.join('\u0000') !== next.missingDeviceIds.join('\u0000') ||
+      previous.armedTrackIds.join('\u0000') !== next.armedTrackIds.join('\u0000')
+    );
+  };
 
   useEffect(() => {
     api
@@ -14,27 +39,40 @@ export function useArrangeTransport(api: NativeApi, timebase: ProjectTimebase) {
         if (status.timelineTick != null) {
           anchor.current.tick = status.timelineTick;
           anchor.current.at = performance.now();
-          setDisplayTick(status.timelineTick);
+          publishTick(status.timelineTick);
         }
       })
       .catch(() => undefined);
-    return api.onTransportStatus((status) => {
-      setTransport(status);
+    const unlisten = api.onTransportStatus((status) => {
+      setTransport((previous) =>
+        transportMeaningfullyChanged(previous, status) ? status : previous,
+      );
       anchor.current = {
         tick: status.timelineTick,
         at: performance.now(),
         playing: status.state === 'playing',
       };
-      setDisplayTick(status.timelineTick);
+      displayTickRef.current = status.timelineTick;
     });
+    return unlisten;
   }, [api]);
 
   useEffect(() => {
     let frame = 0;
-    const update = () => {
+    let lastUiUpdate = 0;
+    const update = (now: number) => {
       const current = anchor.current;
       const elapsed = current.playing ? performance.now() - current.at : 0;
-      setDisplayTick(current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60_000);
+      const tick = current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60_000;
+      // The playhead itself is animated by a tiny DOM-only component. The
+      // editor needs a React snapshot only for the toolbar clock and editing
+      // actions; rebuilding every ArrangeTrack on every animation frame made
+      // playback consume the WebView's entire event loop.
+      displayTickRef.current = tick;
+      if (now - lastUiUpdate >= 250) {
+        lastUiUpdate = now;
+        setDisplayTick(tick);
+      }
       frame = requestAnimationFrame(update);
     };
     frame = requestAnimationFrame(update);
@@ -47,8 +85,8 @@ export function useArrangeTransport(api: NativeApi, timebase: ProjectTimebase) {
       at: performance.now(),
       playing: transport?.state === 'playing',
     };
-    setDisplayTick(tick);
+    publishTick(tick);
   };
 
-  return { transport, displayTick, seekLocally };
+  return { transport, displayTick, displayTickRef, seekLocally };
 }

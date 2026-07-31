@@ -1,4 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MutableRefObject,
+} from 'react';
 import type {
   AudioClip,
   AutomationParameter,
@@ -87,7 +96,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
-  const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
+  const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
+    props.api,
+    timebase,
+  );
   const analyses = useWaveformAnalyses(props.api, arrangement.audioClips);
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
   // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
@@ -899,9 +911,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               className={styles.recordingPreview}
               style={{
                 left: TRACK_HEADER_WIDTH + transport.recordingStartTick * pixelsPerTick,
-                width:
-                  Math.max(1, transport.recordingCurrentTick - transport.recordingStartTick) *
-                  pixelsPerTick,
+                width: Math.max(1, displayTick - transport.recordingStartTick) * pixelsPerTick,
               }}
             >
               {transport.recordingPhase.toUpperCase()} ·{' '}
@@ -914,12 +924,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               · PASS {transport.recordingPassOrdinal}
             </div>
           )}
-          <div
-            className={styles.playhead}
-            style={{ left: TRACK_HEADER_WIDTH + displayTick * pixelsPerTick }}
-          >
-            <span />
-          </div>
+          <ArrangePlayhead
+            positionRef={displayTickRef}
+            pixelsPerTick={pixelsPerTick}
+            playing={transport?.state === 'playing'}
+          />
           {timeSelection && (
             <div
               data-time-selection-chip
@@ -1196,5 +1205,43 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         />
       )}
     </section>
+  );
+}
+
+function ArrangePlayhead({
+  positionRef,
+  pixelsPerTick,
+  playing,
+}: {
+  positionRef: MutableRefObject<number>;
+  pixelsPerTick: number;
+  playing: boolean;
+}) {
+  const elementRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const update = () => {
+      const element = elementRef.current;
+      if (element) {
+        element.style.transform = `translate3d(${
+          TRACK_HEADER_WIDTH + positionRef.current * pixelsPerTick
+        }px, 0, 0)`;
+      }
+    };
+    if (!playing) {
+      update();
+      return;
+    }
+    let frame = requestAnimationFrame(function animate() {
+      update();
+      frame = requestAnimationFrame(animate);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pixelsPerTick, playing, positionRef]);
+
+  return (
+    <div ref={elementRef} className={styles.playhead}>
+      <span />
+    </div>
   );
 }

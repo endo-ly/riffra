@@ -7,7 +7,7 @@
 //! Filesystem + Asset + Library relocation) lives entirely in
 //! [`super::application`]; nothing here re-implements it.
 
-use tauri::State;
+use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::library;
@@ -15,7 +15,20 @@ use crate::model::AudioStatus;
 use crate::recording::RecordingAsset;
 use crate::recording::application::{self, RecordingContext};
 
-fn context<'a>(state: &'a State<'_, AppState>) -> RecordingContext<'a> {
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Recording blocking operation failed: {error}"))?
+}
+
+fn app_context(state: &AppState) -> RecordingContext<'_> {
     RecordingContext {
         audio: state.core.audio(),
         data_root: state.core.data_root(),
@@ -25,82 +38,116 @@ fn context<'a>(state: &'a State<'_, AppState>) -> RecordingContext<'a> {
 }
 
 #[tauri::command]
-pub fn list_recordings(
-    state: State<'_, AppState>,
+pub async fn list_recordings(
     query: Option<String>,
+    app: AppHandle,
 ) -> Result<Vec<RecordingAsset>, String> {
-    application::list_recordings(&context(&state), query.as_deref())
+    run_blocking(app, move |state| {
+        application::list_recordings(&app_context(state), query.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn rename_recording(
+pub async fn rename_recording(
     id: String,
     new_name: String,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<String, String> {
-    application::rename_recording(&context(&state), &id, &new_name)
+    run_blocking(app, move |state| {
+        application::rename_recording(&app_context(state), &id, &new_name)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_recording(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    application::delete_recording(&context(&state), &id)
+pub async fn delete_recording(id: String, app: AppHandle) -> Result<(), String> {
+    run_blocking(app, move |state| {
+        application::delete_recording(&app_context(state), &id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn archive_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    application::archive_recording(&context(&state), &id)
+pub async fn archive_recording(id: String, app: AppHandle) -> Result<String, String> {
+    run_blocking(app, move |state| {
+        application::archive_recording(&app_context(state), &id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn promote_recording(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    application::promote_recording(&context(&state), &id)
+pub async fn promote_recording(id: String, app: AppHandle) -> Result<String, String> {
+    run_blocking(app, move |state| {
+        application::promote_recording(&app_context(state), &id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn detect_duplicate_recordings(state: State<'_, AppState>) -> Result<Vec<Vec<String>>, String> {
-    application::detect_duplicate_recordings(&context(&state))
+pub async fn detect_duplicate_recordings(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
+    run_blocking(app, |state| {
+        application::detect_duplicate_recordings(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn tag_recording(
+pub async fn tag_recording(
     id: String,
     tag: Option<String>,
     note: Option<String>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<library::LibraryAsset, String> {
-    application::tag_recording(&context(&state), &id, tag, note)
+    run_blocking(app, move |state| {
+        application::tag_recording(&app_context(state), &id, tag, note)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn start_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    application::start_recording(&context(&state))
+pub async fn start_recording(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::start_recording(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn start_arrange_recording(
+pub async fn start_arrange_recording(
     recording_session_id: Option<String>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AudioStatus, String> {
-    match recording_session_id {
-        Some(id) => application::record_another_take(&context(&state), &id),
-        None => application::start_recording(&context(&state)),
-    }
+    run_blocking(app, move |state| match recording_session_id {
+        Some(id) => application::record_another_take(&app_context(state), &id),
+        None => application::start_recording(&app_context(state)),
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn record_another_take(
+pub async fn record_another_take(
     recording_session_id: String,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AudioStatus, String> {
-    application::record_another_take(&context(&state), &recording_session_id)
+    run_blocking(app, move |state| {
+        application::record_another_take(&app_context(state), &recording_session_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn stop_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    application::stop_recording(&context(&state))
+pub async fn stop_recording(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::stop_recording(&app_context(state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn stop_arrange_recording(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    application::stop_recording(&context(&state))
+pub async fn stop_arrange_recording(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::stop_recording(&app_context(state))
+    })
+    .await
 }

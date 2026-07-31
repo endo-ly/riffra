@@ -52,7 +52,11 @@ use riffra_core::AppCore;
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
 use session::CreativeSession;
-use std::sync::Mutex;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 use storage::SessionStore;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
@@ -66,45 +70,197 @@ struct AppState {
     jobs: jobs::JobRegistry,
 }
 
+#[derive(Default)]
+struct PendingSessionIndex {
+    latest: Option<CreativeSession>,
+    running: bool,
+}
+
+// Session saves are intentionally durable per user intent, but the Library
+// read-model refresh is derived data. A rapid sequence of parameter/arrangement
+// edits must not create one blocking database worker per click; only the latest
+// session for a data root is useful once an earlier refresh is already queued.
+static SESSION_INDEX_QUEUE: OnceLock<Mutex<HashMap<PathBuf, PendingSessionIndex>>> =
+    OnceLock::new();
+
+/// Runs a synchronous native/persistence operation on Tokio's blocking pool.
+/// An `async fn` alone only changes where the future is scheduled; it does not
+/// make Condvar waits, VST IPC, fsync, or database work non-blocking. Keeping
+/// those waits off the async worker pool is necessary for window commands and
+/// status delivery to remain serviceable while a plugin is busy.
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Native blocking operation failed: {error}"))?
+}
+
 /// Refreshes the Library Read Model after a Production Operation has changed
 /// the canonical CreativeSession. Feature modules call this instead of
 /// re-implementing the spawn_blocking + sync_session fan-out.
 pub(crate) fn queue_session_index(data_root: &std::path::Path, session: &CreativeSession) {
     let data_root = data_root.to_path_buf();
-    let session = session.clone();
+    let should_start = {
+        let queues = SESSION_INDEX_QUEUE.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut queues = match queues.lock() {
+            Ok(queues) => queues,
+            Err(error) => abort_on_poison(error),
+        };
+        let pending = queues.entry(data_root.clone()).or_default();
+        pending.latest = Some(session.clone());
+        if pending.running {
+            false
+        } else {
+            pending.running = true;
+            true
+        }
+    };
+    if !should_start {
+        return;
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = library::sync_session(&data_root, &session);
+        loop {
+            let session = {
+                let queues = SESSION_INDEX_QUEUE.get_or_init(|| Mutex::new(HashMap::new()));
+                let mut queues = match queues.lock() {
+                    Ok(queues) => queues,
+                    Err(error) => abort_on_poison(error),
+                };
+                let Some(pending) = queues.get_mut(&data_root) else {
+                    return;
+                };
+                let Some(session) = pending.latest.take() else {
+                    queues.remove(&data_root);
+                    return;
+                };
+                session
+            };
+            let _ = library::sync_session(&data_root, &session);
+        }
+    });
+}
+
+/// Completes startup-only persistence and native reconciliation after Tauri
+/// has registered managed state. Audio-device initialization can involve a
+/// driver handshake, so it must not hold up the first WebView paint.
+fn queue_startup_maintenance(
+    app_handle: AppHandle,
+    data_root: std::path::PathBuf,
+    session: CreativeSession,
+    requested_preferences: audio_preferences::AudioPreferences,
+) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        if let Err(error) = library::sync_session(&data_root, &session) {
+            let _ = diagnostics::record(&data_root, "startup-library", &error);
+        }
+        if state.core.safe_mode() {
+            return;
+        }
+
+        match state.core.audio().refresh_status() {
+            Ok(status) => match audio_preferences::AudioPreferences::from_effective_status(&status)
+            {
+                Ok(effective) => {
+                    let preferences_unchanged = state
+                        .audio_preferences
+                        .lock()
+                        .map(|current| *current == requested_preferences)
+                        .unwrap_or(false);
+                    if preferences_unchanged {
+                        if let Err(error) =
+                            audio_preferences::AudioPreferencesStore::new(&data_root)
+                                .save(&effective)
+                        {
+                            let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                        }
+                        if let Err(error) = state
+                            .core
+                            .audio()
+                            .set_restart_preferences(effective.clone())
+                        {
+                            let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                        }
+                        if let Ok(mut current) = state.audio_preferences.lock() {
+                            *current = effective;
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                }
+            },
+            Err(error) => {
+                let _ = diagnostics::record(&data_root, "startup-audio", &error);
+            }
+        }
+
+        let current_session = state
+            .core
+            .session()
+            .lock()
+            .map(|current| current.clone())
+            .unwrap_or(session);
+        let workspace = current_session.workspace;
+        let mode = match workspace {
+            session::Workspace::Play => "play",
+            session::Workspace::Arrange => "arrange",
+            session::Workspace::Home | session::Workspace::Design => "passive",
+        };
+        if let Err(error) = state.core.audio().set_processing_mode(mode) {
+            let _ = diagnostics::record(&data_root, "startup-audio", &error);
+        }
+        if workspace == session::Workspace::Arrange {
+            let snapshot =
+                session::application::runtime_snapshot_for_recording(&data_root, &current_session);
+            if let Err(error) = state.core.audio().load_timeline_snapshot(snapshot) {
+                let _ = diagnostics::record(&data_root, "startup-timeline", &error);
+            }
+        }
     });
 }
 
 #[tauri::command]
-fn get_bootstrap_state(state: State<'_, AppState>) -> Result<BootstrapState, String> {
-    Ok(BootstrapState {
-        session: state.core.session().lock().map_err(lock_error)?.clone(),
-        recovered_from_generation: state.core.recovered_from_generation(),
-        safe_mode: state.core.safe_mode(),
-        native_available: true,
-        recovery_candidates: SessionStore::new(state.core.data_root())
-            .recovery_candidates()
-            .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
-            .into_iter()
-            .map(|candidate| RecoveryCandidate {
-                file_name: candidate.file_name,
-                updated_at_ms: candidate.updated_at_ms,
-                session_id: candidate.session_id,
-                project_name: candidate.project_name,
-                note: candidate.note,
-            })
-            .collect(),
-        data_root: state.core.data_root().to_string_lossy().into_owned(),
-        vst3_root: DEFAULT_VST3_ROOT.into(),
+async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
+    run_blocking(app, |state| {
+        Ok(BootstrapState {
+            session: state.core.session().lock().map_err(lock_error)?.clone(),
+            recovered_from_generation: state.core.recovered_from_generation(),
+            safe_mode: state.core.safe_mode(),
+            native_available: true,
+            recovery_candidates: SessionStore::new(state.core.data_root())
+                .recovery_candidates()
+                .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
+                .into_iter()
+                .map(|candidate| RecoveryCandidate {
+                    file_name: candidate.file_name,
+                    updated_at_ms: candidate.updated_at_ms,
+                    session_id: candidate.session_id,
+                    project_name: candidate.project_name,
+                    note: candidate.note,
+                })
+                .collect(),
+            data_root: state.core.data_root().to_string_lossy().into_owned(),
+            vst3_root: DEFAULT_VST3_ROOT.into(),
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn export_scratch_session(state: State<'_, AppState>) -> Result<projects::ProjectExport, String> {
-    let session = state.core.session().lock().map_err(lock_error)?.clone();
-    projects::export(state.core.data_root(), &session, storage::now_ms())
+async fn export_scratch_session(app: AppHandle) -> Result<projects::ProjectExport, String> {
+    run_blocking(app, |state| {
+        let session = state.core.session().lock().map_err(lock_error)?.clone();
+        projects::export(state.core.data_root(), &session, storage::now_ms())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -271,70 +427,95 @@ fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
 // in lock-step with the runtime.
 
 #[tauri::command]
-async fn get_audio_status(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.core.audio().refresh_meters()
+async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| state.core.audio().refresh_meters()).await
 }
 
 #[tauri::command]
-fn preview_master_gain_db(gain_db: f64, state: State<'_, AppState>) -> Result<AudioStatus, String> {
+async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), String> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }
-    state.core.audio().set_master_gain_db(gain_db)
+    run_blocking(app, move |state| {
+        state.core.audio().preview_master_gain_db(gain_db)
+    })
+    .await
 }
 
 #[tauri::command]
-fn set_emergency_mute(muted: bool, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.core.audio().set_emergency_mute(muted)
+async fn set_emergency_mute(muted: bool, app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, move |state| {
+        state.core.audio().set_emergency_mute(muted)
+    })
+    .await
 }
 
 #[tauri::command]
-fn recover_audio_device(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.core.safe_mode() {
-        return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
-    }
-    state.core.audio().recover_audio_device(&app)
+async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
+    let operation_app = app.clone();
+    run_blocking(app, move |state| {
+        if state.core.safe_mode() {
+            return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
+        }
+        state.core.audio().recover_audio_device(&operation_app)
+    })
+    .await
 }
 
 #[tauri::command]
-fn enable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.core.safe_mode() {
-        return Err(
-            "Safe Mode blocks MIDI input; offline MIDI and audio export remain available.".into(),
-        );
-    }
-    state.core.audio().enable_midi_listening()
+async fn enable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        if state.core.safe_mode() {
+            return Err(
+                "Safe Mode blocks MIDI input; offline MIDI and audio export remain available."
+                    .into(),
+            );
+        }
+        state.core.audio().enable_midi_listening()
+    })
+    .await
 }
 
 #[tauri::command]
-fn disable_midi_listening(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.core.audio().disable_midi_listening()
+async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| state.core.audio().disable_midi_listening()).await
 }
 
 #[tauri::command]
-fn send_midi_to_plugin(bytes: Vec<u8>, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    if state.core.safe_mode() {
-        return Err(
-            "Safe Mode blocks outgoing MIDI; offline MIDI and audio export remain available."
-                .into(),
-        );
-    }
-    state.core.audio().send_midi(&bytes)
+async fn send_midi_to_plugin(bytes: Vec<u8>, app: AppHandle) -> Result<(), String> {
+    run_blocking(app, move |state| {
+        if state.core.safe_mode() {
+            return Err(
+                "Safe Mode blocks outgoing MIDI; offline MIDI and audio export remain available."
+                    .into(),
+            );
+        }
+        state.core.audio().send_midi(&bytes)
+    })
+    .await
 }
 
 #[tauri::command]
-fn stop_preview(state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.core.audio().stop_preview()
+async fn stop_preview(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| state.core.audio().stop_preview()).await
 }
 
 #[tauri::command]
-fn stop_preview_for_key(voice_key: i32, state: State<'_, AppState>) -> Result<AudioStatus, String> {
-    state.core.audio().stop_preview_for_key(voice_key)
+async fn stop_preview_for_key(voice_key: i32, app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, move |state| {
+        state.core.audio().stop_preview_for_key(voice_key)
+    })
+    .await
 }
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     let message = format!("An internal state lock was poisoned: {error}");
     eprintln!("[riffra] {message}. Aborting to prevent corrupted state from propagating.");
+    std::process::abort();
+}
+
+fn abort_on_poison<T>(error: std::sync::PoisonError<T>) -> ! {
+    eprintln!("[riffra] Internal state lock was poisoned: {error}. Aborting.");
     std::process::abort();
 }
 
@@ -373,16 +554,6 @@ pub fn run() {
             let loaded = SessionStore::new(&data_root).load_or_create()?;
             let session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
-            let startup_timeline = if !safe_mode
-                && session.workspace == session::Workspace::Arrange
-            {
-                Some(session::application::runtime_snapshot_for_recording(
-                    &data_root,
-                    &session,
-                ))
-            } else {
-                None
-            };
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -391,28 +562,10 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle(), preferences.clone())
             };
-            let effective_preferences = if safe_mode {
-                preferences
-            } else {
-                match audio.refresh_status() {
-                    Ok(status) => {
-                        audio_preferences::AudioPreferences::from_effective_status(&status)?
-                    }
-                    Err(_) => preferences,
-                }
-            };
-            audio_preferences::AudioPreferencesStore::new(&data_root)
-                .save(&effective_preferences)?;
+            let effective_preferences = preferences.clone();
             audio.set_restart_preferences(effective_preferences.clone())?;
-            if !safe_mode {
-                audio.set_processing_mode(match session.workspace {
-                    session::Workspace::Play => "play",
-                    session::Workspace::Arrange => "arrange",
-                    session::Workspace::Home | session::Workspace::Design => "passive",
-                })?;
-            }
-            SessionStore::new(&data_root).save(&session)?;
-            let _ = library::sync_session(&data_root, &session);
+            let startup_data_root = data_root.clone();
+            let startup_session = session.clone();
             app.manage(AppState {
                 core: AppCore::new(
                     data_root,
@@ -425,19 +578,12 @@ pub fn run() {
                 audio_preferences: Mutex::new(effective_preferences),
                 jobs: jobs::JobRegistry::default(),
             });
-            if let Some(snapshot) = startup_timeline {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    let state = app_handle.state::<AppState>();
-                    if let Err(error) = state.core.audio().load_timeline_snapshot(snapshot) {
-                        let _ = diagnostics::record(
-                            state.core.data_root(),
-                            "startup-timeline",
-                            &error,
-                        );
-                    }
-                });
-            }
+            queue_startup_maintenance(
+                app.handle().clone(),
+                startup_data_root,
+                startup_session,
+                preferences,
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

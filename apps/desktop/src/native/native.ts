@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AudioClipMove,
@@ -42,8 +41,9 @@ import type {
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
-import { invokeOrFallback, isNativeRuntime } from './invoke';
+import { invoke, invokeOrFallback, isNativeRuntime } from './invoke';
 import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -397,8 +397,8 @@ async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
   });
 }
 
-async function previewMasterGainDb(gainDb: number): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('preview_master_gain_db', { gainDb });
+async function previewMasterGainDb(gainDb: number): Promise<void> {
+  await invoke<void>('preview_master_gain_db', { gainDb });
 }
 
 async function recoverAudioDevice(): Promise<AudioStatus> {
@@ -429,9 +429,10 @@ async function disableMidiListening(): Promise<AudioStatus> {
   }
 }
 
-async function sendMidiToPlugin(bytes: number[]): Promise<AudioStatus> {
+async function sendMidiToPlugin(bytes: number[]): Promise<AudioStatus | null> {
   try {
-    return await invoke<AudioStatus>('send_midi_to_plugin', { bytes });
+    await invoke<void>('send_midi_to_plugin', { bytes });
+    return null;
   } catch (error) {
     return await audioCommandError('Send MIDI to plugin', error);
   }
@@ -1055,6 +1056,19 @@ function createNativeApi(): NativeApi {
       void listen<AudioStatus>('audio-status', (event) => {
         callback(event.payload);
       }).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    onAudioMeters: (callback: (meters: AudioMeters) => void) => {
+      if (!isNativeRuntime()) return () => undefined;
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<AudioMeters>('audio-meters', (event) => callback(event.payload)).then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
       });

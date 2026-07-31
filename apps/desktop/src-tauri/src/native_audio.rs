@@ -33,9 +33,17 @@ struct CommandResponse {
     results: HashMap<u64, Option<Result<(), String>>>,
 }
 
+#[derive(Clone, Copy)]
+enum NativeEvent {
+    AudioStatus,
+    AudioMeters,
+    None,
+}
+
 struct NativeReply {
     request_id: Option<u64>,
     result: Result<(), String>,
+    event: NativeEvent,
 }
 
 /// Sample-pad payload exchanged with the native audio sidecar. The sidecar
@@ -333,16 +341,29 @@ impl AudioSupervisor {
                                 _ => {}
                             }
                         }
-                        if let Some(response) = handle_native_stdout(&event_status, &bytes)
-                            && let Some(request_id) = response.request_id
-                        {
-                            record_command_response(
-                                &event_responses,
-                                request_id,
-                                response.result.err(),
-                            );
+                        if let Some(response) = handle_native_stdout(&event_status, &bytes) {
+                            if let Some(request_id) = response.request_id {
+                                record_command_response(
+                                    &event_responses,
+                                    request_id,
+                                    response.result.as_ref().err().cloned(),
+                                );
+                            }
+                            // Transport acknowledgements are already delivered
+                            // through the dedicated transport-status event. Meter
+                            // frames also use a small payload so they do not
+                            // serialize the full plugin/session status 20 times
+                            // per second or invalidate the entire React tree.
+                            match response.event {
+                                NativeEvent::AudioStatus => {
+                                    emit_audio_status(&event_app, &event_status)
+                                }
+                                NativeEvent::AudioMeters => {
+                                    emit_audio_meters(&event_app, &event_status)
+                                }
+                                NativeEvent::None => {}
+                            }
                         }
-                        emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Stderr(bytes) => {
                         let detail = String::from_utf8_lossy(&bytes);
@@ -552,10 +573,47 @@ impl AudioSupervisor {
 
     fn send_command_with_timeout(
         &self,
-        mut command: serde_json::Value,
+        command: serde_json::Value,
         message: &str,
         timeout: Duration,
     ) -> Result<AudioStatus, String> {
+        self.wait_for_command(command, timeout)?;
+        let mut status = self
+            .status
+            .lock()
+            .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
+        if !message.is_empty() {
+            status.message = message.into();
+        }
+        Ok(status.clone())
+    }
+
+    /// Waits for a sidecar acknowledgement without cloning the full
+    /// [`AudioStatus`]. High-rate realtime commands such as MIDI only need an
+    /// acknowledgement; cloning plugin state data for every note can otherwise
+    /// turn a performance path into a large allocation/serialization path.
+    fn send_command_ack(
+        &self,
+        command: serde_json::Value,
+        message: &str,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        self.wait_for_command(command, timeout)?;
+        if !message.is_empty() {
+            let mut status = self
+                .status
+                .lock()
+                .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
+            status.message = message.into();
+        }
+        Ok(())
+    }
+
+    fn wait_for_command(
+        &self,
+        mut command: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         command["requestId"] = serde_json::json!(request_id);
         let payload = serde_json::to_string(&command)
@@ -620,19 +678,38 @@ impl AudioSupervisor {
         if let Err(error) = result {
             return Err(error);
         }
-        let mut status = self
-            .status
-            .lock()
-            .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
-        if !message.is_empty() {
-            status.message = message.into();
-        }
-        Ok(status.clone())
+        Ok(())
     }
 
-    pub fn load_plugin(&self, path: &Path) -> Result<AudioStatus, String> {
+    pub fn load_plugin(
+        &self,
+        path: &Path,
+        parameter_values: &[f32],
+        bypassed: bool,
+        state_data: Option<&str>,
+    ) -> Result<AudioStatus, String> {
+        if parameter_values.iter().any(|value| !value.is_finite()) {
+            return Err("VST3 parameter values must be finite.".into());
+        }
+        if state_data.is_some_and(|value| value.len() > 4_000_000) {
+            return Err("VST3 state data exceeds the safe 4 MiB limit.".into());
+        }
+        let has_state = state_data.is_some_and(|value| !value.is_empty());
+        // A non-empty opaque state is authoritative. Do not also replay the
+        // parameter array: some plugins expose thousands of parameters and
+        // applying both would duplicate work while allowing the stale array
+        // to overwrite values restored by the plugin state blob.
+        let values = if has_state { &[] } else { parameter_values };
         self.send_command_with_timeout(
-            serde_json::json!({"type": "loadPlugin", "path": path.to_string_lossy()}),
+            serde_json::json!({
+                "type": "loadPlugin",
+                "path": path.to_string_lossy(),
+                "persistedState": {
+                    "parameterValues": values,
+                    "stateData": state_data.unwrap_or_default(),
+                    "bypassed": bypassed,
+                },
+            }),
             "VST3 loaded into the isolated rack; audio remains under the safety limiter.",
             Duration::from_secs(30),
         )
@@ -698,16 +775,6 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn set_plugin_state(&self, state_data: &str) -> Result<AudioStatus, String> {
-        if state_data.len() > 4_000_000 {
-            return Err("VST3 state data exceeds the safe 4 MiB limit.".into());
-        }
-        self.send_command(
-            serde_json::json!({"type": "setPluginState", "stateData": state_data}),
-            "VST3 state restored through the isolated rack.",
-        )
-    }
-
     pub fn plugin_parameter_status(&self) -> Result<AudioStatus, String> {
         self.send_command(serde_json::json!({"type": "pluginParameterStatus"}), "")
     }
@@ -717,6 +784,15 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
             "Master gain updated through the safety limiter.",
+        )
+    }
+
+    pub fn preview_master_gain_db(&self, gain_db: f64) -> Result<(), String> {
+        let safe_gain = gain_db.clamp(-90.0, 0.0);
+        self.send_command_ack(
+            serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
+            "",
+            Duration::from_secs(3),
         )
     }
 
@@ -822,7 +898,7 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn send_midi(&self, bytes: &[u8]) -> Result<AudioStatus, String> {
+    pub fn send_midi(&self, bytes: &[u8]) -> Result<(), String> {
         if bytes.is_empty() {
             return Err("MIDI bytes must contain at least one status byte.".into());
         }
@@ -832,9 +908,10 @@ impl AudioSupervisor {
             );
         }
         let payload_bytes: Vec<u64> = bytes.iter().map(|byte| *byte as u64).collect();
-        self.send_command(
+        self.send_command_ack(
             serde_json::json!({"type": "sendMidi", "bytes": payload_bytes}),
             "MIDI message enqueued for the loaded plugin.",
+            Duration::from_secs(3),
         )
     }
 
@@ -1167,6 +1244,7 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
             Some(NativeReply {
                 request_id,
                 result: Ok(()),
+                event: NativeEvent::AudioStatus,
             })
         }
         ParsedNativeLine::Meters { request_id, meters } => {
@@ -1179,11 +1257,13 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
             Some(NativeReply {
                 request_id,
                 result: Ok(()),
+                event: NativeEvent::AudioMeters,
             })
         }
         ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
             request_id,
             result: Ok(()),
+            event: NativeEvent::None,
         }),
         ParsedNativeLine::Error {
             request_id,
@@ -1198,6 +1278,7 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
             Some(NativeReply {
                 request_id,
                 result: Err(detail),
+                event: NativeEvent::AudioStatus,
             })
         }
     }
@@ -1265,6 +1346,27 @@ fn sidecar_restart_required(error: &str) -> bool {
 fn emit_audio_status<R: Runtime>(app: &AppHandle<R>, status: &Arc<Mutex<AudioStatus>>) {
     if let Ok(current) = status.lock() {
         let _ = app.emit("audio-status", &*current);
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioMeters {
+    input_peak: f64,
+    output_peak: f64,
+    invalid_samples: u64,
+    feedback_suspected: bool,
+}
+
+fn emit_audio_meters<R: Runtime>(app: &AppHandle<R>, status: &Arc<Mutex<AudioStatus>>) {
+    if let Ok(current) = status.lock() {
+        let meters = AudioMeters {
+            input_peak: current.input_peak,
+            output_peak: current.output_peak,
+            invalid_samples: current.invalid_samples,
+            feedback_suspected: current.feedback_suspected,
+        };
+        let _ = app.emit("audio-meters", meters);
     }
 }
 
@@ -1487,6 +1589,7 @@ mod tests {
         .expect("meter reply");
         let current = status.lock().unwrap();
         assert_eq!(reply.request_id, Some(12));
+        assert!(matches!(reply.event, NativeEvent::AudioMeters));
         assert_eq!(current.driver.as_deref(), Some("Test"));
         assert_eq!(current.input_peak, 0.7);
         assert_eq!(current.output_peak, 0.4);

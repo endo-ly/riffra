@@ -12,7 +12,7 @@ use crate::asset;
 use crate::jobs::{self, BackgroundJobStatus, JobKind};
 
 #[tauri::command]
-pub fn start_analysis_job(
+pub async fn start_analysis_job(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<BackgroundJobStatus, String> {

@@ -36,6 +36,7 @@ import type {
   Workspace,
   TransportStatus,
 } from '@/lib/domain';
+import type { AudioMeters } from '@/lib/audio-meters';
 
 export interface TrackPluginStateChange {
   trackId: string;
@@ -162,7 +163,7 @@ export interface NativeApi {
 
   getAudioStatus(): Promise<AudioStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
-  previewMasterGainDb(gainDb: number): Promise<AudioStatus>;
+  previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   startRecording(): Promise<AudioStatus>;
@@ -190,9 +191,11 @@ export interface NativeApi {
   /**
    * Enqueues a raw MIDI message (1-3 bytes: status, data1, data2) for the
    * currently loaded rack plugin. Intended for computer-keyboard performance
-   * and headless rendering when no MIDI device is connected.
+   * and headless rendering when no MIDI device is connected. Successful
+   * messages return `null`; an error returns the latest AudioStatus so the UI
+   * can surface the safety state without copying full plugin state per note.
    */
-  sendMidiToPlugin(bytes: number[]): Promise<AudioStatus>;
+  sendMidiToPlugin(bytes: number[]): Promise<AudioStatus | null>;
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
@@ -399,12 +402,14 @@ export interface NativeApi {
 
   /**
    * Subscribes to the `audio-status` event pushed by the Rust audio supervisor.
-   * The callback receives the latest AudioStatus whenever the sidecar reports
-   * a status or meter change. Returns an unlisten function. In the browser
+   * The callback receives the latest AudioStatus when the sidecar reports a
+   * semantic status change. High-rate meter frames use `onAudioMeters` so they
+   * do not invalidate the whole React tree. Returns an unlisten function. In the browser
    * preview (no native runtime) the callback is never invoked and the returned
    * unlisten is a no-op.
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
+  onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
   onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
   onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;

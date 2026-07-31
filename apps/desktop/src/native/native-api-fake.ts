@@ -45,6 +45,7 @@ import type {
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
 import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
 
@@ -415,6 +416,11 @@ export class FakeNativeApi implements NativeApi {
 
   onAudioStatus = (_callback: (status: AudioStatus) => void): (() => void) => {
     this.calls.push('onAudioStatus');
+    return () => undefined;
+  };
+
+  onAudioMeters = (_callback: (meters: AudioMeters) => void): (() => void) => {
+    this.calls.push('onAudioMeters');
     return () => undefined;
   };
 
@@ -1017,11 +1023,10 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  previewMasterGainDb = async (gainDb: number): Promise<AudioStatus> => {
+  previewMasterGainDb = async (gainDb: number): Promise<void> => {
     this.calls.push('previewMasterGainDb');
     const clamped = Math.max(-90, Math.min(0, gainDb));
     this.audio = { ...this.audio, message: `Master gain previewed at ${clamped.toFixed(1)} dB.` };
-    return this.audio;
   };
 
   recoverAudioDevice = async (): Promise<AudioStatus> => {
@@ -1088,7 +1093,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  sendMidiToPlugin = async (bytes: number[]): Promise<AudioStatus> => {
+  sendMidiToPlugin = async (bytes: number[]): Promise<AudioStatus | null> => {
     this.calls.push('sendMidiToPlugin');
     if (bytes.length === 0 || bytes.length > 3) {
       throw new Error('MIDI bytes must contain between 1 and 3 bytes.');
@@ -1112,7 +1117,7 @@ export class FakeNativeApi implements NativeApi {
     } else {
       this.audio = { ...this.audio, message: 'MIDI message enqueued.' };
     }
-    return this.audio;
+    return null;
   };
 
   createSamplePad = async (assetId: AssetId, name: string): Promise<SessionAudioPair> => {
