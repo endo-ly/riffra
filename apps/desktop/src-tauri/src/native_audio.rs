@@ -460,17 +460,32 @@ impl AudioSupervisor {
         self.send_command(serde_json::json!({"type": "meterStatus"}), "")
     }
 
-    pub fn load_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
-        self.send_command_with_timeout(
+    pub fn prepare_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
+        self.send_command_ack(
             serde_json::json!({
-                "type": "loadTimelineSnapshot",
+                "type": "prepareTimelineSnapshot",
                 "protocolVersion": 1,
                 "snapshot": snapshot,
             }),
             "",
             Duration::from_secs(15),
-        )?;
-        Ok(())
+        )
+    }
+
+    pub fn commit_timeline_snapshot(&self) -> Result<(), String> {
+        self.send_command_ack(
+            serde_json::json!({"type": "commitTimelineSnapshot"}),
+            "",
+            Duration::from_secs(3),
+        )
+    }
+
+    pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
+        self.send_command_ack(
+            serde_json::json!({"type": "discardTimelineSnapshot"}),
+            "",
+            Duration::from_secs(3),
+        )
     }
 
     pub fn play_timeline(&self) -> Result<(), String> {

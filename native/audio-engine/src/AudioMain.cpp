@@ -866,11 +866,9 @@ int serve(
                 const auto snapshot = command.getProperty("snapshot", {});
                 const auto sampleRate = callback.getSampleRate();
                 const auto requestId = currentRequestId;
-                const auto editorWasOpen = trackPluginEditor != nullptr;
-                const auto editorTrackId = trackPluginEditorTrackId;
                 timelineOperationRunning.store(true, std::memory_order_release);
                 timelineOperationThread = std::thread(
-                    [&, snapshot, requestId, sampleRate, blockSize, commitImmediately, editorWasOpen, editorTrackId] {
+                    [&, snapshot, requestId, sampleRate, blockSize, commitImmediately] {
                         const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         if (commitImmediately && trackPluginEditor != nullptr) {
                             trackPluginEditor->close();
@@ -900,15 +898,6 @@ int serve(
                         if (!loaded) {
                             writeJson(makeError("timeline", timelineError), requestId);
                         } else {
-                            const auto shouldCloseEditor = editorWasOpen
-                                && (!timelineEngine.preparedTrackReusesRuntimeDevices(editorTrackId)
-                                    || commitImmediately);
-                            if (shouldCloseEditor && trackPluginEditor != nullptr) {
-                                trackPluginEditor->close();
-                                trackPluginEditor.reset();
-                                trackPluginEditorTrackId.clear();
-                                trackPluginEditorDeviceId.clear();
-                            }
                             auto* ack = new juce::DynamicObject();
                             ack->setProperty("type", "timelineAck");
                             ack->setProperty("revision", snapshot.getProperty("revision", 0));
@@ -936,6 +925,16 @@ int serve(
                     continue;
                 }
                 const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                const auto shouldCloseEditor = timelineEngine.hasPreparedSnapshot()
+                    && trackPluginEditor != nullptr
+                    && !timelineEngine.preparedTrackReusesRuntimeDevices(
+                        trackPluginEditorTrackId);
+                if (shouldCloseEditor) {
+                    trackPluginEditor->close();
+                    trackPluginEditor.reset();
+                    trackPluginEditorTrackId.clear();
+                    trackPluginEditorDeviceId.clear();
+                }
                 juce::String timelineError;
                 if (!timelineEngine.commitPreparedSnapshot(timelineError)) {
                     writeJson(makeError("timeline", timelineError));

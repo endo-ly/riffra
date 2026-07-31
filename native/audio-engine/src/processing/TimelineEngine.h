@@ -78,6 +78,7 @@ public:
         juce::String& error) const;
     [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
         const juce::String& trackId) const noexcept;
+    [[nodiscard]] bool hasPreparedSnapshot() const noexcept;
     [[nodiscard]] bool monitoringEnabled() const noexcept;
     [[nodiscard]] bool recordingWindow(
         int sampleCount,

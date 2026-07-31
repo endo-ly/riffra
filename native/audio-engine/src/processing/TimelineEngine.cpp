@@ -1043,6 +1043,11 @@ bool TimelineEngine::preparedTrackReusesRuntimeDevices(
         && (*track)->reuseRuntimeDevices;
 }
 
+bool TimelineEngine::hasPreparedSnapshot() const noexcept {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    return pendingTimeline != nullptr;
+}
+
 bool TimelineEngine::setDeviceBypassed(
     const juce::String& trackId,
     const juce::String& deviceId,

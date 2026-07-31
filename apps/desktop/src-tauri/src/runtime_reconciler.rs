@@ -17,15 +17,25 @@ use std::time::{Duration, Instant};
 pub type RuntimeRecovery = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 pub trait RuntimeDriver: Send + Sync + 'static {
-    fn load_timeline_snapshot(&self, snapshot: Value) -> Result<(), String>;
+    fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String>;
+    fn commit_timeline_snapshot(&self) -> Result<(), String>;
+    fn discard_timeline_snapshot(&self) -> Result<(), String>;
     fn play_timeline(&self) -> Result<(), String>;
     fn stop_timeline(&self) -> Result<(), String>;
     fn runtime_generation(&self) -> u64;
 }
 
 impl RuntimeDriver for AudioSupervisor {
-    fn load_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
-        AudioSupervisor::load_timeline_snapshot(self, snapshot)
+    fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
+        AudioSupervisor::prepare_timeline_snapshot(self, snapshot)
+    }
+
+    fn commit_timeline_snapshot(&self) -> Result<(), String> {
+        AudioSupervisor::commit_timeline_snapshot(self)
+    }
+
+    fn discard_timeline_snapshot(&self) -> Result<(), String> {
+        AudioSupervisor::discard_timeline_snapshot(self)
     }
 
     fn play_timeline(&self) -> Result<(), String> {
@@ -67,6 +77,7 @@ struct ReconcilerState {
 pub struct RuntimeReconciler<D: RuntimeDriver> {
     driver: Arc<D>,
     state: Arc<(Mutex<ReconcilerState>, Condvar)>,
+    publish_gate: Arc<Mutex<()>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -91,18 +102,32 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         let worker_state = Arc::clone(&state);
         let worker_driver = Arc::clone(&driver);
         let worker_recovery = recovery.clone();
+        let publish_gate = Arc::new(Mutex::new(()));
+        let worker_publish_gate = Arc::clone(&publish_gate);
         let worker = thread::Builder::new()
             .name("riffra-runtime-reconciler".into())
-            .spawn(move || worker_loop(worker_driver, worker_state, worker_recovery))
+            .spawn(move || {
+                worker_loop(
+                    worker_driver,
+                    worker_state,
+                    worker_publish_gate,
+                    worker_recovery,
+                )
+            })
             .map_err(|error| format!("Runtime Reconciler could not start: {error}"))?;
         Ok(Self {
             driver,
             state,
+            publish_gate,
             worker: Mutex::new(Some(worker)),
         })
     }
 
     pub fn submit(&self, snapshot: Value, session_revision: u64) -> RuntimeProjectionStatus {
+        let _publish_gate = self
+            .publish_gate
+            .lock()
+            .expect("runtime publish gate poisoned");
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime reconciler lock poisoned");
         state.next_operation_id = state.next_operation_id.saturating_add(1);
@@ -253,6 +278,7 @@ impl<D: RuntimeDriver> Drop for RuntimeReconciler<D> {
 fn worker_loop<D: RuntimeDriver>(
     driver: Arc<D>,
     state: Arc<(Mutex<ReconcilerState>, Condvar)>,
+    publish_gate: Arc<Mutex<()>>,
     recovery: Option<RuntimeRecovery>,
 ) {
     loop {
@@ -280,7 +306,35 @@ fn worker_loop<D: RuntimeDriver>(
         };
 
         let generation = driver.runtime_generation();
-        let mut result = driver.load_timeline_snapshot(target.snapshot.clone());
+        let mut result = driver.prepare_timeline_snapshot(target.snapshot.clone());
+        if result.is_ok() {
+            let publish_result = {
+                let _publish_gate = publish_gate.lock().expect("runtime publish gate poisoned");
+                let should_publish = {
+                    let state = state.0.lock().expect("runtime reconciler lock poisoned");
+                    state.status.operation_id == target.operation_id
+                        && state.latest_target.is_none()
+                        && !state.stop_requested
+                };
+                if !should_publish {
+                    None
+                } else if generation != driver.runtime_generation() {
+                    Some(Err(format!(
+                        "Audio Runtime generation changed while preparing Session revision {}.",
+                        target.session_revision
+                    )))
+                } else {
+                    Some(driver.commit_timeline_snapshot())
+                }
+            };
+            match publish_result {
+                Some(result_value) => result = result_value,
+                None => {
+                    let _ = driver.discard_timeline_snapshot();
+                    continue;
+                }
+            }
+        }
         if is_native_timeout(&result)
             && target.recovery_attempts == 0
             && let Some(recovery) = recovery.as_ref()
@@ -397,7 +451,10 @@ mod tests {
     struct FakeDriver {
         generation: AtomicU64,
         loaded: Mutex<Vec<u64>>,
-        load_delay: Duration,
+        pending: Mutex<Option<u64>>,
+        prepare_delay: Duration,
+        prepare_started: AtomicU64,
+        discarded: AtomicU64,
         timeout_once: AtomicU64,
         played: AtomicU64,
         stopped: AtomicU64,
@@ -408,7 +465,10 @@ mod tests {
             Self {
                 generation: AtomicU64::new(1),
                 loaded: Mutex::new(Vec::new()),
-                load_delay,
+                pending: Mutex::new(None),
+                prepare_delay: load_delay,
+                prepare_started: AtomicU64::new(0),
+                discarded: AtomicU64::new(0),
                 timeout_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
@@ -417,8 +477,9 @@ mod tests {
     }
 
     impl RuntimeDriver for FakeDriver {
-        fn load_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
-            thread::sleep(self.load_delay);
+        fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
+            self.prepare_started.fetch_add(1, Ordering::Release);
+            thread::sleep(self.prepare_delay);
             if self
                 .timeout_once
                 .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed)
@@ -428,10 +489,24 @@ mod tests {
                     "Native audio did not acknowledge the command within 15 seconds.".into(),
                 );
             }
-            self.loaded
+            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
+            Ok(())
+        }
+
+        fn commit_timeline_snapshot(&self) -> Result<(), String> {
+            let revision = self
+                .pending
                 .lock()
                 .unwrap()
-                .push(snapshot["revision"].as_u64().unwrap());
+                .take()
+                .ok_or_else(|| "No prepared timeline snapshot is available.".to_string())?;
+            self.loaded.lock().unwrap().push(revision);
+            Ok(())
+        }
+
+        fn discard_timeline_snapshot(&self) -> Result<(), String> {
+            self.pending.lock().unwrap().take();
+            self.discarded.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
 
@@ -476,6 +551,20 @@ mod tests {
         let loaded = driver.loaded.lock().unwrap().clone();
         assert_eq!(loaded.last().copied(), Some(3));
         assert!(!loaded.contains(&2));
+    }
+
+    #[test]
+    fn does_not_publish_superseded_prepared_snapshot() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(1), 1);
+
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+        reconciler.submit(snapshot(2), 2);
+
+        wait_until(|| reconciler.status().active_session_revision == Some(2));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[2]);
+        assert_eq!(driver.discarded.load(Ordering::Relaxed), 1);
     }
 
     #[test]
