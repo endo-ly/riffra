@@ -18,6 +18,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <condition_variable>
+#include <deque>
 #include <exception>
 #include <optional>
 #include <thread>
@@ -37,7 +39,83 @@ using riffra::PluginRack;
 using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
-std::mutex responseMutex;
+
+enum class OutputKind { control, telemetry };
+
+class OutputWriter final {
+public:
+    OutputWriter() = default;
+
+    ~OutputWriter() { stop(); }
+
+    void enqueue(std::string line, const OutputKind kind) {
+        {
+            const std::lock_guard lock(mutex);
+            ensureStarted();
+            if (kind == OutputKind::telemetry
+                && telemetryQueue.size() >= kTelemetryQueueLimit) {
+                droppedTelemetry.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            if (kind == OutputKind::control)
+                controlQueue.push_back(std::move(line));
+            else
+                telemetryQueue.push_back(std::move(line));
+        }
+        wake.notify_one();
+    }
+
+    [[nodiscard]] std::uint64_t droppedTelemetryCount() const noexcept {
+        return droppedTelemetry.load(std::memory_order_acquire);
+    }
+
+private:
+    static constexpr std::size_t kTelemetryQueueLimit = 32;
+
+    void ensureStarted() {
+        if (writer.joinable())
+            return;
+        writer = std::thread([this] { run(); });
+    }
+
+    void run() {
+        for (;;) {
+            std::string line;
+            {
+                std::unique_lock lock(mutex);
+                wake.wait(lock, [this] {
+                    return stopping || !controlQueue.empty() || !telemetryQueue.empty();
+                });
+                if (stopping && controlQueue.empty() && telemetryQueue.empty())
+                    return;
+                auto& queue = !controlQueue.empty() ? controlQueue : telemetryQueue;
+                line = std::move(queue.front());
+                queue.pop_front();
+            }
+            std::cout << line << '\n' << std::flush;
+        }
+    }
+
+    void stop() {
+        {
+            const std::lock_guard lock(mutex);
+            stopping = true;
+        }
+        wake.notify_one();
+        if (writer.joinable())
+            writer.join();
+    }
+
+    mutable std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<std::string> controlQueue;
+    std::deque<std::string> telemetryQueue;
+    std::thread writer;
+    std::atomic<std::uint64_t> droppedTelemetry { 0 };
+    bool stopping = false;
+};
+
+OutputWriter outputWriter;
 
 juce::var midiDeviceValue(const juce::MidiDeviceInfo& device) {
     auto* value = new juce::DynamicObject();
@@ -262,14 +340,16 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
     return juce::var(object);
 }
 
-void writeJson(const juce::var& value, const juce::String& requestId = {}) {
-    const std::lock_guard lock(responseMutex);
+void writeJson(
+    const juce::var& value,
+    const juce::String& requestId = {},
+    const OutputKind kind = OutputKind::control) {
     auto response = value;
     const auto effectiveRequestId = requestId.isNotEmpty() ? requestId : currentRequestId;
     if (effectiveRequestId.isNotEmpty())
         if (auto* object = response.getDynamicObject())
             object->setProperty("requestId", effectiveRequestId.getLargeIntValue());
-    std::cout << juce::JSON::toString(response, true) << std::endl;
+    outputWriter.enqueue(juce::JSON::toString(response, true).toStdString(), kind);
 }
 
 juce::var probeAudioDevices() {
@@ -429,6 +509,9 @@ juce::var currentMeters(const SafetyAudioCallback& callback) {
         "invalidSamples",
         static_cast<juce::int64>(callback.getInvalidSampleCount()));
     meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
+    meters->setProperty(
+        "droppedTelemetryFrames",
+        static_cast<juce::int64>(outputWriter.droppedTelemetryCount()));
     return juce::var(meters);
 }
 
@@ -693,7 +776,7 @@ int serve(
         while (meterPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (!meterPushRunning.load(std::memory_order_acquire)) break;
-            writeJson(currentMeters(callback));
+            writeJson(currentMeters(callback), {}, OutputKind::telemetry);
         }
     });
 
@@ -702,7 +785,7 @@ int serve(
         while (transportPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (!transportPushRunning.load(std::memory_order_acquire)) break;
-            writeJson(timelineEngine.status());
+            writeJson(timelineEngine.status(), {}, OutputKind::telemetry);
         }
     });
 
