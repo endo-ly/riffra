@@ -1,4 +1,4 @@
-use crate::plugins::ScanReport;
+use crate::plugins::{PluginScanState, ScanReport};
 use serde::Deserialize;
 use std::{
     fs::{self, File},
@@ -42,6 +42,34 @@ pub fn save(data_root: &Path, report: &ScanReport) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Reuses validation results for plugins whose discovered path and filesystem
+/// timestamp are unchanged. Discovery still runs on every explicit scan, while
+/// the expensive isolated instance load is reserved for new or changed files.
+pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
+    let catalog_path = data_root.join("plugins/catalog.json");
+    let Ok(payload) = fs::read(catalog_path) else {
+        return;
+    };
+    let Ok(cached) = serde_json::from_slice::<ScanReport>(&payload) else {
+        return;
+    };
+
+    for plugin in &mut report.plugins {
+        let Some(previous) = cached.plugins.iter().find(|candidate| {
+            candidate.path == plugin.path
+                && plugin.modified_at_ms.is_some()
+                && candidate.modified_at_ms == plugin.modified_at_ms
+                && candidate.scan_state != PluginScanState::Discovered
+        }) else {
+            continue;
+        };
+        plugin.name = previous.name.clone();
+        plugin.vendor = previous.vendor.clone();
+        plugin.version = previous.version.clone();
+        plugin.scan_state = previous.scan_state;
+    }
 }
 
 pub fn validated_plugin(
@@ -182,6 +210,42 @@ mod tests {
         let error = validated_plugin(&root, &plugin_path).unwrap_err();
 
         assert!(error.contains("not validated"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reuses_unchanged_validation_results() {
+        let root = test_root();
+        let plugin_path = root.join("VST3/Amp.vst3");
+        fs::create_dir_all(&plugin_path).unwrap();
+        let cached = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 1,
+            finished_at_ms: 2,
+            plugins: vec![PluginEntry {
+                id: "vst3-amp".into(),
+                name: "Amp (validated)".into(),
+                vendor: Some("Vendor".into()),
+                version: Some("1.0".into()),
+                format: PluginFormat::Vst3,
+                path: plugin_path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: Some(1),
+                scan_state: PluginScanState::Validated,
+            }],
+            issues: vec![],
+        };
+        save(&root, &cached).unwrap();
+
+        let mut discovered = cached.clone();
+        discovered.plugins[0].name = "Amp".into();
+        discovered.plugins[0].vendor = None;
+        discovered.plugins[0].version = None;
+        discovered.plugins[0].scan_state = PluginScanState::Discovered;
+        reuse_cached_scan_results(&root, &mut discovered);
+
+        assert_eq!(discovered.plugins[0].name, "Amp (validated)");
+        assert_eq!(discovered.plugins[0].scan_state, PluginScanState::Validated);
         let _ = fs::remove_dir_all(root);
     }
 }

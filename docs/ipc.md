@@ -152,8 +152,10 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 ```
 
 - `type`: メッセージ種別（camelCase）
-- `requestId`: 数値。Rust側が `AtomicU64` で1から連続発行し、`Condvar` で3秒タイムアウト付きで応答を待機する。イベント通知では省略可
-- C++側は `thread_local` の `currentRequestId` に保持し、応答行に `requestId` を付与する
+- `requestId`: 数値。Rust側が `AtomicU64` で発行し、要求ごとに対応する応答を `Condvar` でコマンド種別ごとのタイムアウト付きで待機する。イベント通知では省略可
+- C++側は通常のコマンドでは `thread_local` の `currentRequestId` を使い、コマンドスレッド外で完了する処理は要求時に保存したIDを明示して応答へ付与する
+
+VST3のインスタンス生成・初期化・破棄とArrangement Snapshotの準備は、C++のstdin読み取りスレッドを塞がないワーカースレッドで行う。処理中も再生・停止・ワークスペース操作の要求は受け付け、同じプラグイン状態を同時に変更する要求には `pluginBusy` または `timelineBusy` を返す。
 
 ### 4.2 メッセージ種別（C++ → Rust）
 
@@ -186,7 +188,7 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 通常の `audioStatus` にプラグインのパラメータ一覧とstateDataは含めない。パラメータ一覧は `pluginParameterStatus` の応答で取得し、プラグイン状態はSessionからランタイムへ復元するときだけ渡す。Masterのドラッグ中は `preview_master_gain_db` がAudio Runtimeだけを更新し、操作確定時に `set_master_gain_db` がSessionへ保存する。
 
-Timeline Snapshotは`protocolVersion: 1`とArrangement revisionを持つ。RustはAssetIdを解決済みパスとSource Frame情報へ変換し、利用不能AssetはSnapshotから除外して`unavailableClipIds`へ残す。C++はファイルopen、read-ahead、Sample Rate補正、作業バッファ確保をコマンドスレッドで完了してから交換する。Audio CallbackはファイルI/O・JSON解析・メモリ確保を行わない。
+Timeline Snapshotは`protocolVersion: 1`とArrangement revisionを持つ。RustはAssetIdを解決済みパスとSource Frame情報へ変換し、利用不能AssetはSnapshotから除外して`unavailableClipIds`へ残す。C++はファイルopen、read-ahead、Sample Rate補正、作業バッファ確保を専用ワーカースレッドで完了してから交換する。Audio CallbackはファイルI/O・JSON解析・メモリ確保を行わない。
 
 `transportStatus.timelineSample`はseekやloopで不連続になり得る。`audioClockSample`はAudio Callbackごとに単調増加する。UIは最新イベントをanchorとして`requestAnimationFrame`で表示だけを補間し、補間値を正準状態へ書き戻さない。
 
@@ -229,15 +231,17 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 
 `scope` でエラーの影響範囲を分類する。Rust側の `render_native_error` は `scope == "audioDevice"` のみ `faulted` 状態へ遷移させ、それ以外はコマンド失敗（`message` 更新）扱いにする。
 
-| scope         | 影響                            | C++側の主な発生元                             |
-| ------------- | ------------------------------- | --------------------------------------------- |
-| `audioDevice` | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗      |
-| `plugin`      | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗           |
-| `recording`   | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                |
-| `midi`        | コマンド失敗                    | MIDI入力オープン/クローズ失敗                 |
-| `preview`     | コマンド失敗                    | サンプルプレビュー失敗                        |
-| `protocol`    | コマンド失敗                    | JSONパース失敗・未対応コマンド                |
-| `arguments`   | 起動時失敗                      | CLI引数エラー（`--probe` / `--serve` 起動時） |
+| scope          | 影響                            | C++側の主な発生元                             |
+| -------------- | ------------------------------- | --------------------------------------------- |
+| `audioDevice`  | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗      |
+| `plugin`       | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗           |
+| `pluginBusy`   | コマンド失敗。fault状態にしない | VST3ロード中の同時操作                        |
+| `timelineBusy` | コマンド失敗。fault状態にしない | Arrangement Snapshot準備中の同時操作          |
+| `recording`    | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                |
+| `midi`         | コマンド失敗                    | MIDI入力オープン/クローズ失敗                 |
+| `preview`      | コマンド失敗                    | サンプルプレビュー失敗                        |
+| `protocol`     | コマンド失敗                    | JSONパース失敗・未対応コマンド                |
+| `arguments`    | 起動時失敗                      | CLI引数エラー（`--probe` / `--serve` 起動時） |
 
 `dataSafe` は保存済みデータが保全されているかを示す。現在のC++実装は常に `true` を送信し、保存データがsidecarの異常で失われないことを表明する。
 

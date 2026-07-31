@@ -5,6 +5,7 @@ use crate::model::{
 use crate::session::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
@@ -23,15 +24,13 @@ pub struct AudioSupervisor {
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
     next_request_id: AtomicU64,
     sidecar_generation: Arc<AtomicU64>,
-    pending_request_id: Arc<AtomicU64>,
     child: Mutex<Option<CommandChild>>,
     restart_preferences: Mutex<AudioPreferences>,
 }
 
 #[derive(Default)]
 struct CommandResponse {
-    request_id: Option<u64>,
-    error: Option<String>,
+    results: HashMap<u64, Option<Result<(), String>>>,
 }
 
 struct NativeReply {
@@ -203,7 +202,6 @@ impl AudioSupervisor {
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
             next_request_id: AtomicU64::new(1),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
-            pending_request_id: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(AudioPreferences::default()),
         }
@@ -244,7 +242,6 @@ impl AudioSupervisor {
             responses,
             next_request_id: AtomicU64::new(1),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
-            pending_request_id: Arc::new(AtomicU64::new(0)),
             child: Mutex::new(None),
             restart_preferences: Mutex::new(preferences),
         };
@@ -313,7 +310,6 @@ impl AudioSupervisor {
         let event_status = Arc::clone(&self.status);
         let event_responses = Arc::clone(&self.responses);
         let event_generation = Arc::clone(&self.sidecar_generation);
-        let event_pending_request_id = Arc::clone(&self.pending_request_id);
         let event_app = app.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
@@ -363,7 +359,7 @@ impl AudioSupervisor {
                             "Native audio communication failed: {error}. The engine is isolated and saved data is safe."
                         );
                         set_faulted(&event_status, message.clone());
-                        fail_pending_request(&event_responses, &event_pending_request_id, message);
+                        fail_pending_requests(&event_responses, message);
                         emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Terminated(payload) => {
@@ -372,7 +368,7 @@ impl AudioSupervisor {
                             payload.code
                         );
                         set_faulted(&event_status, message.clone());
-                        fail_pending_request(&event_responses, &event_pending_request_id, message);
+                        fail_pending_requests(&event_responses, message);
                         emit_audio_status(&event_app, &event_status);
                     }
                     _ => {}
@@ -388,6 +384,10 @@ impl AudioSupervisor {
         starting_message: &str,
     ) -> Result<(), String> {
         let generation = self.next_sidecar_generation();
+        fail_pending_requests(
+            &self.responses,
+            "Native audio sidecar is restarting; the command will be retried.".into(),
+        );
         let mut slot = self
             .child
             .lock()
@@ -560,47 +560,64 @@ impl AudioSupervisor {
         command["requestId"] = serde_json::json!(request_id);
         let payload = serde_json::to_string(&command)
             .map_err(|error| format!("Audio command could not be encoded: {error}"))?;
-        let mut child_slot = self
-            .child
-            .lock()
-            .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
-        let child = child_slot.as_mut().ok_or_else(|| {
-            "Native audio is unavailable; the requested audio command was not sent.".to_string()
-        })?;
         let (response_lock, response_ready) = &*self.responses;
-        let response = response_lock
-            .lock()
-            .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
-        self.pending_request_id.store(request_id, Ordering::Release);
-        if let Err(error) = child.write(format!("{payload}\n").as_bytes()) {
-            let _ = self.pending_request_id.compare_exchange(
-                request_id,
-                0,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
+        {
+            let mut response = response_lock
+                .lock()
+                .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
+            response.results.insert(request_id, None);
+        }
+
+        let write_result = {
+            let mut child_slot = self
+                .child
+                .lock()
+                .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
+            let child = child_slot.as_mut().ok_or_else(|| {
+                "Native audio is unavailable; the requested audio command was not sent.".to_string()
+            });
+            child.and_then(|child| {
+                child
+                    .write(format!("{payload}\n").as_bytes())
+                    .map_err(|error| error.to_string())
+            })
+        };
+        if let Err(error) = write_result {
+            if let Ok(mut response) = response_lock.lock() {
+                response.results.remove(&request_id);
+            }
             return Err(format!(
                 "Audio command could not reach the isolated audio process: {error}"
             ));
         }
+
+        let response = response_lock
+            .lock()
+            .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
         let wait = response_ready.wait_timeout_while(response, timeout, |current| {
-            current.request_id != Some(request_id)
+            current.results.get(&request_id).is_none_or(Option::is_none)
         });
-        let _ = self.pending_request_id.compare_exchange(
-            request_id,
-            0,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        let (response, wait_result) =
+        let (mut response, wait_result) =
             wait.map_err(|error| format!("Audio response wait failed: {error}"))?;
-        if wait_result.timed_out() && response.request_id != Some(request_id) {
+        if wait_result.timed_out()
+            && response
+                .results
+                .get(&request_id)
+                .is_none_or(Option::is_none)
+        {
+            response.results.remove(&request_id);
             return Err(format!(
                 "Native audio did not acknowledge the command within {} seconds.",
                 timeout.as_secs()
             ));
         }
-        if let Some(error) = response.error.clone() {
+
+        let result = response
+            .results
+            .remove(&request_id)
+            .flatten()
+            .unwrap_or_else(|| Err("Native audio returned no command result.".into()));
+        if let Err(error) = result {
             return Err(error);
         }
         let mut status = self
@@ -1193,20 +1210,25 @@ fn record_command_response(
 ) {
     let (response_lock, response_ready) = &**responses;
     if let Ok(mut response) = response_lock.lock() {
-        response.request_id = Some(request_id);
-        response.error = error;
+        if let Some(result) = response.results.get_mut(&request_id) {
+            *result = Some(match error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            });
+        }
         response_ready.notify_all();
     }
 }
 
-fn fail_pending_request(
-    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
-    pending_request_id: &AtomicU64,
-    error: String,
-) {
-    let request_id = pending_request_id.swap(0, Ordering::AcqRel);
-    if request_id != 0 {
-        record_command_response(responses, request_id, Some(error));
+fn fail_pending_requests(responses: &Arc<(Mutex<CommandResponse>, Condvar)>, error: String) {
+    let (response_lock, response_ready) = &**responses;
+    if let Ok(mut response) = response_lock.lock() {
+        for result in response.results.values_mut() {
+            if result.is_none() {
+                *result = Some(Err(error.clone()));
+            }
+        }
+        response_ready.notify_all();
     }
 }
 
@@ -1402,14 +1424,38 @@ mod tests {
     #[test]
     fn sidecar_termination_completes_the_pending_command() {
         let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        let pending = AtomicU64::new(42);
+        responses.0.lock().unwrap().results.insert(42, None);
 
-        fail_pending_request(&responses, &pending, "plugin process stopped".into());
+        fail_pending_requests(&responses, "plugin process stopped".into());
 
         let response = responses.0.lock().unwrap();
-        assert_eq!(pending.load(Ordering::Acquire), 0);
-        assert_eq!(response.request_id, Some(42));
-        assert_eq!(response.error.as_deref(), Some("plugin process stopped"));
+        assert!(matches!(
+            response.results.get(&42),
+            Some(Some(Err(message))) if message == "plugin process stopped"
+        ));
+    }
+
+    #[test]
+    fn sidecar_termination_completes_all_pending_commands() {
+        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
+        responses
+            .0
+            .lock()
+            .unwrap()
+            .results
+            .extend([(7, None), (8, None)]);
+
+        fail_pending_requests(&responses, "plugin process stopped".into());
+
+        let response = responses.0.lock().unwrap();
+        assert!(matches!(
+            response.results.get(&7),
+            Some(Some(Err(message))) if message == "plugin process stopped"
+        ));
+        assert!(matches!(
+            response.results.get(&8),
+            Some(Some(Err(message))) if message == "plugin process stopped"
+        ));
     }
 
     #[test]

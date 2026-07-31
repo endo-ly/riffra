@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <optional>
 #include <thread>
 
@@ -261,12 +262,13 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
     return juce::var(object);
 }
 
-void writeJson(const juce::var& value) {
+void writeJson(const juce::var& value, const juce::String& requestId = {}) {
     const std::lock_guard lock(responseMutex);
     auto response = value;
-    if (currentRequestId.isNotEmpty())
+    const auto effectiveRequestId = requestId.isNotEmpty() ? requestId : currentRequestId;
+    if (effectiveRequestId.isNotEmpty())
         if (auto* object = response.getDynamicObject())
-            object->setProperty("requestId", currentRequestId.getLargeIntValue());
+            object->setProperty("requestId", effectiveRequestId.getLargeIntValue());
     std::cout << juce::JSON::toString(response, true) << std::endl;
 }
 
@@ -704,9 +706,31 @@ int serve(
         }
     });
 
+    // Plugin construction and timeline preparation may execute third-party
+    // code for an unbounded amount of time. Keep that work away from the
+    // command reader so transport and workspace commands remain serviceable.
+    std::atomic<bool> pluginOperationRunning { false };
+    std::thread pluginOperationThread;
+    std::atomic<bool> timelineOperationRunning { false };
+    std::atomic<bool> timelineEditorClosePending { false };
+    std::thread timelineOperationThread;
+
     std::thread commandThread([&] {
         std::string line;
         while (std::getline(std::cin, line)) {
+            if (pluginOperationThread.joinable()
+                && !pluginOperationRunning.load(std::memory_order_acquire))
+                pluginOperationThread.join();
+            if (timelineOperationThread.joinable()
+                && !timelineOperationRunning.load(std::memory_order_acquire))
+                timelineOperationThread.join();
+            if (timelineEditorClosePending.exchange(false, std::memory_order_acq_rel)
+                && trackPluginEditor != nullptr) {
+                trackPluginEditor->close();
+                trackPluginEditor.reset();
+                trackPluginEditorTrackId.clear();
+                trackPluginEditorDeviceId.clear();
+            }
             currentRequestId.clear();
             const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
             if (!command.isObject()) {
@@ -732,43 +756,80 @@ int serve(
                     writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));
                     continue;
                 }
-                auto* device = manager.getCurrentAudioDevice();
-                const auto blockSize = device != nullptr
-                    ? device->getCurrentBufferSizeSamples()
-                    : 0;
-                juce::String timelineError;
-                const auto snapshot = command.getProperty("snapshot", {});
-                if (!timelineEngine.loadSnapshot(
-                        snapshot,
-                        formatManager,
-                        callback.getSampleRate(),
-                        blockSize,
-                        timelineError,
-                        type == "loadTimelineSnapshot")) {
-                    writeJson(makeError("timeline", timelineError));
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "Another Arrangement Graph is still loading a VST3. The current runtime remains available."));
                     continue;
                 }
-                if (type == "prepareTimelineSnapshot"
-                    && trackPluginEditor != nullptr
-                    && !timelineEngine.preparedTrackReusesRuntimeDevices(
-                        trackPluginEditorTrackId)) {
+                if (timelineOperationThread.joinable())
+                    timelineOperationThread.join();
+                const auto commitImmediately = type == "loadTimelineSnapshot";
+                if (commitImmediately && trackPluginEditor != nullptr) {
                     trackPluginEditor->close();
                     trackPluginEditor.reset();
                     trackPluginEditorTrackId.clear();
                     trackPluginEditorDeviceId.clear();
                 }
-                auto* ack = new juce::DynamicObject();
-                ack->setProperty("type", "timelineAck");
-                ack->setProperty("revision", snapshot.getProperty("revision", 0));
-                ack->setProperty("appliedAtAudioClockSample",
-                    timelineEngine.status().getProperty("audioClockSample", 0));
-                ack->setProperty(
-                    "unavailableClipIds",
-                    snapshot.getProperty("unavailableClipIds", juce::Array<juce::var> {}));
-                writeJson(juce::var(ack));
+                auto* device = manager.getCurrentAudioDevice();
+                const auto blockSize = device != nullptr
+                    ? device->getCurrentBufferSizeSamples()
+                    : 0;
+                const auto snapshot = command.getProperty("snapshot", {});
+                const auto sampleRate = callback.getSampleRate();
+                const auto requestId = currentRequestId;
+                const auto editorWasOpen = trackPluginEditor != nullptr;
+                const auto editorTrackId = trackPluginEditorTrackId;
+                timelineOperationRunning.store(true, std::memory_order_release);
+                timelineOperationThread = std::thread(
+                    [&, snapshot, requestId, sampleRate, blockSize, commitImmediately, editorWasOpen, editorTrackId] {
+                        juce::String timelineError;
+                        bool loaded = false;
+                        try {
+                            loaded = timelineEngine.loadSnapshot(
+                                snapshot,
+                                formatManager,
+                                sampleRate,
+                                blockSize,
+                                timelineError,
+                                commitImmediately);
+                        } catch (const std::exception& exception) {
+                            timelineError =
+                                "Arrangement VST3 loading raised an exception: "
+                                + juce::String(exception.what());
+                        } catch (...) {
+                            timelineError =
+                                "Arrangement VST3 loading failed with an unknown exception.";
+                        }
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!loaded) {
+                            writeJson(makeError("timeline", timelineError), requestId);
+                        } else {
+                            const auto shouldCloseEditor = editorWasOpen
+                                && (!timelineEngine.preparedTrackReusesRuntimeDevices(editorTrackId)
+                                    || commitImmediately);
+                            if (shouldCloseEditor)
+                                timelineEditorClosePending.store(true, std::memory_order_release);
+                            auto* ack = new juce::DynamicObject();
+                            ack->setProperty("type", "timelineAck");
+                            ack->setProperty("revision", snapshot.getProperty("revision", 0));
+                            ack->setProperty("appliedAtAudioClockSample",
+                                timelineEngine.status().getProperty("audioClockSample", 0));
+                            ack->setProperty(
+                                "unavailableClipIds",
+                                snapshot.getProperty("unavailableClipIds", juce::Array<juce::var> {}));
+                            writeJson(juce::var(ack), requestId);
+                        }
+                    });
                 continue;
             }
             if (type == "commitTimelineSnapshot") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3 and cannot be committed yet."));
+                    continue;
+                }
                 juce::String timelineError;
                 if (!timelineEngine.commitPreparedSnapshot(timelineError)) {
                     writeJson(makeError("timeline", timelineError));
@@ -778,11 +839,23 @@ int serve(
                 continue;
             }
             if (type == "discardTimelineSnapshot") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3 and cannot be discarded yet."));
+                    continue;
+                }
                 timelineEngine.discardPreparedSnapshot();
                 writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "setTrackDeviceBypassed") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
+                    continue;
+                }
                 juce::String deviceError;
                 if (!timelineEngine.setDeviceBypassed(
                         command.getProperty("trackId", {}).toString(),
@@ -796,6 +869,12 @@ int serve(
                 continue;
             }
             if (type == "setTrackDeviceParameter") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
+                    continue;
+                }
                 juce::String deviceError;
                 if (!timelineEngine.setDeviceParameter(
                         command.getProperty("trackId", {}).toString(),
@@ -810,6 +889,12 @@ int serve(
                 continue;
             }
             if (type == "openTrackPluginEditor") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. The plugin editor can be opened when it finishes."));
+                    continue;
+                }
                 auto* device = timelineEngine.findDevice(
                     command.getProperty("trackId", {}).toString(),
                     command.getProperty("deviceId", {}).toString());
@@ -930,20 +1015,68 @@ int serve(
                                         "VST3 loading requires an active audio device."));
                     continue;
                 }
-                if (const auto pluginError = pluginEditor.load(path, sampleRate, blockSize)) {
-                    writeJson(makeError(pluginError->scope, pluginError->message));
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "Another Play rack operation is still loading a VST3. The current runtime remains available."));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                if (pluginOperationThread.joinable())
+                    pluginOperationThread.join();
+                const auto requestId = currentRequestId;
+                pluginOperationRunning.store(true, std::memory_order_release);
+                pluginOperationThread = std::thread(
+                    [&, path, requestId, sampleRate, blockSize] {
+                        std::optional<riffra::PluginLoadError> pluginError;
+                        try {
+                            pluginError = pluginEditor.load(path, sampleRate, blockSize);
+                        } catch (const std::exception& exception) {
+                            pluginError = riffra::PluginLoadError {
+                                "pluginInstance",
+                                "VST3 loading raised an exception: " + juce::String(exception.what())};
+                        } catch (...) {
+                            pluginError = riffra::PluginLoadError {
+                                "pluginInstance",
+                                "VST3 loading failed with an unknown exception."};
+                        }
+                        pluginOperationRunning.store(false, std::memory_order_release);
+                        if (pluginError.has_value()) {
+                            writeJson(makeError(pluginError->scope, pluginError->message), requestId);
+                            return;
+                        }
+                        writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                    });
                 continue;
             }
             if (type == "clearPlugin") {
-                juce::String clearError;
-                if (!pluginEditor.clear(clearError)) {
-                    writeJson(makeError("pluginLifecycle", clearError));
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "Another Play rack operation is still changing the VST3. The current runtime remains available."));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                if (pluginOperationThread.joinable())
+                    pluginOperationThread.join();
+                const auto requestId = currentRequestId;
+                pluginOperationRunning.store(true, std::memory_order_release);
+                pluginOperationThread = std::thread([&, requestId] {
+                    juce::String clearError;
+                    bool cleared = false;
+                    try {
+                        cleared = pluginEditor.clear(clearError);
+                    } catch (const std::exception& exception) {
+                        clearError =
+                            "VST3 clearing raised an exception: " + juce::String(exception.what());
+                    } catch (...) {
+                        clearError = "VST3 clearing failed with an unknown exception.";
+                    }
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    if (!cleared) {
+                        writeJson(makeError("pluginLifecycle", clearError), requestId);
+                        return;
+                    }
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                });
                 continue;
             }
             if (type == "probeMidiDevices") {
@@ -951,6 +1084,12 @@ int serve(
                 continue;
             }
             if (type == "configureSamplePads") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Sample pad changes can be retried shortly."));
+                    continue;
+                }
                 const auto padsValue = command.getProperty("pads", {});
                 const auto sampleRate = callback.getSampleRate();
                 juce::String mappingError;
@@ -1045,6 +1184,12 @@ int serve(
                 continue;
             }
             if (type == "startTakeComparison") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Take comparison can be retried shortly."));
+                    continue;
+                }
                 const auto loadComparisonFile = [&](const juce::String& path,
                                                     const juce::int64 startFrame,
                                                     const juce::int64 endFrame,
@@ -1144,6 +1289,12 @@ int serve(
                 continue;
             }
             if (type == "previewSample") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Preview can be retried shortly."));
+                    continue;
+                }
                 const auto path = command.getProperty("path", {}).toString();
                 std::unique_ptr<juce::AudioFormatReader> reader(
                     path.isEmpty() ? nullptr : formatManager.createReaderFor(juce::File(path)));
@@ -1205,11 +1356,23 @@ int serve(
                 continue;
             }
             if (type == "setPluginBypassed") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "Another Play rack operation is still changing the VST3. The current runtime remains available."));
+                    continue;
+                }
                 rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
             if (type == "openPluginEditor") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still loading a VST3. The editor can be opened when it finishes."));
+                    continue;
+                }
                 juce::String editorError;
                 if (!pluginEditor.open(editorError)) {
                     writeJson(makeError("pluginEditor", editorError));
@@ -1219,6 +1382,12 @@ int serve(
                 continue;
             }
             if (type == "setPluginParameter") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still loading a VST3. Parameter changes can be retried shortly."));
+                    continue;
+                }
                 juce::String parameterError;
                 const auto index = static_cast<int>(command.getProperty("index", -1));
                 const auto value = static_cast<float>(command.getProperty("value", 0.0));
@@ -1230,6 +1399,12 @@ int serve(
                 continue;
             }
             if (type == "setPluginState") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still loading a VST3. State changes can be retried shortly."));
+                    continue;
+                }
                 juce::String stateError;
                 const auto stateData = command.getProperty("stateData", {}).toString();
                 if (!rack.setState(stateData, stateError)) {
@@ -1240,12 +1415,24 @@ int serve(
                 continue;
             }
             if (type == "pluginParameterStatus") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still loading a VST3. Parameter status will be available when it finishes."));
+                    continue;
+                }
                 auto status = currentStatus(manager, callback, &rack, &midiMonitor);
                 status.getDynamicObject()->setProperty("plugin", rack.parameterStatus());
                 writeJson(status);
                 continue;
             }
             if (type == "sendMidi") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still loading a VST3. MIDI input can be sent when it finishes."));
+                    continue;
+                }
                 if (!rack.isLoaded()) {
                     writeJson(makeError("plugin", "No VST3 plugin is loaded."));
                     continue;
@@ -1276,6 +1463,18 @@ int serve(
                 continue;
             }
             if (type == "recoverAudioDevice") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still changing a VST3. Audio device recovery can be retried shortly."));
+                    continue;
+                }
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Audio device recovery can be retried shortly."));
+                    continue;
+                }
                 juce::String midiError;
                 if (!midiMonitor.finishRecording(midiError)) {
                     writeJson(makeError("recording", midiError));
@@ -1297,6 +1496,18 @@ int serve(
                 continue;
             }
             if (type == "setAudioDriver") {
+                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "pluginBusy",
+                        "The Play rack is still changing a VST3. Audio driver changes can be retried shortly."));
+                    continue;
+                }
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError(
+                        "timelineBusy",
+                        "The Arrangement Graph is still loading a VST3. Audio driver changes can be retried shortly."));
+                    continue;
+                }
                 const auto driver = command.getProperty("driver", {}).toString();
                 if (driver.isEmpty()) {
                     writeJson(makeError("audioDevice", "An audio driver name is required."));
@@ -1467,6 +1678,8 @@ int serve(
 
     juce::MessageManager::getInstance()->runDispatchLoop();
     if (commandThread.joinable()) commandThread.join();
+    if (pluginOperationThread.joinable()) pluginOperationThread.join();
+    if (timelineOperationThread.joinable()) timelineOperationThread.join();
     pluginEditor.close();
 
     callback.setEmergencyMuted(true);

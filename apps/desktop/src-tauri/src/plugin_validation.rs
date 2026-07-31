@@ -14,7 +14,10 @@ use tauri_plugin_shell::{
 };
 
 const SCANNER_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_PARALLEL_SCANNERS: usize = 4;
+// Plugin instance construction is deliberately serialized. The scan runs in
+// the background, and avoiding several DLLs initializing at once keeps startup
+// audio and the WebView responsive on machines with a large VST3 folder.
+const MAX_PARALLEL_SCANNERS: usize = 1;
 
 #[derive(Debug)]
 enum ValidationOutcome {
@@ -31,6 +34,8 @@ struct ScanEnvelope {
     message_type: String,
     plugins: Option<Vec<PluginMetadata>>,
     message: Option<String>,
+    load_tested: Option<bool>,
+    load_test_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -64,6 +69,7 @@ pub async fn validate_report_with_cancel(
     let candidates = report
         .plugins
         .iter()
+        .filter(|plugin| plugin.scan_state == PluginScanState::Discovered)
         .map(|plugin| plugin.path.clone())
         .collect::<Vec<_>>();
 
@@ -242,6 +248,14 @@ fn interpret_result(
                 }
             })
         {
+            if envelope.load_tested == Some(false) {
+                let message = envelope.load_test_message.unwrap_or_else(|| {
+                    "The plugin described itself but could not be safely instantiated.".into()
+                });
+                return ValidationOutcome::Quarantined(format!(
+                    "VST3 load validation failed: {message} The plugin is quarantined to prevent the audio engine from freezing."
+                ));
+            }
             return ValidationOutcome::Validated(plugin);
         }
         if envelope.message_type == "pluginScanError" {
@@ -272,7 +286,7 @@ mod tests {
 
     #[test]
     fn parses_successful_scanner_output() {
-        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Amp","vendor":"Vendor","version":"1.2"}]}"#;
+        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Amp","vendor":"Vendor","version":"1.2"}],"loadTested":true,"loadTestMessage":"VST3 instance created and initialized successfully."}"#;
         let result = interpret_result(
             output,
             "",
@@ -288,6 +302,23 @@ mod tests {
             }
             _ => panic!("expected validated plugin"),
         }
+    }
+
+    #[test]
+    fn quarantines_plugin_that_describes_but_fails_to_load() {
+        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Heavy","vendor":"Vendor","version":"1.0"}],"loadTested":false,"loadTestMessage":"VST3 instance creation timed out."}"#;
+        let result = interpret_result(
+            output,
+            "",
+            TerminatedPayload {
+                code: Some(0),
+                signal: None,
+            },
+        );
+        assert!(
+            matches!(result, ValidationOutcome::Quarantined(_)),
+            "expected quarantined outcome, got {result:?}"
+        );
     }
 
     #[test]

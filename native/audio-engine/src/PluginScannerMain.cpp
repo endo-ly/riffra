@@ -1,6 +1,8 @@
 #include <JuceHeader.h>
 
+#include <exception>
 #include <iostream>
+#include <optional>
 
 namespace {
 
@@ -42,7 +44,65 @@ juce::var describePlugin(const juce::PluginDescription& description) {
     return juce::var(plugin);
 }
 
-int scan(const juce::String& path) {
+juce::AudioPluginFormatManager& pluginFormatManager() {
+    static juce::AudioPluginFormatManager manager;
+    if (manager.getNumFormats() == 0) {
+        juce::addDefaultFormatsToManager(manager);
+    }
+    return manager;
+}
+
+juce::var makeLoadTestResult(
+    const juce::String& path,
+    bool success,
+    const juce::String& message,
+    double durationMs) {
+    auto* result = new juce::DynamicObject();
+    result->setProperty("type", "pluginLoadTestResult");
+    result->setProperty("path", path);
+    result->setProperty("success", success);
+    result->setProperty("message", message);
+    result->setProperty("durationMs", durationMs);
+    result->setProperty("dataSafe", true);
+    return juce::var(result);
+}
+
+std::optional<juce::String> validateInstanceCreation(
+    const juce::OwnedArray<juce::PluginDescription>& descriptions) {
+    if (descriptions.isEmpty()) {
+        return "No VST3 component could be described.";
+    }
+
+    const auto& description = *descriptions[0];
+    juce::String instanceError;
+    std::unique_ptr<juce::AudioPluginInstance> instance;
+    try {
+        instance = pluginFormatManager().createPluginInstance(description, 44100.0, 512, instanceError);
+    } catch (const std::exception& exception) {
+        return "VST3 instance creation raised an exception: " + juce::String(exception.what());
+    } catch (...) {
+        return "VST3 instance creation failed with an unknown exception.";
+    }
+
+    if (instance == nullptr) {
+        return instanceError.isNotEmpty()
+                   ? instanceError
+                   : "The VST3 host could not create a plugin instance.";
+    }
+
+    try {
+        instance->prepareToPlay(44100.0, 512);
+        instance->releaseResources();
+    } catch (const std::exception& exception) {
+        return "VST3 initialization raised an exception: " + juce::String(exception.what());
+    } catch (...) {
+        return "VST3 initialization failed with an unknown exception.";
+    }
+
+    return std::nullopt;
+}
+
+int scan(const juce::String& path, bool includeLoadTest) {
     const auto started = juce::Time::getMillisecondCounterHiRes();
     if (!juce::File(path).exists()) {
         writeJson(makeError(path, "VST3 bundle or file does not exist."));
@@ -66,6 +126,19 @@ int scan(const juce::String& path) {
     result->setProperty("type", "pluginScanResult");
     result->setProperty("path", path);
     result->setProperty("plugins", plugins);
+
+    if (includeLoadTest) {
+        const auto loadTestStarted = juce::Time::getMillisecondCounterHiRes();
+        const auto loadError = validateInstanceCreation(descriptions);
+        const auto loadDurationMs =
+            juce::Time::getMillisecondCounterHiRes() - loadTestStarted;
+        result->setProperty("loadTested", loadError == std::nullopt);
+        result->setProperty(
+            "loadTestMessage",
+            loadError.value_or("VST3 instance created and initialized successfully."));
+        result->setProperty("loadTestDurationMs", loadDurationMs);
+    }
+
     result->setProperty(
         "scanDurationMs",
         juce::Time::getMillisecondCounterHiRes() - started);
@@ -73,13 +146,55 @@ int scan(const juce::String& path) {
     return 0;
 }
 
+int validateLoad(const juce::String& path) {
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    if (!juce::File(path).exists()) {
+        writeJson(makeLoadTestResult(
+            path, false, "VST3 bundle or file does not exist.", 0.0));
+        return 2;
+    }
+
+    juce::VST3PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    format.findAllTypesForFile(descriptions, path);
+
+    const auto loadError = validateInstanceCreation(descriptions);
+    const auto durationMs = juce::Time::getMillisecondCounterHiRes() - started;
+    if (loadError.has_value()) {
+        writeJson(makeLoadTestResult(path, false, *loadError, durationMs));
+        return 4;
+    }
+
+    writeJson(makeLoadTestResult(
+        path, true, "VST3 instance created and initialized successfully.", durationMs));
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
-    if (argc != 3 || juce::String(argv[1]) != "--scan") {
-        writeJson(makeError({}, "Usage: riffra-plugin-scan --scan <vst3-path>"));
+    if (argc < 2) {
+        writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
         return 1;
     }
-    return scan(juce::String::fromUTF8(argv[2]));
+    const auto mode = juce::String(argv[1]);
+    if (mode == "--help" || mode == "-h") {
+        writeJson(makeError(
+            {},
+            "Usage: riffra-plugin-scan --scan <vst3-path>\n"
+            "       riffra-plugin-scan --validate-load <vst3-path>"));
+        return 0;
+    }
+    if (argc != 3) {
+        writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
+        return 1;
+    }
+    const auto path = juce::String::fromUTF8(argv[2]);
+    if (mode == "--scan")
+        return scan(path, true);
+    if (mode == "--validate-load")
+        return validateLoad(path);
+    writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
+    return 1;
 }

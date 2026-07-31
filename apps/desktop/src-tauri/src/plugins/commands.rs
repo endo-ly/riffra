@@ -37,11 +37,12 @@ pub async fn scan_vst3_folder(
         });
     }
     let data_root = state.core.data_root().to_path_buf();
-    let report = tauri::async_runtime::spawn_blocking(move || plugins::discover(&root))
+    let mut report = tauri::async_runtime::spawn_blocking(move || plugins::discover(&root))
         .await
         .map_err(|error| {
             format!("VST3 discovery task failed; no session data was changed: {error}")
         })?;
+    plugin_catalog::reuse_cached_scan_results(&data_root, &mut report);
     let mut report = plugin_validation::validate_report(app, report).await;
     report.finished_at_ms = crate::storage::now_ms();
     tauri::async_runtime::spawn_blocking(move || {
@@ -95,7 +96,7 @@ pub async fn start_scan_job(
             move || plugins::discover_with_cancel(&root, Some(cancelled.as_ref()))
         })
         .await;
-        let report = match discovered {
+        let mut report = match discovered {
             Ok(Ok(report)) => report,
             Ok(Err(message)) => {
                 jobs::fail(&registry, &data_root, &id, message);
@@ -111,6 +112,7 @@ pub async fn start_scan_job(
                 return;
             }
         };
+        plugin_catalog::reuse_cached_scan_results(&data_root, &mut report);
         let report = match plugin_validation::validate_report_with_cancel(
             app,
             report,

@@ -373,6 +373,16 @@ pub fn run() {
             let loaded = SessionStore::new(&data_root).load_or_create()?;
             let session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
+            let startup_timeline = if !safe_mode
+                && session.workspace == session::Workspace::Arrange
+            {
+                Some(session::application::runtime_snapshot_for_recording(
+                    &data_root,
+                    &session,
+                ))
+            } else {
+                None
+            };
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -395,14 +405,6 @@ pub fn run() {
                 .save(&effective_preferences)?;
             audio.set_restart_preferences(effective_preferences.clone())?;
             if !safe_mode {
-                if session.workspace == session::Workspace::Arrange {
-                    audio.load_timeline_snapshot(
-                        session::application::runtime_snapshot_for_recording(
-                            &data_root,
-                            &session,
-                        ),
-                    )?;
-                }
                 audio.set_processing_mode(match session.workspace {
                     session::Workspace::Play => "play",
                     session::Workspace::Arrange => "arrange",
@@ -423,6 +425,19 @@ pub fn run() {
                 audio_preferences: Mutex::new(effective_preferences),
                 jobs: jobs::JobRegistry::default(),
             });
+            if let Some(snapshot) = startup_timeline {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let state = app_handle.state::<AppState>();
+                    if let Err(error) = state.core.audio().load_timeline_snapshot(snapshot) {
+                        let _ = diagnostics::record(
+                            state.core.data_root(),
+                            "startup-timeline",
+                            &error,
+                        );
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

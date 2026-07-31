@@ -36,6 +36,7 @@ use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
 use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
+use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
@@ -1267,6 +1268,11 @@ pub fn set_track_instrument(
     track_id: &str,
     path: &str,
 ) -> Result<CreativeSession, String> {
+    if context.safe_mode {
+        return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.".into());
+    }
+    let (name, validated_path) =
+        plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let revision = session.arrangement.revision;
     let track = session
@@ -1283,7 +1289,8 @@ pub fn set_track_instrument(
         .as_ref()
         .map(|device| device.id.clone())
         .unwrap_or_else(|| format!("device:instrument:{}:{}", now_ms(), revision));
-    track.instrument = Some(plugin_device(path, id)?);
+    track.instrument = Some(plugin_device(&validated_path.to_string_lossy(), id)?);
+    track.instrument.as_mut().unwrap().name = name;
     session.arrangement.revision = revision.saturating_add(1);
     commit_structural_arrangement(context, session)
 }
@@ -1312,6 +1319,14 @@ pub fn add_track_effect(
     track_id: &str,
     path: &str,
 ) -> Result<CreativeSession, String> {
+    if context.safe_mode {
+        return Err(
+            "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect effects."
+                .into(),
+        );
+    }
+    let (name, validated_path) =
+        plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let revision = session.arrangement.revision;
     let track = session
@@ -1321,7 +1336,9 @@ pub fn add_track_effect(
         .find(|track| track.id == track_id)
         .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
     let id = format!("device:effect:{}:{}", now_ms(), revision);
-    track.rack.devices.push(plugin_device(path, id)?);
+    let mut device = plugin_device(&validated_path.to_string_lossy(), id)?;
+    device.name = name;
+    track.rack.devices.push(device);
     session.arrangement.revision = revision.saturating_add(1);
     commit_structural_arrangement(context, session)
 }
