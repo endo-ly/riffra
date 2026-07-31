@@ -38,6 +38,7 @@ mod projects;
 mod rack;
 mod recording;
 mod render;
+mod runtime_reconciler;
 mod separation;
 mod session;
 mod storage;
@@ -46,6 +47,7 @@ mod types;
 
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
+    RuntimeProjectionStatus,
 };
 use native_audio::AudioSupervisor;
 use riffra_core::AppCore;
@@ -65,6 +67,7 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
+    runtime: runtime_reconciler::RuntimeReconciler<AudioSupervisor>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
     jobs: jobs::JobRegistry,
@@ -220,9 +223,9 @@ fn queue_startup_maintenance(
         if workspace == session::Workspace::Arrange {
             let snapshot =
                 session::application::runtime_snapshot_for_recording(&data_root, &current_session);
-            if let Err(error) = state.core.audio().load_timeline_snapshot(snapshot) {
-                let _ = diagnostics::record(&data_root, "startup-timeline", &error);
-            }
+            let _ = state
+                .runtime
+                .submit(snapshot, current_session.arrangement.revision);
         }
     });
 }
@@ -432,6 +435,11 @@ async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, String> {
 }
 
 #[tauri::command]
+async fn get_runtime_projection_status(app: AppHandle) -> Result<RuntimeProjectionStatus, String> {
+    run_blocking(app, |state| Ok(state.runtime.status())).await
+}
+
+#[tauri::command]
 async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), String> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
@@ -562,6 +570,9 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle(), preferences.clone())
             };
+            let runtime = runtime_reconciler::RuntimeReconciler::new(
+                std::sync::Arc::new(audio.clone()),
+            )?;
             let effective_preferences = preferences.clone();
             audio.set_restart_preferences(effective_preferences.clone())?;
             let startup_data_root = data_root.clone();
@@ -574,6 +585,7 @@ pub fn run() {
                     recovered_from_generation,
                     safe_mode,
                 ),
+                runtime,
                 render_worker: RenderWorker::bundled()?,
                 audio_preferences: Mutex::new(effective_preferences),
                 jobs: jobs::JobRegistry::default(),
@@ -594,6 +606,7 @@ pub fn run() {
             probe_audio_devices,
             probe_midi_devices,
             get_audio_status,
+            get_runtime_projection_status,
             preview_master_gain_db,
             set_emergency_mute,
             recover_audio_device,

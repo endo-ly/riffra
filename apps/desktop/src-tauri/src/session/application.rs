@@ -11,10 +11,10 @@
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
 //!
-//! - Arrangement operations commit the canonical Session first, then prepare
-//!   and exchange a resolved runtime Timeline Snapshot. Runtime failure never
-//!   rolls back a successful save; the next explicit sync or play rebuilds the
-//!   latest revision.
+//! - Arrangement operations commit the canonical Session first, then submit a
+//!   resolved runtime Timeline Snapshot to the latest-wins Runtime Reconciler.
+//!   Runtime failure never rolls back a successful save; the Reconciler keeps
+//!   the last active graph while it reports the failed target.
 //!
 //! - Pure-session operations ([`commit_session`],
 //!   [`save_session`], [`import_session`], [`restore_generation`],
@@ -38,6 +38,7 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
+use crate::runtime_reconciler::RuntimeReconciler;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
     AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker,
@@ -49,6 +50,7 @@ use crate::storage::{SessionStore, now_ms};
 /// Concrete dependencies a Session Application Operation needs.
 pub struct SessionContext<'a> {
     pub audio: &'a AudioSupervisor,
+    pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
@@ -816,32 +818,30 @@ pub(crate) fn runtime_snapshot_for_recording(
     runtime_timeline_snapshot(data_root, session)
 }
 
-fn sync_arrangement(context: &SessionContext<'_>, session: &CreativeSession) -> Result<(), String> {
-    context
-        .audio
-        .load_timeline_snapshot(runtime_timeline_snapshot(context.data_root, session))
-        .map_err(|error| {
-            format!(
-                "Playback runtime is out of sync at Session revision {}: {error}",
-                session.arrangement.revision
-            )
-        })
+fn sync_arrangement(
+    context: &SessionContext<'_>,
+    session: &CreativeSession,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    Ok(context.runtime.submit(
+        runtime_timeline_snapshot(context.data_root, session),
+        session.arrangement.revision,
+    ))
 }
 
-pub fn sync_arrangement_runtime(context: &SessionContext<'_>) -> Result<(), String> {
+pub fn sync_arrangement_runtime(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let session = context.session.lock().map_err(lock_error)?.clone();
-    context
-        .audio
-        .load_timeline_snapshot(runtime_timeline_snapshot(context.data_root, &session))
+    sync_arrangement(context, &session)
 }
 
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    sync_arrangement_runtime(context)?;
-    context.audio.play_timeline()
+    let _ = sync_arrangement_runtime(context)?;
+    context.runtime.play().map(|_| ())
 }
 
 pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    context.audio.stop_timeline()
+    context.runtime.stop().map(|_| ())
 }
 
 pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
@@ -1159,22 +1159,8 @@ fn commit_structural_arrangement(
     context: &SessionContext<'_>,
     candidate: CreativeSession,
 ) -> Result<CreativeSession, String> {
-    context
-        .audio
-        .prepare_timeline_snapshot(runtime_timeline_snapshot(context.data_root, &candidate))?;
-    let committed = match commit_session(context, candidate) {
-        Ok(committed) => committed,
-        Err(error) => {
-            let _ = context.audio.discard_timeline_snapshot();
-            return Err(error);
-        }
-    };
-    context.audio.commit_timeline_snapshot().map_err(|error| {
-        format!(
-            "Playback runtime is out of sync at Session revision {}: the prepared Arrangement Graph could not be activated: {error}",
-            committed.arrangement.revision
-        )
-    })?;
+    let committed = commit_session(context, candidate)?;
+    let _ = sync_arrangement(context, &committed)?;
     Ok(committed)
 }
 

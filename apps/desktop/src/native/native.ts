@@ -23,6 +23,7 @@ import type {
   SeparationJobStatus,
   CreativeSession,
   ProjectTimebase,
+  RuntimeProjectionStatus,
   DesignTool,
   SeparationResult,
   SessionAudioPair,
@@ -351,6 +352,25 @@ async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
 
 async function getAudioStatus(): Promise<AudioStatus> {
   return invokeOrFallback<AudioStatus>('get_audio_status', {}, offlineAudioStatus());
+}
+
+async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
+  return invokeOrFallback<RuntimeProjectionStatus>(
+    'get_runtime_projection_status',
+    {},
+    {
+      state: 'idle',
+      operationId: 0,
+      runningOperationId: null,
+      targetSessionRevision: null,
+      activeSessionRevision: null,
+      runtimeGeneration: 0,
+      queuedAtMs: null,
+      startedAtMs: null,
+      completedAtMs: null,
+      lastError: null,
+    },
+  );
 }
 
 async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
@@ -832,8 +852,8 @@ async function placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>
   return await invoke<CreativeSession>('place_take_as_separate_clip', { takeId });
 }
 
-async function syncArrangementRuntime(): Promise<void> {
-  await invoke<void>('sync_arrangement_runtime');
+async function syncArrangementRuntime(): Promise<RuntimeProjectionStatus> {
+  return await invoke<RuntimeProjectionStatus>('sync_arrangement_runtime');
 }
 
 async function playTimeline(): Promise<void> {
@@ -959,6 +979,7 @@ function createNativeApi(): NativeApi {
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
+    getRuntimeProjectionStatus,
     setEmergencyMute,
     startRecording,
     startArrangeRecording,

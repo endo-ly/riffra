@@ -32,6 +32,7 @@ use crate::library;
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::recording::{RecordingAsset, RecordingCapture};
+use crate::runtime_reconciler::RuntimeReconciler;
 use crate::session::{
     AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
     RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
@@ -43,6 +44,7 @@ use crate::storage::now_ms;
 /// keeps the operation signatures small without pulling in `tauri::State`.
 pub struct RecordingContext<'a> {
     pub audio: &'a AudioSupervisor,
+    pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
@@ -109,8 +111,10 @@ fn start_recording_in_session(
     let midi_only = armed_tracks
         .iter()
         .all(|track| track.kind == TrackKind::Instrument);
-    context.audio.load_timeline_snapshot(
+    context.runtime.apply_and_wait(
         crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
+        session.arrangement.revision,
+        std::time::Duration::from_secs(30),
     )?;
     context.audio.set_processing_mode("arrange")?;
     let status = context.audio.start_arrange_recording(
@@ -460,6 +464,7 @@ fn finalize_arrange_recording(
     let outputs = register_track_outputs(context.data_root, directory, &manifest)?;
     let session_context = crate::session::application::SessionContext {
         audio: context.audio,
+        runtime: context.runtime,
         data_root: context.data_root,
         session: context.session,
         safe_mode: context.safe_mode,
@@ -859,6 +864,7 @@ fn finalize_arrange_recording(
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     crate::session::application::commit_session(&session_context, session)?;
     crate::session::application::sync_arrangement_runtime(&session_context)
+        .map(|_| ())
         .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
 }
 
@@ -1291,6 +1297,7 @@ fn place_recording_on_timeline(
     }
     let session_context = crate::session::application::SessionContext {
         audio: context.audio,
+        runtime: context.runtime,
         data_root: context.data_root,
         session: context.session,
         safe_mode: context.safe_mode,
@@ -1686,11 +1693,12 @@ fn relocate_take(context: &RecordingContext<'_>, old_id: &str, new_id: &str) -> 
 mod tests {
     use super::*;
     use crate::native_audio::AudioSupervisor;
+    use crate::runtime_reconciler::RuntimeReconciler;
     use crate::session::CreativeSession;
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::Mutex,
+        sync::{Arc, Mutex},
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -1723,10 +1731,12 @@ mod tests {
         data_root: &'a Path,
         session: &'a Mutex<CreativeSession>,
         audio: &'a AudioSupervisor,
+        runtime: &'a RuntimeReconciler<AudioSupervisor>,
         safe_mode: bool,
     ) -> RecordingContext<'a> {
         RecordingContext {
             audio,
+            runtime,
             data_root,
             session,
             safe_mode,
@@ -1738,11 +1748,12 @@ mod tests {
         let root = temp_root("rename");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
         // Relocation requires the Library Read Model row to already exist, so
         // sync the Inbox before any rename/archive/promote just like production.
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &session, &audio, false);
+        let ctx = context_for(&root, &session, &audio, &runtime, false);
         let new_id = rename_recording(&ctx, &id, "renamed").unwrap();
         assert!(new_id.ends_with("renamed"));
         assert!(root.join("recordings/inbox/renamed").is_dir());
@@ -1755,8 +1766,9 @@ mod tests {
         let root = temp_root("delete");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &session, &audio, false);
+        let ctx = context_for(&root, &session, &audio, &runtime, false);
         delete_recording(&ctx, &id).unwrap();
         assert!(!root.join("recordings/inbox/take-a").exists());
         let _ = fs::remove_dir_all(root);
@@ -1767,9 +1779,10 @@ mod tests {
         let root = temp_root("relocate");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
         let archive_id = seed_take(&root, "take-archive", b"a");
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &session, &audio, false);
+        let ctx = context_for(&root, &session, &audio, &runtime, false);
         let _ = archive_recording(&ctx, &archive_id).unwrap();
         assert!(root.join("recordings/archive/take-archive").is_dir());
         let _ = fs::remove_dir_all(root);
@@ -1780,7 +1793,8 @@ mod tests {
         let root = temp_root("safe");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
-        let ctx = context_for(&root, &session, &audio, true);
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
+        let ctx = context_for(&root, &session, &audio, &runtime, true);
         let error = start_recording(&ctx).unwrap_err();
         assert!(error.contains("Safe Mode"));
         let _ = fs::remove_dir_all(root);
@@ -2044,8 +2058,9 @@ mod tests {
         let root = temp_root("list");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
         let _ = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &session, &audio, false);
+        let ctx = context_for(&root, &session, &audio, &runtime, false);
         let recordings = list_recordings(&ctx, None).unwrap();
         assert_eq!(recordings.len(), 1);
         let _ = fs::remove_dir_all(root);
@@ -2056,10 +2071,11 @@ mod tests {
         let root = temp_root("dupes");
         let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone())).unwrap();
         let _ = seed_take(&root, "take-a", b"identical");
         let _ = seed_take(&root, "take-b", b"identical");
         let _ = seed_take(&root, "take-c", b"different");
-        let ctx = context_for(&root, &session, &audio, false);
+        let ctx = context_for(&root, &session, &audio, &runtime, false);
         let groups = detect_duplicate_recordings(&ctx).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);

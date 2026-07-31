@@ -25,6 +25,7 @@ import type {
   SeparationResult,
   CreativeSession,
   ProjectTimebase,
+  RuntimeProjectionStatus,
   DesignTool,
   SessionAudioPair,
   MonitoringState,
@@ -162,6 +163,7 @@ export interface NativeApi {
   stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
+  getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
@@ -332,7 +334,7 @@ export interface NativeApi {
   stopTakeComparison(): Promise<AudioStatus>;
   activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
   placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
-  syncArrangementRuntime(): Promise<void>;
+  syncArrangementRuntime(): Promise<RuntimeProjectionStatus>;
   playTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;

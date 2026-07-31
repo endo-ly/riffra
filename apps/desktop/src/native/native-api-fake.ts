@@ -27,6 +27,7 @@ import type {
   RecordingStatus,
   RenderOptions,
   RenderResult,
+  RuntimeProjectionStatus,
   ScanJobStatus,
   ScanReport,
   CreativeSession,
@@ -142,6 +143,7 @@ export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
   readonly savedSessions: CreativeSession[] = [];
   audio: AudioStatus;
+  runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
   separations: SeparationResult[];
@@ -164,6 +166,18 @@ export class FakeNativeApi implements NativeApi {
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
+    this.runtimeProjection = {
+      state: 'idle',
+      operationId: 0,
+      runningOperationId: null,
+      targetSessionRevision: null,
+      activeSessionRevision: null,
+      runtimeGeneration: 1,
+      queuedAtMs: null,
+      startedAtMs: null,
+      completedAtMs: null,
+      lastError: null,
+    };
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.separations = options.separations ?? [];
@@ -862,6 +876,11 @@ export class FakeNativeApi implements NativeApi {
   getAudioStatus = async (): Promise<AudioStatus> => {
     this.calls.push('getAudioStatus');
     return this.audio;
+  };
+
+  getRuntimeProjectionStatus = async (): Promise<RuntimeProjectionStatus> => {
+    this.calls.push('getRuntimeProjectionStatus');
+    return this.runtimeProjection;
   };
 
   setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
@@ -1885,8 +1904,18 @@ export class FakeNativeApi implements NativeApi {
     });
   };
 
-  syncArrangementRuntime = async (): Promise<void> => {
+  syncArrangementRuntime = async (): Promise<RuntimeProjectionStatus> => {
     this.calls.push('syncArrangementRuntime');
+    const operationId = this.runtimeProjection.operationId + 1;
+    this.runtimeProjection = {
+      ...this.runtimeProjection,
+      state: 'queued',
+      operationId,
+      targetSessionRevision: this.bootstrapState.session.arrangement.revision,
+      queuedAtMs: Date.now(),
+      lastError: null,
+    };
+    return this.runtimeProjection;
   };
 
   playTimeline = async (): Promise<void> => {

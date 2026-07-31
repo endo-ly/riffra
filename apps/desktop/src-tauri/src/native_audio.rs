@@ -19,13 +19,14 @@ use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
 };
 
+#[derive(Clone)]
 pub struct AudioSupervisor {
     status: Arc<Mutex<AudioStatus>>,
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
-    next_request_id: AtomicU64,
+    next_request_id: Arc<AtomicU64>,
     sidecar_generation: Arc<AtomicU64>,
-    child: Mutex<Option<CommandChild>>,
-    restart_preferences: Mutex<AudioPreferences>,
+    child: Arc<Mutex<Option<CommandChild>>>,
+    restart_preferences: Arc<Mutex<AudioPreferences>>,
 }
 
 #[derive(Default)]
@@ -208,10 +209,10 @@ impl AudioSupervisor {
                 message: message.into(),
             })),
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
-            next_request_id: AtomicU64::new(1),
+            next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
-            child: Mutex::new(None),
-            restart_preferences: Mutex::new(AudioPreferences::default()),
+            child: Arc::new(Mutex::new(None)),
+            restart_preferences: Arc::new(Mutex::new(AudioPreferences::default())),
         }
     }
 
@@ -248,10 +249,10 @@ impl AudioSupervisor {
         let supervisor = Self {
             status: Arc::clone(&status),
             responses,
-            next_request_id: AtomicU64::new(1),
+            next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
-            child: Mutex::new(None),
-            restart_preferences: Mutex::new(preferences),
+            child: Arc::new(Mutex::new(None)),
+            restart_preferences: Arc::new(Mutex::new(preferences)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(app, generation) {
@@ -273,6 +274,10 @@ impl AudioSupervisor {
 
     fn next_sidecar_generation(&self) -> u64 {
         self.sidecar_generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub(crate) fn sidecar_generation(&self) -> u64 {
+        self.sidecar_generation.load(Ordering::Acquire)
     }
 
     fn spawn_sidecar<R: Runtime>(
@@ -455,29 +460,6 @@ impl AudioSupervisor {
             "",
             Duration::from_secs(15),
         )?;
-        Ok(())
-    }
-
-    pub fn prepare_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
-        self.send_command_with_timeout(
-            serde_json::json!({
-                "type": "prepareTimelineSnapshot",
-                "protocolVersion": 1,
-                "snapshot": snapshot,
-            }),
-            "",
-            Duration::from_secs(30),
-        )?;
-        Ok(())
-    }
-
-    pub fn commit_timeline_snapshot(&self) -> Result<(), String> {
-        self.send_command(serde_json::json!({"type": "commitTimelineSnapshot"}), "")?;
-        Ok(())
-    }
-
-    pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
-        self.send_command(serde_json::json!({"type": "discardTimelineSnapshot"}), "")?;
         Ok(())
     }
 
@@ -675,9 +657,7 @@ impl AudioSupervisor {
             .remove(&request_id)
             .flatten()
             .unwrap_or_else(|| Err("Native audio returned no command result.".into()));
-        if let Err(error) = result {
-            return Err(error);
-        }
+        result?;
         Ok(())
     }
 
@@ -1012,7 +992,10 @@ impl AudioSupervisor {
 
 impl Drop for AudioSupervisor {
     fn drop(&mut self) {
-        if let Ok(slot) = self.child.get_mut()
+        if Arc::strong_count(&self.child) != 1 {
+            return;
+        }
+        if let Ok(mut slot) = self.child.lock()
             && let Some(mut child) = slot.take()
         {
             let _ = child.write(b"{\"type\":\"shutdown\"}\n");

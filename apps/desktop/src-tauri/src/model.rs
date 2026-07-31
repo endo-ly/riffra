@@ -15,6 +15,36 @@ pub struct SessionAudioPair {
     pub audio: AudioStatus,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeProjectionState {
+    #[default]
+    Idle,
+    Queued,
+    Preparing,
+    Active,
+    Failed,
+}
+
+/// Describes how far the latest persisted arrangement has been reflected in
+/// the isolated Audio Runtime. A target can remain queued while an older VST
+/// operation is still returning; the active revision is the graph currently
+/// visible to the audio callback.
+#[derive(Clone, Debug, Default, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeProjectionStatus {
+    pub state: RuntimeProjectionState,
+    pub operation_id: u64,
+    pub running_operation_id: Option<u64>,
+    pub target_session_revision: Option<u64>,
+    pub active_session_revision: Option<u64>,
+    pub runtime_generation: u64,
+    pub queued_at_ms: Option<u64>,
+    pub started_at_ms: Option<u64>,
+    pub completed_at_ms: Option<u64>,
+    pub last_error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryCandidate {

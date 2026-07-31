@@ -62,6 +62,8 @@ export type {
   RecordingStatus,
   RecordingTakeRecord,
   RecoveryCandidate,
+  RuntimeProjectionState,
+  RuntimeProjectionStatus,
   RenderOptions,
   RenderRange,
   RenderResult,

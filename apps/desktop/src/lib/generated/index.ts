@@ -66,6 +66,8 @@ export type { RecoveryCandidate } from './RecoveryCandidate';
 export type { RenderOptions } from './RenderOptions';
 export type { RenderRange } from './RenderRange';
 export type { RenderResult } from './RenderResult';
+export type { RuntimeProjectionState } from './RuntimeProjectionState';
+export type { RuntimeProjectionStatus } from './RuntimeProjectionStatus';
 export type { SampleInstrumentState } from './SampleInstrumentState';
 export type { SamplePad } from './SamplePad';
 export type { ScanIssue } from './ScanIssue';

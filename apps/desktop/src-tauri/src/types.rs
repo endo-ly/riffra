@@ -15,7 +15,8 @@ use crate::missing::MissingDependency;
 use crate::model::{
     AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo,
     AudioState, AudioStatus, BootstrapState, MidiDeviceInfo, MidiProbe, PluginParameter,
-    PluginStatus, RecordingStatus, RecoveryCandidate, SessionAudioPair,
+    PluginStatus, RecordingStatus, RecoveryCandidate, RuntimeProjectionState,
+    RuntimeProjectionStatus, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -99,6 +100,8 @@ fn export_types() {
     RecordingStatus::export_all(&cfg).expect("RecordingStatus bindings");
     RecoveryCandidate::export_all(&cfg).expect("RecoveryCandidate bindings");
     AudioStatus::export_all(&cfg).expect("AudioStatus bindings");
+    RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
+    RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");
     SessionAudioPair::export_all(&cfg).expect("SessionAudioPair bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");

@@ -267,7 +267,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const pending = arrangeRuntimeSyncPromise.current;
     if (pending) return pending;
 
-    const operation = enqueueRuntimeReconciliation(() => syncArrangementRuntime()).finally(() => {
+    const operation = enqueueRuntimeReconciliation(() =>
+      syncArrangementRuntime().then(() => undefined),
+    ).finally(() => {
       if (arrangeRuntimeSyncPromise.current === operation) {
         arrangeRuntimeSyncPromise.current = null;
       }

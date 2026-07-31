@@ -31,6 +31,7 @@ where
 fn app_context(state: &AppState) -> RecordingContext<'_> {
     RecordingContext {
         audio: state.core.audio(),
+        runtime: &state.runtime,
         data_root: state.core.data_root(),
         session: state.core.session(),
         safe_mode: state.core.safe_mode(),

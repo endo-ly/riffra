@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 use crate::AppState;
 use crate::asset::AssetId;
 use crate::missing::MissingDependency;
-use crate::model::SessionAudioPair;
+use crate::model::{RuntimeProjectionStatus, SessionAudioPair};
 use crate::session::application::{self, SessionContext};
 use crate::session::{
     AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
@@ -37,6 +37,7 @@ where
 fn app_context(state: &AppState) -> SessionContext<'_> {
     SessionContext {
         audio: state.core.audio(),
+        runtime: &state.runtime,
         data_root: state.core.data_root(),
         session: state.core.session(),
         safe_mode: state.core.safe_mode(),
@@ -337,7 +338,7 @@ pub async fn crossfade_audio_clips(
 }
 
 #[tauri::command]
-pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<(), String> {
+pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<RuntimeProjectionStatus, String> {
     run_blocking(app, |state| {
         application::sync_arrangement_runtime(&app_context(state))
     })
