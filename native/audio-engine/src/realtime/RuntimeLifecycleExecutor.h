@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace riffra {
 
@@ -25,6 +26,10 @@ public:
     RuntimeLifecycleExecutor& operator=(const RuntimeLifecycleExecutor&) = delete;
 
     [[nodiscard]] bool submit(Task task);
+    /// Enqueues a latest-value state event. Events with the same key replace
+    /// one another, and a bounded state lane prevents parameter floods from
+    /// delaying lifecycle work.
+    [[nodiscard]] bool submitState(std::string key, Task task);
     [[nodiscard]] bool isBusy() const noexcept;
     [[nodiscard]] bool waitForIdle(std::chrono::milliseconds timeout) noexcept;
     void requestStop() noexcept;
@@ -33,10 +38,14 @@ public:
 private:
     void run();
 
+    static constexpr std::size_t kStateTaskLimit = 256;
+
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::condition_variable idleChanged;
-    std::deque<Task> tasks;
+    std::deque<Task> lifecycleTasks;
+    std::deque<std::string> stateOrder;
+    std::unordered_map<std::string, Task> stateTasks;
     std::thread worker;
     bool stopping = false;
     bool running = false;

@@ -22,7 +22,27 @@ bool RuntimeLifecycleExecutor::submit(Task task) {
         const std::lock_guard lock(mutex);
         if (stopping)
             return false;
-        tasks.push_back(std::move(task));
+        lifecycleTasks.push_back(std::move(task));
+    }
+    wake.notify_one();
+    return true;
+}
+
+bool RuntimeLifecycleExecutor::submitState(std::string key, Task task) {
+    if (!task || key.empty())
+        return false;
+    {
+        const std::lock_guard lock(mutex);
+        if (stopping)
+            return false;
+        if (const auto existing = stateTasks.find(key); existing != stateTasks.end()) {
+            existing->second = std::move(task);
+        } else {
+            if (stateTasks.size() >= kStateTaskLimit)
+                return false;
+            stateOrder.push_back(key);
+            stateTasks.emplace(std::move(key), std::move(task));
+        }
     }
     wake.notify_one();
     return true;
@@ -30,13 +50,13 @@ bool RuntimeLifecycleExecutor::submit(Task task) {
 
 bool RuntimeLifecycleExecutor::isBusy() const noexcept {
     const std::lock_guard lock(mutex);
-    return running || !tasks.empty();
+    return running || !lifecycleTasks.empty() || !stateTasks.empty();
 }
 
 bool RuntimeLifecycleExecutor::waitForIdle(const std::chrono::milliseconds timeout) noexcept {
     std::unique_lock lock(mutex);
     return idleChanged.wait_for(lock, timeout, [this] {
-        return !running && tasks.empty();
+        return !running && lifecycleTasks.empty() && stateTasks.empty();
     });
 }
 
@@ -44,7 +64,9 @@ void RuntimeLifecycleExecutor::requestStop() noexcept {
     {
         const std::lock_guard lock(mutex);
         stopping = true;
-        tasks.clear();
+        lifecycleTasks.clear();
+        stateOrder.clear();
+        stateTasks.clear();
     }
     wake.notify_all();
     idleChanged.notify_all();
@@ -60,14 +82,26 @@ void RuntimeLifecycleExecutor::run() {
         Task task;
         {
             std::unique_lock lock(mutex);
-            wake.wait(lock, [this] { return stopping || !tasks.empty(); });
-            if (stopping && tasks.empty()) {
+            wake.wait(lock, [this] {
+                return stopping || !lifecycleTasks.empty() || !stateTasks.empty();
+            });
+            if (stopping && lifecycleTasks.empty() && stateTasks.empty()) {
                 running = false;
                 idleChanged.notify_all();
                 return;
             }
-            task = std::move(tasks.front());
-            tasks.pop_front();
+            if (!lifecycleTasks.empty()) {
+                task = std::move(lifecycleTasks.front());
+                lifecycleTasks.pop_front();
+            } else {
+                const auto key = std::move(stateOrder.front());
+                stateOrder.pop_front();
+                const auto event = stateTasks.find(key);
+                if (event != stateTasks.end()) {
+                    task = std::move(event->second);
+                    stateTasks.erase(event);
+                }
+            }
             running = true;
         }
         try {

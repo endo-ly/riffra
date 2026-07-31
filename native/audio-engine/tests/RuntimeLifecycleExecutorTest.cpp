@@ -56,4 +56,34 @@ TEST(RuntimeLifecycleExecutorTest, StopRejectsNewLifecycleTasks) {
     EXPECT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
 }
 
+TEST(RuntimeLifecycleExecutorTest, CoalescesLatestStateTaskByKey) {
+    RuntimeLifecycleExecutor executor;
+    std::atomic<bool> blockerStarted { false };
+    std::atomic<bool> releaseBlocker { false };
+    std::atomic<int> executions { 0 };
+    std::atomic<int> value { 0 };
+
+    ASSERT_TRUE(executor.submit([&] {
+        blockerStarted.store(true, std::memory_order_release);
+        while (!releaseBlocker.load(std::memory_order_acquire))
+            std::this_thread::yield();
+    }));
+    while (!blockerStarted.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    ASSERT_TRUE(executor.submitState("track/device/parameter/7", [&] {
+        executions.fetch_add(1, std::memory_order_acq_rel);
+        value.store(1, std::memory_order_release);
+    }));
+    ASSERT_TRUE(executor.submitState("track/device/parameter/7", [&] {
+        executions.fetch_add(1, std::memory_order_acq_rel);
+        value.store(2, std::memory_order_release);
+    }));
+    releaseBlocker.store(true, std::memory_order_release);
+
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_EQ(executions.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(value.load(std::memory_order_acquire), 2);
+}
+
 }  // namespace riffra
