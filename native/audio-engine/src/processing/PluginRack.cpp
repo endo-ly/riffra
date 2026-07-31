@@ -1,5 +1,7 @@
 #include "PluginRack.h"
 
+#include "FaultInjection.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -70,6 +72,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
 
     juce::VST3PluginFormat format;
     juce::OwnedArray<juce::PluginDescription> descriptions;
+    FaultInjection::before(FaultStage::discovery);
     format.findAllTypesForFile(descriptions, path);
     if (descriptions.isEmpty()) {
         return PluginLoadError{
@@ -81,6 +84,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     juce::String instanceError;
     std::unique_ptr<juce::AudioPluginInstance> candidate;
     try {
+        FaultInjection::before(FaultStage::create);
         candidate = formatManager.createPluginInstance(*descriptions[0], sampleRate, blockSize,
                                                        instanceError);
     } catch (const std::exception& exception) {
@@ -115,6 +119,14 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     if (!allocateParameterQueue(candidateParameterCount, parameterQueueError))
         return PluginLoadError { "parameterQueue", parameterQueueError };
     if (plugin != nullptr) {
+        try {
+            FaultInjection::before(FaultStage::destroy);
+        } catch (...) {
+            return PluginLoadError {
+                "pluginDestroy",
+                "Fault injection interrupted destruction of the previous VST3 instance.",
+            };
+        }
         plugin->releaseResources();
         destroyCount.fetch_add(1, std::memory_order_relaxed);
     }
@@ -137,6 +149,10 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     loaded.store(true, std::memory_order_release);
     loadCount.fetch_add(1, std::memory_order_relaxed);
     return std::nullopt;
+}
+
+PluginRack::~PluginRack() {
+    clear();
 }
 
 std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcessor& processor,
@@ -179,6 +195,7 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
     }
 
     try {
+        FaultInjection::before(FaultStage::prepare);
         processor.setNonRealtime(false);
         processor.setProcessingPrecision(juce::AudioProcessor::singlePrecision);
         processor.setRateAndBufferSizeDetails(sampleRate, blockSize);
@@ -203,6 +220,11 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
 void PluginRack::clear() noexcept {
     mutationInProgress.store(true, std::memory_order_release);
     const AtomicFlagReset resetMutation(mutationInProgress);
+    try {
+        FaultInjection::before(FaultStage::destroy);
+    } catch (...) {
+        return;
+    }
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin != nullptr) {
         plugin->releaseResources();
@@ -378,6 +400,16 @@ bool PluginRack::setState(const juce::String& base64, juce::String& error) noexc
 bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error) noexcept {
     if (!state.isObject()) {
         error = "Plugin persisted state must be an object.";
+        return false;
+    }
+    try {
+        FaultInjection::before(FaultStage::stateApply);
+    } catch (const std::exception& exception) {
+        error = "Fault injection interrupted VST3 state application: "
+            + juce::String(exception.what());
+        return false;
+    } catch (...) {
+        error = "Fault injection interrupted VST3 state application.";
         return false;
     }
     const auto stateData = state.getProperty("stateData", {}).toString();

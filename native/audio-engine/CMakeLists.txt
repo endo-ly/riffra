@@ -54,6 +54,8 @@ target_sources(riffra-render-core PRIVATE
   src/processing/PluginRack.h
   src/processing/PluginChain.cpp
   src/processing/PluginChain.h
+  src/realtime/FaultInjection.cpp
+  src/realtime/FaultInjection.h
 )
 
 target_sources(riffra-audio-core PRIVATE
@@ -68,6 +70,8 @@ target_sources(riffra-audio-core PRIVATE
   src/realtime/ArrangeRecordingSession.h
   src/realtime/PluginEditorHost.cpp
   src/realtime/PluginEditorHost.h
+  src/realtime/RuntimeLifecycleExecutor.cpp
+  src/realtime/RuntimeLifecycleExecutor.h
 )
 
 target_sources(riffra-audio PRIVATE
@@ -171,6 +175,7 @@ juce_generate_juce_header(riffra-render)
 
 target_include_directories(riffra-render-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
 target_include_directories(riffra-audio-core PUBLIC
@@ -230,6 +235,7 @@ if(BUILD_TESTING)
     tests/PluginChainTest.cpp
     tests/RecordingSessionTest.cpp
     tests/ArrangeRecordingSessionTest.cpp
+    tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE

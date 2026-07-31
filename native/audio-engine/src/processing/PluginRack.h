@@ -19,6 +19,8 @@ struct PluginLoadError final {
 
 class PluginRack final {
 public:
+    ~PluginRack();
+
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
                                                       int blockSize);
     void clear() noexcept;

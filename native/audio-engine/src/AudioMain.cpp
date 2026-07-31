@@ -2,8 +2,10 @@
 
 #include "SafetyAudioCallback.h"
 #include "AudioRuntimeStatus.h"
+#include "FaultInjection.h"
 #include "PluginEditorHost.h"
 #include "PluginRack.h"
+#include "RuntimeLifecycleExecutor.h"
 #include "TimelineEngine.h"
 
 #include <iostream>
@@ -36,6 +38,7 @@ namespace {
 using riffra::SafetyAudioCallback;
 using riffra::PluginEditorHost;
 using riffra::PluginRack;
+using riffra::RuntimeLifecycleExecutor;
 using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
@@ -49,6 +52,8 @@ public:
     ~OutputWriter() { stop(); }
 
     void enqueue(std::string line, const OutputKind kind) {
+        if (kind == OutputKind::control)
+            riffra::FaultInjection::stdoutFlood();
         {
             const std::lock_guard lock(mutex);
             ensureStarted();
@@ -656,8 +661,8 @@ int serve(
     TimelineEngine timelineEngine;
     SafetyAudioCallback callback;
     PluginRack rack;
-    PluginEditorHost pluginEditor(rack);
-    std::unique_ptr<PluginEditorHost> trackPluginEditor;
+    auto pluginEditor = std::make_shared<PluginEditorHost>(rack);
+    std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
     juce::AudioBuffer<float> comparisonRaw;
@@ -793,26 +798,12 @@ int serve(
     // code for an unbounded amount of time. Keep that work away from the
     // command reader so transport and workspace commands remain serviceable.
     std::atomic<bool> pluginOperationRunning { false };
-    std::thread pluginOperationThread;
     std::atomic<bool> timelineOperationRunning { false };
-    std::thread timelineOperationThread;
-    // Play-rack and Arrangement Graph operations use separate worker threads
-    // so the command reader remains responsive, but both eventually enter
-    // third-party VST lifecycle code in the same sidecar. Keep that lifecycle
-    // ownership single-threaded; otherwise a Play navigation can construct a
-    // plugin while Arrangement is constructing another one through the same
-    // JUCE/vendor host machinery.
-    std::mutex runtimeGraphMutex;
+    RuntimeLifecycleExecutor runtimeLifecycle;
 
     std::thread commandThread([&] {
         std::string line;
         while (std::getline(std::cin, line)) {
-            if (pluginOperationThread.joinable()
-                && !pluginOperationRunning.load(std::memory_order_acquire))
-                pluginOperationThread.join();
-            if (timelineOperationThread.joinable()
-                && !timelineOperationRunning.load(std::memory_order_acquire))
-                timelineOperationThread.join();
             currentRequestId.clear();
             const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
             if (!command.isObject()) {
@@ -823,16 +814,20 @@ int serve(
             currentRequestId = command.getProperty("requestId", {}).toString();
             const auto type = command.getProperty("type", {}).toString();
             if (type == "shutdown") {
-                if (pluginOperationThread.joinable())
-                    pluginOperationThread.join();
-                if (timelineOperationThread.joinable())
-                    timelineOperationThread.join();
-                if (trackPluginEditor != nullptr) {
-                    trackPluginEditor->close();
-                    trackPluginEditor.reset();
-                    trackPluginEditorTrackId.clear();
-                    trackPluginEditorDeviceId.clear();
-                }
+                callback.setEmergencyMuted(true);
+                const auto submitted = runtimeLifecycle.submit([&] {
+                    if (trackPluginEditor != nullptr) {
+                        trackPluginEditor->close();
+                        trackPluginEditor.reset();
+                        trackPluginEditorTrackId.clear();
+                        trackPluginEditorDeviceId.clear();
+                    }
+                    pluginEditor->close();
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                });
+                if (submitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
+                    std::_Exit(0);
                 break;
             }
             if (type == "setEmergencyMute") {
@@ -856,8 +851,6 @@ int serve(
                         "Another Arrangement Graph is still loading a VST3. The current runtime remains available."));
                     continue;
                 }
-                if (timelineOperationThread.joinable())
-                    timelineOperationThread.join();
                 const auto commitImmediately = type == "loadTimelineSnapshot";
                 auto* device = manager.getCurrentAudioDevice();
                 const auto blockSize = device != nullptr
@@ -867,9 +860,8 @@ int serve(
                 const auto sampleRate = callback.getSampleRate();
                 const auto requestId = currentRequestId;
                 timelineOperationRunning.store(true, std::memory_order_release);
-                timelineOperationThread = std::thread(
+                const auto submitted = runtimeLifecycle.submit(
                     [&, snapshot, requestId, sampleRate, blockSize, commitImmediately] {
-                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         if (commitImmediately && trackPluginEditor != nullptr) {
                             trackPluginEditor->close();
                             trackPluginEditor.reset();
@@ -909,6 +901,10 @@ int serve(
                             writeJson(juce::var(ack), requestId);
                         }
                     });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "commitTimelineSnapshot") {
@@ -918,29 +914,30 @@ int serve(
                         "The Arrangement Graph is still loading a VST3 and cannot be committed yet."));
                     continue;
                 }
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still changing a VST3 and the Arrangement Graph cannot be committed yet."));
-                    continue;
+                const auto requestId = currentRequestId;
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit([&, requestId] {
+                    const auto shouldCloseEditor = timelineEngine.hasPreparedSnapshot()
+                        && trackPluginEditor != nullptr;
+                    if (shouldCloseEditor) {
+                        trackPluginEditor->close();
+                        trackPluginEditor.reset();
+                        trackPluginEditorTrackId.clear();
+                        trackPluginEditorDeviceId.clear();
+                    }
+                    juce::String timelineError;
+                    const auto committed = timelineEngine.commitPreparedSnapshot(timelineError);
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    if (!committed) {
+                        writeJson(makeError("timeline", timelineError), requestId);
+                        return;
+                    }
+                    writeJson(timelineEngine.status(), requestId);
+                });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
-                const auto shouldCloseEditor = timelineEngine.hasPreparedSnapshot()
-                    && trackPluginEditor != nullptr
-                    && !timelineEngine.preparedTrackReusesRuntimeDevices(
-                        trackPluginEditorTrackId);
-                if (shouldCloseEditor) {
-                    trackPluginEditor->close();
-                    trackPluginEditor.reset();
-                    trackPluginEditorTrackId.clear();
-                    trackPluginEditorDeviceId.clear();
-                }
-                juce::String timelineError;
-                if (!timelineEngine.commitPreparedSnapshot(timelineError)) {
-                    writeJson(makeError("timeline", timelineError));
-                    continue;
-                }
-                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "discardTimelineSnapshot") {
@@ -950,15 +947,17 @@ int serve(
                         "The Arrangement Graph is still loading a VST3 and cannot be discarded yet."));
                     continue;
                 }
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still changing a VST3 and the Arrangement Graph cannot be discarded yet."));
-                    continue;
+                const auto requestId = currentRequestId;
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit([&, requestId] {
+                    timelineEngine.discardPreparedSnapshot();
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(timelineEngine.status(), requestId);
+                });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
-                timelineEngine.discardPreparedSnapshot();
-                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "setTrackDeviceBypassed") {
@@ -968,16 +967,27 @@ int serve(
                         "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
                     continue;
                 }
-                juce::String deviceError;
-                if (!timelineEngine.setDeviceBypassed(
-                        command.getProperty("trackId", {}).toString(),
-                        command.getProperty("deviceId", {}).toString(),
-                        static_cast<bool>(command.getProperty("bypassed", false)),
-                        deviceError)) {
-                    writeJson(makeError("trackDevice", deviceError));
-                    continue;
+                const auto requestId = currentRequestId;
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                const auto deviceId = command.getProperty("deviceId", {}).toString();
+                const auto bypassed = static_cast<bool>(command.getProperty("bypassed", false));
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId, trackId, deviceId, bypassed] {
+                        juce::String deviceError;
+                        const auto changed = timelineEngine.setDeviceBypassed(
+                            trackId, deviceId, bypassed, deviceError);
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!changed) {
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        writeJson(timelineEngine.status(), requestId);
+                    });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "setTrackDeviceParameter") {
@@ -987,17 +997,29 @@ int serve(
                         "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
                     continue;
                 }
-                juce::String deviceError;
-                if (!timelineEngine.setDeviceParameter(
-                        command.getProperty("trackId", {}).toString(),
-                        command.getProperty("deviceId", {}).toString(),
-                        static_cast<int>(command.getProperty("parameterIndex", -1)),
-                        static_cast<float>(command.getProperty("value", 0.0)),
-                        deviceError)) {
-                    writeJson(makeError("trackDevice", deviceError));
-                    continue;
+                const auto requestId = currentRequestId;
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                const auto deviceId = command.getProperty("deviceId", {}).toString();
+                const auto parameterIndex =
+                    static_cast<int>(command.getProperty("parameterIndex", -1));
+                const auto value = static_cast<float>(command.getProperty("value", 0.0));
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId, trackId, deviceId, parameterIndex, value] {
+                        juce::String deviceError;
+                        const auto changed = timelineEngine.setDeviceParameter(
+                            trackId, deviceId, parameterIndex, value, deviceError);
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!changed) {
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        writeJson(timelineEngine.status(), requestId);
+                    });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "openTrackPluginEditor") {
@@ -1007,15 +1029,12 @@ int serve(
                         "The Arrangement Graph is still loading a VST3. The plugin editor can be opened when it finishes."));
                     continue;
                 }
-                if (timelineOperationThread.joinable())
-                    timelineOperationThread.join();
                 const auto requestId = currentRequestId;
                 const auto editorTrackId = command.getProperty("trackId", {}).toString();
                 const auto editorDeviceId = command.getProperty("deviceId", {}).toString();
                 timelineOperationRunning.store(true, std::memory_order_release);
-                timelineOperationThread = std::thread(
+                const auto submitted = runtimeLifecycle.submit(
                     [&, requestId, editorTrackId, editorDeviceId] {
-                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         auto* device = timelineEngine.findDevice(editorTrackId, editorDeviceId);
                         if (device == nullptr) {
                             timelineOperationRunning.store(false, std::memory_order_release);
@@ -1028,52 +1047,68 @@ int serve(
                         }
                         trackPluginEditorTrackId = editorTrackId;
                         trackPluginEditorDeviceId = editorDeviceId;
-                        trackPluginEditor = std::make_unique<PluginEditorHost>(
+                        trackPluginEditor = std::make_shared<PluginEditorHost>(
                             *device,
                             [&, editorTrackId, editorDeviceId](const juce::var& state) {
-                                juce::String mirrorError;
-                                if (!timelineEngine.mirrorEditorDeviceState(
-                                        editorTrackId,
-                                        editorDeviceId,
-                                        state,
-                                        mirrorError)) {
-                                    writeJson(makeError("trackDevice", mirrorError));
+                                const auto stateCopy = state;
+                                if (!runtimeLifecycle.submit(
+                                        [&, editorTrackId, editorDeviceId, stateCopy] {
+                                            juce::String mirrorError;
+                                            if (!timelineEngine.mirrorEditorDeviceState(
+                                                    editorTrackId,
+                                                    editorDeviceId,
+                                                    stateCopy,
+                                                    mirrorError)) {
+                                                writeJson(makeError("trackDevice", mirrorError));
+                                            }
+                                            auto* changed = new juce::DynamicObject();
+                                            changed->setProperty("type", "trackPluginStateChanged");
+                                            changed->setProperty("trackId", editorTrackId);
+                                            changed->setProperty("deviceId", editorDeviceId);
+                                            changed->setProperty(
+                                                "parameterValues",
+                                                stateCopy.getProperty(
+                                                    "parameterValues",
+                                                    juce::Array<juce::var> {}));
+                                            changed->setProperty(
+                                                "stateData",
+                                                stateCopy.getProperty("stateData", {}));
+                                            changed->setProperty(
+                                                "bypassed",
+                                                stateCopy.getProperty("bypassed", false));
+                                            writeJson(juce::var(changed));
+                                        })) {
+                                    writeJson(makeError(
+                                        "runtimeLifecycle",
+                                        "The VST lifecycle executor is stopping."));
                                 }
-                                auto* changed = new juce::DynamicObject();
-                                changed->setProperty("type", "trackPluginStateChanged");
-                                changed->setProperty("trackId", editorTrackId);
-                                changed->setProperty("deviceId", editorDeviceId);
-                                changed->setProperty(
-                                    "parameterValues",
-                                    state.getProperty(
-                                        "parameterValues",
-                                        juce::Array<juce::var> {}));
-                                changed->setProperty(
-                                    "stateData",
-                                    state.getProperty("stateData", {}));
-                                changed->setProperty(
-                                    "bypassed",
-                                    state.getProperty("bypassed", false));
-                                writeJson(juce::var(changed));
                             },
                             [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
-                                juce::String mirrorError;
-                                if (!timelineEngine.mirrorEditorDeviceParameter(
-                                        editorTrackId,
-                                        editorDeviceId,
-                                        parameterIndex,
-                                        value,
-                                        mirrorError)) {
-                                    writeJson(makeError("trackDevice", mirrorError));
-                                    return;
+                                if (!runtimeLifecycle.submit(
+                                        [&, editorTrackId, editorDeviceId, parameterIndex, value] {
+                                            juce::String mirrorError;
+                                            if (!timelineEngine.mirrorEditorDeviceParameter(
+                                                    editorTrackId,
+                                                    editorDeviceId,
+                                                    parameterIndex,
+                                                    value,
+                                                    mirrorError)) {
+                                                writeJson(makeError("trackDevice", mirrorError));
+                                                return;
+                                            }
+                                            auto* changed = new juce::DynamicObject();
+                                            changed->setProperty(
+                                                "type", "trackPluginParameterChanged");
+                                            changed->setProperty("trackId", editorTrackId);
+                                            changed->setProperty("deviceId", editorDeviceId);
+                                            changed->setProperty("parameterIndex", parameterIndex);
+                                            changed->setProperty("value", value);
+                                            writeJson(juce::var(changed));
+                                        })) {
+                                    writeJson(makeError(
+                                        "runtimeLifecycle",
+                                        "The VST lifecycle executor is stopping."));
                                 }
-                                auto* changed = new juce::DynamicObject();
-                                changed->setProperty("type", "trackPluginParameterChanged");
-                                changed->setProperty("trackId", editorTrackId);
-                                changed->setProperty("deviceId", editorDeviceId);
-                                changed->setProperty("parameterIndex", parameterIndex);
-                                changed->setProperty("value", value);
-                                writeJson(juce::var(changed));
                             });
                         juce::String editorError;
                         bool opened = false;
@@ -1096,6 +1131,10 @@ int serve(
                         }
                         writeJson(timelineEngine.status(), requestId);
                     });
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "playTimeline") {
@@ -1151,17 +1190,14 @@ int serve(
                         "Another Play rack operation is still loading a VST3. The current runtime remains available."));
                     continue;
                 }
-                if (pluginOperationThread.joinable())
-                    pluginOperationThread.join();
                 const auto requestId = currentRequestId;
                 const auto persistedState = command.getProperty("persistedState", {});
                 pluginOperationRunning.store(true, std::memory_order_release);
-                pluginOperationThread = std::thread(
+                const auto submitted = runtimeLifecycle.submit(
                     [&, path, requestId, sampleRate, blockSize, persistedState] {
-                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
                         std::optional<riffra::PluginLoadError> pluginError;
                         try {
-                            pluginError = pluginEditor.load(
+                            pluginError = pluginEditor->load(
                                 path,
                                 sampleRate,
                                 blockSize,
@@ -1182,6 +1218,10 @@ int serve(
                         }
                         writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
                     });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "clearPlugin") {
@@ -1191,16 +1231,13 @@ int serve(
                         "Another Play rack operation is still changing the VST3. The current runtime remains available."));
                     continue;
                 }
-                if (pluginOperationThread.joinable())
-                    pluginOperationThread.join();
                 const auto requestId = currentRequestId;
                 pluginOperationRunning.store(true, std::memory_order_release);
-                pluginOperationThread = std::thread([&, requestId] {
-                    const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                const auto submitted = runtimeLifecycle.submit([&, requestId] {
                     juce::String clearError;
                     bool cleared = false;
                     try {
-                        cleared = pluginEditor.clear(clearError);
+                        cleared = pluginEditor->clear(clearError);
                     } catch (const std::exception& exception) {
                         clearError =
                             "VST3 clearing raised an exception: " + juce::String(exception.what());
@@ -1214,6 +1251,10 @@ int serve(
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
                 });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "probeMidiDevices") {
@@ -1499,8 +1540,18 @@ int serve(
                         "Another Play rack operation is still changing the VST3. The current runtime remains available."));
                     continue;
                 }
-                rack.setBypassed(static_cast<bool>(command.getProperty("bypassed", true)));
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                const auto requestId = currentRequestId;
+                const auto bypassed = static_cast<bool>(command.getProperty("bypassed", true));
+                pluginOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit([&, requestId, bypassed] {
+                    rack.setBypassed(bypassed);
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "openPluginEditor") {
@@ -1510,16 +1561,13 @@ int serve(
                         "The Play rack is still loading a VST3. The editor can be opened when it finishes."));
                     continue;
                 }
-                if (pluginOperationThread.joinable())
-                    pluginOperationThread.join();
                 const auto requestId = currentRequestId;
                 pluginOperationRunning.store(true, std::memory_order_release);
-                pluginOperationThread = std::thread([&, requestId] {
-                    const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                const auto submitted = runtimeLifecycle.submit([&, requestId] {
                     juce::String editorError;
                     bool opened = false;
                     try {
-                        opened = pluginEditor.open(editorError);
+                        opened = pluginEditor->open(editorError);
                     } catch (const std::exception& exception) {
                         editorError =
                             "Play VST3 editor opening raised an exception: "
@@ -1534,6 +1582,10 @@ int serve(
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
                 });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
                 continue;
             }
             if (type == "setPluginParameter") {
@@ -1543,14 +1595,24 @@ int serve(
                         "The Play rack is still loading a VST3. Parameter changes can be retried shortly."));
                     continue;
                 }
-                juce::String parameterError;
                 const auto index = static_cast<int>(command.getProperty("index", -1));
                 const auto value = static_cast<float>(command.getProperty("value", 0.0));
-                if (!rack.setParameter(index, value, parameterError)) {
-                    writeJson(makeError("plugin", parameterError));
-                    continue;
+                const auto requestId = currentRequestId;
+                pluginOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit([&, requestId, index, value] {
+                    juce::String parameterError;
+                    const auto changed = rack.setParameter(index, value, parameterError);
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    if (!changed) {
+                        writeJson(makeError("plugin", parameterError), requestId);
+                        return;
+                    }
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
             if (type == "setPluginState") {
@@ -1560,13 +1622,23 @@ int serve(
                         "The Play rack is still loading a VST3. State changes can be retried shortly."));
                     continue;
                 }
-                juce::String stateError;
                 const auto stateData = command.getProperty("stateData", {}).toString();
-                if (!rack.setState(stateData, stateError)) {
-                    writeJson(makeError("plugin", stateError));
-                    continue;
+                const auto requestId = currentRequestId;
+                pluginOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit([&, requestId, stateData] {
+                    juce::String stateError;
+                    const auto changed = rack.setState(stateData, stateError);
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    if (!changed) {
+                        writeJson(makeError("plugin", stateError), requestId);
+                        return;
+                    }
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                });
+                if (!submitted) {
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
             if (type == "pluginParameterStatus") {
@@ -1831,15 +1903,29 @@ int serve(
             writeJson(makeError("protocol", "Unsupported command: " + type));
         }
 
+        const auto cleanupSubmitted = runtimeLifecycle.submit([&] {
+            if (trackPluginEditor != nullptr) {
+                trackPluginEditor->close();
+                trackPluginEditor.reset();
+                trackPluginEditorTrackId.clear();
+                trackPluginEditorDeviceId.clear();
+            }
+            pluginEditor->close();
+            pluginOperationRunning.store(false, std::memory_order_release);
+            timelineOperationRunning.store(false, std::memory_order_release);
+        });
+        if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
+            std::_Exit(0);
         juce::MessageManager::callAsync(
             [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
     });
 
     juce::MessageManager::getInstance()->runDispatchLoop();
     if (commandThread.joinable()) commandThread.join();
-    if (pluginOperationThread.joinable()) pluginOperationThread.join();
-    if (timelineOperationThread.joinable()) timelineOperationThread.join();
-    pluginEditor.close();
+    if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
+        std::_Exit(0);
+    runtimeLifecycle.requestStop();
+    runtimeLifecycle.join();
 
     callback.setEmergencyMuted(true);
     juce::String ignoredMidiError;

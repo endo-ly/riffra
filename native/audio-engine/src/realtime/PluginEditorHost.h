@@ -11,7 +11,7 @@
 
 namespace riffra {
 
-class PluginEditorHost final {
+class PluginEditorHost final : public std::enable_shared_from_this<PluginEditorHost> {
 public:
     using StateCallback = std::function<void(const juce::var&)>;
     using ParameterCallback = std::function<void(int, float)>;
@@ -23,7 +23,7 @@ public:
     ~PluginEditorHost();
 
     bool open(juce::String& error);
-    void close();
+    bool close();
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
                                                       int blockSize,
                                                       const juce::var& persistedState = {});
@@ -35,7 +35,7 @@ private:
 
     bool runOnMessageThread(std::function<void()> operation, juce::String& error);
     void openOnMessageThread(juce::String& error);
-    void closeOnMessageThread();
+    bool closeOnMessageThread();
     void queueParameterChange(int index, float value) noexcept;
     void markOpaqueStateDirty() noexcept;
     void drainParameterChanges();

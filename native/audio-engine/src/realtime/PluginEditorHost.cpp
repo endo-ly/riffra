@@ -1,8 +1,11 @@
 #include "PluginEditorHost.h"
 
+#include <cstdlib>
 #include <exception>
+#include <mutex>
 #include <new>
 
+#include "FaultInjection.h"
 #include "PluginRack.h"
 
 namespace riffra {
@@ -40,7 +43,10 @@ public:
     }
 
     void closeButtonPressed() override {
-        juce::MessageManager::callAsync([&owner = host] { owner.closeOnMessageThread(); });
+        auto self = host.shared_from_this();
+        juce::MessageManager::callAsync([self = std::move(self)] {
+            (void) self->closeOnMessageThread();
+        });
     }
 
 private:
@@ -60,41 +66,74 @@ PluginEditorHost::PluginEditorHost(
 
 PluginEditorHost::~PluginEditorHost() {
     auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
-    if (messageManager == nullptr)
-        return;
-    if (messageManager->isThisTheMessageThread()) {
-        closeOnMessageThread();
+    if (messageManager == nullptr) {
+        if (window != nullptr)
+            std::_Exit(0);
         return;
     }
-    juce::String ignored;
-    runOnMessageThread([this] { closeOnMessageThread(); }, ignored);
+    if (messageManager->isThisTheMessageThread()) {
+        (void) closeOnMessageThread();
+        return;
+    }
+    // The owner must close the editor before releasing the last shared_ptr.
+    // Deferring a raw `this` capture from a destructor would allow a late
+    // Message Thread callback to access freed state.
+    if (window != nullptr)
+        std::_Exit(0);
 }
 
 bool PluginEditorHost::open(juce::String& error) {
-    return runOnMessageThread([this, &error] { openOnMessageThread(error); }, error) &&
-           error.isEmpty();
+    const auto result = std::make_shared<juce::String>();
+    const auto self = shared_from_this();
+    if (!runOnMessageThread(
+            [self, result] { self->openOnMessageThread(*result); },
+            error))
+        return false;
+    error = *result;
+    return error.isEmpty();
 }
 
-void PluginEditorHost::close() {
+bool PluginEditorHost::close() {
     juce::String ignored;
-    runOnMessageThread([this] { closeOnMessageThread(); }, ignored);
+    const auto self = shared_from_this();
+    const auto closed = std::make_shared<std::atomic<bool>>(false);
+    if (!runOnMessageThread(
+            [self, closed] { closed->store(self->closeOnMessageThread(), std::memory_order_release); },
+            ignored)
+        || !closed->load(std::memory_order_acquire)) {
+        // A plugin editor is third-party code. Once its Message Thread
+        // boundary stops responding, destroying it from another thread is
+        // unsafe; the sidecar is the recovery boundary.
+        std::_Exit(0);
+    }
+    return true;
 }
 
 std::optional<PluginLoadError> PluginEditorHost::load(const juce::String& path,
                                                        const double sampleRate,
                                                        const int blockSize,
                                                        const juce::var& persistedState) {
-    std::optional<PluginLoadError> result;
+    struct LoadResult final {
+        std::optional<PluginLoadError> value;
+    };
+    const auto result = std::make_shared<LoadResult>();
+    const auto self = shared_from_this();
     juce::String dispatchError;
     if (!runOnMessageThread(
-            [this, path, sampleRate, blockSize, persistedState, &result] {
-                closeOnMessageThread();
-                result = rack.load(path, sampleRate, blockSize);
-                if (!result.has_value() && persistedState.isObject()) {
+        [self, path, sampleRate, blockSize, persistedState, result] {
+                if (!self->closeOnMessageThread()) {
+                    result->value = PluginLoadError{
+                        "pluginEditor",
+                        "The previous VST3 editor could not be closed safely.",
+                    };
+                    return;
+                }
+                result->value = self->rack.load(path, sampleRate, blockSize);
+                if (!result->value.has_value() && persistedState.isObject()) {
                     juce::String stateError;
-                    if (!rack.applyPersistedState(persistedState, stateError)) {
-                        rack.clear();
-                        result = PluginLoadError{
+                    if (!self->rack.applyPersistedState(persistedState, stateError)) {
+                        self->rack.clear();
+                        result->value = PluginLoadError{
                             "pluginState",
                             stateError.isNotEmpty()
                                 ? stateError
@@ -102,22 +141,32 @@ std::optional<PluginLoadError> PluginEditorHost::load(const juce::String& path,
                         };
                     }
                 }
-                if (!result.has_value())
-                    resizeParameterQueue();
+                if (!result->value.has_value())
+                    self->resizeParameterQueue();
             },
             dispatchError)) {
         return PluginLoadError{"pluginLifecycle", dispatchError};
     }
-    return result;
+    return result->value;
 }
 
 bool PluginEditorHost::clear(juce::String& error) {
-    return runOnMessageThread(
-        [this] {
-            closeOnMessageThread();
-            rack.clear();
+    const auto self = shared_from_this();
+    const auto closed = std::make_shared<std::atomic<bool>>(false);
+    if (!runOnMessageThread(
+        [self, closed] {
+            if (!self->closeOnMessageThread())
+                return;
+            closed->store(true, std::memory_order_release);
+            self->rack.clear();
         },
-        error);
+        error))
+        return false;
+    if (!closed->load(std::memory_order_acquire)) {
+        error = "The VST3 editor could not be closed safely.";
+        std::_Exit(0);
+    }
+    return true;
 }
 
 bool PluginEditorHost::runOnMessageThread(std::function<void()> operation, juce::String& error) {
@@ -131,15 +180,38 @@ bool PluginEditorHost::runOnMessageThread(std::function<void()> operation, juce:
         return true;
     }
 
-    juce::WaitableEvent completed;
-    if (!juce::MessageManager::callAsync([operation = std::move(operation), &completed] {
-            operation();
-            completed.signal();
+    struct Dispatch final {
+        std::function<void()> operation;
+        juce::WaitableEvent completed;
+        std::exception_ptr exception;
+        std::mutex exceptionLock;
+    };
+    const auto dispatch = std::make_shared<Dispatch>();
+    dispatch->operation = std::move(operation);
+    if (!juce::MessageManager::callAsync([dispatch] {
+            try {
+                dispatch->operation();
+            } catch (...) {
+                const std::lock_guard lock(dispatch->exceptionLock);
+                dispatch->exception = std::current_exception();
+            }
+            dispatch->completed.signal();
         })) {
         error = "The plugin editor command could not reach the message thread.";
         return false;
     }
-    completed.wait();
+    constexpr int kMessageThreadTimeoutMs = 15'000;
+    if (!dispatch->completed.wait(kMessageThreadTimeoutMs)) {
+        error = "The plugin editor message thread did not complete within 15 seconds.";
+        return false;
+    }
+    {
+        const std::lock_guard lock(dispatch->exceptionLock);
+        if (dispatch->exception != nullptr) {
+            error = "The plugin editor message-thread operation raised an exception.";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -150,6 +222,7 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
         return;
     }
 
+    FaultInjection::before(FaultStage::editorOpen);
     std::unique_ptr<juce::AudioProcessorEditor> editor(rack.createEditor(error));
     if (editor == nullptr) {
         if (error.isEmpty()) error = "The loaded VST3 does not provide an editor.";
@@ -167,14 +240,22 @@ void PluginEditorHost::openOnMessageThread(juce::String& error) {
     }
 }
 
-void PluginEditorHost::closeOnMessageThread() {
+bool PluginEditorHost::closeOnMessageThread() {
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    if (window == nullptr)
+        return true;
     stateTimer.stop();
     drainParameterChanges();
     publishStateIfDirty(true);
     if (listener != nullptr)
         rack.removeProcessorListener(*listener);
+    try {
+        FaultInjection::before(FaultStage::destroy);
+    } catch (...) {
+        return false;
+    }
     window.reset();
+    return true;
 }
 
 void PluginEditorHost::queueParameterChange(const int index, const float value) noexcept {

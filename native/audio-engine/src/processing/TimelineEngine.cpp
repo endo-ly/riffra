@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <thread>
 
 namespace riffra {
 
@@ -43,6 +45,76 @@ bool requiredNumber(const juce::var& object, const juce::Identifier& name, doubl
 
 } // namespace
 
+class TimelineEngine::AudioReadScope final {
+public:
+    explicit AudioReadScope(TimelineEngine& owner) : engine(owner) {
+        entered = engine.beginAudioRead(active);
+    }
+
+    ~AudioReadScope() {
+        if (entered)
+            engine.endAudioRead();
+    }
+
+    [[nodiscard]] PreparedTimeline* get() const noexcept { return active; }
+    [[nodiscard]] bool enteredSuccessfully() const noexcept {
+        return entered && active != nullptr;
+    }
+
+private:
+    TimelineEngine& engine;
+    PreparedTimeline* active = nullptr;
+    bool entered = false;
+};
+
+class TimelineEngine::AudioPublishScope final {
+public:
+    explicit AudioPublishScope(TimelineEngine& owner) : engine(owner) {
+        engine.publishInProgress.store(true, std::memory_order_release);
+        ready = engine.waitForAudioReaders(std::chrono::milliseconds(100));
+    }
+
+    ~AudioPublishScope() {
+        engine.publishInProgress.store(false, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool isReady() const noexcept { return ready; }
+
+private:
+    TimelineEngine& engine;
+    bool ready = false;
+};
+
+bool TimelineEngine::beginAudioRead(PreparedTimeline*& active) noexcept {
+    active = nullptr;
+    if (publishInProgress.load(std::memory_order_acquire)) {
+        callbackPublishMisses.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    activeAudioReaders.fetch_add(1, std::memory_order_acq_rel);
+    if (publishInProgress.load(std::memory_order_acquire)) {
+        activeAudioReaders.fetch_sub(1, std::memory_order_acq_rel);
+        callbackPublishMisses.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    active = activeTimeline.load(std::memory_order_acquire);
+    return true;
+}
+
+void TimelineEngine::endAudioRead() noexcept {
+    activeAudioReaders.fetch_sub(1, std::memory_order_release);
+}
+
+bool TimelineEngine::waitForAudioReaders(const std::chrono::milliseconds timeout) noexcept {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (activeAudioReaders.load(std::memory_order_acquire) != 0) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline),
       recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
@@ -52,11 +124,16 @@ TimelineEngine::TimelineEngine(const bool offline)
 
 TimelineEngine::~TimelineEngine() {
     stop();
+    publishInProgress.store(true, std::memory_order_release);
+    if (!waitForAudioReaders(std::chrono::milliseconds(250)))
+        std::_Exit(0);
+    activeTimeline.store(nullptr, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         timeline.reset();
         pendingTimeline.reset();
     }
+    publishInProgress.store(false, std::memory_order_release);
     if (readAheadThread.isThreadRunning())
         readAheadThread.stopThread(3000);
 }
@@ -512,6 +589,12 @@ bool TimelineEngine::prepareSnapshot(
 }
 
 bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
+    const AudioPublishScope publish(*this);
+    if (!publish.isReady()) {
+        error = "Native audio did not acknowledge the graph publish within 100 milliseconds.";
+        return false;
+    }
+
     std::unique_ptr<PreparedTimeline> candidate;
     std::unique_ptr<PreparedTimeline> retiredTimeline;
     {
@@ -561,16 +644,22 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
                     });
                 if (existing == timeline->tracks.end())
                     continue;
-                (*existing)->effectChain = std::move(candidateTrack->effectChain);
-                (*existing)->liveEffectChain = std::move(candidateTrack->liveEffectChain);
-                (*existing)->recordingCapture.effectChain =
-                    std::move(candidateTrack->recordingCapture.effectChain);
-                (*existing)->instrumentRack = std::move(candidateTrack->instrumentRack);
+                // The candidate deliberately skipped construction for a
+                // reusable topology. Transfer the already-live instances
+                // into the candidate graph; assigning the empty candidate
+                // chains back to the old graph would destroy the runtime we
+                // intended to reuse.
+                candidateTrack->effectChain = std::move((*existing)->effectChain);
+                candidateTrack->liveEffectChain = std::move((*existing)->liveEffectChain);
+                candidateTrack->recordingCapture.effectChain =
+                    std::move((*existing)->recordingCapture.effectChain);
+                candidateTrack->instrumentRack = std::move((*existing)->instrumentRack);
             }
         }
 
         retiredTimeline = std::move(timeline);
         timeline = std::move(candidate);
+        activeTimeline.store(timeline.get(), std::memory_order_release);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
         if (retiredTimeline == nullptr)
@@ -578,6 +667,7 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         discontinuity.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);
     }
+    retiredTimeline.reset();
     return true;
 }
 
@@ -593,10 +683,13 @@ void TimelineEngine::play() noexcept {
 
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (lock.isLocked() && timeline != nullptr) {
-        resetPlaybackTrackState(*timeline);
-        resetRecordingTrackState(*timeline);
+    const AudioPublishScope publish(*this);
+    if (publish.isReady()) {
+        const juce::SpinLock::ScopedLockType lock(timelineLock);
+        if (timeline != nullptr) {
+            resetPlaybackTrackState(*timeline);
+            resetRecordingTrackState(*timeline);
+        }
     }
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
@@ -604,10 +697,13 @@ void TimelineEngine::stop() noexcept {
 
 void TimelineEngine::audioDeviceStarted() noexcept {
     audioClockSample.store(0, std::memory_order_release);
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (lock.isLocked() && timeline != nullptr) {
-        resetPlaybackTrackState(*timeline);
-        resetRecordingTrackState(*timeline);
+    const AudioPublishScope publish(*this);
+    if (publish.isReady()) {
+        const juce::SpinLock::ScopedLockType lock(timelineLock);
+        if (timeline != nullptr) {
+            resetPlaybackTrackState(*timeline);
+            resetRecordingTrackState(*timeline);
+        }
     }
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
@@ -615,8 +711,10 @@ void TimelineEngine::audioDeviceStarted() noexcept {
 }
 
 void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr) return;
+    const AudioPublishScope publish(*this);
+    if (!publish.isReady()) return;
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) return;
     timelineSample.store(
         timeline->timebase.tickToSample(tick, timeline->outputSampleRate),
         std::memory_order_release);
@@ -627,6 +725,11 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
 }
 
 bool TimelineEngine::startRecording(const int countInBeats, juce::String& error) noexcept {
+    const AudioPublishScope publish(*this);
+    if (!publish.isReady()) {
+        error = "Arrange recording could not acquire the audio graph boundary.";
+        return false;
+    }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr || timeline->outputSampleRate <= 0.0) {
         error = "Arrange recording requires a prepared Arrangement Graph.";
@@ -667,6 +770,11 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
 
 void TimelineEngine::stopRecording() noexcept {
     recordingPhase.store(RecordingPhase::stopping, std::memory_order_release);
+    const AudioPublishScope publish(*this);
+    if (!publish.isReady()) {
+        sequence.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     const auto hasCaptureWork = timeline != nullptr
         && std::any_of(timeline->tracks.begin(), timeline->tracks.end(), [&](const auto& track) {
@@ -695,6 +803,11 @@ bool TimelineEngine::cancelRecordingIfCountingIn() noexcept {
 
 bool TimelineEngine::flushRecordingTail(juce::String& error) noexcept {
     {
+        const AudioPublishScope publish(*this);
+        if (!publish.isReady()) {
+            error = "Processed recording tail could not acquire the audio graph boundary.";
+            return false;
+        }
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         auto sinkLease = recordingCapture->acquireSink();
         auto* sink = sinkLease.get();
@@ -901,8 +1014,11 @@ bool TimelineEngine::enqueueLiveMidi(
     const juce::String& deviceId) noexcept {
     if (!armedInstrumentTrack.load(std::memory_order_acquire))
         return false;
+    if (publishInProgress.load(std::memory_order_acquire))
+        return true;
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr)
+    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire)
+        || timeline == nullptr)
         return true;
     for (auto& trackPtr : timeline->tracks) {
         auto& track = *trackPtr;
@@ -1157,6 +1273,8 @@ bool TimelineEngine::recordingWindow(
     countInBlockStartRemainingSamples.store(0, std::memory_order_release);
     if (sampleCount <= 0)
         return false;
+    AudioReadScope activeRead(*this);
+    auto* active = activeRead.get();
     auto phase = recordingPhase.load(std::memory_order_acquire);
     auto transitionedFromCountIn = false;
     if (phase == RecordingPhase::idle || phase == RecordingPhase::stopping) {
@@ -1180,11 +1298,10 @@ bool TimelineEngine::recordingWindow(
             audioClockSample.load(std::memory_order_acquire) +
                 static_cast<std::uint64_t>(sampleOffset),
             std::memory_order_release);
-        const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-        if (lock.isLocked() && timeline != nullptr) {
-            const auto tick = timeline->timebase.sampleToTick(
+        if (active != nullptr) {
+            const auto tick = active->timebase.sampleToTick(
                 timelineSample.load(std::memory_order_acquire),
-                timeline->outputSampleRate);
+                active->outputSampleRate);
             recordingStartTick.store(tick, std::memory_order_release);
         }
         state.store(State::playing, std::memory_order_release);
@@ -1193,8 +1310,7 @@ bool TimelineEngine::recordingWindow(
         transitionedFromCountIn = true;
     }
 
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr || !timeline->punchEnabled) {
+    if (active == nullptr || !active->punchEnabled) {
         captureBlockOffset.store(sampleOffset, std::memory_order_release);
         captureBlockSamples.store(capturedSamples, std::memory_order_release);
         return true;
@@ -1204,14 +1320,14 @@ bool TimelineEngine::recordingWindow(
     const auto playbackOffset = transitionedFromCountIn ? sampleOffset : 0;
     const auto playbackSamples = sampleCount - playbackOffset;
     const auto blockEnd = position + static_cast<std::int64_t>(playbackSamples);
-    if (blockEnd <= timeline->punchStartSample || position >= timeline->punchEndSample) {
+    if (blockEnd <= active->punchStartSample || position >= active->punchEndSample) {
         capturedSamples = 0;
         return false;
     }
     const auto punchOffset = static_cast<int>(std::max<std::int64_t>(
-        0, timeline->punchStartSample - position));
+        0, active->punchStartSample - position));
     sampleOffset = playbackOffset + punchOffset;
-    const auto end = std::min<std::int64_t>(blockEnd, timeline->punchEndSample);
+    const auto end = std::min<std::int64_t>(blockEnd, active->punchEndSample);
     capturedSamples = static_cast<int>(std::max<std::int64_t>(
         0, end - position - punchOffset));
     captureBlockOffset.store(sampleOffset, std::memory_order_release);
@@ -1225,11 +1341,11 @@ void TimelineEngine::mixMetronome(
     const int sampleCount) noexcept {
     if (sampleCount <= 0)
         return;
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr || !timeline->metronomeEnabled
-        || timeline->beatSamples <= 0)
+    AudioReadScope activeRead(*this);
+    auto* active = activeRead.get();
+    if (active == nullptr || !active->metronomeEnabled || active->beatSamples <= 0)
         return;
-    const auto loopLength = timeline->loopEndSample - timeline->loopStartSample;
+    const auto loopLength = active->loopEndSample - active->loopStartSample;
     const auto start = lastMixStartSample.load(std::memory_order_acquire);
     const auto playbackOffset = juce::jlimit(
         0, sampleCount, lastMixPlaybackOffset.load(std::memory_order_acquire));
@@ -1244,26 +1360,26 @@ void TimelineEngine::mixMetronome(
         if (countInRemaining > 0
             && sample < (countingIn ? sampleCount : playbackOffset)) {
             const auto remaining = countInRemaining - sample;
-            const auto offset = (timeline->beatSamples
-                - remaining % timeline->beatSamples) % timeline->beatSamples;
+            const auto offset = (active->beatSamples
+                - remaining % active->beatSamples) % active->beatSamples;
             if (offset >= 0 && offset < clickSamples) {
                 const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
                 value = 0.11f * envelope;
             }
         } else if (playing && sample >= playbackOffset) {
             auto position = start + sample - playbackOffset;
-            if (timeline->loopEnabled && loopLength > 0
-                && position >= timeline->loopEndSample)
-                position = timeline->loopStartSample +
-                    (position - timeline->loopEndSample) % loopLength;
+            if (active->loopEnabled && loopLength > 0
+                && position >= active->loopEndSample)
+                position = active->loopStartSample +
+                    (position - active->loopEndSample) % loopLength;
             if (position >= 0) {
-                const auto beat = position / timeline->beatSamples;
-                const auto offset = position % timeline->beatSamples;
+                const auto beat = position / active->beatSamples;
+                const auto offset = position % active->beatSamples;
                 if (offset >= 0 && offset < clickSamples) {
                     const auto envelope =
                         1.0f - static_cast<float>(offset) / clickSamples;
                     const auto amplitude =
-                        beat % timeline->beatsPerBar == 0 ? 0.18f : 0.11f;
+                        beat % active->beatsPerBar == 0 ? 0.18f : 0.11f;
                     value = amplitude * envelope;
                 }
             }
@@ -1660,16 +1776,14 @@ void TimelineEngine::mix(
         0, sampleCount, playbackBlockOffset.exchange(0, std::memory_order_acq_rel));
     lastMixPlaybackOffset.store(blockPlaybackOffset, std::memory_order_release);
     if (state.load(std::memory_order_acquire) != State::playing) return;
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked()) {
-        callbackLockMisses.fetch_add(1, std::memory_order_relaxed);
+    AudioReadScope activeRead(*this);
+    auto* active = activeRead.get();
+    if (active == nullptr)
         return;
-    }
-    if (timeline == nullptr) return;
     auto position = timelineSample.load(std::memory_order_relaxed);
     lastMixStartSample.store(position, std::memory_order_release);
     if (recordingCapture->drainingTailTracks() != 0) {
-        for (auto& trackPtr : timeline->tracks)
+        for (auto& trackPtr : active->tracks)
             (void) recordingCapture->drainTail(
                 trackPtr->id,
                 trackPtr->recordingCapture,
@@ -1685,19 +1799,19 @@ void TimelineEngine::mix(
     auto consumed = blockPlaybackOffset;
     while (consumed < sampleCount) {
         auto chunk = sampleCount - consumed;
-        if (!timeline->tracks.empty()) {
-            const auto bufferSize = timeline->tracks.front()->mixBuffer.getNumSamples();
+        if (!active->tracks.empty()) {
+            const auto bufferSize = active->tracks.front()->mixBuffer.getNumSamples();
             if (bufferSize > 0)
                 chunk = std::min(chunk, bufferSize);
         }
-        if (timeline->loopEnabled && position < timeline->loopEndSample)
-            chunk = std::min<int>(chunk, static_cast<int>(timeline->loopEndSample - position));
-        for (auto& trackPtr : timeline->tracks)
+        if (active->loopEnabled && position < active->loopEndSample)
+            chunk = std::min<int>(chunk, static_cast<int>(active->loopEndSample - position));
+        for (auto& trackPtr : active->tracks)
             trackPtr->mixBuffer.clear(0, chunk);
-        for (auto& trackPtr : timeline->tracks)
+        for (auto& trackPtr : active->tracks)
             mixRange(*trackPtr, position, 0, chunk);
-        for (auto& trackPtr : timeline->tracks)
-            scheduleMidi(*timeline, *trackPtr, position, chunk);
+        for (auto& trackPtr : active->tracks)
+            scheduleMidi(*active, *trackPtr, position, chunk);
         const auto captureStart = captureBlockOffset.load(std::memory_order_acquire);
         const auto captureSamples = captureBlockSamples.load(std::memory_order_acquire);
         const auto [captureWriteStart, captureWriteEnd] =
@@ -1719,7 +1833,7 @@ void TimelineEngine::mix(
                         localOffset + captureWriteEnd - captureWriteStart));
         }
         processTracks(
-            *timeline,
+            *active,
             inputChannels,
             inputChannelCount,
             outputChannels,
@@ -1736,13 +1850,13 @@ void TimelineEngine::mix(
                 captureBlockSamples.store(
                     remaining - std::min(chunk, remaining), std::memory_order_release);
         }
-        if (timeline->loopEnabled && position >= timeline->loopEndSample) {
+        if (active->loopEnabled && position >= active->loopEndSample) {
             if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::recording) {
                 const auto callbackStart = audioClockSample.load(std::memory_order_acquire)
                     - static_cast<std::uint64_t>(sampleCount);
                 recordingCapture->markLoopBoundary(
                     callbackStart + static_cast<std::uint64_t>(consumed));
-                for (auto& trackPtr : timeline->tracks) {
+                for (auto& trackPtr : active->tracks) {
                     auto& track = *trackPtr;
                     if (!track.armed || track.instrument
                         || track.recordingCapture.state != RecordingCaptureState::capturing)
@@ -1754,9 +1868,9 @@ void TimelineEngine::mix(
                     track.recordingCapture.latencyToDiscard = 0;
                 }
             }
-            position = timeline->loopStartSample;
+            position = active->loopStartSample;
             recordingPassOrdinal.fetch_add(1, std::memory_order_relaxed);
-            resetPlaybackTrackState(*timeline);
+            resetPlaybackTrackState(*active);
             discontinuity.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -1779,6 +1893,8 @@ juce::var TimelineEngine::status() const {
         sequence.fetch_add(1, std::memory_order_relaxed) + 1));
     object->setProperty("callbackLockMisses", static_cast<juce::int64>(
         callbackLockMisses.load(std::memory_order_acquire)));
+    object->setProperty("callbackPublishMisses", static_cast<juce::int64>(
+        callbackPublishMisses.load(std::memory_order_acquire)));
     object->setProperty("clockGeneration", static_cast<juce::int64>(
         clockGeneration.load(std::memory_order_acquire)));
     object->setProperty("discontinuity", static_cast<juce::int64>(
