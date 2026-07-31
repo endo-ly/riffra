@@ -23,6 +23,10 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let _rack_operation = state
+            .rack_operation_gate
+            .lock()
+            .map_err(|error| format!("Rack operation lock was poisoned: {error}"))?;
         operation(state.inner())
     })
     .await
@@ -32,6 +36,7 @@ where
 fn app_context(state: &AppState) -> RackContext<'_> {
     RackContext {
         audio: state.core.audio(),
+        session_actor: &state.session_actor,
         data_root: state.core.data_root(),
         session: state.core.session(),
         safe_mode: state.core.safe_mode(),

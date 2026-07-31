@@ -23,13 +23,15 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::AudioSupervisor;
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
+use crate::session::actor::SessionActor;
 use crate::session::{CreativeSession, SessionSnapshot};
-use crate::storage::{SessionStore, now_ms};
+use crate::storage::now_ms;
 
 /// Concrete dependencies a Rack Application Operation needs. Bundling them keeps
 /// the operation signatures small without pulling in `tauri::State`.
 pub struct RackContext<'a> {
     pub audio: &'a AudioSupervisor,
+    pub session_actor: &'a SessionActor,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
@@ -87,26 +89,31 @@ fn rack_with_plugin_device(session: &mut CreativeSession, device: RackDevice) {
     session.rack.devices.push(device);
 }
 
-fn persist(
-    context: &RackContext<'_>,
-    mut session: CreativeSession,
-) -> Result<CreativeSession, String> {
-    session.updated_at_ms = now_ms();
-    SessionStore::new(context.data_root)
-        .save(&session)
-        .map_err(|error| error.to_string())?;
-    Ok(session)
+fn merge_rack_session(
+    current: &CreativeSession,
+    _base: &CreativeSession,
+    candidate: CreativeSession,
+) -> CreativeSession {
+    let mut merged = current.clone();
+    merged.rack = candidate.rack;
+    merged
 }
 
 fn commit_session_only(
     context: &RackContext<'_>,
+    base: CreativeSession,
     session: CreativeSession,
 ) -> Result<SessionAudioPair, String> {
-    let saved = persist(context, session)?;
-    crate::queue_session_index(context.data_root, &saved);
-    *context.session.lock().map_err(lock_error)? = saved.clone();
+    let committed = crate::session::application::commit_merged_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        &base,
+        session,
+        merge_rack_session,
+    )?;
     Ok(SessionAudioPair {
-        session: saved,
+        session: committed.session,
         audio: context.audio.refresh_status()?,
     })
 }
@@ -180,19 +187,23 @@ fn restore_previous_plugin(
 /// runtime back to `previous_plugin` if persistence fails.
 fn commit_with_rollback(
     context: &RackContext<'_>,
+    base: CreativeSession,
     session: CreativeSession,
     previous_plugin: Option<RackDevice>,
     runtime_status: AudioStatus,
 ) -> Result<SessionAudioPair, String> {
-    match persist(context, session) {
-        Ok(saved) => {
-            crate::queue_session_index(context.data_root, &saved);
-            *context.session.lock().map_err(lock_error)? = saved.clone();
-            Ok(SessionAudioPair {
-                session: saved,
-                audio: runtime_status,
-            })
-        }
+    match crate::session::application::commit_merged_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        &base,
+        session,
+        merge_rack_session,
+    ) {
+        Ok(committed) => Ok(SessionAudioPair {
+            session: committed.session,
+            audio: runtime_status,
+        }),
         Err(error) => match restore_previous_plugin(context.audio, previous_plugin.as_ref()) {
             Ok(()) => Err(format!(
                 "The rack change was applied to the runtime but the session could not be \
@@ -277,7 +288,7 @@ pub fn load_plugin_into_rack(
             disabled_placeholder: false,
         },
     );
-    commit_with_rollback(context, session, previous_plugin, status)
+    commit_with_rollback(context, previous_session, session, previous_plugin, status)
 }
 
 /// Clears the plugin from the rack: clears the runtime, removes the plugin
@@ -297,7 +308,7 @@ pub fn clear_plugin_from_rack(context: &RackContext<'_>) -> Result<SessionAudioP
         .rack
         .devices
         .retain(|d| d.kind != DeviceKind::Plugin);
-    commit_with_rollback(context, session, previous_plugin, status)
+    commit_with_rollback(context, previous_session, session, previous_plugin, status)
 }
 
 /// Opens the native editor belonging to the active runtime plugin instance.
@@ -329,7 +340,7 @@ pub fn set_rack_plugin_bypassed(
             device.bypassed = bypassed;
         }
     }
-    commit_with_rollback(context, session, previous_plugin, status)
+    commit_with_rollback(context, previous_session, session, previous_plugin, status)
 }
 
 /// Sets a single plugin parameter, applying it to the runtime first and
@@ -372,7 +383,7 @@ pub fn set_rack_plugin_parameter(
                 .or_else(|| device.state_data.clone());
         }
     }
-    commit_with_rollback(context, session, previous_plugin, status)
+    commit_with_rollback(context, previous_session, session, previous_plugin, status)
 }
 
 /// Synchronizes the current session rack into the Audio Runtime at startup or
@@ -484,7 +495,7 @@ pub fn set_rack_macro_value(
         item.value = value;
     }
     let Some(index) = parameter_index else {
-        return commit_session_only(context, session);
+        return commit_session_only(context, previous_session, session);
     };
     let status = context.audio.set_plugin_parameter(index, value)?;
     if !audio_command_succeeded(&status) {
@@ -512,7 +523,7 @@ pub fn set_rack_macro_value(
             }
         }
     }
-    commit_with_rollback(context, session, previous_plugin, status)
+    commit_with_rollback(context, previous_session, session, previous_plugin, status)
 }
 
 pub fn map_rack_macro(
@@ -520,6 +531,7 @@ pub fn map_rack_macro(
     macro_id: &str,
     parameter_index: Option<u32>,
 ) -> Result<SessionAudioPair, String> {
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     let item = session
         .rack
@@ -528,14 +540,15 @@ pub fn map_rack_macro(
         .find(|item| item.id == macro_id)
         .ok_or_else(|| format!("Rack macro is not registered: {macro_id}"))?;
     item.parameter_index = parameter_index;
-    commit_session_only(context, session)
+    commit_session_only(context, previous_session, session)
 }
 
 pub fn capture_snapshot(context: &RackContext<'_>, slot: &str) -> Result<SessionAudioPair, String> {
     if !matches!(slot, "A" | "B") {
         return Err("Snapshot slot must be A or B.".into());
     }
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous_session = context.session.lock().map_err(lock_error)?.clone();
+    let mut session = previous_session.clone();
     let id = format!("snapshot:{slot}");
     let snapshot = SessionSnapshot {
         id: id.clone(),
@@ -550,7 +563,7 @@ pub fn capture_snapshot(context: &RackContext<'_>, slot: &str) -> Result<Session
     };
     session.snapshots.retain(|item| item.id != id);
     session.snapshots.push(snapshot);
-    commit_session_only(context, session)
+    commit_session_only(context, previous_session, session)
 }
 
 /// Recalls an A/B session snapshot: clears the current runtime plugin, applies
@@ -614,7 +627,13 @@ pub fn recall_snapshot(context: &RackContext<'_>, slot: &str) -> Result<SessionA
     session.settings.master_db = snapshot.master_db;
     session.rack.devices = snapshot.rack.clone();
     session.rack.macros = snapshot.macros.clone();
-    commit_with_rollback(context, session, previous_plugin, final_status)
+    commit_with_rollback(
+        context,
+        previous_session,
+        session,
+        previous_plugin,
+        final_status,
+    )
 }
 
 // Canonical RackDefinition Asset operations.
@@ -733,5 +752,11 @@ pub fn load_rack_definition_asset(
 
     let mut session = previous_session.clone();
     session.rack = crate::rack::RackInstance::from_definition(&definition);
-    commit_with_rollback(context, session, previous_plugin_device, final_status)
+    commit_with_rollback(
+        context,
+        previous_session,
+        session,
+        previous_plugin_device,
+        final_status,
+    )
 }

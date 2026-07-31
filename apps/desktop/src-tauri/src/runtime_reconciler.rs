@@ -14,12 +14,22 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-pub type RuntimeRecovery = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+pub type RuntimeRecovery = Arc<dyn Fn(Duration) -> Result<(), String> + Send + Sync>;
+
+/// Absolute ordering assigned by the Session Actor when canonical state is
+/// committed. `session_revision` is retained for diagnostics and display, but
+/// it is not an ordering key because restore/import may legitimately move it
+/// backwards.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProjectionKey {
+    pub sequence: u64,
+    pub session_revision: u64,
+}
 
 pub trait RuntimeDriver: Send + Sync + 'static {
-    fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String>;
-    fn commit_timeline_snapshot(&self) -> Result<(), String>;
-    fn discard_timeline_snapshot(&self) -> Result<(), String>;
+    fn prepare_timeline_snapshot(&self, snapshot: Value, timeout: Duration) -> Result<(), String>;
+    fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), String>;
+    fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), String>;
     fn play_timeline(&self) -> Result<(), String>;
     fn stop_timeline(&self) -> Result<(), String>;
     fn runtime_generation(&self) -> u64;
@@ -27,16 +37,16 @@ pub trait RuntimeDriver: Send + Sync + 'static {
 }
 
 impl RuntimeDriver for AudioSupervisor {
-    fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
-        AudioSupervisor::prepare_timeline_snapshot(self, snapshot)
+    fn prepare_timeline_snapshot(&self, snapshot: Value, timeout: Duration) -> Result<(), String> {
+        AudioSupervisor::prepare_timeline_snapshot(self, snapshot, timeout)
     }
 
-    fn commit_timeline_snapshot(&self) -> Result<(), String> {
-        AudioSupervisor::commit_timeline_snapshot(self)
+    fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), String> {
+        AudioSupervisor::commit_timeline_snapshot(self, timeout)
     }
 
-    fn discard_timeline_snapshot(&self) -> Result<(), String> {
-        AudioSupervisor::discard_timeline_snapshot(self)
+    fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), String> {
+        AudioSupervisor::discard_timeline_snapshot(self, timeout)
     }
 
     fn play_timeline(&self) -> Result<(), String> {
@@ -58,9 +68,16 @@ impl RuntimeDriver for AudioSupervisor {
 
 struct RuntimeTarget {
     operation_id: u64,
-    session_revision: u64,
+    key: ProjectionKey,
     snapshot: Value,
     recovery_attempts: u8,
+    deadline: Option<Instant>,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveProjection {
+    runtime_generation: u64,
+    key: ProjectionKey,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -72,8 +89,9 @@ enum TransportIntent {
 struct ReconcilerState {
     next_operation_id: u64,
     latest_target: Option<RuntimeTarget>,
+    desired_key: Option<ProjectionKey>,
     running_operation_id: Option<u64>,
-    active_session_revision: Option<u64>,
+    active_projection: Option<ActiveProjection>,
     transport_intent: TransportIntent,
     stop_requested: bool,
     status: RuntimeProjectionStatus,
@@ -93,8 +111,9 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             Mutex::new(ReconcilerState {
                 next_operation_id: 0,
                 latest_target: None,
+                desired_key: None,
                 running_operation_id: None,
-                active_session_revision: None,
+                active_projection: None,
                 transport_intent: TransportIntent::Stopped,
                 stop_requested: false,
                 status: RuntimeProjectionStatus {
@@ -128,29 +147,48 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         })
     }
 
-    pub fn submit(&self, snapshot: Value, session_revision: u64) -> RuntimeProjectionStatus {
+    pub fn submit(&self, snapshot: Value, key: ProjectionKey) -> RuntimeProjectionStatus {
+        self.submit_with_deadline(snapshot, key, None)
+    }
+
+    fn submit_with_deadline(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        deadline: Option<Instant>,
+    ) -> RuntimeProjectionStatus {
         let _publish_gate = self
             .publish_gate
             .lock()
             .expect("runtime publish gate poisoned");
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime reconciler lock poisoned");
+        observe_generation(&mut state, self.driver.runtime_generation());
+        if state.desired_key.is_some_and(|desired| key < desired) {
+            return state.status.clone();
+        }
         state.next_operation_id = state.next_operation_id.saturating_add(1);
         let operation_id = state.next_operation_id;
         let queued_at_ms = now_ms();
+        state.desired_key = Some(key);
         state.latest_target = Some(RuntimeTarget {
             operation_id,
-            session_revision,
+            key,
             snapshot,
             recovery_attempts: 0,
+            deadline,
         });
         state.status = RuntimeProjectionStatus {
             state: RuntimeProjectionState::Queued,
             operation_id,
             running_operation_id: state.running_operation_id,
-            target_session_revision: Some(session_revision),
+            target_projection_sequence: Some(key.sequence),
+            target_session_revision: Some(key.session_revision),
             prepared_session_revision: None,
-            active_session_revision: state.active_session_revision,
+            active_projection_sequence: state.active_projection.map(|active| active.key.sequence),
+            active_session_revision: state
+                .active_projection
+                .map(|active| active.key.session_revision),
             runtime_generation: self.driver.runtime_generation(),
             queued_at_ms: Some(queued_at_ms),
             started_at_ms: None,
@@ -165,12 +203,14 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     }
 
     pub fn status(&self) -> RuntimeProjectionStatus {
-        self.state
+        let generation = self.driver.runtime_generation();
+        let mut state = self
+            .state
             .0
             .lock()
-            .expect("runtime reconciler lock poisoned")
-            .status
-            .clone()
+            .expect("runtime reconciler lock poisoned");
+        observe_generation(&mut state, generation);
+        state.status.clone()
     }
 
     /// Applies a snapshot through the same single owner as asynchronous
@@ -180,12 +220,12 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     pub fn apply_and_wait(
         &self,
         snapshot: Value,
-        session_revision: u64,
+        key: ProjectionKey,
         timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, String> {
-        let submitted = self.submit(snapshot, session_revision);
-        let operation_id = submitted.operation_id;
         let deadline = Instant::now() + timeout;
+        let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
+        let operation_id = submitted.operation_id;
         let (lock, wake) = &*self.state;
         let mut state = lock
             .lock()
@@ -193,7 +233,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         loop {
             if state.status.operation_id != operation_id {
                 return Err(format!(
-                    "Runtime operation {operation_id} was superseded by a newer Session revision."
+                    "Runtime operation {operation_id} was superseded by a newer projection."
                 ));
             }
             if state.running_operation_id.is_none() && state.latest_target.is_none() {
@@ -234,16 +274,20 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// immediately; otherwise the worker starts playback after publishing the
     /// latest successful graph.
     pub fn play(&self) -> Result<RuntimeProjectionStatus, String> {
+        let generation = self.driver.runtime_generation();
         let should_play_now = {
             let mut state = self
                 .state
                 .0
                 .lock()
                 .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            observe_generation(&mut state, generation);
             state.transport_intent = TransportIntent::Playing;
             state.latest_target.is_none()
                 && state.running_operation_id.is_none()
-                && state.active_session_revision.is_some()
+                && state
+                    .active_projection
+                    .is_some_and(|active| active.runtime_generation == generation)
         };
         if should_play_now {
             self.driver.play_timeline()?;
@@ -315,12 +359,15 @@ fn worker_loop<D: RuntimeDriver>(
         };
 
         let generation = driver.runtime_generation();
-        let mut result = driver.prepare_timeline_snapshot(target.snapshot.clone());
+        let mut result = match remaining_timeout(target.deadline, Duration::from_secs(15)) {
+            Ok(timeout) => driver.prepare_timeline_snapshot(target.snapshot.clone(), timeout),
+            Err(error) => Err(error),
+        };
         {
             let mut state = state.0.lock().expect("runtime reconciler lock poisoned");
             state.status.last_native_response_at_ms = Some(now_ms());
             if result.is_ok() && state.status.operation_id == target.operation_id {
-                state.status.prepared_session_revision = Some(target.session_revision);
+                state.status.prepared_session_revision = Some(target.key.session_revision);
             }
         }
         if result.is_ok() {
@@ -332,25 +379,36 @@ fn worker_loop<D: RuntimeDriver>(
                         && state.latest_target.is_none()
                         && !state.stop_requested
                         && state
-                            .active_session_revision
-                            .is_none_or(|active| target.session_revision >= active)
+                            .active_projection
+                            .is_none_or(|active| target.key >= active.key)
+                        && state
+                            .desired_key
+                            .is_none_or(|desired| target.key >= desired)
                 };
                 if !should_publish {
                     None
                 } else if generation != driver.runtime_generation() {
                     Some(Err(format!(
                         "Audio Runtime generation changed while preparing Session revision {}.",
-                        target.session_revision
+                        target.key.session_revision
                     )))
                 } else {
-                    Some(driver.commit_timeline_snapshot())
+                    Some(
+                        match remaining_timeout(target.deadline, Duration::from_secs(3)) {
+                            Ok(timeout) => driver.commit_timeline_snapshot(timeout),
+                            Err(error) => Err(error),
+                        },
+                    )
                 }
             };
             match publish_result {
                 Some(result_value) => {
                     result = result_value;
                     if result.is_err() {
-                        let _ = driver.discard_timeline_snapshot();
+                        let _ = driver.discard_timeline_snapshot(
+                            remaining_timeout(target.deadline, Duration::from_secs(3))
+                                .unwrap_or(Duration::from_millis(1)),
+                        );
                     }
                     if let Ok(mut state) = state.0.lock() {
                         state.status.last_native_response_at_ms = Some(now_ms());
@@ -364,7 +422,10 @@ fn worker_loop<D: RuntimeDriver>(
                     }
                 }
                 None => {
-                    let _ = driver.discard_timeline_snapshot();
+                    let _ = driver.discard_timeline_snapshot(
+                        remaining_timeout(target.deadline, Duration::from_secs(3))
+                            .unwrap_or(Duration::from_millis(1)),
+                    );
                     let (lock, wake) = &*state;
                     if let Ok(mut state) = lock.lock() {
                         state.status.last_native_response_at_ms = Some(now_ms());
@@ -373,7 +434,11 @@ fn worker_loop<D: RuntimeDriver>(
                         if state.status.operation_id == target.operation_id {
                             state.status.prepared_session_revision = None;
                             state.status.running_operation_id = None;
-                            state.status.active_session_revision = state.active_session_revision;
+                            state.status.active_projection_sequence =
+                                state.active_projection.map(|active| active.key.sequence);
+                            state.status.active_session_revision = state
+                                .active_projection
+                                .map(|active| active.key.session_revision);
                             state.status.completed_at_ms = Some(now_ms());
                             state.status.state = if state.latest_target.is_some() {
                                 RuntimeProjectionState::Queued
@@ -393,12 +458,18 @@ fn worker_loop<D: RuntimeDriver>(
             && target.recovery_attempts == 0
             && let Some(recovery) = recovery.as_ref()
         {
-            match recovery() {
+            let recovery_result = remaining_timeout(target.deadline, Duration::from_secs(20))
+                .and_then(|timeout| recovery(timeout));
+            match recovery_result {
                 Ok(()) => {
                     let (lock, wake) = &*state;
                     let mut state = lock.lock().expect("runtime reconciler lock poisoned");
                     state.running_operation_id = None;
                     state.status.running_operation_id = None;
+                    state.active_projection = None;
+                    state.status.active_projection_sequence = None;
+                    state.status.active_session_revision = None;
+                    state.status.runtime_generation = driver.runtime_generation();
                     if state.status.operation_id == target.operation_id
                         && state.latest_target.is_none()
                     {
@@ -434,7 +505,7 @@ fn worker_loop<D: RuntimeDriver>(
         } else {
             Err(format!(
                 "Audio Runtime generation changed while applying Session revision {}.",
-                target.session_revision
+                target.key.session_revision
             ))
         };
         let completed_at_ms = now_ms();
@@ -449,13 +520,23 @@ fn worker_loop<D: RuntimeDriver>(
             match result {
                 Ok(()) => {
                     if state
-                        .active_session_revision
-                        .is_none_or(|active| target.session_revision >= active)
+                        .active_projection
+                        .is_none_or(|active| target.key >= active.key)
+                        && state
+                            .desired_key
+                            .is_none_or(|desired| target.key >= desired)
                     {
-                        state.active_session_revision = Some(target.session_revision);
+                        state.active_projection = Some(ActiveProjection {
+                            runtime_generation: current_generation,
+                            key: target.key,
+                        });
                     }
                     if state.status.operation_id == target.operation_id {
-                        state.status.active_session_revision = state.active_session_revision;
+                        state.status.active_projection_sequence =
+                            state.active_projection.map(|active| active.key.sequence);
+                        state.status.active_session_revision = state
+                            .active_projection
+                            .map(|active| active.key.session_revision);
                         state.status.runtime_generation = current_generation;
                         state.status.prepared_session_revision = None;
                         state.status.completed_at_ms = Some(completed_at_ms);
@@ -494,6 +575,31 @@ fn worker_loop<D: RuntimeDriver>(
             state.status.last_error = Some(error);
             state.status.completed_at_ms = Some(now_ms());
         }
+    }
+}
+
+fn remaining_timeout(deadline: Option<Instant>, default: Duration) -> Result<Duration, String> {
+    let Some(deadline) = deadline else {
+        return Ok(default);
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err("Runtime projection deadline expired before the next native step.".into())
+    } else {
+        Ok(remaining.min(default))
+    }
+}
+
+fn observe_generation(state: &mut ReconcilerState, generation: u64) {
+    if state.status.runtime_generation == generation {
+        return;
+    }
+    state.active_projection = None;
+    state.status.active_projection_sequence = None;
+    state.status.active_session_revision = None;
+    state.status.runtime_generation = generation;
+    if state.running_operation_id.is_none() && state.latest_target.is_none() {
+        state.status.state = RuntimeProjectionState::Idle;
     }
 }
 
@@ -548,7 +654,11 @@ mod tests {
     }
 
     impl RuntimeDriver for FakeDriver {
-        fn prepare_timeline_snapshot(&self, snapshot: Value) -> Result<(), String> {
+        fn prepare_timeline_snapshot(
+            &self,
+            snapshot: Value,
+            _timeout: Duration,
+        ) -> Result<(), String> {
             self.prepare_started.fetch_add(1, Ordering::Release);
             thread::sleep(self.prepare_delay);
             if self
@@ -564,7 +674,7 @@ mod tests {
             Ok(())
         }
 
-        fn commit_timeline_snapshot(&self) -> Result<(), String> {
+        fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
             let revision = self
                 .pending
                 .lock()
@@ -575,7 +685,7 @@ mod tests {
             Ok(())
         }
 
-        fn discard_timeline_snapshot(&self) -> Result<(), String> {
+        fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
             self.pending.lock().unwrap().take();
             self.discarded.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -600,6 +710,13 @@ mod tests {
         serde_json::json!({ "revision": revision })
     }
 
+    fn key(sequence: u64, session_revision: u64) -> ProjectionKey {
+        ProjectionKey {
+            sequence,
+            session_revision,
+        }
+    }
+
     fn wait_until(predicate: impl Fn() -> bool) {
         for _ in 0..100 {
             if predicate() {
@@ -614,9 +731,9 @@ mod tests {
     fn keeps_only_the_latest_queued_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(1), 1);
-        reconciler.submit(snapshot(2), 2);
-        reconciler.submit(snapshot(3), 3);
+        reconciler.submit(snapshot(1), key(1, 1));
+        reconciler.submit(snapshot(2), key(2, 2));
+        reconciler.submit(snapshot(3), key(3, 3));
 
         wait_until(|| reconciler.status().active_session_revision == Some(3));
         let loaded = driver.loaded.lock().unwrap().clone();
@@ -628,10 +745,10 @@ mod tests {
     fn does_not_publish_superseded_prepared_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(1), 1);
+        reconciler.submit(snapshot(1), key(1, 1));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.submit(snapshot(2), 2);
+        reconciler.submit(snapshot(2), key(2, 2));
 
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[2]);
@@ -644,11 +761,11 @@ mod tests {
     fn does_not_regress_an_active_revision_when_requests_arrive_out_of_order() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(10), 10);
+        reconciler.submit(snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_session_revision == Some(10));
 
-        reconciler.submit(snapshot(9), 9);
-        wait_until(|| reconciler.status().discarded_preparation_count == 1);
+        let status_before = reconciler.submit(snapshot(9), key(9, 9));
+        assert_eq!(status_before.target_session_revision, Some(10));
 
         let status = reconciler.status();
         assert_eq!(status.state, RuntimeProjectionState::Active);
@@ -660,7 +777,7 @@ mod tests {
     fn ignores_a_response_from_an_old_runtime_generation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(4), 4);
+        reconciler.submit(snapshot(4), key(4, 4));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         driver.generation.store(2, Ordering::Release);
 
@@ -679,7 +796,7 @@ mod tests {
     fn stop_does_not_wait_for_runtime_preparation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(5), 5);
+        reconciler.submit(snapshot(5), key(5, 5));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -692,7 +809,7 @@ mod tests {
     fn dropping_the_reconciler_does_not_join_a_stalled_runtime_worker() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(500)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(6), 6);
+        reconciler.submit(snapshot(6), key(6, 6));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -704,7 +821,7 @@ mod tests {
     fn play_waits_for_the_latest_graph_without_blocking_the_request() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(7), 7);
+        reconciler.submit(snapshot(7), key(7, 7));
 
         let status = reconciler.play().unwrap();
         assert!(matches!(
@@ -719,7 +836,7 @@ mod tests {
     fn stop_clears_pending_play_intent() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(9), 9);
+        reconciler.submit(snapshot(9), key(9, 9));
         reconciler.play().unwrap();
         reconciler.stop().unwrap();
 
@@ -735,16 +852,42 @@ mod tests {
         let recoveries = Arc::new(AtomicU64::new(0));
         let recovery_count = Arc::clone(&recoveries);
         let recovery_driver = Arc::clone(&driver);
-        let recovery: RuntimeRecovery = Arc::new(move || {
+        let recovery: RuntimeRecovery = Arc::new(move |_timeout| {
             recovery_count.fetch_add(1, Ordering::Relaxed);
             recovery_driver.generation.store(2, Ordering::Release);
             Ok(())
         });
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
-        reconciler.submit(snapshot(11), 11);
+        reconciler.submit(snapshot(11), key(11, 11));
 
         wait_until(|| reconciler.status().active_session_revision == Some(11));
         assert_eq!(recoveries.load(Ordering::Relaxed), 1);
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);
+    }
+
+    #[test]
+    fn rejects_a_late_lower_projection_sequence_while_a_newer_graph_is_preparing() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(20), key(20, 20));
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+
+        let status = reconciler.submit(snapshot(19), key(19, 19));
+        assert_eq!(status.target_projection_sequence, Some(20));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(20));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
+    }
+
+    #[test]
+    fn accepts_a_restored_session_with_a_lower_arrangement_revision() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(100), key(1, 100));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(1));
+
+        reconciler.submit(snapshot(40), key(2, 40));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(2));
+        assert_eq!(reconciler.status().active_session_revision, Some(40));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[100, 40]);
     }
 }

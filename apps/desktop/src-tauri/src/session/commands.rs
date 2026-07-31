@@ -35,10 +35,27 @@ where
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
 }
 
+/// Runtime controls must not queue behind canonical Session persistence or a
+/// slow VST/native operation. They only read the current snapshot when needed
+/// and never mutate the durable Session.
+async fn run_runtime_control<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Runtime control operation failed: {error}"))?
+}
+
 fn app_context(state: &AppState) -> SessionContext<'_> {
     SessionContext {
         audio: state.core.audio(),
         runtime: &state.runtime,
+        session_actor: &state.session_actor,
         data_root: state.core.data_root(),
         session: state.core.session(),
         safe_mode: state.core.safe_mode(),
@@ -340,7 +357,7 @@ pub async fn crossfade_audio_clips(
 
 #[tauri::command]
 pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<RuntimeProjectionStatus, String> {
-    run_blocking(app, |state| {
+    run_runtime_control(app, |state| {
         application::sync_arrangement_runtime(&app_context(state))
     })
     .await
@@ -348,17 +365,17 @@ pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<RuntimeProjectio
 
 #[tauri::command]
 pub async fn play_timeline(app: AppHandle) -> Result<(), String> {
-    run_blocking(app, |state| application::play_timeline(&app_context(state))).await
+    run_runtime_control(app, |state| application::play_timeline(&app_context(state))).await
 }
 
 #[tauri::command]
 pub async fn stop_timeline(app: AppHandle) -> Result<(), String> {
-    run_blocking(app, |state| application::stop_timeline(&app_context(state))).await
+    run_runtime_control(app, |state| application::stop_timeline(&app_context(state))).await
 }
 
 #[tauri::command]
 pub async fn seek_timeline(tick: TimelineTick, app: AppHandle) -> Result<(), String> {
-    run_blocking(app, move |state| {
+    run_runtime_control(app, move |state| {
         application::seek_timeline(&app_context(state), tick)
     })
     .await

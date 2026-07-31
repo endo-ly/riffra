@@ -33,6 +33,7 @@ use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime_reconciler::RuntimeReconciler;
+use crate::session::actor::SessionActor;
 use crate::session::{
     AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
     RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
@@ -45,9 +46,77 @@ use crate::storage::now_ms;
 pub struct RecordingContext<'a> {
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+    pub session_actor: &'a SessionActor,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
+}
+
+fn merge_recording_vector<T: Clone + PartialEq>(
+    current: &[T],
+    base: &[T],
+    candidate: &[T],
+    key: impl Fn(&T) -> String,
+) -> Vec<T> {
+    let mut merged = current.to_vec();
+    for item in candidate {
+        let item_key = key(item);
+        let changed = base
+            .iter()
+            .find(|previous| key(previous) == item_key)
+            .is_none_or(|previous| previous != item);
+        if !changed {
+            continue;
+        }
+        if let Some(index) = merged.iter().position(|existing| key(existing) == item_key) {
+            merged[index] = item.clone();
+        } else {
+            merged.push(item.clone());
+        }
+    }
+    merged
+}
+
+fn merge_recording_session(
+    current: &CreativeSession,
+    _base: &CreativeSession,
+    candidate: CreativeSession,
+) -> CreativeSession {
+    let mut merged = current.clone();
+    let mut arrangement = current.arrangement.clone();
+    arrangement.midi_clips = merge_recording_vector(
+        &current.arrangement.midi_clips,
+        &_base.arrangement.midi_clips,
+        &candidate.arrangement.midi_clips,
+        |clip| clip.id.clone(),
+    );
+    arrangement.audio_clips = merge_recording_vector(
+        &current.arrangement.audio_clips,
+        &_base.arrangement.audio_clips,
+        &candidate.arrangement.audio_clips,
+        |clip| clip.id.clone(),
+    );
+    arrangement.recording_passes = merge_recording_vector(
+        &current.arrangement.recording_passes,
+        &_base.arrangement.recording_passes,
+        &candidate.arrangement.recording_passes,
+        |pass| pass.id.clone(),
+    );
+    arrangement.takes = merge_recording_vector(
+        &current.arrangement.takes,
+        &_base.arrangement.takes,
+        &candidate.arrangement.takes,
+        |take| take.id.clone(),
+    );
+    arrangement.recording_sessions = merge_recording_vector(
+        &current.arrangement.recording_sessions,
+        &_base.arrangement.recording_sessions,
+        &candidate.arrangement.recording_sessions,
+        |recording| recording.id.clone(),
+    );
+    arrangement.revision = current.arrangement.revision.saturating_add(1);
+    merged.arrangement = arrangement;
+    merged
 }
 
 /// Starts a new hardware recording. The Audio Runtime begins writing into a
@@ -113,8 +182,13 @@ fn start_recording_in_session(
         .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
         crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
-        session.arrangement.revision,
-        std::time::Duration::from_secs(30),
+        crate::runtime_reconciler::ProjectionKey {
+            sequence: context.session_actor.projection_sequence(),
+            session_revision: session.arrangement.revision,
+        },
+        // One deadline covers the initial prepare, Sidecar replacement plus
+        // control-state restoration, the retry, and the publish boundary.
+        std::time::Duration::from_secs(60),
     )?;
     context.audio.set_processing_mode("arrange")?;
     let status = context.audio.start_arrange_recording(
@@ -465,6 +539,7 @@ fn finalize_arrange_recording(
     let session_context = crate::session::application::SessionContext {
         audio: context.audio,
         runtime: context.runtime,
+        session_actor: context.session_actor,
         data_root: context.data_root,
         session: context.session,
         safe_mode: context.safe_mode,
@@ -474,6 +549,7 @@ fn finalize_arrange_recording(
         .lock()
         .map_err(|error| error.to_string())?
         .clone();
+    let base_session = session.clone();
     let timebase = session.arrangement.timebase;
     let sample_to_ticks = |samples: u64| {
         ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
@@ -862,10 +938,21 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::application::commit_session(&session_context, session)?;
-    crate::session::application::sync_arrangement_runtime(&session_context)
-        .map(|_| ())
-        .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
+    let committed = crate::session::application::commit_merged_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        &base_session,
+        session,
+        merge_recording_session,
+    )?;
+    crate::session::application::sync_arrangement_with_sequence(
+        &session_context,
+        &committed.session,
+        committed.projection_sequence,
+    )
+    .map(|_| ())
+    .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
 }
 
 fn next_recording_pass_ordinal(
@@ -1298,6 +1385,7 @@ fn place_recording_on_timeline(
     let session_context = crate::session::application::SessionContext {
         audio: context.audio,
         runtime: context.runtime,
+        session_actor: context.session_actor,
         data_root: context.data_root,
         session: context.session,
         safe_mode: context.safe_mode,
@@ -1307,6 +1395,7 @@ fn place_recording_on_timeline(
         .lock()
         .map_err(|error| error.to_string())?
         .clone();
+    let base_session = session.clone();
     let start_tick = listed
         .as_ref()
         .and_then(|recording| recording.capture.as_ref())
@@ -1599,11 +1688,22 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = crate::session::application::commit_session(&session_context, session)?;
-    crate::session::application::sync_arrangement_runtime(&session_context).map_err(|error| {
+    let committed = crate::session::application::commit_merged_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        &base_session,
+        session,
+        merge_recording_session,
+    )?;
+    crate::session::application::sync_arrangement_with_sequence(
+        &session_context,
+        &committed.session,
+        committed.projection_sequence,
+    )
+    .map_err(|error| {
         format!("Recorded Timeline clip was saved but runtime sync failed: {error}")
     })?;
-    let _ = committed;
     Ok(())
 }
 
@@ -1698,7 +1798,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, OnceLock},
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -1734,13 +1834,46 @@ mod tests {
         runtime: &'a RuntimeReconciler<AudioSupervisor>,
         safe_mode: bool,
     ) -> RecordingContext<'a> {
+        static TEST_SESSION_ACTOR: OnceLock<SessionActor> = OnceLock::new();
         RecordingContext {
             audio,
             runtime,
+            session_actor: TEST_SESSION_ACTOR.get_or_init(SessionActor::default),
             data_root,
             session,
             safe_mode,
         }
+    }
+
+    #[test]
+    fn recording_merge_preserves_unrelated_session_edits() {
+        let base = CreativeSession::new(1);
+        let mut current = base.clone();
+        current.settings.note = "edited while recording was processing".into();
+
+        let mut candidate = base.clone();
+        candidate
+            .arrangement
+            .recording_sessions
+            .push(RecordingSessionRecord {
+                id: "recording-session:new".into(),
+                start_tick: TimelineTick(0),
+                track_slots: Vec::new(),
+                pass_ids: Vec::new(),
+            });
+
+        let merged = merge_recording_session(&current, &base, candidate);
+        assert_eq!(
+            merged.settings.note,
+            "edited while recording was processing"
+        );
+        assert!(
+            merged
+                .arrangement
+                .recording_sessions
+                .iter()
+                .any(|recording| recording.id == "recording-session:new")
+        );
     }
 
     #[test]

@@ -39,6 +39,7 @@ use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
 use crate::runtime_reconciler::RuntimeReconciler;
+use crate::session::actor::SessionActor;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
     AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker,
@@ -51,6 +52,7 @@ use crate::storage::{SessionStore, now_ms};
 pub struct SessionContext<'a> {
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+    pub session_actor: &'a SessionActor,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
@@ -202,6 +204,7 @@ pub fn create_sample_pad(
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
     *context.session.lock().map_err(lock_error)? = session;
+    context.session_actor.mark_committed();
 
     // In Safe Mode the runtime stayed isolated; report the current status so
     // React reflects the real (muted/offline) engine.
@@ -275,6 +278,7 @@ fn commit_pad_set(
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
     *context.session.lock().map_err(lock_error)? = session;
+    context.session_actor.mark_committed();
     let status = match runtime_status {
         Some(status) => status,
         None => context.audio.refresh_status()?,
@@ -381,7 +385,43 @@ pub fn commit_session(
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
     *context.session.lock().map_err(lock_error)? = session;
+    context.session_actor.mark_committed();
     Ok(committed)
+}
+
+/// Commits a long-running operation's changed portion onto the latest
+/// canonical Session while holding the Session Actor only for the commit
+/// boundary. The caller may clone `base` and perform native/file work before
+/// calling this function; `merge` is then responsible for applying only the
+/// operation-owned portion to the current Session so unrelated edits survive.
+pub(crate) struct CommittedSession {
+    pub session: CreativeSession,
+    pub projection_sequence: u64,
+}
+
+pub(crate) fn commit_merged_session(
+    actor: &SessionActor,
+    data_root: &Path,
+    session_lock: &Mutex<CreativeSession>,
+    base: &CreativeSession,
+    candidate: CreativeSession,
+    merge: impl FnOnce(&CreativeSession, &CreativeSession, CreativeSession) -> CreativeSession,
+) -> Result<CommittedSession, String> {
+    let _operation = actor.enter()?;
+    let current = session_lock.lock().map_err(lock_error)?.clone();
+    let mut merged = merge(&current, base, candidate).validate_and_normalize()?;
+    merged.updated_at_ms = now_ms();
+    SessionStore::new(data_root)
+        .save(&merged)
+        .map_err(|error| format!("Session could not be saved: {error}"))?;
+    crate::queue_session_index(data_root, &merged);
+    let committed = merged.clone();
+    *session_lock.lock().map_err(lock_error)? = merged;
+    let projection_sequence = actor.mark_committed();
+    Ok(CommittedSession {
+        session: committed,
+        projection_sequence,
+    })
 }
 
 /// Saves a caller-supplied session (the canonical save intent). The session is
@@ -414,6 +454,7 @@ pub fn restore_generation(
     crate::queue_session_index(context.data_root, &session);
     let restored = session.clone();
     *context.session.lock().map_err(lock_error)? = session;
+    context.session_actor.mark_committed();
     Ok(restored)
 }
 
@@ -822,9 +863,24 @@ fn sync_arrangement(
     context: &SessionContext<'_>,
     session: &CreativeSession,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    sync_arrangement_with_sequence(
+        context,
+        session,
+        context.session_actor.projection_sequence(),
+    )
+}
+
+pub(crate) fn sync_arrangement_with_sequence(
+    context: &SessionContext<'_>,
+    session: &CreativeSession,
+    projection_sequence: u64,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
     Ok(context.runtime.submit(
         runtime_timeline_snapshot(context.data_root, session),
-        session.arrangement.revision,
+        crate::runtime_reconciler::ProjectionKey {
+            sequence: projection_sequence,
+            session_revision: session.arrangement.revision,
+        },
     ))
 }
 

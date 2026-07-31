@@ -68,6 +68,8 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 struct AppState {
     core: AppCore<AudioSupervisor>,
     session_actor: session::actor::SessionActor,
+    rack_operation_gate: Mutex<()>,
+    recording_operation_gate: Mutex<()>,
     runtime: runtime_reconciler::RuntimeReconciler<AudioSupervisor>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
@@ -224,9 +226,13 @@ fn queue_startup_maintenance(
         if workspace == session::Workspace::Arrange {
             let snapshot =
                 session::application::runtime_snapshot_for_recording(&data_root, &current_session);
-            let _ = state
-                .runtime
-                .submit(snapshot, current_session.arrangement.revision);
+            let _ = state.runtime.submit(
+                snapshot,
+                runtime_reconciler::ProjectionKey {
+                    sequence: state.session_actor.projection_sequence(),
+                    session_revision: current_session.arrangement.revision,
+                },
+            );
         }
     });
 }
@@ -584,8 +590,8 @@ pub fn run() {
             let runtime_audio = audio.clone();
             let runtime_app = app.handle().clone();
             let runtime_recovery: runtime_reconciler::RuntimeRecovery =
-                std::sync::Arc::new(move || {
-                    runtime_audio.restart_sidecar_for_runtime(&runtime_app)
+                std::sync::Arc::new(move |timeout| {
+                    runtime_audio.restart_sidecar_for_runtime(&runtime_app, timeout)
                 });
             let runtime = runtime_reconciler::RuntimeReconciler::new(
                 std::sync::Arc::new(audio.clone()),
@@ -604,6 +610,8 @@ pub fn run() {
                     safe_mode,
                 ),
                 session_actor: session::actor::SessionActor::default(),
+                rack_operation_gate: Mutex::new(()),
+                recording_operation_gate: Mutex::new(()),
                 runtime,
                 render_worker: RenderWorker::bundled()?,
                 audio_preferences: Mutex::new(effective_preferences),

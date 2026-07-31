@@ -11,7 +11,7 @@ use std::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_shell::{
@@ -22,6 +22,7 @@ use tauri_plugin_shell::{
 #[derive(Clone)]
 pub struct AudioSupervisor {
     status: Arc<Mutex<AudioStatus>>,
+    runtime_controls: Arc<Mutex<RuntimeControlState>>,
     responses: Arc<(Mutex<CommandResponse>, Condvar)>,
     next_request_id: Arc<AtomicU64>,
     sidecar_generation: Arc<AtomicU64>,
@@ -33,6 +34,25 @@ pub struct AudioSupervisor {
 #[derive(Default)]
 struct CommandResponse {
     results: HashMap<u64, Option<Result<(), String>>>,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeControlState {
+    processing_mode: String,
+    master_gain_db: f64,
+    midi_listening: bool,
+    emergency_muted: bool,
+}
+
+impl Default for RuntimeControlState {
+    fn default() -> Self {
+        Self {
+            processing_mode: "passive".into(),
+            master_gain_db: -18.0,
+            midi_listening: false,
+            emergency_muted: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +199,15 @@ fn normalize_sample_rate(rate: f64) -> Option<u32> {
     Some(rounded as u32)
 }
 
+fn remaining_timeout(deadline: Instant, maximum: Duration) -> Result<Duration, String> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err("Audio Runtime recovery deadline expired before the next control step.".into())
+    } else {
+        Ok(remaining.min(maximum))
+    }
+}
+
 impl AudioSupervisor {
     pub fn offline(message: impl Into<String>) -> Self {
         Self {
@@ -209,6 +238,7 @@ impl AudioSupervisor {
                 feedback_suspected: false,
                 message: message.into(),
             })),
+            runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
             responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
             next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
@@ -250,6 +280,7 @@ impl AudioSupervisor {
 
         let supervisor = Self {
             status: Arc::clone(&status),
+            runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
             responses,
             next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
@@ -420,6 +451,16 @@ impl AudioSupervisor {
         app: &AppHandle<R>,
         starting_message: &str,
     ) -> Result<(), String> {
+        self.restart_sidecar_with_timeout(app, starting_message, Duration::from_secs(15))
+    }
+
+    fn restart_sidecar_with_timeout<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        starting_message: &str,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
         let previous_generation = self.sidecar_generation();
         let generation = self.next_sidecar_generation();
         fail_pending_requests(
@@ -437,17 +478,19 @@ impl AudioSupervisor {
             kill_error = child.kill().err().map(|error| error.to_string());
         }
         drop(slot);
-        if had_child
-            && !self.wait_for_sidecar_termination(previous_generation, Duration::from_millis(1500))
-        {
-            let detail = kill_error
-                .map(|error| format!(" Kill error: {error}."))
-                .unwrap_or_default();
-            let message = format!(
-                "Native audio sidecar termination was not confirmed; a replacement was not started.{detail}"
-            );
-            set_faulted(&self.status, message.clone());
-            return Err(message);
+        if had_child {
+            let termination_timeout = remaining_timeout(deadline, Duration::from_millis(1500))
+                .unwrap_or(Duration::from_millis(1));
+            if !self.wait_for_sidecar_termination(previous_generation, termination_timeout) {
+                let detail = kill_error
+                    .map(|error| format!(" Kill error: {error}."))
+                    .unwrap_or_default();
+                let message = format!(
+                    "Native audio sidecar termination was not confirmed; a replacement was not started.{detail}"
+                );
+                set_faulted(&self.status, message.clone());
+                return Err(message);
+            }
         }
         set_starting(&self.status, starting_message);
         let child = self.spawn_sidecar(app, generation).map_err(|spawn_error| {
@@ -463,6 +506,58 @@ impl AudioSupervisor {
             .child
             .lock()
             .map_err(|error| format!("Audio child lock was poisoned: {error}"))? = Some(child);
+        if let Err(error) = self.restore_runtime_controls(deadline) {
+            set_faulted(
+                &self.status,
+                format!(
+                    "Native audio sidecar restarted but runtime controls could not be restored: {error}"
+                ),
+            );
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn restore_runtime_controls(&self, deadline: Instant) -> Result<(), String> {
+        let controls = self
+            .runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .clone();
+        self.wait_for_command(
+            serde_json::json!({
+                "type": "setProcessingMode",
+                "mode": controls.processing_mode,
+            }),
+            remaining_timeout(deadline, Duration::from_secs(3))?,
+        )?;
+        self.wait_for_command(
+            serde_json::json!({
+                "type": "setMasterGainDb",
+                "gainDb": controls.master_gain_db,
+            }),
+            remaining_timeout(deadline, Duration::from_secs(3))?,
+        )?;
+        self.wait_for_command(
+            serde_json::json!({
+                "type": if controls.midi_listening {
+                    "enableMidiListening"
+                } else {
+                    "disableMidiListening"
+                },
+            }),
+            remaining_timeout(deadline, Duration::from_secs(3))?,
+        )?;
+        // A recovered process must remain muted until the user explicitly
+        // confirms that audio should fade back in. The other control values are
+        // restored exactly, but safety mute is deliberately not auto-cleared.
+        self.wait_for_command(
+            serde_json::json!({"type": "setEmergencyMute", "muted": true}),
+            remaining_timeout(deadline, Duration::from_secs(3))?,
+        )?;
+        if let Ok(mut current) = self.runtime_controls.lock() {
+            current.emergency_muted = true;
+        }
         Ok(())
     }
 
@@ -496,10 +591,12 @@ impl AudioSupervisor {
     pub(crate) fn restart_sidecar_for_runtime<R: Runtime>(
         &self,
         app: &AppHandle<R>,
+        timeout: Duration,
     ) -> Result<(), String> {
-        self.restart_sidecar(
+        self.restart_sidecar_with_timeout(
             app,
             "The isolated audio runtime exceeded its lifecycle deadline and is restarting.",
+            timeout,
         )
     }
 
@@ -514,7 +611,11 @@ impl AudioSupervisor {
         self.send_command(serde_json::json!({"type": "meterStatus"}), "")
     }
 
-    pub fn prepare_timeline_snapshot(&self, snapshot: serde_json::Value) -> Result<(), String> {
+    pub fn prepare_timeline_snapshot(
+        &self,
+        snapshot: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
         self.send_command_ack(
             serde_json::json!({
                 "type": "prepareTimelineSnapshot",
@@ -522,23 +623,23 @@ impl AudioSupervisor {
                 "snapshot": snapshot,
             }),
             "",
-            Duration::from_secs(15),
+            timeout.min(Duration::from_secs(15)),
         )
     }
 
-    pub fn commit_timeline_snapshot(&self) -> Result<(), String> {
+    pub fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), String> {
         self.send_command_ack(
             serde_json::json!({"type": "commitTimelineSnapshot"}),
             "",
-            Duration::from_secs(3),
+            timeout.min(Duration::from_secs(3)),
         )
     }
 
-    pub fn discard_timeline_snapshot(&self) -> Result<(), String> {
+    pub fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), String> {
         self.send_command_ack(
             serde_json::json!({"type": "discardTimelineSnapshot"}),
             "",
-            Duration::from_secs(3),
+            timeout.min(Duration::from_secs(3)),
         )
     }
 
@@ -564,10 +665,15 @@ impl AudioSupervisor {
         if !matches!(mode, "play" | "arrange" | "passive") {
             return Err("Audio processing mode is invalid.".into());
         }
-        self.send_command(
+        let status = self.send_command(
             serde_json::json!({"type": "setProcessingMode", "mode": mode}),
             "",
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .processing_mode = mode.into();
+        Ok(status)
     }
 
     pub fn set_track_device_bypassed(
@@ -840,10 +946,15 @@ impl AudioSupervisor {
 
     pub fn set_master_gain_db(&self, gain_db: f64) -> Result<AudioStatus, String> {
         let safe_gain = gain_db.clamp(-90.0, 0.0);
-        self.send_command(
+        let status = self.send_command(
             serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
             "Master gain updated through the safety limiter.",
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .master_gain_db = safe_gain;
+        Ok(status)
     }
 
     pub fn preview_master_gain_db(&self, gain_db: f64) -> Result<(), String> {
@@ -852,7 +963,12 @@ impl AudioSupervisor {
             serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
             "",
             Duration::from_secs(3),
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .master_gain_db = safe_gain;
+        Ok(())
     }
 
     pub fn preview_sample(
@@ -944,17 +1060,27 @@ impl AudioSupervisor {
     }
 
     pub fn enable_midi_listening(&self) -> Result<AudioStatus, String> {
-        self.send_command(
+        let status = self.send_command(
             serde_json::json!({"type": "enableMidiListening"}),
             "MIDI listening enabled; all detected inputs are routed to the rack.",
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .midi_listening = true;
+        Ok(status)
     }
 
     pub fn disable_midi_listening(&self) -> Result<AudioStatus, String> {
-        self.send_command(
+        let status = self.send_command(
             serde_json::json!({"type": "disableMidiListening"}),
             "MIDI listening disabled; no external MIDI device is being consumed.",
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .midi_listening = false;
+        Ok(status)
     }
 
     pub fn send_midi(&self, bytes: &[u8]) -> Result<(), String> {
@@ -1058,14 +1184,19 @@ impl AudioSupervisor {
     }
 
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
-        self.send_command(
+        let status = self.send_command(
             serde_json::json!({"type": "setEmergencyMute", "muted": muted}),
             if muted {
                 "Emergency mute is engaged; saved and recorded data is unaffected."
             } else {
                 "Audio faded in from silence through the safety limiter."
             },
-        )
+        )?;
+        self.runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .emergency_muted = muted;
+        Ok(status)
     }
 }
 

@@ -1,4 +1,7 @@
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{
+    Mutex, MutexGuard,
+    atomic::{AtomicU64, Ordering},
+};
 
 /// Owns the ordering boundary for canonical Session operations. Runtime VST
 /// preparation is deliberately submitted after the Session operation leaves
@@ -6,6 +9,7 @@ use std::sync::{Mutex, MutexGuard};
 #[derive(Default)]
 pub(crate) struct SessionActor {
     operation_gate: Mutex<()>,
+    projection_sequence: AtomicU64,
 }
 
 impl SessionActor {
@@ -14,6 +18,21 @@ impl SessionActor {
             .lock()
             .map(|guard| SessionOperationGuard { _guard: guard })
             .map_err(|error| format!("Session Actor lock was poisoned: {error}"))
+    }
+
+    /// Returns the absolute order of the latest canonical Session commit.
+    ///
+    /// This is intentionally independent from `Arrangement::revision`:
+    /// importing or restoring a saved Session is a new projection intent even
+    /// when the restored arrangement revision is numerically smaller.
+    pub(crate) fn projection_sequence(&self) -> u64 {
+        self.projection_sequence.load(Ordering::Acquire)
+    }
+
+    /// Advances the projection order after a canonical Session commit has
+    /// been durably written. Callers must already hold the operation guard.
+    pub(crate) fn mark_committed(&self) -> u64 {
+        self.projection_sequence.fetch_add(1, Ordering::AcqRel) + 1
     }
 }
 
@@ -50,5 +69,14 @@ mod tests {
             worker.join().unwrap();
         }
         assert_eq!(maximum.load(std::sync::atomic::Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn projection_sequence_is_monotonic_and_independent_from_revision() {
+        let actor = SessionActor::default();
+        assert_eq!(actor.projection_sequence(), 0);
+        assert_eq!(actor.mark_committed(), 1);
+        assert_eq!(actor.mark_committed(), 2);
+        assert_eq!(actor.projection_sequence(), 2);
     }
 }
