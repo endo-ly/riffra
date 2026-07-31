@@ -73,7 +73,7 @@ Timelineの複数選択操作は `paste_timeline_clips` と `remove_timeline_cli
 
 ### 2.5 Asset Application Operations（`asset/commands.rs`）
 
-`preview_asset`
+`preview_asset` / `import_midi_file`
 
 ### 2.6 Recording Application Operations（`recording/commands.rs`）
 

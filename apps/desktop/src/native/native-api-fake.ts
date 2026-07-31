@@ -220,6 +220,16 @@ export class FakeNativeApi implements NativeApi {
     return { ...this.bootstrapState.session, projectName: `Imported ${path}` };
   };
 
+  importMidiFile = async (_path: string, _name?: string): Promise<AssetId | null> => {
+    this.calls.push('importMidiFile');
+    return null;
+  };
+
+  importMidiBytes = async (_name: string, _bytes: number[]): Promise<AssetId | null> => {
+    this.calls.push('importMidiBytes');
+    return null;
+  };
+
   scanVst3Folder = async (path?: string): Promise<ScanReport> => {
     this.calls.push('scanVst3Folder');
     const root = path ?? defaultVst3Root;

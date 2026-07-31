@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { AudioStatus, LibraryAsset } from '@/lib/domain';
 import { toAssetId } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
-import { logNativeError } from '@/native/invoke';
+import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
@@ -49,6 +50,36 @@ export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLib
     setPreviewPadId(null);
   }, [previewAsset, selectedLibraryAsset]);
 
+  // Imports an external Standard MIDI File as a canonical MIDI Asset through the
+  // native dialog, then drives the cross-asset search by the file stem so the
+  // freshly imported MIDI shows up in the results without a manual reload.
+  const importMidi = useCallback(async () => {
+    if (!isNativeRuntime()) return;
+    let selected: string | null;
+    try {
+      const result = await open({
+        multiple: false,
+        filters: [{ name: 'Standard MIDI', extensions: ['mid', 'midi'] }],
+      });
+      selected = typeof result === 'string' ? result : null;
+    } catch (error) {
+      logNativeError('importMidiFile')(error);
+      return;
+    }
+    if (!selected) return;
+    const stem =
+      selected
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.(mid|midi)$/i, '') ?? 'midi';
+    try {
+      const assetId = await api.importMidiFile(selected);
+      if (assetId) setLibraryQuery(stem);
+    } catch (error) {
+      logNativeError('importMidiFile')(error);
+    }
+  }, [api]);
+
   useEffect(() => {
     let active = true;
     if (!query) {
@@ -84,5 +115,6 @@ export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLib
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     editSelectedLibraryAsset,
+    importMidi,
   };
 }

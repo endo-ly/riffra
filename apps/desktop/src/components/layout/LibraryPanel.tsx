@@ -24,6 +24,7 @@ interface LibraryPanelProps {
     onEditAsset: () => void;
     onOpenInDesign: (asset: LibraryAsset) => void;
     onLoadRackDefinition: (assetId: AssetId) => void;
+    onImportMidi: () => void;
   };
   rack: {
     plugins: PluginEntry[];
@@ -57,6 +58,11 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           placeholder="Search assets"
         />
       </label>
+      <div className={styles.libraryActions}>
+        <button type="button" className="text-button" onClick={() => void library.onImportMidi()}>
+          Import MIDI…
+        </button>
+      </div>
       <nav>
         {librarySections.map((section) => (
           <button

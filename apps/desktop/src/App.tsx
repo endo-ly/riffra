@@ -39,6 +39,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     focusMode,
     libraryQuery,
     librarySection,
+    importMidi,
     libraryResults,
     plugins,
     visiblePlugins,
@@ -212,6 +213,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           onEditAsset: editSelectedLibraryAsset,
           onOpenInDesign: openLibraryAssetAnalysis,
           onLoadRackDefinition: (assetId) => void loadSavedRack(assetId),
+          onImportMidi: () => void importMidi(),
         }}
         rack={{
           plugins,

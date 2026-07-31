@@ -158,6 +158,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     editSelectedLibraryAsset,
+    importMidi,
   } = library;
 
   const sessionHook = useSession(api, { setBoot, setAudio, setMissingPluginPaths });
@@ -1076,6 +1077,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setSelectedLibraryAsset,
     relatedAssets,
     setRelatedAssets,
+    importMidi,
     commandOpen,
     setCommandOpen,
     focusMode,

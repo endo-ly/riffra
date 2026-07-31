@@ -83,6 +83,14 @@ async function importSession(path: string): Promise<CreativeSession | null> {
   return invokeOrFallback<CreativeSession | null>('import_scratch_session', { path }, null);
 }
 
+async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {
+  return invokeOrFallback<AssetId | null>('import_midi_file', { path, name: name ?? null }, null);
+}
+
+async function importMidiBytes(name: string, bytes: number[]): Promise<AssetId | null> {
+  return invokeOrFallback<AssetId | null>('import_midi_bytes', { name, bytes }, null);
+}
+
 async function scanVst3Folder(path?: string): Promise<ScanReport> {
   return invokeOrFallback<ScanReport>(
     'scan_vst3_folder',
@@ -919,6 +927,8 @@ function createNativeApi(): NativeApi {
     restoreRecoveryGeneration,
     exportSession,
     importSession,
+    importMidiFile,
+    importMidiBytes,
     scanVst3Folder,
     startAnalysisJob,
     startSeparationJob,

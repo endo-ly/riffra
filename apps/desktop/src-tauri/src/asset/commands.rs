@@ -25,3 +25,39 @@ pub fn preview_asset(
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     application::preview_asset(&context(&state), asset_id, options)
 }
+
+/// Imports an external Standard MIDI File as a canonical MIDI Asset. Runs on a
+/// blocking task because canonical registration touches SQLite and the
+/// filesystem. Returns the freshly minted AssetId; the session is not mutated.
+#[tauri::command]
+pub async fn import_midi_file(
+    path: String,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<AssetId, String> {
+    let data_root = state.core.data_root().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        application::import_midi_asset(&data_root, &path, name.as_deref())
+    })
+    .await
+    .map_err(|error| format!("MIDI import task failed: {error}"))?
+}
+
+/// Imports a Standard MIDI File delivered as an in-memory byte payload, used by
+/// HTML5 drag-and-drop where the OS file path is not exposed to the webview.
+/// Runs on a blocking task because canonical registration touches SQLite and
+/// the filesystem. Returns the freshly minted AssetId; the session is not
+/// mutated.
+#[tauri::command]
+pub async fn import_midi_bytes(
+    name: String,
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<AssetId, String> {
+    let data_root = state.core.data_root().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        application::import_midi_bytes(&data_root, &name, &bytes)
+    })
+    .await
+    .map_err(|error| format!("MIDI import task failed: {error}"))?
+}

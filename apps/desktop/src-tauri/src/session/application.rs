@@ -467,7 +467,17 @@ fn read_be_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, String> {
     Ok(value)
 }
 
-fn parse_midi_asset(bytes: &[u8]) -> Result<(u64, Vec<MidiNote>, Vec<MidiEvent>), String> {
+/// Parses a Standard MIDI File (SMF) into the duration in project ticks plus
+/// the normalized note and event lists. Shared by Asset import (validating an
+/// incoming SMF) and MIDI clip placement (expanding an Asset into a clip).
+///
+/// # Errors
+/// Returns a string error when the bytes are not a valid SMF (missing header,
+/// truncated track, invalid variable-length value, non-ticks-per-quarter
+/// division).
+pub(crate) fn parse_midi_asset(
+    bytes: &[u8],
+) -> Result<(u64, Vec<MidiNote>, Vec<MidiEvent>), String> {
     if bytes.len() < 14 || &bytes[0..4] != b"MThd" {
         return Err("MIDI Asset does not contain a standard MIDI header.".into());
     }
@@ -488,7 +498,7 @@ fn parse_midi_asset(bytes: &[u8]) -> Result<(u64, Vec<MidiNote>, Vec<MidiEvent>)
     let mut last_tick = 0_u64;
     let mut note_starts: HashMap<(u8, u8), (u64, u8)> = HashMap::new();
     for _ in 0..track_count {
-        if bytes.get(cursor..cursor.saturating_add(8)) != Some(b"MTrk".as_slice()) {
+        if bytes.get(cursor..cursor.saturating_add(4)) != Some(b"MTrk".as_slice()) {
             return Err("MIDI track header is missing.".into());
         }
         cursor += 4;

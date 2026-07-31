@@ -90,6 +90,7 @@ const libraryStub = {
   onEditAsset: vi.fn(),
   onOpenInDesign: vi.fn(),
   onLoadRackDefinition: vi.fn(),
+  onImportMidi: vi.fn(),
 };
 
 const rackStub = {

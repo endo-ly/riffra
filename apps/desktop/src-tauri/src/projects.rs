@@ -281,21 +281,36 @@ fn resolve_packaged_path(
     Ok(package_root.join(relative))
 }
 
-fn unique_import_destination(
+/// Builds a unique destination path under `assets/imports` for an incoming
+/// content file. The original extension is preserved (defaulting to `wav` when
+/// absent) and the supplied display name is sanitized. Shared by Project
+/// package import and single-file MIDI import so every intake lands in the same
+/// canonical location with a collision-proof suffix.
+pub(crate) fn unique_import_destination(
     data_root: &Path,
     name: &str,
     source: &Path,
 ) -> Result<std::path::PathBuf, String> {
-    let directory = data_root.join("assets").join("imports");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("wav");
+    unique_import_destination_with_ext(data_root, name, extension)
+}
+
+/// Builds a unique destination path under `assets/imports` with an explicit
+/// extension. Used by byte-payload import (which has no source path to derive
+/// an extension from) and by [`unique_import_destination`].
+pub(crate) fn unique_import_destination_with_ext(
+    data_root: &Path,
+    name: &str,
+    extension: &str,
+) -> Result<std::path::PathBuf, String> {
+    let directory = data_root.join("assets").join("imports");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
     let safe = safe_name(name);
-    let destination = directory.join(format!("{safe}-{}.{extension}", crate::storage::now_ms()));
-    Ok(destination)
+    Ok(directory.join(format!("{safe}-{}.{extension}", crate::storage::now_ms())))
 }
 
 fn finalize_rename(temporary: &Path, final_path: &Path) -> Result<(), String> {

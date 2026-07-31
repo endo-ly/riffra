@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type {
   AudioClip,
   AutomationParameter,
@@ -90,6 +90,30 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { transport, displayTick, seekLocally } = useArrangeTransport(props.api, timebase);
   const analyses = useWaveformAnalyses(props.api, arrangement.audioClips);
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
+  // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
+  // delivers the file contents rather than the OS path, so the bytes are
+  // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
+  const handleOsMidiDrop = useCallback(
+    async (files: FileList, trackId?: string): Promise<void> => {
+      for (const file of Array.from(files)) {
+        if (!/\.midi?$/i.test(file.name)) continue;
+        const stem = file.name.replace(/\.(mid|midi)$/i, '');
+        try {
+          const assetId = await api.importMidiBytes(
+            stem,
+            Array.from(new Uint8Array(await file.arrayBuffer())),
+          );
+          if (!assetId) continue;
+          const next = await api.addMidiClipToArrangement(assetId, stem, undefined, trackId);
+          if (next) setSession(next);
+        } catch {
+          /* import or placement failure surfaces through the library notice path */
+        }
+      }
+    },
+    [api, setSession],
+  );
+  const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
     const contentEnd = Math.max(
@@ -934,7 +958,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             <div
               className={`${styles.empty} ${emptyDragOver ? styles.emptyDragOver : ''}`}
               onDragOver={(event) => {
-                if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME)) return;
+                if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) && !isOsFileDrag(event))
+                  return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'copy';
               }}
@@ -945,6 +970,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               }}
               onDrop={(event) => {
                 setEmptyDragOver(false);
+                if (event.dataTransfer.files?.length) {
+                  void handleOsMidiDrop(event.dataTransfer.files);
+                  return;
+                }
                 void editor.dropAsset(event);
               }}
             >
@@ -1001,7 +1030,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   trackSize={trackSizes[track.id] ?? trackSize}
                   api={props.api}
                   onCommit={editor.commit}
-                  onDrop={(event, trackId) => void editor.dropAsset(event, trackId)}
+                  onDrop={(event, trackId) => {
+                    if (event.dataTransfer.files?.length) {
+                      void handleOsMidiDrop(event.dataTransfer.files, trackId);
+                      return;
+                    }
+                    void editor.dropAsset(event, trackId);
+                  }}
                   onContextMenu={openTrackLaneContextMenu}
                   onMove={editor.beginMove}
                   onMoveMidi={editor.beginMidiMove}

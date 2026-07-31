@@ -69,6 +69,22 @@ export interface NativeApi {
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;
   importSession(path: string): Promise<CreativeSession | null>;
+  /**
+   * Imports an external Standard MIDI File as a canonical MIDI Asset. Rust owns
+   * SMF validation, copies the file under the application data root, and
+   * registers it with Imported provenance so the original can be moved or
+   * deleted without affecting the registered Asset. Returns the freshly minted
+   * AssetId, or null when the runtime is unavailable in browser preview.
+   */
+  importMidiFile(path: string, name?: string): Promise<AssetId | null>;
+  /**
+   * Imports a Standard MIDI File delivered as an in-memory byte payload, used by
+   * HTML5 drag-and-drop where the OS file path is not exposed to the webview.
+   * Rust owns SMF validation, persists the bytes under the application data
+   * root, and registers a MIDI Asset with Imported provenance. Returns the
+   * freshly minted AssetId, or null when the runtime is unavailable.
+   */
+  importMidiBytes(name: string, bytes: number[]): Promise<AssetId | null>;
 
   scanVst3Folder(path?: string): Promise<ScanReport>;
   startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus>;

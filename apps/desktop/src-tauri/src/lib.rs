@@ -363,6 +363,7 @@ fn safe_mode_requested() -> bool {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let safe_mode = safe_mode_requested();
             let data_root = app.path().app_data_dir().map_err(|error| {
@@ -528,6 +529,8 @@ pub fn run() {
             session::commands::get_missing_dependencies,
             // Asset Application Operations.
             asset::commands::preview_asset,
+            asset::commands::import_midi_file,
+            asset::commands::import_midi_bytes,
             // Recording Application Operations.
             recording::commands::list_recordings,
             recording::commands::rename_recording,
