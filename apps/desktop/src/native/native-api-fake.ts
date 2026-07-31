@@ -171,11 +171,14 @@ export class FakeNativeApi implements NativeApi {
       operationId: 0,
       runningOperationId: null,
       targetSessionRevision: null,
+      preparedSessionRevision: null,
       activeSessionRevision: null,
       runtimeGeneration: 1,
       queuedAtMs: null,
       startedAtMs: null,
       completedAtMs: null,
+      lastNativeResponseAtMs: null,
+      discardedPreparationCount: 0,
       lastError: null,
     };
     this.recordings = options.recordings ?? [];

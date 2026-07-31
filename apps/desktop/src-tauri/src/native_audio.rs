@@ -5,7 +5,7 @@ use crate::model::{
 use crate::session::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
@@ -26,6 +26,7 @@ pub struct AudioSupervisor {
     next_request_id: Arc<AtomicU64>,
     sidecar_generation: Arc<AtomicU64>,
     child: Arc<Mutex<Option<CommandChild>>>,
+    terminated_generations: Arc<(Mutex<HashSet<u64>>, Condvar)>,
     restart_preferences: Arc<Mutex<AudioPreferences>>,
 }
 
@@ -212,6 +213,7 @@ impl AudioSupervisor {
             next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
             child: Arc::new(Mutex::new(None)),
+            terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
             restart_preferences: Arc::new(Mutex::new(AudioPreferences::default())),
         }
     }
@@ -252,6 +254,7 @@ impl AudioSupervisor {
             next_request_id: Arc::new(AtomicU64::new(1)),
             sidecar_generation: Arc::new(AtomicU64::new(0)),
             child: Arc::new(Mutex::new(None)),
+            terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
             restart_preferences: Arc::new(Mutex::new(preferences)),
         };
         let generation = supervisor.next_sidecar_generation();
@@ -323,11 +326,16 @@ impl AudioSupervisor {
         let event_status = Arc::clone(&self.status);
         let event_responses = Arc::clone(&self.responses);
         let event_generation = Arc::clone(&self.sidecar_generation);
+        let event_terminated_generations = Arc::clone(&self.terminated_generations);
         let event_app = app.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 if event_generation.load(Ordering::Acquire) != generation {
-                    break;
+                    if matches!(event, CommandEvent::Error(_) | CommandEvent::Terminated(_)) {
+                        mark_sidecar_terminated(&event_terminated_generations, generation);
+                        break;
+                    }
+                    continue;
                 }
                 match event {
                     CommandEvent::Stdout(bytes) => {
@@ -381,6 +389,7 @@ impl AudioSupervisor {
                         emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Error(error) => {
+                        mark_sidecar_terminated(&event_terminated_generations, generation);
                         let message = format!(
                             "Native audio communication failed: {error}. The engine is isolated and saved data is safe."
                         );
@@ -389,6 +398,7 @@ impl AudioSupervisor {
                         emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Terminated(payload) => {
+                        mark_sidecar_terminated(&event_terminated_generations, generation);
                         let message = format!(
                             "Native audio process stopped (code {:?}); the UI and saved session remain available.",
                             payload.code
@@ -400,6 +410,7 @@ impl AudioSupervisor {
                     _ => {}
                 }
             }
+            mark_sidecar_terminated(&event_terminated_generations, generation);
         });
         Ok(child)
     }
@@ -409,19 +420,35 @@ impl AudioSupervisor {
         app: &AppHandle<R>,
         starting_message: &str,
     ) -> Result<(), String> {
+        let previous_generation = self.sidecar_generation();
         let generation = self.next_sidecar_generation();
         fail_pending_requests(
             &self.responses,
             "Native audio sidecar is restarting; the command will be retried.".into(),
         );
+        let mut had_child = false;
+        let mut kill_error = None;
         let mut slot = self
             .child
             .lock()
             .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
         if let Some(child) = slot.take() {
-            let _ = child.kill();
+            had_child = true;
+            kill_error = child.kill().err().map(|error| error.to_string());
         }
         drop(slot);
+        if had_child
+            && !self.wait_for_sidecar_termination(previous_generation, Duration::from_millis(1500))
+        {
+            let detail = kill_error
+                .map(|error| format!(" Kill error: {error}."))
+                .unwrap_or_default();
+            let message = format!(
+                "Native audio sidecar termination was not confirmed; a replacement was not started.{detail}"
+            );
+            set_faulted(&self.status, message.clone());
+            return Err(message);
+        }
         set_starting(&self.status, starting_message);
         let child = self.spawn_sidecar(app, generation).map_err(|spawn_error| {
             set_faulted(
@@ -437,6 +464,33 @@ impl AudioSupervisor {
             .lock()
             .map_err(|error| format!("Audio child lock was poisoned: {error}"))? = Some(child);
         Ok(())
+    }
+
+    pub(crate) fn force_shutdown(&self) {
+        fail_pending_requests(
+            &self.responses,
+            "Native audio sidecar is shutting down.".into(),
+        );
+        if let Ok(mut slot) = self.child.lock()
+            && let Some(child) = slot.take()
+        {
+            let _ = child.kill();
+        }
+    }
+
+    fn wait_for_sidecar_termination(&self, generation: u64, timeout: Duration) -> bool {
+        let (terminated, changed) = &*self.terminated_generations;
+        let guard = match terminated.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        let (mut guard, _) = match changed.wait_timeout_while(guard, timeout, |generations| {
+            !generations.contains(&generation)
+        }) {
+            Ok(result) => result,
+            Err(_) => return false,
+        };
+        guard.remove(&generation)
     }
 
     pub(crate) fn restart_sidecar_for_runtime<R: Runtime>(
@@ -1309,6 +1363,17 @@ fn record_command_response(
     }
 }
 
+fn mark_sidecar_terminated(
+    terminated_generations: &Arc<(Mutex<HashSet<u64>>, Condvar)>,
+    generation: u64,
+) {
+    let (terminated, changed) = &**terminated_generations;
+    if let Ok(mut generations) = terminated.lock() {
+        generations.insert(generation);
+        changed.notify_all();
+    }
+}
+
 fn fail_pending_requests(responses: &Arc<(Mutex<CommandResponse>, Condvar)>, error: String) {
     let (response_lock, response_ready) = &**responses;
     if let Ok(mut response) = response_lock.lock() {
@@ -1345,6 +1410,7 @@ fn sidecar_restart_required(error: &str) -> bool {
     error.contains("could not reach the isolated audio process")
         || error.contains("Native audio is unavailable")
         || error.contains("did not acknowledge the command")
+        || error.contains("did not acknowledge the graph publish")
 }
 
 /// Emits the current AudioStatus to the frontend via the Tauri event bus so

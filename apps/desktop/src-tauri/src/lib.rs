@@ -67,6 +67,7 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
+    session_actor: session::actor::SessionActor,
     runtime: runtime_reconciler::RuntimeReconciler<AudioSupervisor>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
@@ -553,6 +554,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. })
+                && let Some(state) = window.try_state::<AppState>()
+            {
+                // Window close is a critical boundary. Do not let an
+                // unresponsive VST lifecycle keep the native child alive
+                // after the user has requested application exit.
+                state.core.audio().force_shutdown();
+            }
+        })
         .setup(|app| {
             let safe_mode = safe_mode_requested();
             let data_root = app.path().app_data_dir().map_err(|error| {
@@ -592,6 +603,7 @@ pub fn run() {
                     recovered_from_generation,
                     safe_mode,
                 ),
+                session_actor: session::actor::SessionActor::default(),
                 runtime,
                 render_worker: RenderWorker::bundled()?,
                 audio_preferences: Mutex::new(effective_preferences),

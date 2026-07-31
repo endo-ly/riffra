@@ -37,11 +37,14 @@ pub struct RuntimeProjectionStatus {
     pub operation_id: u64,
     pub running_operation_id: Option<u64>,
     pub target_session_revision: Option<u64>,
+    pub prepared_session_revision: Option<u64>,
     pub active_session_revision: Option<u64>,
     pub runtime_generation: u64,
     pub queued_at_ms: Option<u64>,
     pub started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,
+    pub last_native_response_at_ms: Option<u64>,
+    pub discarded_preparation_count: u64,
     pub last_error: Option<String>,
 }
 

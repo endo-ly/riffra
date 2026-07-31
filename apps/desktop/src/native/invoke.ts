@@ -1,11 +1,10 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
-// Tauri can dispatch several async commands at once. That is useful for
-// independent reads, but it is unsafe for canonical-session mutations: each
-// mutation reads the current session, persists a generation, and may also
-// exchange the Arrangement Graph with the audio sidecar. Keep those intents in
-// one FIFO so a fast sequence of clicks cannot create stale-session races or a
-// pile of blocking native requests.
+// Tauri can dispatch several async commands at once. Canonical-session
+// mutations are still kept in one FIFO for the legacy application operations
+// that read, persist, and return a complete session snapshot. Commands that
+// only change the active workspace or transport stay outside this list so a
+// slow third-party VST cannot delay navigation or critical controls.
 const serializedCommands = new Set([
   'save_scratch_session',
   'restore_recovery_generation',
@@ -31,8 +30,6 @@ const serializedCommands = new Set([
   'update_arrangement_timebase',
   'update_timeline_loop_range',
   'update_timeline_punch_range',
-  'open_asset_in_design',
-  'switch_workspace',
   'update_session_settings',
   'add_track',
   'update_track',
@@ -83,16 +80,13 @@ const serializedCommands = new Set([
   'load_rack_definition_asset',
 ]);
 
-// Runtime graph operations need a second FIFO. The canonical-session FIFO
-// protects persistence ordering, but it does not by itself protect the audio
-// sidecar: Play rack restore and Arrangement Graph preparation are different
-// canonical commands that can otherwise ask the same process to construct VST
-// instances at the same time. Keep workspace switching out of this set so its
-// optimistic UI update is never made to wait for third-party plugin code.
+// Runtime graph operations need a second FIFO for legacy Play-rack and editor
+// commands that still perform a synchronous native transaction. Arrangement
+// projection is owned by the backend Runtime Reconciler, and transport/play
+// commands have their own critical path, so neither is allowed to wait behind
+// a VST construction task here.
 const runtimeSerializedCommands = new Set([
   'restore_current_rack',
-  'sync_arrangement_runtime',
-  'play_timeline',
   'load_plugin_into_rack',
   'clear_plugin_from_rack',
   'open_plugin_editor',
@@ -105,8 +99,6 @@ const runtimeSerializedCommands = new Set([
   'update_track',
   'set_track_audio_input',
   'set_track_midi_input',
-  'set_track_instrument',
-  'clear_track_instrument',
   'add_track_effect',
   'remove_track_effect',
   'reorder_track_effects',

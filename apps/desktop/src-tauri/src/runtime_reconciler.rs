@@ -23,6 +23,7 @@ pub trait RuntimeDriver: Send + Sync + 'static {
     fn play_timeline(&self) -> Result<(), String>;
     fn stop_timeline(&self) -> Result<(), String>;
     fn runtime_generation(&self) -> u64;
+    fn force_shutdown(&self) {}
 }
 
 impl RuntimeDriver for AudioSupervisor {
@@ -48,6 +49,10 @@ impl RuntimeDriver for AudioSupervisor {
 
     fn runtime_generation(&self) -> u64 {
         self.sidecar_generation()
+    }
+
+    fn force_shutdown(&self) {
+        AudioSupervisor::force_shutdown(self);
     }
 }
 
@@ -144,11 +149,14 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             operation_id,
             running_operation_id: state.running_operation_id,
             target_session_revision: Some(session_revision),
+            prepared_session_revision: None,
             active_session_revision: state.active_session_revision,
             runtime_generation: self.driver.runtime_generation(),
             queued_at_ms: Some(queued_at_ms),
             started_at_ms: None,
             completed_at_ms: None,
+            last_native_response_at_ms: None,
+            discarded_preparation_count: 0,
             last_error: None,
         };
         let status = state.status.clone();
@@ -266,6 +274,7 @@ impl<D: RuntimeDriver> Drop for RuntimeReconciler<D> {
             state.latest_target = None;
             self.state.1.notify_one();
         }
+        self.driver.force_shutdown();
         // A third-party VST may be inside native code while the application is
         // closing. Dropping the handle detaches the bounded native wait rather
         // than making shutdown wait on an unbounded join.
@@ -307,6 +316,13 @@ fn worker_loop<D: RuntimeDriver>(
 
         let generation = driver.runtime_generation();
         let mut result = driver.prepare_timeline_snapshot(target.snapshot.clone());
+        {
+            let mut state = state.0.lock().expect("runtime reconciler lock poisoned");
+            state.status.last_native_response_at_ms = Some(now_ms());
+            if result.is_ok() && state.status.operation_id == target.operation_id {
+                state.status.prepared_session_revision = Some(target.session_revision);
+            }
+        }
         if result.is_ok() {
             let publish_result = {
                 let _publish_gate = publish_gate.lock().expect("runtime publish gate poisoned");
@@ -315,6 +331,9 @@ fn worker_loop<D: RuntimeDriver>(
                     state.status.operation_id == target.operation_id
                         && state.latest_target.is_none()
                         && !state.stop_requested
+                        && state
+                            .active_session_revision
+                            .is_none_or(|active| target.session_revision >= active)
                 };
                 if !should_publish {
                     None
@@ -328,14 +347,49 @@ fn worker_loop<D: RuntimeDriver>(
                 }
             };
             match publish_result {
-                Some(result_value) => result = result_value,
+                Some(result_value) => {
+                    result = result_value;
+                    if result.is_err() {
+                        let _ = driver.discard_timeline_snapshot();
+                    }
+                    if let Ok(mut state) = state.0.lock() {
+                        state.status.last_native_response_at_ms = Some(now_ms());
+                        if result.is_err() {
+                            state.status.discarded_preparation_count =
+                                state.status.discarded_preparation_count.saturating_add(1);
+                        }
+                        if result.is_err() && state.status.operation_id == target.operation_id {
+                            state.status.prepared_session_revision = None;
+                        }
+                    }
+                }
                 None => {
                     let _ = driver.discard_timeline_snapshot();
+                    let (lock, wake) = &*state;
+                    if let Ok(mut state) = lock.lock() {
+                        state.status.last_native_response_at_ms = Some(now_ms());
+                        state.status.discarded_preparation_count =
+                            state.status.discarded_preparation_count.saturating_add(1);
+                        if state.status.operation_id == target.operation_id {
+                            state.status.prepared_session_revision = None;
+                            state.status.running_operation_id = None;
+                            state.status.active_session_revision = state.active_session_revision;
+                            state.status.completed_at_ms = Some(now_ms());
+                            state.status.state = if state.latest_target.is_some() {
+                                RuntimeProjectionState::Queued
+                            } else {
+                                RuntimeProjectionState::Active
+                            };
+                        }
+                        state.running_operation_id = None;
+                        state.status.running_operation_id = None;
+                        wake.notify_one();
+                    }
                     continue;
                 }
             }
         }
-        if is_native_timeout(&result)
+        if should_recover_runtime(&result)
             && target.recovery_attempts == 0
             && let Some(recovery) = recovery.as_ref()
         {
@@ -356,6 +410,7 @@ fn worker_loop<D: RuntimeDriver>(
                         state.status.runtime_generation = driver.runtime_generation();
                         state.status.started_at_ms = None;
                         state.status.completed_at_ms = None;
+                        state.status.prepared_session_revision = None;
                         state.status.last_error = None;
                         wake.notify_one();
                     }
@@ -393,10 +448,16 @@ fn worker_loop<D: RuntimeDriver>(
             state.status.running_operation_id = None;
             match result {
                 Ok(()) => {
-                    state.active_session_revision = Some(target.session_revision);
+                    if state
+                        .active_session_revision
+                        .is_none_or(|active| target.session_revision >= active)
+                    {
+                        state.active_session_revision = Some(target.session_revision);
+                    }
                     if state.status.operation_id == target.operation_id {
                         state.status.active_session_revision = state.active_session_revision;
                         state.status.runtime_generation = current_generation;
+                        state.status.prepared_session_revision = None;
                         state.status.completed_at_ms = Some(completed_at_ms);
                         state.status.last_error = None;
                         state.status.state = if state.latest_target.is_some() {
@@ -414,6 +475,7 @@ fn worker_loop<D: RuntimeDriver>(
                         state.status.runtime_generation = current_generation;
                         state.status.completed_at_ms = Some(completed_at_ms);
                         state.status.running_operation_id = None;
+                        state.status.prepared_session_revision = None;
                         state.status.last_error = Some(error);
                     }
                 }
@@ -436,17 +498,26 @@ fn worker_loop<D: RuntimeDriver>(
 }
 
 fn is_native_timeout(result: &Result<(), String>) -> bool {
-    result
-        .as_ref()
-        .err()
-        .is_some_and(|error| error.contains("did not acknowledge the command within"))
+    result.as_ref().err().is_some_and(|error| {
+        error.contains("did not acknowledge") || error.contains("graph boundary")
+    })
+}
+
+fn should_recover_runtime(result: &Result<(), String>) -> bool {
+    is_native_timeout(result)
+        || result.as_ref().err().is_some_and(|error| {
+            error.contains("generation changed")
+                || error.contains("Native audio communication failed")
+                || error.contains("could not reach the isolated audio process")
+                || error.contains("Native audio is unavailable")
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     struct FakeDriver {
         generation: AtomicU64,
@@ -565,6 +636,68 @@ mod tests {
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[2]);
         assert_eq!(driver.discarded.load(Ordering::Relaxed), 1);
+        assert_eq!(reconciler.status().prepared_session_revision, None);
+        assert!(reconciler.status().last_native_response_at_ms.is_some());
+    }
+
+    #[test]
+    fn does_not_regress_an_active_revision_when_requests_arrive_out_of_order() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(10), 10);
+        wait_until(|| reconciler.status().active_session_revision == Some(10));
+
+        reconciler.submit(snapshot(9), 9);
+        wait_until(|| reconciler.status().discarded_preparation_count == 1);
+
+        let status = reconciler.status();
+        assert_eq!(status.state, RuntimeProjectionState::Active);
+        assert_eq!(status.active_session_revision, Some(10));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn ignores_a_response_from_an_old_runtime_generation() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(4), 4);
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+        driver.generation.store(2, Ordering::Release);
+
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+        assert!(driver.loaded.lock().unwrap().is_empty());
+        assert!(
+            reconciler
+                .status()
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("generation"))
+        );
+    }
+
+    #[test]
+    fn stop_does_not_wait_for_runtime_preparation() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(5), 5);
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+
+        let started = Instant::now();
+        reconciler.stop().unwrap();
+        assert!(started.elapsed() < Duration::from_millis(50));
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dropping_the_reconciler_does_not_join_a_stalled_runtime_worker() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(500)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(6), 6);
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+
+        let started = Instant::now();
+        drop(reconciler);
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[test]
@@ -601,8 +734,10 @@ mod tests {
         driver.timeout_once.store(1, Ordering::Release);
         let recoveries = Arc::new(AtomicU64::new(0));
         let recovery_count = Arc::clone(&recoveries);
+        let recovery_driver = Arc::clone(&driver);
         let recovery: RuntimeRecovery = Arc::new(move || {
             recovery_count.fetch_add(1, Ordering::Relaxed);
+            recovery_driver.generation.store(2, Ordering::Release);
             Ok(())
         });
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();

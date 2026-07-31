@@ -293,11 +293,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
             const previous = sessionRef.current;
             if (!previous) continue;
 
-            // The canonical switch command is still serialized with other
-            // session mutations, but a preceding VST operation may take tens
-            // of seconds. Paint the requested workspace immediately so a
-            // navigation click never waits for third-party plugin code. The
-            // Rust response remains authoritative and replaces this optimistic
+            // Paint the requested workspace immediately. The backend owns
+            // Session operation ordering, while this optimistic projection
+            // prevents navigation from waiting for third-party plugin code.
+            // The Rust response remains authoritative and replaces this
             // projection when it arrives.
             const optimistic = { ...previous, workspace: target };
             sessionRef.current = optimistic;

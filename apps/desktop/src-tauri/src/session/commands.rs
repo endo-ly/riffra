@@ -28,6 +28,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let _session_operation = state.session_actor.enter()?;
         operation(state.inner())
     })
     .await
@@ -599,10 +600,15 @@ pub async fn open_track_plugin_editor(
     device_id: String,
     app: AppHandle,
 ) -> Result<(), String> {
-    run_blocking(app, move |state| {
-        application::open_track_plugin_editor(&app_context(state), &track_id, &device_id)
+    // Opening an editor is a native lifecycle operation, not a canonical
+    // Session mutation. It must not occupy the Session Actor while JUCE waits
+    // for a third-party editor on the Message Thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        application::open_track_plugin_editor(&app_context(state.inner()), &track_id, &device_id)
     })
     .await
+    .map_err(|error| format!("Track plugin editor operation failed: {error}"))?
 }
 
 #[tauri::command]
