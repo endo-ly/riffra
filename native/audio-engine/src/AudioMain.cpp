@@ -795,7 +795,6 @@ int serve(
     std::atomic<bool> pluginOperationRunning { false };
     std::thread pluginOperationThread;
     std::atomic<bool> timelineOperationRunning { false };
-    std::atomic<bool> timelineEditorClosePending { false };
     std::thread timelineOperationThread;
     // Play-rack and Arrangement Graph operations use separate worker threads
     // so the command reader remains responsive, but both eventually enter
@@ -814,13 +813,6 @@ int serve(
             if (timelineOperationThread.joinable()
                 && !timelineOperationRunning.load(std::memory_order_acquire))
                 timelineOperationThread.join();
-            if (timelineEditorClosePending.exchange(false, std::memory_order_acq_rel)
-                && trackPluginEditor != nullptr) {
-                trackPluginEditor->close();
-                trackPluginEditor.reset();
-                trackPluginEditorTrackId.clear();
-                trackPluginEditorDeviceId.clear();
-            }
             currentRequestId.clear();
             const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
             if (!command.isObject()) {
@@ -830,7 +822,19 @@ int serve(
 
             currentRequestId = command.getProperty("requestId", {}).toString();
             const auto type = command.getProperty("type", {}).toString();
-            if (type == "shutdown") break;
+            if (type == "shutdown") {
+                if (pluginOperationThread.joinable())
+                    pluginOperationThread.join();
+                if (timelineOperationThread.joinable())
+                    timelineOperationThread.join();
+                if (trackPluginEditor != nullptr) {
+                    trackPluginEditor->close();
+                    trackPluginEditor.reset();
+                    trackPluginEditorTrackId.clear();
+                    trackPluginEditorDeviceId.clear();
+                }
+                break;
+            }
             if (type == "setEmergencyMute") {
                 callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
@@ -855,12 +859,6 @@ int serve(
                 if (timelineOperationThread.joinable())
                     timelineOperationThread.join();
                 const auto commitImmediately = type == "loadTimelineSnapshot";
-                if (commitImmediately && trackPluginEditor != nullptr) {
-                    trackPluginEditor->close();
-                    trackPluginEditor.reset();
-                    trackPluginEditorTrackId.clear();
-                    trackPluginEditorDeviceId.clear();
-                }
                 auto* device = manager.getCurrentAudioDevice();
                 const auto blockSize = device != nullptr
                     ? device->getCurrentBufferSizeSamples()
@@ -874,6 +872,12 @@ int serve(
                 timelineOperationThread = std::thread(
                     [&, snapshot, requestId, sampleRate, blockSize, commitImmediately, editorWasOpen, editorTrackId] {
                         const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                        if (commitImmediately && trackPluginEditor != nullptr) {
+                            trackPluginEditor->close();
+                            trackPluginEditor.reset();
+                            trackPluginEditorTrackId.clear();
+                            trackPluginEditorDeviceId.clear();
+                        }
                         juce::String timelineError;
                         bool loaded = false;
                         try {
@@ -899,8 +903,12 @@ int serve(
                             const auto shouldCloseEditor = editorWasOpen
                                 && (!timelineEngine.preparedTrackReusesRuntimeDevices(editorTrackId)
                                     || commitImmediately);
-                            if (shouldCloseEditor)
-                                timelineEditorClosePending.store(true, std::memory_order_release);
+                            if (shouldCloseEditor && trackPluginEditor != nullptr) {
+                                trackPluginEditor->close();
+                                trackPluginEditor.reset();
+                                trackPluginEditorTrackId.clear();
+                                trackPluginEditorDeviceId.clear();
+                            }
                             auto* ack = new juce::DynamicObject();
                             ack->setProperty("type", "timelineAck");
                             ack->setProperty("revision", snapshot.getProperty("revision", 0));
@@ -1000,77 +1008,95 @@ int serve(
                         "The Arrangement Graph is still loading a VST3. The plugin editor can be opened when it finishes."));
                     continue;
                 }
-                auto* device = timelineEngine.findDevice(
-                    command.getProperty("trackId", {}).toString(),
-                    command.getProperty("deviceId", {}).toString());
-                if (device == nullptr) {
-                    writeJson(makeError("trackDevice", "Track Device was not found."));
-                    continue;
-                }
-                if (trackPluginEditor != nullptr)
-                    trackPluginEditor->close();
-                trackPluginEditorTrackId =
-                    command.getProperty("trackId", {}).toString();
-                trackPluginEditorDeviceId =
-                    command.getProperty("deviceId", {}).toString();
-                const auto editorTrackId = trackPluginEditorTrackId;
-                const auto editorDeviceId = trackPluginEditorDeviceId;
-                trackPluginEditor = std::make_unique<PluginEditorHost>(
-                    *device,
-                    [&, editorTrackId, editorDeviceId](const juce::var& state) {
-                        juce::String mirrorError;
-                        if (!timelineEngine.mirrorEditorDeviceState(
-                                editorTrackId,
-                                editorDeviceId,
-                                state,
-                                mirrorError)) {
-                            writeJson(makeError("trackDevice", mirrorError));
-                        }
-                        auto* changed = new juce::DynamicObject();
-                        changed->setProperty("type", "trackPluginStateChanged");
-                        changed->setProperty("trackId", editorTrackId);
-                        changed->setProperty("deviceId", editorDeviceId);
-                        changed->setProperty(
-                            "parameterValues",
-                            state.getProperty(
-                                "parameterValues",
-                                juce::Array<juce::var> {}));
-                        changed->setProperty(
-                            "stateData",
-                            state.getProperty("stateData", {}));
-                        changed->setProperty(
-                            "bypassed",
-                            state.getProperty("bypassed", false));
-                        writeJson(juce::var(changed));
-                    },
-                    [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
-                        juce::String mirrorError;
-                        if (!timelineEngine.mirrorEditorDeviceParameter(
-                                editorTrackId,
-                                editorDeviceId,
-                                parameterIndex,
-                                value,
-                                mirrorError)) {
-                            writeJson(makeError("trackDevice", mirrorError));
+                if (timelineOperationThread.joinable())
+                    timelineOperationThread.join();
+                const auto requestId = currentRequestId;
+                const auto editorTrackId = command.getProperty("trackId", {}).toString();
+                const auto editorDeviceId = command.getProperty("deviceId", {}).toString();
+                timelineOperationRunning.store(true, std::memory_order_release);
+                timelineOperationThread = std::thread(
+                    [&, requestId, editorTrackId, editorDeviceId] {
+                        const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                        auto* device = timelineEngine.findDevice(editorTrackId, editorDeviceId);
+                        if (device == nullptr) {
+                            timelineOperationRunning.store(false, std::memory_order_release);
+                            writeJson(makeError("trackDevice", "Track Device was not found."), requestId);
                             return;
                         }
-                        auto* changed = new juce::DynamicObject();
-                        changed->setProperty("type", "trackPluginParameterChanged");
-                        changed->setProperty("trackId", editorTrackId);
-                        changed->setProperty("deviceId", editorDeviceId);
-                        changed->setProperty("parameterIndex", parameterIndex);
-                        changed->setProperty("value", value);
-                        writeJson(juce::var(changed));
+                        if (trackPluginEditor != nullptr) {
+                            trackPluginEditor->close();
+                            trackPluginEditor.reset();
+                        }
+                        trackPluginEditorTrackId = editorTrackId;
+                        trackPluginEditorDeviceId = editorDeviceId;
+                        trackPluginEditor = std::make_unique<PluginEditorHost>(
+                            *device,
+                            [&, editorTrackId, editorDeviceId](const juce::var& state) {
+                                juce::String mirrorError;
+                                if (!timelineEngine.mirrorEditorDeviceState(
+                                        editorTrackId,
+                                        editorDeviceId,
+                                        state,
+                                        mirrorError)) {
+                                    writeJson(makeError("trackDevice", mirrorError));
+                                }
+                                auto* changed = new juce::DynamicObject();
+                                changed->setProperty("type", "trackPluginStateChanged");
+                                changed->setProperty("trackId", editorTrackId);
+                                changed->setProperty("deviceId", editorDeviceId);
+                                changed->setProperty(
+                                    "parameterValues",
+                                    state.getProperty(
+                                        "parameterValues",
+                                        juce::Array<juce::var> {}));
+                                changed->setProperty(
+                                    "stateData",
+                                    state.getProperty("stateData", {}));
+                                changed->setProperty(
+                                    "bypassed",
+                                    state.getProperty("bypassed", false));
+                                writeJson(juce::var(changed));
+                            },
+                            [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
+                                juce::String mirrorError;
+                                if (!timelineEngine.mirrorEditorDeviceParameter(
+                                        editorTrackId,
+                                        editorDeviceId,
+                                        parameterIndex,
+                                        value,
+                                        mirrorError)) {
+                                    writeJson(makeError("trackDevice", mirrorError));
+                                    return;
+                                }
+                                auto* changed = new juce::DynamicObject();
+                                changed->setProperty("type", "trackPluginParameterChanged");
+                                changed->setProperty("trackId", editorTrackId);
+                                changed->setProperty("deviceId", editorDeviceId);
+                                changed->setProperty("parameterIndex", parameterIndex);
+                                changed->setProperty("value", value);
+                                writeJson(juce::var(changed));
+                            });
+                        juce::String editorError;
+                        bool opened = false;
+                        try {
+                            opened = trackPluginEditor->open(editorError);
+                        } catch (const std::exception& exception) {
+                            editorError =
+                                "Track VST3 editor opening raised an exception: "
+                                + juce::String(exception.what());
+                        } catch (...) {
+                            editorError = "Track VST3 editor opening failed with an unknown exception.";
+                        }
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!opened) {
+                            trackPluginEditor.reset();
+                            trackPluginEditorTrackId.clear();
+                            trackPluginEditorDeviceId.clear();
+                            writeJson(makeError("pluginEditor", editorError), requestId);
+                            return;
+                        }
+                        writeJson(timelineEngine.status(), requestId);
                     });
-                juce::String editorError;
-                if (!trackPluginEditor->open(editorError)) {
-                    trackPluginEditor.reset();
-                    trackPluginEditorTrackId.clear();
-                    trackPluginEditorDeviceId.clear();
-                    writeJson(makeError("pluginEditor", editorError));
-                    continue;
-                }
-                writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "playTimeline") {
@@ -1485,12 +1511,30 @@ int serve(
                         "The Play rack is still loading a VST3. The editor can be opened when it finishes."));
                     continue;
                 }
-                juce::String editorError;
-                if (!pluginEditor.open(editorError)) {
-                    writeJson(makeError("pluginEditor", editorError));
-                    continue;
-                }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                if (pluginOperationThread.joinable())
+                    pluginOperationThread.join();
+                const auto requestId = currentRequestId;
+                pluginOperationRunning.store(true, std::memory_order_release);
+                pluginOperationThread = std::thread([&, requestId] {
+                    const std::lock_guard<std::mutex> graphGuard(runtimeGraphMutex);
+                    juce::String editorError;
+                    bool opened = false;
+                    try {
+                        opened = pluginEditor.open(editorError);
+                    } catch (const std::exception& exception) {
+                        editorError =
+                            "Play VST3 editor opening raised an exception: "
+                            + juce::String(exception.what());
+                    } catch (...) {
+                        editorError = "Play VST3 editor opening failed with an unknown exception.";
+                    }
+                    pluginOperationRunning.store(false, std::memory_order_release);
+                    if (!opened) {
+                        writeJson(makeError("pluginEditor", editorError), requestId);
+                        return;
+                    }
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
+                });
                 continue;
             }
             if (type == "setPluginParameter") {

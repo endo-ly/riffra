@@ -59,8 +59,15 @@ PluginEditorHost::PluginEditorHost(
 }
 
 PluginEditorHost::~PluginEditorHost() {
-    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
-    closeOnMessageThread();
+    auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    if (messageManager == nullptr)
+        return;
+    if (messageManager->isThisTheMessageThread()) {
+        closeOnMessageThread();
+        return;
+    }
+    juce::String ignored;
+    runOnMessageThread([this] { closeOnMessageThread(); }, ignored);
 }
 
 bool PluginEditorHost::open(juce::String& error) {
