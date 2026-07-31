@@ -271,6 +271,9 @@ bool TimelineEngine::prepareSnapshot(
         track->instrumentDeviceId = instrument.isObject()
             ? instrument.getProperty("id", {}).toString()
             : juce::String();
+        juce::var existingEffectState;
+        juce::var existingInstrumentState;
+        auto sameRuntimeTopology = false;
         {
             const juce::SpinLock::ScopedLockType lock(timelineLock);
             if (timeline != nullptr) {
@@ -282,17 +285,20 @@ bool TimelineEngine::prepareSnapshot(
                         == track->effectTopologySignature
                     && (*existing)->instrumentTopologySignature
                         == track->instrumentTopologySignature) {
-                    track->reuseRuntimeDevices = true;
-                    track->effectStateChanged =
-                        juce::JSON::toString((*existing)->effectState, false)
-                        != juce::JSON::toString(track->effectState, false);
-                    track->instrumentStateChanged =
-                        juce::JSON::toString((*existing)->instrumentState, false)
-                        != juce::JSON::toString(track->instrumentState, false);
+                    sameRuntimeTopology = true;
+                    existingEffectState = (*existing)->effectState;
+                    existingInstrumentState = (*existing)->instrumentState;
                     track->pluginDelaySamples = (*existing)->pluginDelaySamples;
                     track->pluginTailSamples = (*existing)->pluginTailSamples;
                 }
             }
+        }
+        if (sameRuntimeTopology) {
+            track->reuseRuntimeDevices =
+                juce::JSON::toString(existingEffectState, false)
+                    == juce::JSON::toString(track->effectState, false)
+                && juce::JSON::toString(existingInstrumentState, false)
+                    == juce::JSON::toString(track->instrumentState, false);
         }
         if (rack.isObject()) {
             if (!track->reuseRuntimeDevices
@@ -508,7 +514,6 @@ bool TimelineEngine::prepareSnapshot(
 bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
     std::unique_ptr<PreparedTimeline> candidate;
     std::unique_ptr<PreparedTimeline> retiredTimeline;
-    bool hasExistingTimeline = false;
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         if (pendingTimeline == nullptr) {
@@ -516,8 +521,10 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
             return false;
         }
         candidate = std::move(pendingTimeline);
-        hasExistingTimeline = timeline != nullptr;
         if (timeline != nullptr) {
+            // Validate every reusable runtime before moving ownership. The
+            // prepared graph was built against the active graph, but a direct
+            // native mutation may have changed the topology in the meantime.
             for (auto& candidateTrack : candidate->tracks) {
                 if (!candidateTrack->reuseRuntimeDevices)
                     continue;
@@ -535,44 +542,11 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
                     pendingTimeline = std::move(candidate);
                     return false;
                 }
-                candidateTrack->effectChain = std::move((*existing)->effectChain);
-                candidateTrack->liveEffectChain = std::move((*existing)->liveEffectChain);
-                candidateTrack->recordingCapture.effectChain =
-                    std::move((*existing)->recordingCapture.effectChain);
-                candidateTrack->instrumentRack = std::move((*existing)->instrumentRack);
             }
-        }
-
-        // Reused plugins are stateful objects shared with the active timeline.
-        // Apply the pending state before publishing the candidate so a failed
-        // state update cannot leave a new, partially configured timeline live.
-        const auto applyPendingState = [&]() noexcept {
-            for (auto& track : candidate->tracks) {
-                if (!track->reuseRuntimeDevices)
-                    continue;
-                if (track->effectStateChanged
-                    && !track->effectChain.applyState(track->effectState, error))
-                    return false;
-                if (track->effectStateChanged
-                    && !track->instrument
-                    && !track->liveEffectChain.applyState(track->effectState, error))
-                    return false;
-                if (track->effectStateChanged
-                    && !track->instrument
-                    && !track->recordingCapture.effectChain.applyState(
-                        track->effectState, error))
-                    return false;
-                if (track->instrumentStateChanged
-                    && track->instrumentRack != nullptr
-                    && !track->instrumentRack->applyPersistedState(
-                        track->instrumentState, error))
-                    return false;
-            }
-            return true;
-        };
-        const auto restoreRuntimeDevices = [&]() noexcept {
-            if (timeline == nullptr)
-                return;
+            // State application already happened while the candidate was
+            // prepared. Publishing now only transfers reusable ownership and
+            // swaps the graph pointer; no VST lifecycle method runs under this
+            // lock.
             for (auto& candidateTrack : candidate->tracks) {
                 if (!candidateTrack->reuseRuntimeDevices)
                     continue;
@@ -593,18 +567,13 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
                     std::move(candidateTrack->recordingCapture.effectChain);
                 (*existing)->instrumentRack = std::move(candidateTrack->instrumentRack);
             }
-        };
-        if (!applyPendingState()) {
-            restoreRuntimeDevices();
-            pendingTimeline = std::move(candidate);
-            return false;
         }
 
         retiredTimeline = std::move(timeline);
         timeline = std::move(candidate);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
-        if (!hasExistingTimeline)
+        if (retiredTimeline == nullptr)
             timelineSample.store(0, std::memory_order_release);
         discontinuity.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);

@@ -155,9 +155,10 @@ private:
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
+        // Runtime devices are reusable only when both topology and persisted
+        // state match the active graph. A state change receives newly prepared
+        // plugin instances so state application never mutates the active graph.
         bool reuseRuntimeDevices = false;
-        bool effectStateChanged = false;
-        bool instrumentStateChanged = false;
         PluginChain effectChain;
         PluginChain liveEffectChain;
         juce::AudioBuffer<float> mixBuffer;
