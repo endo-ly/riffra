@@ -152,11 +152,8 @@ fn start_recording_in_session(
         format!("Recording Inbox could not be created; no audio was started: {error}")
     })?;
     let directory = inbox.join(format!("take-{}", now_ms()));
-    let session = context
-        .session
-        .lock()
-        .map_err(|error| error.to_string())?
-        .clone();
+    let projection = context.session_actor.capture_projection(context.session)?;
+    let session = projection.session;
     let armed_tracks = session
         .arrangement
         .tracks
@@ -183,7 +180,7 @@ fn start_recording_in_session(
     context.runtime.apply_and_wait(
         crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
         crate::runtime_reconciler::ProjectionKey {
-            sequence: context.session_actor.projection_sequence(),
+            sequence: projection.sequence,
             session_revision: session.arrangement.revision,
         },
         // One deadline covers the initial prepare, Sidecar replacement plus
@@ -938,7 +935,7 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = crate::session::application::commit_merged_session(
+    let _committed = crate::session::application::commit_merged_session(
         context.session_actor,
         context.data_root,
         context.session,
@@ -946,13 +943,9 @@ fn finalize_arrange_recording(
         session,
         merge_recording_session,
     )?;
-    crate::session::application::sync_arrangement_with_sequence(
-        &session_context,
-        &committed.session,
-        committed.projection_sequence,
-    )
-    .map(|_| ())
-    .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
+    crate::session::application::sync_arrangement_runtime(&session_context)
+        .map(|_| ())
+        .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
 }
 
 fn next_recording_pass_ordinal(
@@ -1688,7 +1681,7 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = crate::session::application::commit_merged_session(
+    let _committed = crate::session::application::commit_merged_session(
         context.session_actor,
         context.data_root,
         context.session,
@@ -1696,12 +1689,7 @@ fn place_recording_on_timeline(
         session,
         merge_recording_session,
     )?;
-    crate::session::application::sync_arrangement_with_sequence(
-        &session_context,
-        &committed.session,
-        committed.projection_sequence,
-    )
-    .map_err(|error| {
+    crate::session::application::sync_arrangement_runtime(&session_context).map_err(|error| {
         format!("Recorded Timeline clip was saved but runtime sync failed: {error}")
     })?;
     Ok(())

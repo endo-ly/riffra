@@ -74,6 +74,29 @@ struct RuntimeTarget {
     deadline: Option<Instant>,
 }
 
+/// Result of submitting a projection request. A caller that needs to wait for
+/// its own graph must distinguish a request that was accepted from one that
+/// was rejected as stale; returning the current Status for both cases allows a
+/// newer operation to be mistaken for the caller's operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SubmissionResult {
+    Accepted {
+        operation_id: u64,
+        key: ProjectionKey,
+    },
+    AlreadyActive {
+        operation_id: u64,
+        key: ProjectionKey,
+    },
+    FollowingExisting {
+        operation_id: u64,
+        key: ProjectionKey,
+    },
+    Superseded {
+        desired_key: ProjectionKey,
+    },
+}
+
 #[derive(Clone, Copy)]
 struct ActiveProjection {
     runtime_generation: u64,
@@ -148,7 +171,8 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     }
 
     pub fn submit(&self, snapshot: Value, key: ProjectionKey) -> RuntimeProjectionStatus {
-        self.submit_with_deadline(snapshot, key, None)
+        let _ = self.submit_with_deadline(snapshot, key, None);
+        self.status()
     }
 
     fn submit_with_deadline(
@@ -156,16 +180,51 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         snapshot: Value,
         key: ProjectionKey,
         deadline: Option<Instant>,
-    ) -> RuntimeProjectionStatus {
+    ) -> SubmissionResult {
         let _publish_gate = self
             .publish_gate
             .lock()
             .expect("runtime publish gate poisoned");
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime reconciler lock poisoned");
-        observe_generation(&mut state, self.driver.runtime_generation());
-        if state.desired_key.is_some_and(|desired| key < desired) {
-            return state.status.clone();
+        let generation = self.driver.runtime_generation();
+        observe_generation(&mut state, generation);
+        if let Some(desired) = state.desired_key
+            && key < desired
+        {
+            return SubmissionResult::Superseded {
+                desired_key: desired,
+            };
+        }
+
+        if state.desired_key == Some(key)
+            && state.latest_target.is_none()
+            && state.running_operation_id.is_none()
+            && state
+                .active_projection
+                .is_some_and(|active| active.runtime_generation == generation && active.key == key)
+        {
+            return SubmissionResult::AlreadyActive {
+                operation_id: state.status.operation_id,
+                key,
+            };
+        }
+
+        if state.desired_key == Some(key) {
+            if let Some(target) = state.latest_target.as_ref()
+                && target.key == key
+            {
+                return SubmissionResult::FollowingExisting {
+                    operation_id: target.operation_id,
+                    key,
+                };
+            }
+            if state.running_operation_id.is_some() {
+                return SubmissionResult::FollowingExisting {
+                    operation_id: state.status.operation_id,
+                    key,
+                };
+            }
         }
         state.next_operation_id = state.next_operation_id.saturating_add(1);
         let operation_id = state.next_operation_id;
@@ -197,9 +256,8 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             discarded_preparation_count: 0,
             last_error: None,
         };
-        let status = state.status.clone();
         wake.notify_one();
-        status
+        SubmissionResult::Accepted { operation_id, key }
     }
 
     pub fn status(&self) -> RuntimeProjectionStatus {
@@ -225,7 +283,17 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     ) -> Result<RuntimeProjectionStatus, String> {
         let deadline = Instant::now() + timeout;
         let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
-        let operation_id = submitted.operation_id;
+        let operation_id = match submitted {
+            SubmissionResult::Accepted { operation_id, .. }
+            | SubmissionResult::AlreadyActive { operation_id, .. }
+            | SubmissionResult::FollowingExisting { operation_id, .. } => operation_id,
+            SubmissionResult::Superseded { desired_key } => {
+                return Err(format!(
+                    "Runtime projection request (sequence {}) was superseded by newer canonical Session (sequence {}).",
+                    key.sequence, desired_key.sequence
+                ));
+            }
+        };
         let (lock, wake) = &*self.state;
         let mut state = lock
             .lock()
@@ -236,15 +304,29 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                     "Runtime operation {operation_id} was superseded by a newer projection."
                 ));
             }
+            let generation = self.driver.runtime_generation();
+            let requested_projection_is_active = state
+                .active_projection
+                .is_some_and(|active| active.runtime_generation == generation && active.key == key);
             if state.running_operation_id.is_none() && state.latest_target.is_none() {
+                if state.status.state == RuntimeProjectionState::Active
+                    && requested_projection_is_active
+                {
+                    return Ok(state.status.clone());
+                }
                 match state.status.state {
-                    RuntimeProjectionState::Active => return Ok(state.status.clone()),
                     RuntimeProjectionState::Failed => {
                         return Err(state
                             .status
                             .last_error
                             .clone()
                             .unwrap_or_else(|| "Runtime projection failed.".into()));
+                    }
+                    RuntimeProjectionState::Active => {
+                        return Err(format!(
+                            "Runtime operation {operation_id} completed without activating the requested projection (sequence {}).",
+                            key.sequence
+                        ));
                     }
                     _ => {}
                 }
@@ -875,6 +957,42 @@ mod tests {
         let status = reconciler.submit(snapshot(19), key(19, 19));
         assert_eq!(status.target_projection_sequence, Some(20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
+    }
+
+    #[test]
+    fn apply_and_wait_reports_a_stale_submission_instead_of_following_newer_work() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(11), key(11, 11));
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+
+        let error = reconciler
+            .apply_and_wait(snapshot(10), key(10, 10), Duration::from_secs(1))
+            .unwrap_err();
+        assert!(error.contains("superseded by newer canonical Session"));
+
+        wait_until(|| reconciler.status().active_projection_sequence == Some(11));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);
+    }
+
+    #[test]
+    fn reuses_an_active_projection_without_repreparing_before_play() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(20), key(20, 20));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(20));
+
+        let prepare_count = driver.prepare_started.load(Ordering::Acquire);
+        reconciler.submit(snapshot(20), key(20, 20));
+        reconciler.play().unwrap();
+        wait_until(|| driver.played.load(Ordering::Acquire) == 1);
+        thread::sleep(Duration::from_millis(20));
+
+        assert_eq!(
+            driver.prepare_started.load(Ordering::Acquire),
+            prepare_count
+        );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
     }
 

@@ -208,12 +208,14 @@ fn queue_startup_maintenance(
             }
         }
 
-        let current_session = state
-            .core
-            .session()
-            .lock()
-            .map(|current| current.clone())
-            .unwrap_or(session);
+        let projection = match state.session_actor.capture_projection(state.core.session()) {
+            Ok(projection) => projection,
+            Err(error) => {
+                let _ = diagnostics::record(&data_root, "startup-runtime", &error);
+                return;
+            }
+        };
+        let current_session = projection.session;
         let workspace = current_session.workspace;
         let mode = match workspace {
             session::Workspace::Play => "play",
@@ -229,7 +231,7 @@ fn queue_startup_maintenance(
             let _ = state.runtime.submit(
                 snapshot,
                 runtime_reconciler::ProjectionKey {
-                    sequence: state.session_actor.projection_sequence(),
+                    sequence: projection.sequence,
                     session_revision: current_session.arrangement.revision,
                 },
             );

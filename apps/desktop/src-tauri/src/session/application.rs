@@ -203,6 +203,7 @@ pub fn create_sample_pad(
 
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
+    context.session_actor.begin_commit();
     *context.session.lock().map_err(lock_error)? = session;
     context.session_actor.mark_committed();
 
@@ -277,6 +278,7 @@ fn commit_pad_set(
 
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
+    context.session_actor.begin_commit();
     *context.session.lock().map_err(lock_error)? = session;
     context.session_actor.mark_committed();
     let status = match runtime_status {
@@ -384,6 +386,7 @@ pub fn commit_session(
         .map_err(|error| format!("Session could not be saved: {error}"))?;
     crate::queue_session_index(context.data_root, &session);
     let committed = session.clone();
+    context.session_actor.begin_commit();
     *context.session.lock().map_err(lock_error)? = session;
     context.session_actor.mark_committed();
     Ok(committed)
@@ -396,7 +399,6 @@ pub fn commit_session(
 /// operation-owned portion to the current Session so unrelated edits survive.
 pub(crate) struct CommittedSession {
     pub session: CreativeSession,
-    pub projection_sequence: u64,
 }
 
 pub(crate) fn commit_merged_session(
@@ -416,12 +418,10 @@ pub(crate) fn commit_merged_session(
         .map_err(|error| format!("Session could not be saved: {error}"))?;
     crate::queue_session_index(data_root, &merged);
     let committed = merged.clone();
+    actor.begin_commit();
     *session_lock.lock().map_err(lock_error)? = merged;
-    let projection_sequence = actor.mark_committed();
-    Ok(CommittedSession {
-        session: committed,
-        projection_sequence,
-    })
+    actor.mark_committed();
+    Ok(CommittedSession { session: committed })
 }
 
 /// Saves a caller-supplied session (the canonical save intent). The session is
@@ -453,6 +453,7 @@ pub fn restore_generation(
         .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
     crate::queue_session_index(context.data_root, &session);
     let restored = session.clone();
+    context.session_actor.begin_commit();
     *context.session.lock().map_err(lock_error)? = session;
     context.session_actor.mark_committed();
     Ok(restored)
@@ -468,7 +469,7 @@ pub fn apply_arrangement_edit(
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     edit(&mut session.arrangement).map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -750,7 +751,7 @@ pub fn add_midi_clip(
         .map_err(|error| error.to_string())?;
     session.workspace = Workspace::Arrange;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -859,36 +860,36 @@ pub(crate) fn runtime_snapshot_for_recording(
     runtime_timeline_snapshot(data_root, session)
 }
 
-fn sync_arrangement(
+fn submit_canonical_projection(
     context: &SessionContext<'_>,
-    session: &CreativeSession,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    sync_arrangement_with_sequence(
-        context,
-        session,
-        context.session_actor.projection_sequence(),
-    )
-}
-
-pub(crate) fn sync_arrangement_with_sequence(
-    context: &SessionContext<'_>,
-    session: &CreativeSession,
-    projection_sequence: u64,
+    projection: crate::session::actor::CanonicalProjection,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     Ok(context.runtime.submit(
-        runtime_timeline_snapshot(context.data_root, session),
+        runtime_timeline_snapshot(context.data_root, &projection.session),
         crate::runtime_reconciler::ProjectionKey {
-            sequence: projection_sequence,
-            session_revision: session.arrangement.revision,
+            sequence: projection.sequence,
+            session_revision: projection.session.arrangement.revision,
         },
     ))
+}
+
+/// Submits the canonical Session captured under the Actor. Session commands
+/// already own the Actor for their whole synchronous operation, so this path
+/// must use the non-reentrant, guard-aware capture method.
+fn sync_arrangement(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    let projection = context
+        .session_actor
+        .capture_projection_while_held(context.session)?;
+    submit_canonical_projection(context, projection)
 }
 
 pub fn sync_arrangement_runtime(
     context: &SessionContext<'_>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let session = context.session.lock().map_err(lock_error)?.clone();
-    sync_arrangement(context, &session)
+    let projection = context.session_actor.capture_projection(context.session)?;
+    submit_canonical_projection(context, projection)
 }
 
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
@@ -914,7 +915,7 @@ pub fn update_timebase(
         .update_timebase(timebase)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -929,7 +930,7 @@ pub fn remove_timeline_clips(
         .remove_timeline_clips(audio_clip_ids, midi_clip_ids)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -969,7 +970,7 @@ pub fn paste_timeline_clips(
         )
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1005,7 +1006,7 @@ pub fn trim_audio_clip(
         )
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1094,7 +1095,7 @@ pub fn add_audio_clip(
         .map_err(|error| error.to_string())?;
     session.workspace = Workspace::Arrange;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1194,7 +1195,7 @@ pub fn update_session_settings(
     }
     let committed = commit_session(context, session)?;
     if metronome_changed {
-        sync_arrangement(context, &committed)?;
+        sync_arrangement(context)?;
     }
     Ok(committed)
 }
@@ -1216,7 +1217,7 @@ fn commit_structural_arrangement(
     candidate: CreativeSession,
 ) -> Result<CreativeSession, String> {
     let committed = commit_session(context, candidate)?;
-    let _ = sync_arrangement(context, &committed)?;
+    let _ = sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1705,7 +1706,7 @@ pub fn update_track(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1848,7 +1849,7 @@ pub fn reorder_track(
         .reorder_track(track_id, target_index)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -1958,7 +1959,7 @@ pub fn add_midi_note(
         channel,
     });
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2021,7 +2022,7 @@ pub fn update_midi_notes(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2039,7 +2040,7 @@ pub fn remove_midi_note(
         .ok_or_else(|| format!("MIDI clip is not registered: {clip_id}"))?;
     clip.notes.retain(|note| note.id != note_id);
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2055,7 +2056,7 @@ pub fn quantize_midi_notes(
         .quantize_midi_notes(clip_id, note_ids, grid_ticks)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2071,7 +2072,7 @@ pub fn duplicate_midi_notes(
         .duplicate_midi_notes(clip_id, note_ids, offset_ticks)
         .map_err(|error| error.to_string())?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2083,7 +2084,7 @@ pub fn set_audio_clip_take_variant(
     let mut session = context.session.lock().map_err(lock_error)?.clone();
     apply_audio_clip_take_variant(&mut session, clip_id, variant)?;
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2277,7 +2278,7 @@ pub fn activate_take(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
@@ -2353,7 +2354,7 @@ pub fn place_take_as_separate_clip(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     let committed = commit_session(context, session)?;
-    sync_arrangement(context, &committed)?;
+    sync_arrangement(context)?;
     Ok(committed)
 }
 
