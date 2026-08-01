@@ -1110,77 +1110,73 @@ int serve(
                                 const auto stateCopy = state;
                                 const auto stateKey =
                                     "track-state:" + (editorTrackId + ":" + editorDeviceId).toStdString();
-                                if (!runtimeLifecycle.submitState(
-                                        stateKey,
-                                        [&, editorTrackId, editorDeviceId, stateCopy, stateKey] {
-                                            juce::String mirrorError;
-                                            if (!timelineEngine.mirrorEditorDeviceState(
-                                                    editorTrackId,
-                                                    editorDeviceId,
-                                                    stateCopy,
-                                                    mirrorError)) {
-                                                writeJson(makeError("trackDevice", mirrorError));
-                                            }
-                                            auto* changed = new juce::DynamicObject();
-                                            changed->setProperty("type", "trackPluginStateChanged");
-                                            changed->setProperty("trackId", editorTrackId);
-                                            changed->setProperty("deviceId", editorDeviceId);
-                                            changed->setProperty(
+                                // State events are best-effort latest-value updates. Capacity
+                                // drops and shutdown must never become unbounded control errors.
+                                (void)runtimeLifecycle.submitState(
+                                    stateKey,
+                                    [&, editorTrackId, editorDeviceId, stateCopy, stateKey] {
+                                        juce::String mirrorError;
+                                        if (!timelineEngine.mirrorEditorDeviceState(
+                                                editorTrackId,
+                                                editorDeviceId,
+                                                stateCopy,
+                                                mirrorError)) {
+                                            writeJson(makeError("trackDevice", mirrorError));
+                                        }
+                                        auto* changed = new juce::DynamicObject();
+                                        changed->setProperty("type", "trackPluginStateChanged");
+                                        changed->setProperty("trackId", editorTrackId);
+                                        changed->setProperty("deviceId", editorDeviceId);
+                                        changed->setProperty(
+                                            "parameterValues",
+                                            stateCopy.getProperty(
                                                 "parameterValues",
-                                                stateCopy.getProperty(
-                                                    "parameterValues",
-                                                    juce::Array<juce::var> {}));
-                                            changed->setProperty(
-                                                "stateData",
-                                                stateCopy.getProperty("stateData", {}));
-                                            changed->setProperty(
-                                                "bypassed",
-                                                stateCopy.getProperty("bypassed", false));
-                                            writeJson(
-                                                juce::var(changed),
-                                                {},
-                                                OutputKind::state,
-                                                stateKey);
-                                        })) {
-                                    writeJson(makeError(
-                                        "runtimeLifecycle",
-                                        "The VST lifecycle executor is stopping."));
-                                }
+                                                juce::Array<juce::var> {}));
+                                        changed->setProperty(
+                                            "stateData",
+                                            stateCopy.getProperty("stateData", {}));
+                                        changed->setProperty(
+                                            "bypassed",
+                                            stateCopy.getProperty("bypassed", false));
+                                        writeJson(
+                                            juce::var(changed),
+                                            {},
+                                            OutputKind::state,
+                                            stateKey);
+                                    });
                             },
                             [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
                                 const auto stateKey = "track-parameter:"
                                     + (editorTrackId + ":" + editorDeviceId).toStdString()
                                     + ":" + std::to_string(parameterIndex);
-                                if (!runtimeLifecycle.submitState(
-                                        stateKey,
-                                        [&, editorTrackId, editorDeviceId, parameterIndex, value, stateKey] {
-                                            juce::String mirrorError;
-                                            if (!timelineEngine.mirrorEditorDeviceParameter(
-                                                    editorTrackId,
-                                                    editorDeviceId,
-                                                    parameterIndex,
-                                                    value,
-                                                    mirrorError)) {
-                                                writeJson(makeError("trackDevice", mirrorError));
-                                                return;
-                                            }
-                                            auto* changed = new juce::DynamicObject();
-                                            changed->setProperty(
-                                                "type", "trackPluginParameterChanged");
-                                            changed->setProperty("trackId", editorTrackId);
-                                            changed->setProperty("deviceId", editorDeviceId);
-                                            changed->setProperty("parameterIndex", parameterIndex);
-                                            changed->setProperty("value", value);
-                                            writeJson(
-                                                juce::var(changed),
-                                                {},
-                                                OutputKind::state,
-                                                stateKey);
-                                        })) {
-                                    writeJson(makeError(
-                                        "runtimeLifecycle",
-                                        "The VST lifecycle executor is stopping."));
-                                }
+                                // State events are best-effort latest-value updates. Capacity
+                                // drops and shutdown must never become unbounded control errors.
+                                (void)runtimeLifecycle.submitState(
+                                    stateKey,
+                                    [&, editorTrackId, editorDeviceId, parameterIndex, value, stateKey] {
+                                        juce::String mirrorError;
+                                        if (!timelineEngine.mirrorEditorDeviceParameter(
+                                                editorTrackId,
+                                                editorDeviceId,
+                                                parameterIndex,
+                                                value,
+                                                mirrorError)) {
+                                            writeJson(makeError("trackDevice", mirrorError));
+                                            return;
+                                        }
+                                        auto* changed = new juce::DynamicObject();
+                                        changed->setProperty(
+                                            "type", "trackPluginParameterChanged");
+                                        changed->setProperty("trackId", editorTrackId);
+                                        changed->setProperty("deviceId", editorDeviceId);
+                                        changed->setProperty("parameterIndex", parameterIndex);
+                                        changed->setProperty("value", value);
+                                        writeJson(
+                                            juce::var(changed),
+                                            {},
+                                            OutputKind::state,
+                                            stateKey);
+                                    });
                             });
                         juce::String editorError;
                         bool opened = false;

@@ -28,24 +28,35 @@ bool RuntimeLifecycleExecutor::submit(Task task) {
     return true;
 }
 
-bool RuntimeLifecycleExecutor::submitState(std::string key, Task task) {
+RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitState(
+    std::string key,
+    Task task) {
     if (!task || key.empty())
-        return false;
+        return StateSubmitResult::invalid;
     {
         const std::lock_guard lock(mutex);
         if (stopping)
-            return false;
+            return StateSubmitResult::stopping;
         if (const auto existing = stateTasks.find(key); existing != stateTasks.end()) {
             existing->second = std::move(task);
+            return StateSubmitResult::coalesced;
         } else {
-            if (stateTasks.size() >= kStateTaskLimit)
-                return false;
+            StateSubmitResult result = StateSubmitResult::accepted;
+            if (stateTasks.size() >= kStateTaskLimit) {
+                while (!stateOrder.empty()) {
+                    const auto oldestKey = std::move(stateOrder.front());
+                    stateOrder.pop_front();
+                    if (stateTasks.erase(oldestKey) != 0)
+                        break;
+                }
+                result = StateSubmitResult::droppedCapacity;
+            }
             stateOrder.push_back(key);
             stateTasks.emplace(std::move(key), std::move(task));
+            wake.notify_one();
+            return result;
         }
     }
-    wake.notify_one();
-    return true;
 }
 
 bool RuntimeLifecycleExecutor::isBusy() const noexcept {

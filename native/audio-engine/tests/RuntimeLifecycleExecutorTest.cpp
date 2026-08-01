@@ -71,19 +71,55 @@ TEST(RuntimeLifecycleExecutorTest, CoalescesLatestStateTaskByKey) {
     while (!blockerStarted.load(std::memory_order_acquire))
         std::this_thread::yield();
 
-    ASSERT_TRUE(executor.submitState("track/device/parameter/7", [&] {
+    ASSERT_EQ(
+        executor.submitState("track/device/parameter/7", [&] {
         executions.fetch_add(1, std::memory_order_acq_rel);
         value.store(1, std::memory_order_release);
-    }));
-    ASSERT_TRUE(executor.submitState("track/device/parameter/7", [&] {
+        }),
+        RuntimeLifecycleExecutor::StateSubmitResult::accepted);
+    ASSERT_EQ(
+        executor.submitState("track/device/parameter/7", [&] {
         executions.fetch_add(1, std::memory_order_acq_rel);
         value.store(2, std::memory_order_release);
-    }));
+        }),
+        RuntimeLifecycleExecutor::StateSubmitResult::coalesced);
     releaseBlocker.store(true, std::memory_order_release);
 
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
     EXPECT_EQ(executions.load(std::memory_order_acquire), 1);
     EXPECT_EQ(value.load(std::memory_order_acquire), 2);
+}
+
+TEST(RuntimeLifecycleExecutorTest, DropsOldestStateWhenCapacityIsExceeded) {
+    RuntimeLifecycleExecutor executor;
+    std::atomic<bool> blockerStarted { false };
+    std::atomic<bool> releaseBlocker { false };
+    std::atomic<int> newestValue { 0 };
+
+    ASSERT_TRUE(executor.submit([&] {
+        blockerStarted.store(true, std::memory_order_release);
+        while (!releaseBlocker.load(std::memory_order_acquire))
+            std::this_thread::yield();
+    }));
+    while (!blockerStarted.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    for (int index = 0; index < 256; ++index) {
+        EXPECT_EQ(
+            executor.submitState("state-" + std::to_string(index), [&, index] {
+                newestValue.store(index, std::memory_order_release);
+            }),
+            RuntimeLifecycleExecutor::StateSubmitResult::accepted);
+    }
+    EXPECT_EQ(
+        executor.submitState("state-newest", [&] {
+            newestValue.store(999, std::memory_order_release);
+        }),
+        RuntimeLifecycleExecutor::StateSubmitResult::droppedCapacity);
+
+    releaseBlocker.store(true, std::memory_order_release);
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_EQ(newestValue.load(std::memory_order_acquire), 999);
 }
 
 }  // namespace riffra

@@ -19,6 +19,14 @@ class RuntimeLifecycleExecutor final {
 public:
     using Task = std::function<void()>;
 
+    enum class StateSubmitResult {
+        accepted,
+        coalesced,
+        droppedCapacity,
+        stopping,
+        invalid,
+    };
+
     RuntimeLifecycleExecutor();
     ~RuntimeLifecycleExecutor();
 
@@ -29,7 +37,7 @@ public:
     /// Enqueues a latest-value state event. Events with the same key replace
     /// one another, and a bounded state lane prevents parameter floods from
     /// delaying lifecycle work.
-    [[nodiscard]] bool submitState(std::string key, Task task);
+    [[nodiscard]] StateSubmitResult submitState(std::string key, Task task);
     [[nodiscard]] bool isBusy() const noexcept;
     [[nodiscard]] bool waitForIdle(std::chrono::milliseconds timeout) noexcept;
     void requestStop() noexcept;
