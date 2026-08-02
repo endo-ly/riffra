@@ -892,8 +892,7 @@ fn worker_loop<D: RuntimeDriver>(
             ))
         };
         let completed_at_ms = now_ms();
-        let mut play_after_publish = false;
-        let mut play_error = None;
+        let mut play_after_publish_sequence = None;
 
         {
             let (lock, wake) = &*state;
@@ -929,8 +928,9 @@ fn worker_loop<D: RuntimeDriver>(
                         } else {
                             RuntimeProjectionState::Active
                         };
-                        play_after_publish = state.latest_target.is_none()
-                            && state.transport_intent == TransportIntent::Playing;
+                        play_after_publish_sequence = (state.latest_target.is_none()
+                            && state.transport_intent == TransportIntent::Playing)
+                            .then_some(state.transport_sequence);
                     }
                 }
                 Err(error) => {
@@ -947,30 +947,31 @@ fn worker_loop<D: RuntimeDriver>(
             wake.notify_one();
         }
 
-        if play_after_publish {
+        if let Some(attempted_sequence) = play_after_publish_sequence {
             let _transport_gate = transport_gate
                 .lock()
                 .expect("runtime transport gate poisoned");
-            let should_play = state
-                .0
-                .lock()
-                .map(|state| {
-                    state.transport_intent == TransportIntent::Playing
-                        && state.latest_target.is_none()
-                        && !state.stop_requested
-                })
-                .unwrap_or(false);
+            let should_play = state.0.lock().is_ok_and(|state| {
+                state.transport_sequence == attempted_sequence
+                    && state.transport_intent == TransportIntent::Playing
+                    && state.latest_target.is_none()
+                    && !state.stop_requested
+            });
             if should_play && let Err(error) = driver.play_timeline() {
-                play_error = Some(error);
+                let (lock, wake) = &*state;
+                let mut state = lock.lock().expect("runtime reconciler lock poisoned");
+                if clear_play_intent_state(&mut state, attempted_sequence) {
+                    wake.notify_all();
+                }
+                if state.status.operation_id == target.operation_id
+                    && state.transport_sequence == attempted_sequence
+                    && state.latest_target.is_none()
+                {
+                    state.status.state = RuntimeProjectionState::Failed;
+                    state.status.last_error = Some(error);
+                    state.status.completed_at_ms = Some(now_ms());
+                }
             }
-        }
-        if let Some(error) = play_error
-            && let Ok(mut state) = state.0.lock()
-            && state.latest_target.is_none()
-        {
-            state.status.state = RuntimeProjectionState::Failed;
-            state.status.last_error = Some(error);
-            state.status.completed_at_ms = Some(now_ms());
         }
     }
 }
@@ -1028,6 +1029,7 @@ mod tests {
         prepare_started: AtomicU64,
         discarded: AtomicU64,
         timeout_once: AtomicU64,
+        play_failure_once: AtomicU64,
         played: AtomicU64,
         stopped: AtomicU64,
     }
@@ -1042,6 +1044,7 @@ mod tests {
                 prepare_started: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
                 timeout_once: AtomicU64::new(0),
+                play_failure_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
             }
@@ -1088,6 +1091,13 @@ mod tests {
 
         fn play_timeline(&self) -> Result<(), String> {
             self.played.fetch_add(1, Ordering::Relaxed);
+            if self
+                .play_failure_once
+                .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Err("Native Play failed.".into());
+            }
             Ok(())
         }
 
@@ -1285,6 +1295,43 @@ mod tests {
         assert!(play.is_err());
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn failed_worker_play_does_not_autoplay_a_later_projection() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver.play_failure_once.store(1, Ordering::Release);
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+
+        let _ = reconciler.apply_and_play_if(
+            1,
+            snapshot(30),
+            key(30, 30),
+            Duration::from_secs(1),
+            || true,
+        );
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+
+        reconciler.submit(snapshot(31), key(31, 31));
+        wait_until(|| reconciler.status().active_session_revision == Some(31));
+        thread::sleep(Duration::from_millis(20));
+
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn older_worker_play_failure_cannot_clear_a_newer_transport_intent() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+
+        assert!(reconciler.play_if(1, || true).unwrap());
+        assert!(reconciler.play_if(2, || true).unwrap());
+
+        let mut state = reconciler.state.0.lock().unwrap();
+        assert!(!clear_play_intent_state(&mut state, 1));
+        assert_eq!(state.transport_sequence, 2);
+        assert!(matches!(state.transport_intent, TransportIntent::Playing));
     }
 
     #[test]
