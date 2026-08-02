@@ -143,6 +143,8 @@ export interface NativeApi {
    * The session is already canonical, so a normal restore does not rewrite it.
    */
   restoreCurrentRack(): Promise<AudioStatus>;
+  /** Rebuilds the persisted Sample Pad mapping after a fresh runtime process. */
+  restoreSamplePads(): Promise<AudioStatus>;
   /**
    * Recalls an A/B session snapshot through one Rust Application Operation:
    * clears the runtime plugin, applies the snapshot's plugin (state + params +
@@ -414,6 +416,7 @@ export interface NativeApi {
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
   onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
+  onRuntimeRestarted(callback: (generation: number) => void): () => void;
   onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
   onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;
 }

@@ -322,17 +322,77 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     ) -> Result<RuntimeProjectionStatus, String> {
         let deadline = Instant::now() + timeout;
         let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
-        let operation_id = match submitted {
-            SubmissionResult::Accepted { operation_id, .. }
-            | SubmissionResult::AlreadyActive { operation_id, .. }
-            | SubmissionResult::FollowingExisting { operation_id, .. } => operation_id,
-            SubmissionResult::Superseded { desired_key } => {
-                return Err(format!(
-                    "Runtime projection request (sequence {}) was superseded by newer canonical Session (sequence {}).",
-                    key.sequence, desired_key.sequence
-                ));
+        let (operation_id, requested_key) = submission_operation(submitted, key)?;
+        self.wait_for_operation(operation_id, requested_key, deadline, timeout)
+    }
+
+    /// Applies a projection while recording the user's Play intent before the
+    /// potentially slow prepare/commit cycle. Stop can therefore clear the
+    /// intent while the worker is inside VST code, preventing a late publish
+    /// from starting playback after the user has already stopped.
+    pub fn apply_and_play_if<F>(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        timeout: Duration,
+        should_play: F,
+    ) -> Result<bool, String>
+    where
+        F: FnOnce() -> bool,
+    {
+        let _transport_gate = self
+            .transport_gate
+            .lock()
+            .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
+        if !should_play() {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            state.transport_intent = TransportIntent::Stopped;
+            return Ok(false);
+        }
+
+        let deadline = Instant::now() + timeout;
+        let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
+        let (operation_id, requested_key) = submission_operation(submitted, key)?;
+        let generation = self.driver.runtime_generation();
+        let mut state = self
+            .state
+            .0
+            .lock()
+            .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+        observe_generation(&mut state, generation);
+        state.transport_intent = TransportIntent::Playing;
+        let should_play_now = state.latest_target.is_none()
+            && state.running_operation_id.is_none()
+            && state.active_projection.is_some_and(|active| {
+                active.runtime_generation == generation && active.key == requested_key
+            });
+        if should_play_now && let Err(error) = self.driver.play_timeline() {
+            state.transport_intent = TransportIntent::Stopped;
+            return Err(error);
+        }
+        drop(state);
+        drop(_transport_gate);
+
+        match self.wait_for_operation(operation_id, requested_key, deadline, timeout) {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                self.clear_play_intent();
+                Err(error)
             }
-        };
+        }
+    }
+
+    fn wait_for_operation(
+        &self,
+        operation_id: u64,
+        key: ProjectionKey,
+        deadline: Instant,
+        timeout: Duration,
+    ) -> Result<RuntimeProjectionStatus, String> {
         let (lock, wake) = &*self.state;
         let mut state = lock
             .lock()
@@ -390,6 +450,15 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
     }
 
+    fn clear_play_intent(&self) {
+        let Ok(_transport_gate) = self.transport_gate.lock() else {
+            return;
+        };
+        if let Ok(mut state) = self.state.0.lock() {
+            state.transport_intent = TransportIntent::Stopped;
+        }
+    }
+
     /// Attempts to record the user's Play intent without waiting for a VST
     /// operation while holding the same gate used by Stop. If the requested
     /// revision is already active, the native command is sent immediately;
@@ -398,6 +467,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// The predicate is evaluated after the gate is acquired, so a workspace
     /// navigation that has already changed the desired view cannot be
     /// followed by a stale Play command.
+    #[cfg(test)]
     pub fn play_if<F>(&self, should_play: F) -> Result<bool, String>
     where
         F: FnOnce() -> bool,
@@ -416,22 +486,21 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             return Ok(false);
         }
         let generation = self.driver.runtime_generation();
-        let should_play_now = {
-            let mut state = self
-                .state
-                .0
-                .lock()
-                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
-            observe_generation(&mut state, generation);
-            state.transport_intent = TransportIntent::Playing;
-            state.latest_target.is_none()
-                && state.running_operation_id.is_none()
-                && state
-                    .active_projection
-                    .is_some_and(|active| active.runtime_generation == generation)
-        };
-        if should_play_now {
-            self.driver.play_timeline()?;
+        let mut state = self
+            .state
+            .0
+            .lock()
+            .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+        observe_generation(&mut state, generation);
+        state.transport_intent = TransportIntent::Playing;
+        let should_play_now = state.latest_target.is_none()
+            && state.running_operation_id.is_none()
+            && state
+                .active_projection
+                .is_some_and(|active| active.runtime_generation == generation);
+        if should_play_now && let Err(error) = self.driver.play_timeline() {
+            state.transport_intent = TransportIntent::Stopped;
+            return Err(error);
         }
         Ok(true)
     }
@@ -490,6 +559,21 @@ impl<D: RuntimeDriver> Drop for RuntimeReconciler<D> {
         if let Ok(mut worker) = self.worker.lock() {
             let _ = worker.take();
         }
+    }
+}
+
+fn submission_operation(
+    submitted: SubmissionResult,
+    requested_key: ProjectionKey,
+) -> Result<(u64, ProjectionKey), String> {
+    match submitted {
+        SubmissionResult::Accepted { operation_id, key }
+        | SubmissionResult::AlreadyActive { operation_id, key }
+        | SubmissionResult::FollowingExisting { operation_id, key } => Ok((operation_id, key)),
+        SubmissionResult::Superseded { desired_key } => Err(format!(
+            "Runtime projection request (sequence {}) was superseded by newer canonical Session (sequence {}).",
+            requested_key.sequence, desired_key.sequence
+        )),
     }
 }
 
@@ -1013,6 +1097,23 @@ mod tests {
         ));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
+    }
+
+    #[test]
+    fn stop_during_play_prepare_prevents_late_playback() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
+        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
+        let caller = Arc::clone(&reconciler);
+        let play = thread::spawn(move || {
+            caller.apply_and_play_if(snapshot(71), key(71, 71), Duration::from_secs(1), || true)
+        });
+
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+        reconciler.stop().unwrap();
+
+        assert!(play.join().unwrap().is_ok());
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
 
     #[test]

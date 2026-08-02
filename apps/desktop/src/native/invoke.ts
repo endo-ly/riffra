@@ -24,20 +24,6 @@ const canonicalOnlyCommands = [
   'stop_recording',
   'map_rack_macro',
   'capture_snapshot',
-];
-
-const runtimeOnlyCommands = [
-  'restore_current_rack',
-  'open_plugin_editor',
-  'open_track_plugin_editor',
-];
-
-// Runtime graph operations need a second FIFO for legacy Play-rack and editor
-// commands that still perform a synchronous native transaction. Arrangement
-// projection is owned by the backend Runtime Reconciler, and transport/play
-// commands have their own critical path, so neither is allowed to wait behind
-// a VST construction task here.
-const canonicalAndRuntimeCommands = [
   'add_audio_clip_to_arrangement',
   'add_midi_clip_to_arrangement',
   'update_audio_clip',
@@ -65,8 +51,6 @@ const canonicalAndRuntimeCommands = [
   'add_track_effect',
   'remove_track_effect',
   'reorder_track_effects',
-  'set_track_device_bypassed',
-  'set_track_device_parameter',
   'remove_track',
   'duplicate_track',
   'reorder_track',
@@ -82,12 +66,28 @@ const canonicalAndRuntimeCommands = [
   'set_audio_clip_take_variant',
   'activate_take',
   'place_take_as_separate_clip',
-  'start_arrange_recording',
-  'record_another_take',
-  'stop_arrange_recording',
   'relink_missing_dependency',
   'disable_missing_plugin',
   'replace_missing_track_plugin',
+];
+
+const runtimeOnlyCommands = [
+  'restore_current_rack',
+  'restore_sample_pads',
+  'open_plugin_editor',
+  'open_track_plugin_editor',
+];
+
+// Runtime operations need a second FIFO only when the command still performs a
+// synchronous native transaction outside the backend Runtime Reconciler.
+// Ordinary Session edits submit the latest projection asynchronously and must
+// not wait behind a VST construction task here.
+const canonicalAndRuntimeCommands = [
+  'set_track_device_bypassed',
+  'set_track_device_parameter',
+  'start_arrange_recording',
+  'record_another_take',
+  'stop_arrange_recording',
   'load_plugin_into_rack',
   'clear_plugin_from_rack',
   'set_rack_plugin_bypassed',

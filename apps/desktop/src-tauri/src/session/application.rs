@@ -961,29 +961,47 @@ pub fn sync_arrangement_runtime(
     submit_canonical_projection(context, projection)
 }
 
+/// Rebuilds the persisted Sample Pad mapping after the isolated Audio Runtime
+/// has been replaced. This does not mutate canonical state.
+pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
+    if context.safe_mode {
+        return context.audio.refresh_status();
+    }
+    let session = context.session.lock().map_err(lock_error)?.clone();
+    let native_pads = resolve_native_pads(
+        context.data_root,
+        &session.play_state.sample_instrument.pads,
+    )?;
+    let status = context.audio.configure_sample_pads(&native_pads)?;
+    if !audio_command_succeeded(&status) {
+        return Err(format!(
+            "Runtime rejected Sample Pad restoration: {}",
+            status.message
+        ));
+    }
+    Ok(status)
+}
+
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     // Playback is the boundary where an eventually-consistent projection is
-    // no longer sufficient. If the latest Arrange graph is still preparing,
-    // starting the transport immediately can report "playing" while the
-    // native graph is still stale (or failed), which is perceived as silent
-    // Arrange playback. Wait for this exact canonical projection and surface
-    // a bounded error instead of silently starting the wrong graph.
+    // no longer sufficient. Register the Play intent before waiting for the
+    // graph so a concurrent Stop can cancel the pending start.
     let projection = context.session_actor.capture_projection(context.session)?;
-    context.runtime.apply_and_wait(
+    let played = context.runtime.apply_and_play_if(
         runtime_timeline_snapshot(context.data_root, &projection.session),
         crate::runtime_reconciler::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
         },
         std::time::Duration::from_secs(30),
+        || {
+            context
+                .session
+                .lock()
+                .map(|session| session.workspace == Workspace::Arrange)
+                .unwrap_or(false)
+        },
     )?;
-    let played = context.runtime.play_if(|| {
-        context
-            .session
-            .lock()
-            .map(|session| session.workspace == Workspace::Arrange)
-            .unwrap_or(false)
-    })?;
     if !played {
         return Err("Arrange playback was cancelled because the workspace changed.".into());
     }

@@ -385,6 +385,14 @@ pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<RuntimeProjectio
 }
 
 #[tauri::command]
+pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::restore_sample_pads(&app_context(state))
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn play_timeline(app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, |state| application::play_timeline(&app_context(state))).await
 }

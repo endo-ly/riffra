@@ -309,6 +309,14 @@ async function restoreCurrentRack(): Promise<AudioStatus> {
   }
 }
 
+async function restoreSamplePads(): Promise<AudioStatus> {
+  try {
+    return await invoke<AudioStatus>('restore_sample_pads');
+  } catch (error) {
+    return await audioCommandError('Restore sample pads', error);
+  }
+}
+
 async function recallSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair> {
   return invoke<SessionAudioPair>('recall_snapshot', { slot });
 }
@@ -990,6 +998,7 @@ function createNativeApi(): NativeApi {
     setRackMacroValue,
     mapRackMacro,
     restoreCurrentRack,
+    restoreSamplePads,
     captureSnapshot,
     recallSnapshot,
     previewAsset,
@@ -1125,6 +1134,21 @@ function createNativeApi(): NativeApi {
           else unlisten = fn;
         },
       );
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    onRuntimeRestarted: (callback: (generation: number) => void) => {
+      if (!isNativeRuntime()) return () => undefined;
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      void listen<{ generation: number }>('runtime-restarted', (event) => {
+        callback(event.payload.generation);
+      }).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
       return () => {
         cancelled = true;
         unlisten?.();

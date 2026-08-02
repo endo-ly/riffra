@@ -66,6 +66,38 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
   });
 
+  it('rehydrates the current Play runtime after a sidecar restart', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'play' } },
+    });
+    renderApp(fake);
+
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
+    fake.calls.splice(0);
+
+    fake.emitRuntimeRestarted(2);
+
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
+  });
+
+  it('rehydrates the current Arrange runtime graph after a sidecar restart', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+    });
+    renderApp(fake);
+
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    fake.calls.splice(0);
+
+    fake.emitRuntimeRestarted(2);
+
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
+  });
+
   it('re-engages emergency mute when the audio driver changes', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);

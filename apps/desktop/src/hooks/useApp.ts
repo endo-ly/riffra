@@ -56,6 +56,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setRackPluginBypassed,
     setRackPluginParameter,
     restoreCurrentRack,
+    restoreSamplePads,
     createSamplePad: createSamplePadApi,
     updateSamplePad: updateSamplePadApi,
     removeSamplePad: removeSamplePadApi,
@@ -79,6 +80,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     onAudioStatus,
     onAudioMeters,
     onTransportStatus,
+    onRuntimeRestarted,
     onTrackPluginStateChanged,
     onTrackPluginParameterChanged,
     persistTrackPluginState,
@@ -151,6 +153,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const arrangeRuntimeSyncPromise = useRef<Promise<void> | null>(null);
   const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
   const transportOperationPromise = useRef<Promise<void> | null>(null);
+  const transportIntentVersion = useRef(0);
+  const runtimeRecoveryPromise = useRef<Promise<void> | null>(null);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -315,6 +319,29 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     arrangeRuntimeSyncPromise.current = operation;
     return operation;
   }, [enqueueRuntimeReconciliation, syncArrangementRuntime]);
+  const recoverCurrentRuntime = useCallback((): Promise<void> => {
+    const pending = runtimeRecoveryPromise.current;
+    if (pending) return pending;
+    if (boot?.safeMode) return Promise.resolve();
+
+    const operation = (async () => {
+      const nextAudio = await restoreSamplePads();
+      setAudio(nextAudio);
+      if (!audioCommandSucceeded(nextAudio)) return;
+      const workspace = sessionRef.current?.workspace;
+      if (workspace === 'play') {
+        await restorePlayRack();
+      } else if (workspace === 'arrange') {
+        await syncArrangeRuntime();
+      }
+    })().finally(() => {
+      if (runtimeRecoveryPromise.current === operation) {
+        runtimeRecoveryPromise.current = null;
+      }
+    });
+    runtimeRecoveryPromise.current = operation;
+    return operation;
+  }, [boot?.safeMode, restorePlayRack, restoreSamplePads, setAudio, syncArrangeRuntime]);
   const switchWorkspace = useCallback(
     async (workspace: Workspace) => {
       const previous = sessionRef.current;
@@ -770,68 +797,83 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     transportOperationPromise.current = current;
     return current;
   }, []);
+  const runImmediateTransportOperation = useCallback((operation: () => Promise<void>) => {
+    return operation().catch((error: unknown) => {
+      logNativeError('Immediate transport operation')(error);
+      setTransportPlaying(false);
+    });
+  }, []);
 
-  const playTransport = useCallback(
-    () =>
-      runTransportOperation(async () => {
-        const currentSession = sessionRef.current;
-        if (!currentSession) return;
-        const requestedWorkspace = currentSession.workspace;
-        if (requestedWorkspace === 'arrange') {
-          await playTimeline();
-          if (sessionRef.current?.workspace === requestedWorkspace) setTransportPlaying(true);
-          return;
-        }
-        let result = renderResult;
-        if (!result) {
-          result = await renderTimeline({
-            range: { kind: 'entireArrangement' },
-            normalize: false,
-            trackId: null,
-          });
-          if (!result) return;
-          setRenderResult(result);
-        }
-        const nextAudio = await previewAssetApi(result.assetId, {
-          looped: currentSession.settings.loopEnabled,
+  const playTransport = useCallback(() => {
+    if (transportOperationPromise.current) return transportOperationPromise.current;
+    const intentVersion = transportIntentVersion.current + 1;
+    transportIntentVersion.current = intentVersion;
+    const isCurrentIntent = () => transportIntentVersion.current === intentVersion;
+    return runTransportOperation(async () => {
+      const currentSession = sessionRef.current;
+      if (!currentSession) return;
+      const requestedWorkspace = currentSession.workspace;
+      if (requestedWorkspace === 'arrange') {
+        await playTimeline();
+        return;
+      }
+      let result = renderResult;
+      if (!result) {
+        result = await renderTimeline({
+          range: { kind: 'entireArrangement' },
+          normalize: false,
+          trackId: null,
         });
-        if (sessionRef.current?.workspace !== requestedWorkspace) return;
-        setAudio(nextAudio);
-        setTransportPlaying(true);
-      }),
-    [playTimeline, previewAssetApi, renderResult, renderTimeline, runTransportOperation],
-  );
+        if (!result || !isCurrentIntent()) return;
+        setRenderResult(result);
+      }
+      if (!isCurrentIntent()) return;
+      const nextAudio = await previewAssetApi(result.assetId, {
+        looped: currentSession.settings.loopEnabled,
+      });
+      if (!isCurrentIntent()) {
+        await stopSamplePreview();
+        return;
+      }
+      if (sessionRef.current?.workspace !== requestedWorkspace) return;
+      setAudio(nextAudio);
+      setTransportPlaying(true);
+    });
+  }, [
+    playTimeline,
+    previewAssetApi,
+    renderResult,
+    renderTimeline,
+    runTransportOperation,
+    stopSamplePreview,
+  ]);
 
-  const stopTransport = useCallback(
-    () =>
-      runTransportOperation(async () => {
-        if (sessionRef.current?.workspace === 'arrange') {
-          await stopTimeline();
-          setTransportPlaying(false);
-          return;
-        }
-        setAudio(await stopSamplePreview());
-        setTransportPlaying(false);
-        setRenderPreviewing(false);
-      }),
-    [runTransportOperation, stopSamplePreview, stopTimeline],
-  );
+  const stopTransport = useCallback(() => {
+    transportIntentVersion.current += 1;
+    setTransportPlaying(false);
+    return runImmediateTransportOperation(async () => {
+      if (sessionRef.current?.workspace === 'arrange') {
+        await stopTimeline();
+        return;
+      }
+      setAudio(await stopSamplePreview());
+      setRenderPreviewing(false);
+    });
+  }, [runImmediateTransportOperation, setAudio, stopSamplePreview, stopTimeline]);
 
-  const goToStart = useCallback(
-    () =>
-      runTransportOperation(async () => {
-        if (sessionRef.current?.workspace === 'arrange') {
-          await stopTimeline();
-          await seekTimeline(0);
-          setTransportPlaying(false);
-          return;
-        }
-        setAudio(await stopSamplePreview());
-        setTransportPlaying(false);
-        setRenderPreviewing(false);
-      }),
-    [runTransportOperation, seekTimeline, stopSamplePreview, stopTimeline],
-  );
+  const goToStart = useCallback(() => {
+    transportIntentVersion.current += 1;
+    setTransportPlaying(false);
+    return runImmediateTransportOperation(async () => {
+      if (sessionRef.current?.workspace === 'arrange') {
+        await stopTimeline();
+        await seekTimeline(0);
+        return;
+      }
+      setAudio(await stopSamplePreview());
+      setRenderPreviewing(false);
+    });
+  }, [runImmediateTransportOperation, seekTimeline, setAudio, stopSamplePreview, stopTimeline]);
 
   const previewSamplePad = useCallback(
     async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
@@ -964,6 +1006,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               startupAudio = result.audio;
               setAudio(result.audio);
               setSession(result.session);
+              startupAudio = await restoreSamplePads();
+              setAudio(startupAudio);
               if (state.session.workspace === 'play') {
                 startupAudio = await restorePlayRack();
               }
@@ -1062,6 +1106,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const unlistenTransport = onTransportStatus((status) =>
       setTransportPlaying(status.state === 'playing'),
     );
+    const unlistenRuntimeRestarted = onRuntimeRestarted(() => {
+      if (disposed) return;
+      void recoverCurrentRuntime().catch(logNativeError('Runtime recovery'));
+    });
     let pluginSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let pluginSaveRunning = false;
     let pluginSaveFlushRequested = false;
@@ -1254,6 +1302,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       unlistenAudio();
       unlistenMeters();
       unlistenTransport();
+      unlistenRuntimeRestarted();
       unlistenTrackPluginParameter();
       unlistenTrackPluginState();
     };

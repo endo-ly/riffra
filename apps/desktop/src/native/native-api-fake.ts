@@ -163,6 +163,7 @@ export class FakeNativeApi implements NativeApi {
   private renderCounter = 0;
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
+  private runtimeRestartListeners = new Set<(generation: number) => void>();
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
@@ -441,6 +442,16 @@ export class FakeNativeApi implements NativeApi {
   onAudioMeters = (_callback: (meters: AudioMeters) => void): (() => void) => {
     this.calls.push('onAudioMeters');
     return () => undefined;
+  };
+
+  onRuntimeRestarted = (callback: (generation: number) => void): (() => void) => {
+    this.calls.push('onRuntimeRestarted');
+    this.runtimeRestartListeners.add(callback);
+    return () => this.runtimeRestartListeners.delete(callback);
+  };
+
+  emitRuntimeRestarted = (generation = this.runtimeProjection.runtimeGeneration): void => {
+    this.runtimeRestartListeners.forEach((callback) => callback(generation));
   };
 
   onTransportStatus = (_callback: (status: TransportStatus) => void): (() => void) => {
@@ -778,6 +789,11 @@ export class FakeNativeApi implements NativeApi {
       },
       message: `Rack restored: ${device.name} reconnected; output stays muted until enabled.`,
     };
+    return this.audio;
+  };
+
+  restoreSamplePads = async (): Promise<AudioStatus> => {
+    this.calls.push('restoreSamplePads');
     return this.audio;
   };
 

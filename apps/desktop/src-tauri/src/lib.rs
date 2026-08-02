@@ -690,6 +690,7 @@ pub fn run() {
             session::commands::paste_timeline_clips,
             session::commands::crossfade_audio_clips,
             session::commands::sync_arrangement_runtime,
+            session::commands::restore_sample_pads,
             session::commands::play_timeline,
             session::commands::stop_timeline,
             session::commands::seek_timeline,

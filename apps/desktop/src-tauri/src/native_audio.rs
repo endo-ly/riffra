@@ -612,6 +612,12 @@ impl AudioSupervisor {
             Ok(())
         })();
         self.record_restart_outcome(previous_generation, &result);
+        if result.is_ok() {
+            let _ = app.emit(
+                "runtime-restarted",
+                serde_json::json!({ "generation": self.sidecar_generation() }),
+            );
+        }
         result
     }
 

@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: tauriInvoke,
 }));
 
-import { invokeLatest } from '@/native/invoke';
+import { invoke, invokeLatest } from '@/native/invoke';
 
 describe('invokeLatest', () => {
   beforeEach(() => {
@@ -35,5 +35,26 @@ describe('invokeLatest', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([{ revision: 7 }, { revision: 7 }]);
     expect(tauriInvoke).toHaveBeenCalledTimes(1);
     expect(tauriInvoke).toHaveBeenCalledWith('update_track', { value: 2 });
+  });
+
+  it('does not queue pure Arrange edits behind a runtime-only operation', async () => {
+    let releaseRack!: (value: unknown) => void;
+    const rackCompletion = new Promise<unknown>((resolve) => {
+      releaseRack = resolve;
+    });
+    tauriInvoke.mockImplementation((command: string) => {
+      if (command === 'restore_current_rack') return rackCompletion;
+      return Promise.resolve({ command });
+    });
+
+    const rack = invoke('restore_current_rack');
+    await Promise.resolve();
+    const edit = invoke('update_track', { trackId: 'track:1' });
+
+    await expect(edit).resolves.toEqual({ command: 'update_track' });
+    expect(tauriInvoke).toHaveBeenNthCalledWith(2, 'update_track', { trackId: 'track:1' });
+
+    releaseRack(undefined);
+    await expect(rack).resolves.toEqual(undefined);
   });
 });
