@@ -164,6 +164,7 @@ export class FakeNativeApi implements NativeApi {
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
   private runtimeRestartListeners = new Set<(generation: number) => void>();
+  private transportStatusListeners = new Set<(status: TransportStatus) => void>();
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
@@ -454,9 +455,34 @@ export class FakeNativeApi implements NativeApi {
     this.runtimeRestartListeners.forEach((callback) => callback(generation));
   };
 
-  onTransportStatus = (_callback: (status: TransportStatus) => void): (() => void) => {
+  onTransportStatus = (callback: (status: TransportStatus) => void): (() => void) => {
     this.calls.push('onTransportStatus');
-    return () => undefined;
+    this.transportStatusListeners.add(callback);
+    return () => this.transportStatusListeners.delete(callback);
+  };
+
+  emitTransportStatus = (overrides: Partial<Omit<TransportStatus, 'type'>> = {}): void => {
+    const status: TransportStatus = {
+      type: 'transportStatus',
+      state: 'stopped',
+      revision: 0,
+      timelineTick: 0,
+      timelineSample: 0,
+      audioClockSample: 0,
+      sampleRate: 48_000,
+      sequence: 0,
+      recordingPhase: 'idle',
+      recordingStartTick: 0,
+      recordingCurrentTick: 0,
+      recordingPassOrdinal: 0,
+      armedTrackIds: [],
+      clockGeneration: 0,
+      discontinuity: 0,
+      unavailableClipIds: [],
+      missingDeviceIds: [],
+      ...overrides,
+    };
+    this.transportStatusListeners.forEach((callback) => callback(status));
   };
 
   analyzeAsset = async (assetId: AssetId): Promise<AudioAnalysis | null> => {

@@ -369,6 +369,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 return Ok(false);
             }
         }
+        let mut play_intent_guard = PlayIntentRollback::new(self, sequence);
 
         let deadline = Instant::now() + timeout;
         let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
@@ -386,10 +387,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 active.runtime_generation == generation && active.key == requested_key
             });
         if should_play_now && let Err(error) = self.driver.play_timeline() {
-            if state.transport_sequence == sequence {
-                state.transport_intent = TransportIntent::Stopped;
-                self.state.1.notify_all();
-            }
             return Err(error);
         }
         drop(state);
@@ -402,11 +399,11 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             timeout,
             Some(sequence),
         ) {
-            Ok(_) => Ok(true),
-            Err(error) => {
-                self.clear_play_intent(sequence);
-                Err(error)
+            Ok(_) => {
+                play_intent_guard.disarm();
+                Ok(true)
             }
+            Err(error) => Err(error),
         }
     }
 
@@ -480,19 +477,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                     timeout.as_secs()
                 ));
             }
-        }
-    }
-
-    fn clear_play_intent(&self, sequence: u64) {
-        let Ok(_transport_gate) = self.transport_gate.lock() else {
-            return;
-        };
-        if let Ok(mut state) = self.state.0.lock()
-            && state.transport_sequence == sequence
-            && state.transport_intent == TransportIntent::Playing
-        {
-            state.transport_intent = TransportIntent::Stopped;
-            self.state.1.notify_all();
         }
     }
 
@@ -661,6 +645,54 @@ fn update_transport_intent(
     state.transport_sequence = sequence;
     state.transport_intent = intent;
     true
+}
+
+fn clear_play_intent_state(state: &mut ReconcilerState, sequence: u64) -> bool {
+    if state.transport_sequence != sequence || state.transport_intent != TransportIntent::Playing {
+        return false;
+    }
+    state.transport_intent = TransportIntent::Stopped;
+    true
+}
+
+struct PlayIntentRollback<'a, D: RuntimeDriver> {
+    reconciler: &'a RuntimeReconciler<D>,
+    sequence: u64,
+    armed: bool,
+}
+
+impl<'a, D: RuntimeDriver> PlayIntentRollback<'a, D> {
+    fn new(reconciler: &'a RuntimeReconciler<D>, sequence: u64) -> Self {
+        Self {
+            reconciler,
+            sequence,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl<D: RuntimeDriver> Drop for PlayIntentRollback<'_, D> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        // The guard can be dropped while apply_and_play_if still holds the
+        // transport gate. Sequence-checking under the state lock is enough:
+        // every competing transport writer also requires that gate, so a newer
+        // intent cannot be installed until this rollback has completed.
+        let mut state = match self.reconciler.state.0.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if clear_play_intent_state(&mut state, self.sequence) {
+            self.reconciler.state.1.notify_all();
+        }
+    }
 }
 
 fn submission_operation(
@@ -1234,6 +1266,25 @@ mod tests {
         assert!(!played);
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn superseded_play_does_not_leave_play_intent_armed() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(2), key(2, 2));
+
+        let play = reconciler.apply_and_play_if(
+            10,
+            snapshot(1),
+            key(1, 1),
+            Duration::from_secs(1),
+            || true,
+        );
+
+        assert!(play.is_err());
+        wait_until(|| reconciler.status().active_session_revision == Some(2));
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
     }
 
     #[test]

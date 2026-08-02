@@ -856,7 +856,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const current = operation()
       .catch((error: unknown) => {
         logNativeError('Transport operation')(error);
-        setTransportPlaying(false);
+        if (transportOperationPromise.current === current) {
+          setTransportPlaying(false);
+        }
       })
       .finally(() => {
         if (transportOperationPromise.current === current) {

@@ -161,6 +161,47 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
   });
 
+  it('does not let a cancelled Play failure overwrite a newer playing state', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+    });
+    const playRejectors: ((reason?: unknown) => void)[] = [];
+    fake.playTimeline = () => {
+      fake.calls.push('playTimeline');
+      return new Promise<void>((_resolve, reject) => {
+        playRejectors.push(reject);
+      });
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(playRejectors).toHaveLength(1));
+
+    fake.emitTransportStatus({ state: 'playing' });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Stop playback' }));
+    await waitFor(() =>
+      expect(fake.calls.filter((call) => call === 'stopTimeline')).toHaveLength(1),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(playRejectors).toHaveLength(2));
+    fake.emitTransportStatus({ state: 'playing' });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
+    );
+
+    playRejectors[0](new Error('Cancelled old Play request.'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
+    );
+  });
+
   it('re-engages emergency mute when the audio driver changes', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
