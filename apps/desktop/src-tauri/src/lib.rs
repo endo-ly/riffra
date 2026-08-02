@@ -38,7 +38,7 @@ mod projects;
 mod rack;
 mod recording;
 mod render;
-mod runtime_reconciler;
+mod runtime;
 mod separation;
 mod session;
 mod storage;
@@ -73,7 +73,7 @@ struct AppState {
     /// Keeps a workspace's stop intent and processing-mode update together so
     /// concurrent navigation commands cannot interleave the two writes.
     workspace_runtime_gate: Mutex<()>,
-    runtime: runtime_reconciler::RuntimeReconciler<AudioSupervisor>,
+    runtime: runtime::RuntimeReconciler<AudioSupervisor>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
     jobs: jobs::JobRegistry,
@@ -233,7 +233,7 @@ fn queue_startup_maintenance(
                 session::application::runtime_snapshot_for_recording(&data_root, &current_session);
             let _ = state.runtime.submit(
                 snapshot,
-                runtime_reconciler::ProjectionKey {
+                crate::runtime::model::ProjectionKey {
                     sequence: projection.sequence,
                     session_revision: current_session.arrangement.revision,
                 },
@@ -595,15 +595,16 @@ pub fn run() {
             };
             let runtime_audio = audio.clone();
             let runtime_app = app.handle().clone();
-            let runtime_recovery: runtime_reconciler::RuntimeRecovery =
+            let runtime_recovery: crate::runtime::projection_coordinator::RuntimeRecovery =
                 std::sync::Arc::new(move |expected_generation, timeout| {
                     runtime_audio.restart_sidecar_for_runtime(
                         &runtime_app,
                         expected_generation,
                         timeout,
                     )
+                .map_err(crate::native_audio::map_native_error)
                 });
-            let runtime = runtime_reconciler::RuntimeReconciler::new(
+            let runtime = runtime::RuntimeReconciler::new(
                 std::sync::Arc::new(audio.clone()),
                 Some(runtime_recovery),
             )?;

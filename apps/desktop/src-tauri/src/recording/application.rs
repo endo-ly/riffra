@@ -32,7 +32,7 @@ use crate::library;
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::recording::{RecordingAsset, RecordingCapture};
-use crate::runtime_reconciler::RuntimeReconciler;
+use crate::runtime::RuntimeReconciler;
 use crate::session::actor::SessionActor;
 use crate::session::{
     AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
@@ -179,7 +179,7 @@ fn start_recording_in_session(
         .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
         crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
-        crate::runtime_reconciler::ProjectionKey {
+        crate::runtime::model::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
         },
@@ -1781,7 +1781,7 @@ fn relocate_take(context: &RecordingContext<'_>, old_id: &str, new_id: &str) -> 
 mod tests {
     use super::*;
     use crate::native_audio::AudioSupervisor;
-    use crate::runtime_reconciler::RuntimeReconciler;
+    use crate::runtime::RuntimeReconciler;
     use crate::session::CreativeSession;
     use std::{
         fs,

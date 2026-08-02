@@ -1,0 +1,146 @@
+use super::AudioSupervisor;
+use crate::audio_preferences::AudioPreferences;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeControlState {
+    pub(crate) processing_mode: String,
+    pub(crate) processing_mode_sent: Option<String>,
+    pub(crate) master_gain_db: f64,
+    pub(crate) midi_listening: bool,
+    pub(crate) emergency_muted: bool,
+}
+
+impl Default for RuntimeControlState {
+    fn default() -> Self {
+        Self {
+            processing_mode: "passive".into(),
+            processing_mode_sent: None,
+            master_gain_db: -18.0,
+            midi_listening: false,
+            emergency_muted: true,
+        }
+    }
+}
+
+/// Owns desired controls and restart coordination. Sidecar process ownership
+/// and command acknowledgements are represented by separate internal types.
+pub(crate) struct RecoveryState {
+    pub(crate) runtime_controls: Arc<Mutex<RuntimeControlState>>,
+    pub(crate) restart_preferences: Arc<Mutex<AudioPreferences>>,
+    pub(crate) restart_gate: Arc<Mutex<()>>,
+    pub(crate) restart_outcomes: Arc<Mutex<HashMap<u64, Result<(), String>>>>,
+}
+
+impl RecoveryState {
+    pub(crate) fn new(preferences: AudioPreferences) -> Self {
+        Self {
+            runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
+            restart_preferences: Arc::new(Mutex::new(preferences)),
+            restart_gate: Arc::new(Mutex::new(())),
+            restart_outcomes: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl AudioSupervisor {
+    pub(super) fn completed_restart_outcome(
+        &self,
+        previous_generation: u64,
+    ) -> Option<Result<(), String>> {
+        self.recovery
+            .restart_outcomes
+            .lock()
+            .ok()?
+            .get(&previous_generation)
+            .cloned()
+    }
+
+    pub(super) fn record_restart_outcome(
+        &self,
+        previous_generation: u64,
+        result: &Result<(), String>,
+    ) {
+        let Ok(mut outcomes) = self.recovery.restart_outcomes.lock() else {
+            return;
+        };
+        if outcomes.len() >= 32
+            && let Some(oldest_generation) = outcomes.keys().min().copied()
+        {
+            outcomes.remove(&oldest_generation);
+        }
+        outcomes.insert(previous_generation, result.clone());
+    }
+
+    pub(super) fn restore_runtime_controls(&self, deadline: Instant) -> Result<(), String> {
+        let controls = self
+            .recovery
+            .runtime_controls
+            .lock()
+            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .clone();
+        self.wait_for_command(
+            serde_json::json!({
+                "type": "setProcessingMode",
+                "mode": controls.processing_mode,
+            }),
+            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        )?;
+        self.wait_for_command(
+            serde_json::json!({
+                "type": "setMasterGainDb",
+                "gainDb": controls.master_gain_db,
+            }),
+            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        )?;
+        self.wait_for_command(
+            serde_json::json!({
+                "type": if controls.midi_listening {
+                    "enableMidiListening"
+                } else {
+                    "disableMidiListening"
+                },
+            }),
+            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        )?;
+        // A recovered process must remain muted until the user explicitly
+        // confirms that audio should fade back in. The other control values
+        // are restored exactly, but safety mute is deliberately not
+        // auto-cleared.
+        self.wait_for_command(
+            serde_json::json!({"type": "setEmergencyMute", "muted": true}),
+            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        )?;
+        if let Ok(mut current) = self.recovery.runtime_controls.lock() {
+            current.processing_mode_sent = Some(current.processing_mode.clone());
+            current.emergency_muted = true;
+        }
+        Ok(())
+    }
+
+    pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> Result<(), String> {
+        *self
+            .recovery
+            .restart_preferences
+            .lock()
+            .map_err(|error| format!("Audio preference lock was poisoned: {error}"))? = preferences;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_coordinator_reuses_the_result_for_a_stale_generation() {
+        let supervisor = AudioSupervisor::offline("test");
+        let result = Err("restart failed".to_string());
+        supervisor.record_restart_outcome(7, &result);
+
+        assert_eq!(supervisor.completed_restart_outcome(7), Some(result));
+        assert!(supervisor.completed_restart_outcome(8).is_none());
+    }
+}

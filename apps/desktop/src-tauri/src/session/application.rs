@@ -29,17 +29,14 @@
 //! matches the runtime's "reconfigure the whole pad set" capability.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 use std::{fs, path::Path};
 
 use crate::asset::{self, AssetId, AssetKind};
 use crate::errors::DomainError;
-use crate::model::{AudioState, AudioStatus, SessionAudioPair};
-use crate::native_audio::{AudioSupervisor, NativeSamplePad};
+use crate::model::{AudioStatus, SessionAudioPair};
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
-use crate::runtime_reconciler::{RuntimeDriver, RuntimeReconciler};
-use crate::session::actor::SessionActor;
+use crate::runtime::ports::RuntimeDriver;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
     AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DesignTool, Marker,
@@ -48,64 +45,16 @@ use crate::session::{
 };
 use crate::storage::{SessionStore, now_ms};
 
-/// Concrete dependencies a Session Application Operation needs.
-pub struct SessionContext<'a, D: RuntimeDriver = AudioSupervisor> {
-    pub audio: &'a AudioSupervisor,
-    pub runtime: &'a RuntimeReconciler<D>,
-    pub session_actor: &'a SessionActor,
-    pub data_root: &'a Path,
-    pub session: &'a Mutex<CreativeSession>,
-    pub safe_mode: bool,
-}
-
-fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
-    let message = format!("An internal state lock was poisoned: {error}");
-    eprintln!("[riffra] {message}. Aborting to prevent corrupted state from propagating.");
-    std::process::abort();
-}
-
-fn audio_command_succeeded(status: &AudioStatus) -> bool {
-    status.state != AudioState::Faulted && status.state != AudioState::Offline
-}
-
-/// `updatedAtMs` is also the public ordering token for Session snapshots at
-/// the UI boundary. Wall-clock milliseconds alone are not strictly monotonic
-/// when several commands commit in one millisecond, so every canonical commit
-/// advances beyond the previous value.
-fn next_session_update_timestamp(previous: u64, candidate: u64) -> u64 {
-    now_ms().max(candidate).max(previous.saturating_add(1))
-}
-
-/// Resolves the session's pad set into the runtime's native pad shape, failing
-/// on any invalid slice or unresolved asset. Shared by the create workflow and
-/// the direct `configure_sample_pads` command.
-pub fn resolve_native_pads(
-    data_root: &Path,
-    pads: &[SamplePad],
-) -> Result<Vec<NativeSamplePad>, String> {
-    if pads.len() > 128 {
-        return Err("A sample instrument cannot contain more than 128 pads.".into());
-    }
-    let mut native_pads = Vec::with_capacity(pads.len());
-    for pad in pads {
-        if pad.end_ms <= pad.start_ms {
-            return Err(format!("Sample pad '{}' has an invalid slice.", pad.name));
-        }
-        let content_location = asset::resolve_content_location(data_root, &pad.asset_id)
-            .ok_or_else(|| format!("Sample pad '{}' references an unresolved asset.", pad.name))?;
-        native_pads.push(NativeSamplePad {
-            id: pad.id.clone(),
-            name: pad.name.clone(),
-            asset_path: content_location,
-            start_ms: pad.start_ms,
-            end_ms: pad.end_ms,
-            midi_key: pad.midi_key,
-            gain_db: pad.gain_db,
-            loop_enabled: pad.loop_enabled,
-        });
-    }
-    Ok(native_pads)
-}
+pub(crate) use crate::session::commit::{
+    commit_merged_session, commit_session, import_session, next_session_update_timestamp,
+    publish_session, restore_generation, save_session,
+};
+pub(crate) use crate::session::context::{SessionContext, lock_error};
+pub(crate) use crate::session::transport::{
+    audio_command_succeeded, go_to_start_timeline, play_timeline, resolve_native_pads,
+    restore_sample_pads, runtime_snapshot_for_recording, seek_timeline, stop_timeline,
+    switch_workspace, sync_arrangement, sync_arrangement_runtime,
+};
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
 /// asset existence + duplicate rules, pad id / MIDI key assignment, slice
@@ -384,132 +333,6 @@ pub fn remove_sample_pad(
 // These mutate the canonical CreativeSession and persist it without touching
 // the Audio Runtime. They share [`commit_session`] as the single
 // validate-and-persist boundary so the save path lives in one place.
-
-/// Publishes a session after its persistence or runtime boundary has completed.
-/// Workspace navigation is view state and may have changed while that boundary
-/// was in progress, so the latest in-memory workspace wins at the single
-/// Session/Projection exchange.
-fn publish_session(
-    actor: &SessionActor,
-    data_root: &Path,
-    session_lock: &Mutex<CreativeSession>,
-    mut session: CreativeSession,
-    workspace_before_boundary: Workspace,
-) -> Result<CreativeSession, String> {
-    actor.begin_commit();
-    let committed = {
-        let mut current = session_lock.lock().map_err(lock_error)?;
-        if current.workspace != workspace_before_boundary {
-            session.workspace = current.workspace;
-        }
-        let committed = session.clone();
-        *current = session;
-        committed
-    };
-    actor.mark_committed();
-    crate::queue_session_index(data_root, &committed);
-    Ok(committed)
-}
-
-/// Commits a mutated session through the canonical pipeline: validate +
-/// normalize, persist to the SessionStore, refresh the Library index, and swap
-/// the in-memory session. This is the "save" boundary for Session Application
-/// Operations that do not also change the Audio Runtime.
-pub fn commit_session<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    mut session: CreativeSession,
-) -> Result<CreativeSession, String> {
-    session = session.validate_and_normalize()?;
-    let (previous_updated_at, workspace_before_save) = {
-        let current = context.session.lock().map_err(lock_error)?;
-        (current.updated_at_ms, current.workspace)
-    };
-    session.updated_at_ms =
-        next_session_update_timestamp(previous_updated_at, session.updated_at_ms);
-    SessionStore::new(context.data_root)
-        .save(&session)
-        .map_err(|error| format!("Session could not be saved: {error}"))?;
-    publish_session(
-        context.session_actor,
-        context.data_root,
-        context.session,
-        session,
-        workspace_before_save,
-    )
-}
-
-/// Commits a long-running operation's changed portion onto the latest
-/// canonical Session while holding the Session Actor only for the commit
-/// boundary. The caller may clone `base` and perform native/file work before
-/// calling this function; `merge` is then responsible for applying only the
-/// operation-owned portion to the current Session so unrelated edits survive.
-pub(crate) struct CommittedSession {
-    pub session: CreativeSession,
-}
-
-pub(crate) fn commit_merged_session(
-    actor: &SessionActor,
-    data_root: &Path,
-    session_lock: &Mutex<CreativeSession>,
-    base: &CreativeSession,
-    candidate: CreativeSession,
-    merge: impl FnOnce(&CreativeSession, &CreativeSession, CreativeSession) -> CreativeSession,
-) -> Result<CommittedSession, String> {
-    let _operation = actor.enter()?;
-    let current = session_lock.lock().map_err(lock_error)?.clone();
-    let workspace_before_save = current.workspace;
-    let mut merged = merge(&current, base, candidate).validate_and_normalize()?;
-    merged.updated_at_ms =
-        next_session_update_timestamp(current.updated_at_ms, merged.updated_at_ms);
-    SessionStore::new(data_root)
-        .save(&merged)
-        .map_err(|error| format!("Session could not be saved: {error}"))?;
-    let committed = publish_session(
-        actor,
-        data_root,
-        session_lock,
-        merged,
-        workspace_before_save,
-    )?;
-    Ok(CommittedSession { session: committed })
-}
-
-/// Saves a caller-supplied session (the canonical save intent). The session is
-/// validated and normalized before persistence.
-pub fn save_session(
-    context: &SessionContext<'_>,
-    session: CreativeSession,
-) -> Result<CreativeSession, String> {
-    commit_session(context, session)
-}
-
-/// Imports a project manifest and commits the resulting session.
-pub fn import_session(
-    context: &SessionContext<'_>,
-    path: &Path,
-) -> Result<CreativeSession, String> {
-    let session = crate::projects::import(context.data_root, path)?;
-    commit_session(context, session)
-}
-
-/// Restores a saved recovery generation as the active session. The generation
-/// file is already canonical, so it is swapped into memory without re-saving.
-pub fn restore_generation(
-    context: &SessionContext<'_>,
-    file_name: &str,
-) -> Result<CreativeSession, String> {
-    let workspace_before_restore = context.session.lock().map_err(lock_error)?.workspace;
-    let session = SessionStore::new(context.data_root)
-        .restore_generation(file_name)
-        .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
-    publish_session(
-        context.session_actor,
-        context.data_root,
-        context.session,
-        session,
-        workspace_before_restore,
-    )
-}
 
 /// Applies a Domain-level mutation to the current session's [`Arrangement`],
 /// then commits the whole session. Every Arrangement editing command funnels
@@ -807,225 +630,6 @@ pub fn add_midi_clip(
     Ok(committed)
 }
 
-fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> serde_json::Value {
-    let arrangement = &session.arrangement;
-    let mut unavailable_clip_ids = Vec::new();
-    let mut missing_device_ids = Vec::new();
-    let tracks = arrangement
-        .tracks
-        .iter()
-        .map(|track| {
-            let mut runtime_instrument = track.instrument.clone();
-            let mut runtime_rack = track.rack.clone();
-            for device in runtime_instrument
-                .iter_mut()
-                .chain(runtime_rack.devices.iter_mut())
-                .filter(|device| device.kind == DeviceKind::Plugin)
-            {
-                if !device.disabled_placeholder
-                    && device
-                        .path
-                        .as_deref()
-                        .is_none_or(|path| !Path::new(path).exists())
-                {
-                    missing_device_ids.push(device.id.clone());
-                    // Keep the canonical unresolved Device intact, but project a
-                    // bypassed placeholder into the Runtime Graph so one missing
-                    // plugin never prevents the rest of the Arrangement playing.
-                    device.disabled_placeholder = true;
-                }
-            }
-            let audio_clips = arrangement
-                .audio_clips
-                .iter()
-                .filter(|clip| clip.track_id == track.id)
-                .filter_map(|clip| {
-                    let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id)
-                    else {
-                        unavailable_clip_ids.push(clip.id.clone());
-                        return None;
-                    };
-                    Some(serde_json::json!({
-                        "clipId": clip.id,
-                        "path": path,
-                        "sourceSampleRate": clip.source_sample_rate,
-                        "sourceStartFrame": clip.source_range.start,
-                        "sourceEndFrame": clip.source_range.end,
-                        "durationFrames": clip.timeline_duration.frames,
-                        "durationSampleRate": clip.timeline_duration.sample_rate,
-                        "startTick": clip.start_tick.0,
-                        "fadeInFrames": clip.fade_in.frames,
-                        "fadeOutFrames": clip.fade_out.frames,
-                        "gainDb": clip.gain_db,
-                        "pan": clip.pan,
-                        "loopEnabled": clip.loop_enabled,
-                        "muted": clip.muted,
-                    }))
-                })
-                .collect::<Vec<_>>();
-            let midi_clips = arrangement
-                .midi_clips
-                .iter()
-                .filter(|clip| clip.track_id == track.id)
-                .collect::<Vec<_>>();
-            let automation = arrangement
-                .automation_lanes
-                .iter()
-                .filter(|lane| lane.track_id == track.id)
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "id": track.id,
-                "name": track.name,
-                "kind": track.kind,
-                "gainDb": track.gain_db,
-                "pan": track.pan,
-                "muted": track.muted,
-                "solo": track.solo,
-                "armed": track.armed,
-                "monitoring": track.monitoring,
-                "audioInput": track.audio_input,
-                "midiInput": track.midi_input,
-                "instrument": runtime_instrument,
-                "rack": runtime_rack,
-                "audioClips": audio_clips,
-                "midiClips": midi_clips,
-                "automation": automation,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "revision": arrangement.revision,
-        "timebase": arrangement.timebase,
-        "loopRange": arrangement.loop_range,
-        "punchRange": arrangement.punch_range,
-        "metronomeEnabled": session.settings.metronome_enabled,
-        "tracks": tracks,
-        "unavailableClipIds": unavailable_clip_ids,
-        "missingDeviceIds": missing_device_ids,
-    })
-}
-
-pub(crate) fn runtime_snapshot_for_recording(
-    data_root: &Path,
-    session: &CreativeSession,
-) -> serde_json::Value {
-    runtime_timeline_snapshot(data_root, session)
-}
-
-fn submit_canonical_projection<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    projection: crate::session::actor::CanonicalProjection,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    Ok(context.runtime.submit(
-        runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime_reconciler::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        },
-    ))
-}
-
-fn submit_canonical_projection_nonblocking<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    projection: crate::session::actor::CanonicalProjection,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    Ok(context.runtime.submit_nonblocking(
-        runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime_reconciler::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        },
-    ))
-}
-
-/// Enqueues the canonical Session captured under the Actor for the Audio
-/// Runtime without blocking on the reconcile cycle. Session commands already
-/// own the Actor for their whole synchronous operation, so this path must use
-/// the non-reentrant, guard-aware capture method. The Runtime applies the
-/// latest projection as soon as an in-flight cycle completes; workflows that
-/// need the graph active before returning (playback, recording) use
-/// [`sync_arrangement_runtime`] instead.
-fn sync_arrangement<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let projection = context
-        .session_actor
-        .capture_projection_while_held(context.session)?;
-    submit_canonical_projection_nonblocking(context, projection)
-}
-
-pub fn sync_arrangement_runtime(
-    context: &SessionContext<'_>,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let projection = context.session_actor.capture_projection(context.session)?;
-    submit_canonical_projection(context, projection)
-}
-
-/// Rebuilds the persisted Sample Pad mapping after the isolated Audio Runtime
-/// has been replaced. This does not mutate canonical state.
-pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
-    if context.safe_mode {
-        return context.audio.refresh_status();
-    }
-    let session = context.session.lock().map_err(lock_error)?.clone();
-    let native_pads = resolve_native_pads(
-        context.data_root,
-        &session.play_state.sample_instrument.pads,
-    )?;
-    let status = context.audio.configure_sample_pads(&native_pads)?;
-    if !audio_command_succeeded(&status) {
-        return Err(format!(
-            "Runtime rejected Sample Pad restoration: {}",
-            status.message
-        ));
-    }
-    Ok(status)
-}
-
-pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    // Playback is the boundary where an eventually-consistent projection is
-    // no longer sufficient. Register the Play intent before waiting for the
-    // graph so a concurrent Stop can cancel the pending start.
-    let projection = context.session_actor.capture_projection(context.session)?;
-    let played = context.runtime.apply_and_play_if(
-        transport_sequence,
-        runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime_reconciler::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        },
-        std::time::Duration::from_secs(30),
-        || {
-            context
-                .session
-                .lock()
-                .map(|session| session.workspace == Workspace::Arrange)
-                .unwrap_or(false)
-        },
-    )?;
-    if !played {
-        return Err("Arrange playback was cancelled because the workspace changed.".into());
-    }
-    Ok(())
-}
-
-pub fn stop_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    context.runtime.stop(transport_sequence).map(|_| ())
-}
-
-pub fn go_to_start_timeline(
-    context: &SessionContext<'_>,
-    transport_sequence: u64,
-) -> Result<(), String> {
-    context
-        .runtime
-        .stop_and_seek_to_start(transport_sequence, || context.audio.seek_timeline(0))
-}
-
-pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
-    context.audio.seek_timeline(tick.0)
-}
-
 pub fn update_timebase(
     context: &SessionContext<'_>,
     timebase: ProjectTimebase,
@@ -1240,61 +844,6 @@ pub fn open_asset_in_design(
     commit_session(context, session)
 }
 
-/// Returns the active workspace snapshot and updates the desired audio mode.
-///
-/// Workspace navigation is UI state, not production content. Persisting it as
-/// a full Session commit made every tab click copy the current recovery
-/// generation, serialize the whole arrangement, fsync, and wait behind any
-/// unrelated edit. The frontend applies this snapshot optimistically; the
-/// in-memory Session also retains the latest workspace so the next real edit
-/// persists it, but navigation itself creates no recovery generation. A
-/// stalled audio process is deliberately unable to block this operation
-/// because mode delivery is best-effort and nonblocking.
-pub fn switch_workspace(
-    context: &SessionContext<'_>,
-    workspace: Workspace,
-    transport_sequence: u64,
-) -> Result<CreativeSession, String> {
-    let session = {
-        let mut current = context.session.lock().map_err(lock_error)?;
-        current.workspace = workspace;
-        current.clone()
-    };
-    if workspace != Workspace::Arrange
-        && let Err(error) = context.runtime.stop_nonblocking(transport_sequence)
-    {
-        tracing::warn!(
-            error = ?error,
-            workspace = ?workspace,
-            "Workspace snapshot returned, but stale Arrange transport could not be stopped."
-        );
-    }
-    // This is deliberately not a SessionActor commit: workspace is view state
-    // and has no effect on the arrangement projection sequence. Keeping the
-    // latest value in memory lets the next real production edit persist it,
-    // while avoiding a full JSON/recovery-generation/fsync cycle per click.
-    let mode = workspace_processing_mode(workspace);
-    if let Err(error) = context.audio.set_processing_mode_nonblocking(mode) {
-        tracing::warn!(
-            error = ?error,
-            workspace = ?workspace,
-            "Workspace snapshot returned, but the audio processing mode could not be sent; recovery will retry the desired mode."
-        );
-    }
-    Ok(session)
-}
-
-fn workspace_processing_mode(workspace: Workspace) -> &'static str {
-    match workspace {
-        Workspace::Play => "play",
-        Workspace::Arrange => "arrange",
-        Workspace::Home | Workspace::Design => "passive",
-    }
-}
-
-/// Bounded patch for the session metadata and settings that are edited by the
-/// current UI. Structural production state (rack, tracks, clips and pads) has
-/// dedicated operations and cannot be smuggled through this patch.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
@@ -2654,9 +2203,10 @@ pub fn replace_missing_track_plugin(
 mod tests {
     use super::*;
     use crate::session::RecordingTakeRecord;
+    use crate::session::actor::SessionActor;
     use serde_json::Value;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -2680,47 +2230,40 @@ mod tests {
         }
     }
 
-    impl crate::runtime_reconciler::RuntimeDriver for ClickStormDriver {
+    impl crate::runtime::ports::ProjectionDriver for ClickStormDriver {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: Value,
             _timeout: Duration,
-        ) -> Result<(), String> {
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
             thread::sleep(self.prepare_delay);
             *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
             Ok(())
         }
 
-        fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
+        fn commit_timeline_snapshot(
+            &self,
+            _timeout: Duration,
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
             // Simulates a Sidecar commit that is slow because the graph
             // (including an instrument VST) has to be switched on the audio
             // thread before the acknowledgement is sent.
             thread::sleep(self.commit_delay);
-            let revision = self
-                .pending
-                .lock()
-                .unwrap()
-                .take()
-                .ok_or_else(|| "No prepared timeline snapshot is available.".to_string())?;
+            let revision = self.pending.lock().unwrap().take().ok_or_else(|| {
+                crate::runtime::error::RuntimeError::NativeRejected(
+                    "No prepared timeline snapshot is available.".into(),
+                )
+            })?;
             self.loaded.lock().unwrap().push(revision);
             Ok(())
         }
 
-        fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
+        fn discard_timeline_snapshot(
+            &self,
+            _timeout: Duration,
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
             self.pending.lock().unwrap().take();
             Ok(())
-        }
-
-        fn play_timeline(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn stop_timeline(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn stop_timeline_nonblocking(&self) -> Result<(), String> {
-            self.stop_timeline()
         }
 
         fn runtime_generation(&self) -> u64 {
@@ -2728,34 +2271,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_navigation_updates_memory_without_creating_a_session_save() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-workspace-navigation-{}",
-            crate::storage::now_ms()
-        ));
-        let session = Mutex::new(CreativeSession::new(1));
-        let audio = crate::native_audio::AudioSupervisor::offline("test");
-        let runtime_driver = Arc::new(audio.clone());
-        let runtime = Arc::new(
-            crate::runtime_reconciler::RuntimeReconciler::new(runtime_driver, None).unwrap(),
-        );
-        let actor = SessionActor::default();
-        let context = SessionContext {
-            audio: &audio,
-            runtime: runtime.as_ref(),
-            session_actor: &actor,
-            data_root: &root,
-            session: &session,
-            safe_mode: false,
-        };
+    impl crate::runtime::ports::TransportDriver for ClickStormDriver {
+        fn play_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            Ok(())
+        }
 
-        let next = switch_workspace(&context, Workspace::Arrange, 1).unwrap();
+        fn stop_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            Ok(())
+        }
 
-        assert_eq!(next.workspace, Workspace::Arrange);
-        assert_eq!(session.lock().unwrap().workspace, Workspace::Arrange);
-        assert!(!root.join("scratch").join("current.json").exists());
-        let _ = std::fs::remove_dir_all(root);
+        fn stop_timeline_nonblocking(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            self.stop_timeline()
+        }
     }
 
     #[test]
@@ -2779,9 +2306,8 @@ mod tests {
             Duration::from_millis(10),
             Duration::from_millis(500),
         ));
-        let runtime = Arc::new(
-            crate::runtime_reconciler::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap(),
-        );
+        let runtime =
+            Arc::new(crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
         let actor = SessionActor::default();
         let audio = crate::native_audio::AudioSupervisor::offline("benchmark");
         let context = SessionContext {
@@ -2843,51 +2369,6 @@ mod tests {
             "the runtime must eventually apply the latest session revision"
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn canonical_commit_timestamp_is_strictly_monotonic_within_one_clock_tick() {
-        let first = next_session_update_timestamp(100, 0);
-        assert!(first >= 101);
-        let future = now_ms().saturating_add(10_000);
-        assert_eq!(next_session_update_timestamp(100, future), future);
-        assert!(next_session_update_timestamp(u64::MAX - 1, 0) >= u64::MAX - 1);
-    }
-
-    #[test]
-    fn missing_track_plugin_is_projected_as_a_runtime_placeholder() {
-        let mut session = CreativeSession::new(1);
-        let mut track = Track::instrument("track:synth".into(), "Synth".into());
-        track.instrument = Some(RackDevice {
-            id: "device:missing".into(),
-            name: "Missing Synth".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\missing\Synth.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
-        session.arrangement.tracks.push(track);
-
-        let snapshot = runtime_timeline_snapshot(Path::new("."), &session);
-
-        assert_eq!(
-            snapshot["missingDeviceIds"],
-            serde_json::json!(["device:missing"])
-        );
-        assert_eq!(
-            snapshot["tracks"][0]["instrument"]["disabledPlaceholder"],
-            true
-        );
-        assert!(
-            !session.arrangement.tracks[0]
-                .instrument
-                .as_ref()
-                .unwrap()
-                .disabled_placeholder
-        );
     }
 
     #[test]

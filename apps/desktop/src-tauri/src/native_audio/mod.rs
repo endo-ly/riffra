@@ -1,3 +1,9 @@
+//! AudioSupervisor facade for the isolated native audio sidecar.
+//!
+//! Command acknowledgement, sidecar lifecycle, recovery state, and Runtime
+//! port adaptation live in the sibling modules below. The facade keeps the
+//! existing application-facing AudioSupervisor API stable.
+
 use crate::audio_preferences::AudioPreferences;
 use crate::model::{
     AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
@@ -5,12 +11,8 @@ use crate::model::{
 use crate::session::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
     path::Path,
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::Ordering},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Runtime};
@@ -18,6 +20,16 @@ use tauri_plugin_shell::{
     ShellExt,
     process::{CommandChild, CommandEvent},
 };
+
+mod command_bus;
+mod recovery;
+mod runtime_adapter;
+mod sidecar_process;
+
+use command_bus::{CommandBus, fail_pending_requests, record_command_response};
+use recovery::RecoveryState;
+pub(crate) use runtime_adapter::map_native_error;
+use sidecar_process::SidecarProcess;
 
 /// Stable classification prefix for failures that mean the Rust supervisor no
 /// longer has a usable transport to the isolated audio process. Recovery code
@@ -28,43 +40,9 @@ pub(crate) const NATIVE_AUDIO_TRANSPORT_LOST: &str = "Native audio transport los
 #[derive(Clone)]
 pub struct AudioSupervisor {
     status: Arc<Mutex<AudioStatus>>,
-    runtime_controls: Arc<Mutex<RuntimeControlState>>,
-    responses: Arc<(Mutex<CommandResponse>, Condvar)>,
-    next_request_id: Arc<AtomicU64>,
-    sidecar_generation: Arc<AtomicU64>,
-    child: Arc<Mutex<Option<CommandChild>>>,
-    terminated_generations: Arc<(Mutex<HashSet<u64>>, Condvar)>,
-    restart_preferences: Arc<Mutex<AudioPreferences>>,
-    planned_terminations: Arc<Mutex<HashSet<u64>>>,
-    restart_gate: Arc<Mutex<()>>,
-    restart_outcomes: Arc<Mutex<HashMap<u64, Result<(), String>>>>,
-    shutting_down: Arc<AtomicBool>,
-}
-
-#[derive(Default)]
-struct CommandResponse {
-    results: HashMap<u64, Option<Result<(), String>>>,
-}
-
-#[derive(Clone, Debug)]
-struct RuntimeControlState {
-    processing_mode: String,
-    processing_mode_sent: Option<String>,
-    master_gain_db: f64,
-    midi_listening: bool,
-    emergency_muted: bool,
-}
-
-impl Default for RuntimeControlState {
-    fn default() -> Self {
-        Self {
-            processing_mode: "passive".into(),
-            processing_mode_sent: None,
-            master_gain_db: -18.0,
-            midi_listening: false,
-            emergency_muted: true,
-        }
-    }
+    command_bus: Arc<CommandBus>,
+    process: Arc<SidecarProcess>,
+    recovery: Arc<RecoveryState>,
 }
 
 #[derive(Clone, Copy)]
@@ -250,17 +228,9 @@ impl AudioSupervisor {
                 feedback_suspected: false,
                 message: message.into(),
             })),
-            runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
-            responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
-            next_request_id: Arc::new(AtomicU64::new(1)),
-            sidecar_generation: Arc::new(AtomicU64::new(0)),
-            child: Arc::new(Mutex::new(None)),
-            terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
-            restart_preferences: Arc::new(Mutex::new(AudioPreferences::default())),
-            planned_terminations: Arc::new(Mutex::new(HashSet::new())),
-            restart_gate: Arc::new(Mutex::new(())),
-            restart_outcomes: Arc::new(Mutex::new(HashMap::new())),
-            shutting_down: Arc::new(AtomicBool::new(true)),
+            command_bus: Arc::new(CommandBus::new()),
+            process: Arc::new(SidecarProcess::new(true)),
+            recovery: Arc::new(RecoveryState::new(AudioPreferences::default())),
         }
     }
 
@@ -292,26 +262,16 @@ impl AudioSupervisor {
             feedback_suspected: false,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-
         let supervisor = Self {
             status: Arc::clone(&status),
-            runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
-            responses,
-            next_request_id: Arc::new(AtomicU64::new(1)),
-            sidecar_generation: Arc::new(AtomicU64::new(0)),
-            child: Arc::new(Mutex::new(None)),
-            terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
-            restart_preferences: Arc::new(Mutex::new(preferences)),
-            planned_terminations: Arc::new(Mutex::new(HashSet::new())),
-            restart_gate: Arc::new(Mutex::new(())),
-            restart_outcomes: Arc::new(Mutex::new(HashMap::new())),
-            shutting_down: Arc::new(AtomicBool::new(false)),
+            command_bus: Arc::new(CommandBus::new()),
+            process: Arc::new(SidecarProcess::new(false)),
+            recovery: Arc::new(RecoveryState::new(preferences)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(app, generation) {
             Ok(child) => {
-                if let Ok(mut slot) = supervisor.child.lock() {
+                if let Ok(mut slot) = supervisor.process.child.lock() {
                     *slot = Some(child);
                 }
             }
@@ -327,11 +287,11 @@ impl AudioSupervisor {
     }
 
     fn next_sidecar_generation(&self) -> u64 {
-        self.sidecar_generation.fetch_add(1, Ordering::AcqRel) + 1
+        self.process.next_generation()
     }
 
     pub(crate) fn sidecar_generation(&self) -> u64 {
-        self.sidecar_generation.load(Ordering::Acquire)
+        self.process.current_generation()
     }
 
     fn spawn_sidecar<R: Runtime>(
@@ -341,6 +301,7 @@ impl AudioSupervisor {
     ) -> Result<CommandChild, String> {
         let parent_pid = std::process::id().to_string();
         let preferences = self
+            .recovery
             .restart_preferences
             .lock()
             .map_err(|error| format!("Audio preference lock was poisoned: {error}"))?
@@ -375,16 +336,16 @@ impl AudioSupervisor {
             .map_err(|error| error.to_string())?;
 
         let event_status = Arc::clone(&self.status);
-        let event_responses = Arc::clone(&self.responses);
-        let event_generation = Arc::clone(&self.sidecar_generation);
-        let event_terminated_generations = Arc::clone(&self.terminated_generations);
+        let event_responses = Arc::clone(&self.command_bus.responses);
+        let event_generation = Arc::clone(&self.process.generation);
+        let event_process = Arc::clone(&self.process);
         let event_app = app.clone();
         let event_supervisor = self.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 if event_generation.load(Ordering::Acquire) != generation {
                     if matches!(event, CommandEvent::Error(_) | CommandEvent::Terminated(_)) {
-                        mark_sidecar_terminated(&event_terminated_generations, generation);
+                        event_process.mark_terminated(generation);
                         break;
                     }
                     continue;
@@ -456,7 +417,7 @@ impl AudioSupervisor {
                     _ => {}
                 }
             }
-            mark_sidecar_terminated(&event_terminated_generations, generation);
+            event_process.mark_terminated(generation);
         });
         Ok(child)
     }
@@ -467,13 +428,13 @@ impl AudioSupervisor {
         generation: u64,
         message: String,
     ) {
-        mark_sidecar_terminated(&self.terminated_generations, generation);
+        self.process.mark_terminated(generation);
         set_faulted(&self.status, message.clone());
-        fail_pending_requests(&self.responses, message);
+        fail_pending_requests(&self.command_bus.responses, message);
         emit_audio_status(app, &self.status);
 
-        let planned = self.take_planned_termination(generation);
-        if planned || self.shutting_down.load(Ordering::Acquire) {
+        let planned = self.process.take_planned_termination(generation);
+        if planned || self.process.shutting_down.load(Ordering::Acquire) {
             return;
         }
 
@@ -515,10 +476,11 @@ impl AudioSupervisor {
         expected_generation: Option<u64>,
     ) -> Result<(), String> {
         let _restart_gate = self
+            .recovery
             .restart_gate
             .lock()
             .map_err(|error| format!("Audio restart gate was poisoned: {error}"))?;
-        if self.shutting_down.load(Ordering::Acquire) {
+        if self.process.shutting_down.load(Ordering::Acquire) {
             return Err(
                 "Native audio sidecar restart was skipped because the app is shutting down.".into(),
             );
@@ -541,25 +503,29 @@ impl AudioSupervisor {
         let generation = self.next_sidecar_generation();
         let result = (|| {
             fail_pending_requests(
-                &self.responses,
+                &self.command_bus.responses,
                 "Native audio sidecar is restarting; the command will be retried.".into(),
             );
             let mut had_child = false;
             let mut kill_error = None;
             let mut slot = self
+                .process
                 .child
                 .lock()
                 .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
             if let Some(child) = slot.take() {
                 had_child = true;
-                self.mark_planned_termination(previous_generation);
+                self.process.mark_planned_termination(previous_generation);
                 kill_error = child.kill().err().map(|error| error.to_string());
             }
             drop(slot);
             if had_child {
                 let termination_timeout = remaining_timeout(deadline, Duration::from_millis(1500))
                     .unwrap_or(Duration::from_millis(1));
-                if !self.wait_for_sidecar_termination(previous_generation, termination_timeout) {
+                if !self
+                    .process
+                    .wait_for_termination(previous_generation, termination_timeout)
+                {
                     let detail = kill_error
                         .map(|error| format!(" Kill error: {error}."))
                         .unwrap_or_default();
@@ -570,7 +536,7 @@ impl AudioSupervisor {
                     return Err(message);
                 }
             }
-            if self.shutting_down.load(Ordering::Acquire) {
+            if self.process.shutting_down.load(Ordering::Acquire) {
                 return Err(
                     "Native audio sidecar restart was cancelled because the app is shutting down."
                         .into(),
@@ -587,11 +553,12 @@ impl AudioSupervisor {
                 format!("Native audio sidecar could not restart: {spawn_error}")
             })?;
             let mut slot = self
+                .process
                 .child
                 .lock()
                 .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
-            if self.shutting_down.load(Ordering::Acquire) {
-                self.mark_planned_termination(generation);
+            if self.process.shutting_down.load(Ordering::Acquire) {
+                self.process.mark_planned_termination(generation);
                 let _ = child.kill();
                 return Err(
                     "Native audio sidecar restart was cancelled because the app is shutting down."
@@ -621,110 +588,19 @@ impl AudioSupervisor {
         result
     }
 
-    fn completed_restart_outcome(&self, previous_generation: u64) -> Option<Result<(), String>> {
-        self.restart_outcomes
-            .lock()
-            .ok()?
-            .get(&previous_generation)
-            .cloned()
-    }
-
-    fn record_restart_outcome(&self, previous_generation: u64, result: &Result<(), String>) {
-        let Ok(mut outcomes) = self.restart_outcomes.lock() else {
-            return;
-        };
-        if outcomes.len() >= 32
-            && let Some(oldest_generation) = outcomes.keys().min().copied()
-        {
-            outcomes.remove(&oldest_generation);
-        }
-        outcomes.insert(previous_generation, result.clone());
-    }
-
-    fn mark_planned_termination(&self, generation: u64) {
-        if let Ok(mut planned) = self.planned_terminations.lock() {
-            planned.insert(generation);
-        }
-    }
-
-    fn take_planned_termination(&self, generation: u64) -> bool {
-        self.planned_terminations
-            .lock()
-            .map(|mut planned| planned.remove(&generation))
-            .unwrap_or(false)
-    }
-
-    fn restore_runtime_controls(&self, deadline: Instant) -> Result<(), String> {
-        let controls = self
-            .runtime_controls
-            .lock()
-            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
-            .clone();
-        self.wait_for_command(
-            serde_json::json!({
-                "type": "setProcessingMode",
-                "mode": controls.processing_mode,
-            }),
-            remaining_timeout(deadline, Duration::from_secs(3))?,
-        )?;
-        self.wait_for_command(
-            serde_json::json!({
-                "type": "setMasterGainDb",
-                "gainDb": controls.master_gain_db,
-            }),
-            remaining_timeout(deadline, Duration::from_secs(3))?,
-        )?;
-        self.wait_for_command(
-            serde_json::json!({
-                "type": if controls.midi_listening {
-                    "enableMidiListening"
-                } else {
-                    "disableMidiListening"
-                },
-            }),
-            remaining_timeout(deadline, Duration::from_secs(3))?,
-        )?;
-        // A recovered process must remain muted until the user explicitly
-        // confirms that audio should fade back in. The other control values are
-        // restored exactly, but safety mute is deliberately not auto-cleared.
-        self.wait_for_command(
-            serde_json::json!({"type": "setEmergencyMute", "muted": true}),
-            remaining_timeout(deadline, Duration::from_secs(3))?,
-        )?;
-        if let Ok(mut current) = self.runtime_controls.lock() {
-            current.processing_mode_sent = Some(current.processing_mode.clone());
-            current.emergency_muted = true;
-        }
-        Ok(())
-    }
-
     pub(crate) fn force_shutdown(&self) {
-        self.shutting_down.store(true, Ordering::Release);
+        self.process.shutting_down.store(true, Ordering::Release);
         fail_pending_requests(
-            &self.responses,
+            &self.command_bus.responses,
             "Native audio sidecar is shutting down.".into(),
         );
-        if let Ok(mut slot) = self.child.lock()
+        if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
         {
-            self.mark_planned_termination(self.sidecar_generation());
+            self.process
+                .mark_planned_termination(self.sidecar_generation());
             let _ = child.kill();
         }
-    }
-
-    fn wait_for_sidecar_termination(&self, generation: u64, timeout: Duration) -> bool {
-        let (terminated, changed) = &*self.terminated_generations;
-        let guard = match terminated.lock() {
-            Ok(guard) => guard,
-            Err(_) => return false,
-        };
-        let (mut guard, _) = match changed.wait_timeout_while(guard, timeout, |generations| {
-            !generations.contains(&generation)
-        }) {
-            Ok(result) => result,
-            Err(_) => return false,
-        };
-        guard.remove(&generation)
     }
 
     pub(crate) fn restart_sidecar_for_runtime<R: Runtime>(
@@ -817,7 +693,8 @@ impl AudioSupervisor {
         // sidecar disappears while this request is in flight, a replacement
         // process must restore the user's latest mode rather than the last
         // mode that happened to acknowledge successfully.
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .processing_mode = mode.into();
@@ -825,7 +702,8 @@ impl AudioSupervisor {
             serde_json::json!({"type": "setProcessingMode", "mode": mode}),
             "",
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .processing_mode_sent = Some(mode.into());
@@ -843,6 +721,7 @@ impl AudioSupervisor {
         }
         let changed = {
             let mut controls = self
+                .recovery
                 .runtime_controls
                 .lock()
                 .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?;
@@ -864,7 +743,7 @@ impl AudioSupervisor {
             "reportStatus": false,
         }));
         if result.is_ok()
-            && let Ok(mut controls) = self.runtime_controls.lock()
+            && let Ok(mut controls) = self.recovery.runtime_controls.lock()
         {
             controls.processing_mode_sent = Some(mode.into());
         }
@@ -922,137 +801,6 @@ impl AudioSupervisor {
             "",
             Duration::from_secs(10),
         )?;
-        Ok(())
-    }
-
-    fn send_command(
-        &self,
-        command: serde_json::Value,
-        message: &str,
-    ) -> Result<AudioStatus, String> {
-        self.send_command_with_timeout(command, message, Duration::from_secs(3))
-    }
-
-    fn send_command_with_timeout(
-        &self,
-        command: serde_json::Value,
-        message: &str,
-        timeout: Duration,
-    ) -> Result<AudioStatus, String> {
-        self.wait_for_command(command, timeout)?;
-        let mut status = self
-            .status
-            .lock()
-            .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
-        if !message.is_empty() {
-            status.message = message.into();
-        }
-        Ok(status.clone())
-    }
-
-    /// Waits for a sidecar acknowledgement without cloning the full
-    /// [`AudioStatus`]. High-rate realtime commands such as MIDI only need an
-    /// acknowledgement; cloning plugin state data for every note can otherwise
-    /// turn a performance path into a large allocation/serialization path.
-    fn send_command_ack(
-        &self,
-        command: serde_json::Value,
-        message: &str,
-        timeout: Duration,
-    ) -> Result<(), String> {
-        self.wait_for_command(command, timeout)?;
-        if !message.is_empty() {
-            let mut status = self
-                .status
-                .lock()
-                .map_err(|error| format!("Audio status lock was poisoned: {error}"))?;
-            status.message = message.into();
-        }
-        Ok(())
-    }
-
-    fn send_command_without_wait(&self, command: serde_json::Value) -> Result<(), String> {
-        let payload = serde_json::to_string(&command)
-            .map_err(|error| format!("Audio command could not be encoded: {error}"))?;
-        let mut child_slot = self
-            .child
-            .lock()
-            .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
-        let child = child_slot.as_mut().ok_or_else(|| {
-            format!("{NATIVE_AUDIO_TRANSPORT_LOST}: the requested audio command was not sent.")
-        })?;
-        child
-            .write(format!("{payload}\n").as_bytes())
-            .map_err(|error| format!("{NATIVE_AUDIO_TRANSPORT_LOST}: {error}"))
-    }
-
-    fn wait_for_command(
-        &self,
-        mut command: serde_json::Value,
-        timeout: Duration,
-    ) -> Result<(), String> {
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        command["requestId"] = serde_json::json!(request_id);
-        let payload = serde_json::to_string(&command)
-            .map_err(|error| format!("Audio command could not be encoded: {error}"))?;
-        let (response_lock, response_ready) = &*self.responses;
-        {
-            let mut response = response_lock
-                .lock()
-                .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
-            response.results.insert(request_id, None);
-        }
-
-        let write_result = {
-            let mut child_slot = self
-                .child
-                .lock()
-                .map_err(|error| format!("Audio child lock was poisoned: {error}"))?;
-            let child = child_slot.as_mut().ok_or_else(|| {
-                format!("{NATIVE_AUDIO_TRANSPORT_LOST}: the requested audio command was not sent.")
-            });
-            child.and_then(|child| {
-                child
-                    .write(format!("{payload}\n").as_bytes())
-                    .map_err(|error| error.to_string())
-            })
-        };
-        if let Err(error) = write_result {
-            if let Ok(mut response) = response_lock.lock() {
-                response.results.remove(&request_id);
-            }
-            return Err(format!(
-                "{NATIVE_AUDIO_TRANSPORT_LOST}: command could not reach the isolated audio process: {error}"
-            ));
-        }
-
-        let response = response_lock
-            .lock()
-            .map_err(|error| format!("Audio response lock was poisoned: {error}"))?;
-        let wait = response_ready.wait_timeout_while(response, timeout, |current| {
-            current.results.get(&request_id).is_none_or(Option::is_none)
-        });
-        let (mut response, wait_result) =
-            wait.map_err(|error| format!("Audio response wait failed: {error}"))?;
-        if wait_result.timed_out()
-            && response
-                .results
-                .get(&request_id)
-                .is_none_or(Option::is_none)
-        {
-            response.results.remove(&request_id);
-            return Err(format!(
-                "{NATIVE_AUDIO_TRANSPORT_LOST}: command was not acknowledged within {} seconds.",
-                timeout.as_secs()
-            ));
-        }
-
-        let result = response
-            .results
-            .remove(&request_id)
-            .flatten()
-            .unwrap_or_else(|| Err("Native audio returned no command result.".into()));
-        result?;
         Ok(())
     }
 
@@ -1160,7 +908,8 @@ impl AudioSupervisor {
             serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
             "Master gain updated through the safety limiter.",
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .master_gain_db = safe_gain;
@@ -1174,7 +923,8 @@ impl AudioSupervisor {
             "",
             Duration::from_secs(3),
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .master_gain_db = safe_gain;
@@ -1274,7 +1024,8 @@ impl AudioSupervisor {
             serde_json::json!({"type": "enableMidiListening"}),
             "MIDI listening enabled; all detected inputs are routed to the rack.",
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .midi_listening = true;
@@ -1286,7 +1037,8 @@ impl AudioSupervisor {
             serde_json::json!({"type": "disableMidiListening"}),
             "MIDI listening disabled; no external MIDI device is being consumed.",
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .midi_listening = false;
@@ -1389,14 +1141,6 @@ impl AudioSupervisor {
         }
     }
 
-    pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> Result<(), String> {
-        *self
-            .restart_preferences
-            .lock()
-            .map_err(|error| format!("Audio preference lock was poisoned: {error}"))? = preferences;
-        Ok(())
-    }
-
     pub fn set_emergency_mute(&self, muted: bool) -> Result<AudioStatus, String> {
         let status = self.send_command(
             serde_json::json!({"type": "setEmergencyMute", "muted": muted}),
@@ -1406,7 +1150,8 @@ impl AudioSupervisor {
                 "Audio faded in from silence through the safety limiter."
             },
         )?;
-        self.runtime_controls
+        self.recovery
+            .runtime_controls
             .lock()
             .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
             .emergency_muted = muted;
@@ -1416,14 +1161,15 @@ impl AudioSupervisor {
 
 impl Drop for AudioSupervisor {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.child) != 1 {
+        if Arc::strong_count(&self.process.child) != 1 {
             return;
         }
-        self.shutting_down.store(true, Ordering::Release);
-        if let Ok(mut slot) = self.child.lock()
+        self.process.shutting_down.store(true, Ordering::Release);
+        if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
         {
-            self.mark_planned_termination(self.sidecar_generation());
+            self.process
+                .mark_planned_termination(self.sidecar_generation());
             // Drop is a hard safety boundary. A graceful shutdown write can
             // block behind the same VST that caused the app to close, so kill
             // the isolated process directly and let the OS reclaim it.
@@ -1695,46 +1441,6 @@ fn handle_native_stdout(status: &Arc<Mutex<AudioStatus>>, bytes: &[u8]) -> Optio
     }
 }
 
-fn record_command_response(
-    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
-    request_id: u64,
-    error: Option<String>,
-) {
-    let (response_lock, response_ready) = &**responses;
-    if let Ok(mut response) = response_lock.lock() {
-        if let Some(result) = response.results.get_mut(&request_id) {
-            *result = Some(match error {
-                Some(error) => Err(error),
-                None => Ok(()),
-            });
-        }
-        response_ready.notify_all();
-    }
-}
-
-fn mark_sidecar_terminated(
-    terminated_generations: &Arc<(Mutex<HashSet<u64>>, Condvar)>,
-    generation: u64,
-) {
-    let (terminated, changed) = &**terminated_generations;
-    if let Ok(mut generations) = terminated.lock() {
-        generations.insert(generation);
-        changed.notify_all();
-    }
-}
-
-fn fail_pending_requests(responses: &Arc<(Mutex<CommandResponse>, Condvar)>, error: String) {
-    let (response_lock, response_ready) = &**responses;
-    if let Ok(mut response) = response_lock.lock() {
-        for result in response.results.values_mut() {
-            if result.is_none() {
-                *result = Some(Err(error.clone()));
-            }
-        }
-        response_ready.notify_all();
-    }
-}
-
 fn set_command_error(status: &Arc<Mutex<AudioStatus>>, message: String) {
     if let Ok(mut current) = status.lock() {
         current.message = message;
@@ -1951,62 +1657,6 @@ mod tests {
         ));
         assert!(!sidecar_restart_required(
             "Native audio device error: device missing."
-        ));
-    }
-
-    #[test]
-    fn restart_coordinator_reuses_the_result_for_a_stale_generation() {
-        let supervisor = AudioSupervisor::offline("test");
-        let result = Err("restart failed".to_string());
-        supervisor.record_restart_outcome(7, &result);
-
-        assert_eq!(supervisor.completed_restart_outcome(7), Some(result));
-        assert!(supervisor.completed_restart_outcome(8).is_none());
-    }
-
-    #[test]
-    fn planned_termination_is_consumed_once() {
-        let supervisor = AudioSupervisor::offline("test");
-        supervisor.mark_planned_termination(3);
-
-        assert!(supervisor.take_planned_termination(3));
-        assert!(!supervisor.take_planned_termination(3));
-    }
-
-    #[test]
-    fn sidecar_termination_completes_the_pending_command() {
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        responses.0.lock().unwrap().results.insert(42, None);
-
-        fail_pending_requests(&responses, "plugin process stopped".into());
-
-        let response = responses.0.lock().unwrap();
-        assert!(matches!(
-            response.results.get(&42),
-            Some(Some(Err(message))) if message == "plugin process stopped"
-        ));
-    }
-
-    #[test]
-    fn sidecar_termination_completes_all_pending_commands() {
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        responses
-            .0
-            .lock()
-            .unwrap()
-            .results
-            .extend([(7, None), (8, None)]);
-
-        fail_pending_requests(&responses, "plugin process stopped".into());
-
-        let response = responses.0.lock().unwrap();
-        assert!(matches!(
-            response.results.get(&7),
-            Some(Some(Err(message))) if message == "plugin process stopped"
-        ));
-        assert!(matches!(
-            response.results.get(&8),
-            Some(Some(Err(message))) if message == "plugin process stopped"
         ));
     }
 
