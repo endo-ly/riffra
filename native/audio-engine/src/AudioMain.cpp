@@ -855,6 +855,13 @@ int serve(
     std::atomic<bool> pluginOperationRunning { false };
     std::atomic<bool> timelineOperationRunning { false };
     RuntimeLifecycleExecutor runtimeLifecycle;
+    runtimeLifecycle.setTimeoutHandler([] {
+        // Do not write to stdout here. The parent may be the stalled party or
+        // its pipe may already be back-pressured; the watchdog's only bounded
+        // operation is to terminate the isolated process so the Rust
+        // supervisor can restart it in emergency-mute state.
+        std::_Exit(0);
+    });
 
     std::thread commandThread([&] {
         std::string line;
@@ -870,7 +877,8 @@ int serve(
             const auto type = command.getProperty("type", {}).toString();
             if (type == "shutdown") {
                 callback.setEmergencyMuted(true);
-                const auto submitted = runtimeLifecycle.submit([&] {
+                const auto submitted = runtimeLifecycle.submit(
+                    [&] {
                     if (trackPluginEditor != nullptr) {
                         trackPluginEditor->close();
                         trackPluginEditor.reset();
@@ -880,7 +888,8 @@ int serve(
                     pluginEditor->close();
                     pluginOperationRunning.store(false, std::memory_order_release);
                     timelineOperationRunning.store(false, std::memory_order_release);
-                });
+                },
+                std::chrono::seconds(10));
                 if (submitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
                     std::_Exit(0);
                 break;
@@ -955,7 +964,8 @@ int serve(
                                 snapshot.getProperty("unavailableClipIds", juce::Array<juce::var> {}));
                             writeJson(juce::var(ack), requestId);
                         }
-                    });
+                    },
+                    std::chrono::seconds(30));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -990,7 +1000,7 @@ int serve(
                         return;
                     }
                     writeJson(timelineEngine.status(), requestId);
-                });
+                }, std::chrono::seconds(30));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1010,7 +1020,7 @@ int serve(
                     timelineEngine.discardPreparedSnapshot();
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(timelineEngine.status(), requestId);
-                });
+                }, std::chrono::seconds(5));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1040,7 +1050,8 @@ int serve(
                             return;
                         }
                         writeJson(timelineEngine.status(), requestId);
-                    });
+                    },
+                    std::chrono::seconds(10));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1072,7 +1083,8 @@ int serve(
                             return;
                         }
                         writeJson(timelineEngine.status(), requestId);
-                    });
+                    },
+                    std::chrono::seconds(10));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1143,7 +1155,8 @@ int serve(
                                             {},
                                             OutputKind::state,
                                             stateKey);
-                                    });
+                                    },
+                                    std::chrono::seconds(10));
                             },
                             [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
                                 const auto stateKey = "track-parameter:"
@@ -1176,7 +1189,8 @@ int serve(
                                             {},
                                             OutputKind::state,
                                             stateKey);
-                                    });
+                                    },
+                                    std::chrono::seconds(10));
                             });
                         juce::String editorError;
                         bool opened = false;
@@ -1198,7 +1212,8 @@ int serve(
                             return;
                         }
                         writeJson(timelineEngine.status(), requestId);
-                    });
+                    },
+                    std::chrono::seconds(30));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1206,13 +1221,20 @@ int serve(
                 continue;
             }
             if (type == "playTimeline") {
+                // Workspace mode delivery is intentionally nonblocking during
+                // navigation. Make Arrange playback self-contained so a Play
+                // click cannot race the preceding mode command and leave the
+                // TimelineEngine playing while the audio callback still runs
+                // in passive/Play mode (which produces silence).
+                callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 timelineEngine.play();
                 writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "stopTimeline") {
                 timelineEngine.stop();
-                writeJson(timelineEngine.status());
+                if (static_cast<bool>(command.getProperty("reportStatus", true)))
+                    writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "seekTimeline") {
@@ -1224,6 +1246,8 @@ int serve(
             }
             if (type == "setProcessingMode") {
                 const auto mode = command.getProperty("mode", {}).toString();
+                const auto reportStatus = static_cast<bool>(
+                    command.getProperty("reportStatus", true));
                 if (mode == "play")
                     callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::play);
                 else if (mode == "arrange")
@@ -1234,7 +1258,9 @@ int serve(
                     writeJson(makeError("processingMode", "Processing mode is invalid."));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
+                if (reportStatus)
+                    writeJson(currentStatus(
+                        manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "loadPlugin") {
@@ -1285,7 +1311,8 @@ int serve(
                             return;
                         }
                         writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                    });
+                    },
+                    std::chrono::seconds(30));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1318,7 +1345,8 @@ int serve(
                         return;
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                });
+                },
+                std::chrono::seconds(30));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1615,7 +1643,7 @@ int serve(
                     rack.setBypassed(bypassed);
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                });
+                }, std::chrono::seconds(10));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1649,7 +1677,8 @@ int serve(
                         return;
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                });
+                },
+                std::chrono::seconds(30));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1676,7 +1705,8 @@ int serve(
                         return;
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                });
+                },
+                std::chrono::seconds(10));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1702,7 +1732,8 @@ int serve(
                         return;
                     }
                     writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                });
+                },
+                std::chrono::seconds(10));
                 if (!submitted) {
                     pluginOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1981,7 +2012,7 @@ int serve(
             pluginEditor->close();
             pluginOperationRunning.store(false, std::memory_order_release);
             timelineOperationRunning.store(false, std::memory_order_release);
-        });
+        }, std::chrono::seconds(10));
         if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
             std::_Exit(0);
         juce::MessageManager::callAsync(

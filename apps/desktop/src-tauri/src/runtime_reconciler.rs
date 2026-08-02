@@ -14,7 +14,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-pub type RuntimeRecovery = Arc<dyn Fn(Duration) -> Result<(), String> + Send + Sync>;
+pub type RuntimeRecovery = Arc<dyn Fn(u64, Duration) -> Result<(), String> + Send + Sync>;
 
 /// Absolute ordering assigned by the Session Actor when canonical state is
 /// committed. `session_revision` is retained for diagnostics and display, but
@@ -32,6 +32,9 @@ pub trait RuntimeDriver: Send + Sync + 'static {
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), String>;
     fn play_timeline(&self) -> Result<(), String>;
     fn stop_timeline(&self) -> Result<(), String>;
+    fn stop_timeline_nonblocking(&self) -> Result<(), String> {
+        self.stop_timeline()
+    }
     fn runtime_generation(&self) -> u64;
     fn force_shutdown(&self) {}
 }
@@ -55,6 +58,10 @@ impl RuntimeDriver for AudioSupervisor {
 
     fn stop_timeline(&self) -> Result<(), String> {
         AudioSupervisor::stop_timeline(self).map(|_| ())
+    }
+
+    fn stop_timeline_nonblocking(&self) -> Result<(), String> {
+        AudioSupervisor::stop_timeline_nonblocking(self)
     }
 
     fn runtime_generation(&self) -> u64 {
@@ -124,6 +131,7 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
     driver: Arc<D>,
     state: Arc<(Mutex<ReconcilerState>, Condvar)>,
     publish_gate: Arc<Mutex<()>>,
+    transport_gate: Arc<Mutex<()>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -151,6 +159,8 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         let worker_recovery = recovery.clone();
         let publish_gate = Arc::new(Mutex::new(()));
         let worker_publish_gate = Arc::clone(&publish_gate);
+        let transport_gate = Arc::new(Mutex::new(()));
+        let worker_transport_gate = Arc::clone(&transport_gate);
         let worker = thread::Builder::new()
             .name("riffra-runtime-reconciler".into())
             .spawn(move || {
@@ -158,6 +168,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                     worker_driver,
                     worker_state,
                     worker_publish_gate,
+                    worker_transport_gate,
                     worker_recovery,
                 )
             })
@@ -166,6 +177,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             driver,
             state,
             publish_gate,
+            transport_gate,
             worker: Mutex::new(Some(worker)),
         })
     }
@@ -175,16 +187,29 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.status()
     }
 
-    fn submit_with_deadline(
+    /// Enqueues a projection without waiting for an in-flight prepare/commit
+    /// cycle on the Audio Runtime. The worker supersedes or discards stale
+    /// work under its own single-owner loop, so this is safe for high-frequency
+    /// edits (mute/arm toggles, automation gestures): the Sidecar converges on
+    /// the latest target as soon as the current cycle finishes. Operations that
+    /// must observe the applied graph before returning (starting a recording)
+    /// keep using the blocking [`RuntimeReconciler::submit`] or
+    /// [`RuntimeReconciler::apply_and_wait`].
+    pub fn submit_nonblocking(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+    ) -> RuntimeProjectionStatus {
+        let _ = self.enqueue(snapshot, key, None);
+        self.status()
+    }
+
+    fn enqueue(
         &self,
         snapshot: Value,
         key: ProjectionKey,
         deadline: Option<Instant>,
     ) -> SubmissionResult {
-        let _publish_gate = self
-            .publish_gate
-            .lock()
-            .expect("runtime publish gate poisoned");
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime reconciler lock poisoned");
         let generation = self.driver.runtime_generation();
@@ -258,6 +283,19 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         };
         wake.notify_one();
         SubmissionResult::Accepted { operation_id, key }
+    }
+
+    fn submit_with_deadline(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        deadline: Option<Instant>,
+    ) -> SubmissionResult {
+        let _publish_gate = self
+            .publish_gate
+            .lock()
+            .expect("runtime publish gate poisoned");
+        self.enqueue(snapshot, key, deadline)
     }
 
     pub fn status(&self) -> RuntimeProjectionStatus {
@@ -351,11 +389,31 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
     }
 
-    /// Records the user's Play intent without waiting for a VST operation. If
-    /// the requested revision is already active, the native command is sent
-    /// immediately; otherwise the worker starts playback after publishing the
-    /// latest successful graph.
-    pub fn play(&self) -> Result<RuntimeProjectionStatus, String> {
+    /// Attempts to record the user's Play intent without waiting for a VST
+    /// operation while holding the same gate used by Stop. If the requested
+    /// revision is already active, the native command is sent immediately;
+    /// otherwise the worker starts playback after publishing the latest
+    /// successful graph.
+    /// The predicate is evaluated after the gate is acquired, so a workspace
+    /// navigation that has already changed the desired view cannot be
+    /// followed by a stale Play command.
+    pub fn play_if<F>(&self, should_play: F) -> Result<bool, String>
+    where
+        F: FnOnce() -> bool,
+    {
+        let _transport_gate = self
+            .transport_gate
+            .lock()
+            .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
+        if !should_play() {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            state.transport_intent = TransportIntent::Stopped;
+            return Ok(false);
+        }
         let generation = self.driver.runtime_generation();
         let should_play_now = {
             let mut state = self
@@ -374,12 +432,16 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         if should_play_now {
             self.driver.play_timeline()?;
         }
-        Ok(self.status())
+        Ok(true)
     }
 
     /// Stop is a critical control path. It never waits for the latest VST
     /// preparation to finish before sending the stop command.
     pub fn stop(&self) -> Result<RuntimeProjectionStatus, String> {
+        let _transport_gate = self
+            .transport_gate
+            .lock()
+            .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
         {
             let mut state = self
                 .state
@@ -389,6 +451,26 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             state.transport_intent = TransportIntent::Stopped;
         }
         self.driver.stop_timeline()?;
+        Ok(self.status())
+    }
+
+    /// Clears pending Play intent and sends Stop without waiting for a native
+    /// acknowledgement. Workspace navigation uses this path because it must
+    /// invalidate stale transport work without joining a slow audio process.
+    pub fn stop_nonblocking(&self) -> Result<RuntimeProjectionStatus, String> {
+        let _transport_gate = self
+            .transport_gate
+            .lock()
+            .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
+        {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            state.transport_intent = TransportIntent::Stopped;
+        }
+        self.driver.stop_timeline_nonblocking()?;
         Ok(self.status())
     }
 }
@@ -414,6 +496,7 @@ fn worker_loop<D: RuntimeDriver>(
     driver: Arc<D>,
     state: Arc<(Mutex<ReconcilerState>, Condvar)>,
     publish_gate: Arc<Mutex<()>>,
+    transport_gate: Arc<Mutex<()>>,
     recovery: Option<RuntimeRecovery>,
 ) {
     loop {
@@ -541,7 +624,7 @@ fn worker_loop<D: RuntimeDriver>(
             && let Some(recovery) = recovery.as_ref()
         {
             let recovery_result = remaining_timeout(target.deadline, Duration::from_secs(20))
-                .and_then(|timeout| recovery(timeout));
+                .and_then(|timeout| recovery(generation, timeout));
             match recovery_result {
                 Ok(()) => {
                     let (lock, wake) = &*state;
@@ -646,8 +729,22 @@ fn worker_loop<D: RuntimeDriver>(
             wake.notify_one();
         }
 
-        if play_after_publish && let Err(error) = driver.play_timeline() {
-            play_error = Some(error);
+        if play_after_publish {
+            let _transport_gate = transport_gate
+                .lock()
+                .expect("runtime transport gate poisoned");
+            let should_play = state
+                .0
+                .lock()
+                .map(|state| {
+                    state.transport_intent == TransportIntent::Playing
+                        && state.latest_target.is_none()
+                        && !state.stop_requested
+                })
+                .unwrap_or(false);
+            if should_play && let Err(error) = driver.play_timeline() {
+                play_error = Some(error);
+            }
         }
         if let Some(error) = play_error
             && let Ok(mut state) = state.0.lock()
@@ -695,9 +792,7 @@ fn should_recover_runtime(result: &Result<(), String>) -> bool {
     is_native_timeout(result)
         || result.as_ref().err().is_some_and(|error| {
             error.contains("generation changed")
-                || error.contains("Native audio communication failed")
-                || error.contains("could not reach the isolated audio process")
-                || error.contains("Native audio is unavailable")
+                || crate::native_audio::is_transport_loss_error(error)
         })
 }
 
@@ -905,7 +1000,8 @@ mod tests {
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(7), key(7, 7));
 
-        let status = reconciler.play().unwrap();
+        reconciler.play_if(|| true).unwrap();
+        let status = reconciler.status();
         assert!(matches!(
             status.state,
             RuntimeProjectionState::Queued | RuntimeProjectionState::Preparing
@@ -915,11 +1011,22 @@ mod tests {
     }
 
     #[test]
+    fn guarded_play_is_dropped_after_workspace_navigation() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        reconciler.submit(snapshot(8), key(8, 8));
+        wait_until(|| reconciler.status().active_session_revision == Some(8));
+
+        assert!(!reconciler.play_if(|| false).unwrap());
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn stop_clears_pending_play_intent() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(9), key(9, 9));
-        reconciler.play().unwrap();
+        reconciler.play_if(|| true).unwrap();
         reconciler.stop().unwrap();
 
         thread::sleep(Duration::from_millis(40));
@@ -934,7 +1041,7 @@ mod tests {
         let recoveries = Arc::new(AtomicU64::new(0));
         let recovery_count = Arc::clone(&recoveries);
         let recovery_driver = Arc::clone(&driver);
-        let recovery: RuntimeRecovery = Arc::new(move |_timeout| {
+        let recovery: RuntimeRecovery = Arc::new(move |_generation, _timeout| {
             recovery_count.fetch_add(1, Ordering::Relaxed);
             recovery_driver.generation.store(2, Ordering::Release);
             Ok(())
@@ -945,6 +1052,13 @@ mod tests {
         wait_until(|| reconciler.status().active_session_revision == Some(11));
         assert_eq!(recoveries.load(Ordering::Relaxed), 1);
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);
+    }
+
+    #[test]
+    fn treats_watchdog_process_termination_as_runtime_recovery() {
+        let result =
+            Err::<(), _>("Native audio transport lost: process stopped (code Some(0)).".into());
+        assert!(should_recover_runtime(&result));
     }
 
     #[test]
@@ -985,7 +1099,7 @@ mod tests {
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
         reconciler.submit(snapshot(20), key(20, 20));
-        reconciler.play().unwrap();
+        reconciler.play_if(|| true).unwrap();
         wait_until(|| driver.played.load(Ordering::Acquire) == 1);
         thread::sleep(Duration::from_millis(20));
 

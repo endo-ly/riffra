@@ -593,8 +593,12 @@ pub fn run() {
             let runtime_audio = audio.clone();
             let runtime_app = app.handle().clone();
             let runtime_recovery: runtime_reconciler::RuntimeRecovery =
-                std::sync::Arc::new(move |timeout| {
-                    runtime_audio.restart_sidecar_for_runtime(&runtime_app, timeout)
+                std::sync::Arc::new(move |expected_generation, timeout| {
+                    runtime_audio.restart_sidecar_for_runtime(
+                        &runtime_app,
+                        expected_generation,
+                        timeout,
+                    )
                 });
             let runtime = runtime_reconciler::RuntimeReconciler::new(
                 std::sync::Arc::new(audio.clone()),

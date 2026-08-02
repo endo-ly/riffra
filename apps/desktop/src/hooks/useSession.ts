@@ -30,15 +30,27 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const historySkip = useRef(false);
   const sessionRef = useRef<CreativeSession | null>(null);
   sessionRef.current = session;
-  const applyNativeSession = useCallback((nextSession: CreativeSession) => {
-    const current = sessionRef.current;
-    const guarded =
-      current != null && current.workspace !== nextSession.workspace
-        ? { ...nextSession, workspace: current.workspace }
-        : nextSession;
-    sessionRef.current = guarded;
-    setSession(guarded);
-  }, []);
+  const applyNativeSession = useCallback(
+    (nextSession: CreativeSession, allowExplicitHistoryMove = false) => {
+      const current = sessionRef.current;
+      // Rust assigns a strictly increasing updatedAtMs at the canonical commit
+      // boundary. A late response from an older command must not replace newer
+      // arrangement/rack data just because it crossed the IPC boundary later.
+      if (
+        !allowExplicitHistoryMove &&
+        current != null &&
+        nextSession.updatedAtMs < current.updatedAtMs
+      )
+        return;
+      const guarded =
+        current != null && current.workspace !== nextSession.workspace
+          ? { ...nextSession, workspace: current.workspace }
+          : nextSession;
+      sessionRef.current = guarded;
+      setSession(guarded);
+    },
+    [],
+  );
 
   const undo = useCallback(async () => {
     if (!session || undoStack.length === 0) return;
@@ -49,7 +61,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       historySkip.current = true;
       setUndoStack(undoStack.slice(0, -1));
       setRedoStack([...redoStack, session].slice(-40));
-      applyNativeSession(canonical);
+      applyNativeSession(canonical, true);
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -65,7 +77,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       historySkip.current = true;
       setRedoStack(redoStack.slice(0, -1));
       setUndoStack([...undoStack, session].slice(-40));
-      applyNativeSession(canonical);
+      applyNativeSession(canonical, true);
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);

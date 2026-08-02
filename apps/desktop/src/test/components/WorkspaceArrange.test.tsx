@@ -103,6 +103,25 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByText('Audio 1')).not.toBeInTheDocument();
   });
 
+  it('uses the latest pending value when Track controls are clicked rapidly', async () => {
+    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
+    render(<Harness api={api} />);
+
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    const mute = await screen.findByRole('button', { name: 'Mute Audio 1' });
+    const solo = screen.getByRole('button', { name: 'Solo Audio 1' });
+
+    fireEvent.click(mute);
+    fireEvent.click(mute);
+    fireEvent.click(mute);
+    fireEvent.click(solo);
+    fireEvent.click(solo);
+
+    await waitFor(() => expect(mute).toHaveAttribute('aria-pressed', 'true'));
+    expect(solo).toHaveAttribute('aria-pressed', 'false');
+    expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(5);
+  });
+
   it('edits Track Automation with one Session commit per gesture', async () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);

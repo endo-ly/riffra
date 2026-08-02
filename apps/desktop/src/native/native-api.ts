@@ -357,8 +357,9 @@ export interface NativeApi {
    */
   openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<CreativeSession | null>;
   /**
-   * Switches the active workspace through the Rust Session Operation so the
-   * canonical session stays the source of truth.
+   * Switches the visible workspace and asks Rust to update the desired audio
+   * processing mode. Workspace navigation is UI state; production Session
+   * persistence happens on the next real edit rather than on every tab click.
    */
   switchWorkspace(workspace: Workspace): Promise<CreativeSession | null>;
   updateSessionSettings(patch: {

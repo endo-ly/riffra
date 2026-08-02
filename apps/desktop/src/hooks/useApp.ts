@@ -132,6 +132,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const activeJobId = useRef<string | null>(null);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
+  const audioRef = useRef(audio);
+  audioRef.current = audio;
   const workspaceSwitchPromise = useRef<Promise<void> | null>(null);
   const workspaceSwitchTarget = useRef<Workspace | null>(null);
   const pendingPluginChanges = useRef(
@@ -205,6 +207,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const setSessionFromChildOperation = useCallback(
     (nextSession: CreativeSession) => {
       const current = sessionRef.current;
+      // `updatedAtMs` is a strictly increasing canonical commit token. Keep
+      // the visible workspace guard, but also reject an older full-session
+      // response so a slow VST/rack operation cannot overwrite newer edits.
+      if (current != null && nextSession.updatedAtMs < current.updatedAtMs) return;
       const guarded =
         current != null && current.workspace !== nextSession.workspace
           ? { ...nextSession, workspace: current.workspace }
@@ -220,6 +226,16 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   // child components. A slow Arrange/VST response must not overwrite a newer
   // optimistic Play/Home navigation.
   const setSession = setSessionFromChildOperation;
+  const setNavigationSession = useCallback(
+    (nextSession: CreativeSession) => {
+      // Workspace navigation is view state, not an undoable production edit.
+      // Mark both optimistic and canonical navigation snapshots so rapid tab
+      // switching cannot retain full CreativeSession copies in undo history.
+      historySkip.current = true;
+      setSession(nextSession);
+    },
+    [historySkip, setSession],
+  );
   // UI helper for applying a Rust Session Operation and surfacing a rejected
   // intent. Production state is never assembled or flushed from React here.
   const runSessionOp = useCallback(
@@ -234,19 +250,39 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const enqueueRuntimeReconciliation = useCallback(<T>(operation: () => Promise<T>): Promise<T> => {
-    const current = runtimeReconciliationTail.current.catch(() => undefined).then(operation);
-    runtimeReconciliationTail.current = current.then(
-      () => undefined,
-      () => undefined,
-    );
-    return current;
-  }, []);
+  const enqueueRuntimeReconciliation = useCallback(
+    <T>(
+      expectedWorkspace: Workspace,
+      operation: () => Promise<T>,
+      staleResult: () => T,
+    ): Promise<T> => {
+      const current = runtimeReconciliationTail.current
+        .catch(() => undefined)
+        .then(() => {
+          // A queued VST operation may outlive the workspace that requested
+          // it. Do not start stale work after a rapid navigation burst; an
+          // operation already inside third-party code remains bounded by the
+          // native lifecycle watchdog and cannot be safely cancelled here.
+          if (sessionRef.current?.workspace !== expectedWorkspace) return staleResult();
+          return operation();
+        });
+      runtimeReconciliationTail.current = current.then(
+        () => undefined,
+        () => undefined,
+      );
+      return current;
+    },
+    [],
+  );
   const restorePlayRack = useCallback((): Promise<AudioStatus> => {
     const pending = playRackRestorePromise.current;
     if (pending) return pending;
 
-    const operation = enqueueRuntimeReconciliation(() => restoreCurrentRack())
+    const operation = enqueueRuntimeReconciliation(
+      'play',
+      () => restoreCurrentRack(),
+      () => audioRef.current,
+    )
       .then((nextAudio) => {
         setAudio(nextAudio);
         return nextAudio;
@@ -267,8 +303,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const pending = arrangeRuntimeSyncPromise.current;
     if (pending) return pending;
 
-    const operation = enqueueRuntimeReconciliation(() =>
-      syncArrangementRuntime().then(() => undefined),
+    const operation = enqueueRuntimeReconciliation(
+      'arrange',
+      () => syncArrangementRuntime().then(() => undefined),
+      () => undefined,
     ).finally(() => {
       if (arrangeRuntimeSyncPromise.current === operation) {
         arrangeRuntimeSyncPromise.current = null;
@@ -279,40 +317,54 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, [enqueueRuntimeReconciliation, syncArrangementRuntime]);
   const switchWorkspace = useCallback(
     async (workspace: Workspace) => {
+      const previous = sessionRef.current;
+      const initialWorkspace = previous?.workspace ?? workspace;
+      // Paint every navigation intent before looking at the runtime loop.
+      // If an earlier native/session operation is stalled, a later click must
+      // still update the visible workspace immediately.
+      if (previous && previous.workspace !== workspace) {
+        const optimistic = { ...previous, workspace };
+        sessionRef.current = optimistic;
+        setNavigationSession(optimistic);
+      }
       workspaceSwitchTarget.current = workspace;
       const pending = workspaceSwitchPromise.current;
-      if (pending) return pending;
+      // Painting the navigation intent is synchronous. A pending runtime loop
+      // may continue in the background, but callers must not await the
+      // previous native/session operation before the new workspace can render.
+      if (pending) return;
 
-      const operation = (async () => {
+      // Start on the next microtask so the promise is installed before a
+      // no-op target can finish synchronously; otherwise clicking the already
+      // active tab could leave a resolved promise marked as permanently
+      // pending and interfere with a later navigation intent.
+      const operation = Promise.resolve().then(async () => {
+        let lastCommittedWorkspace = initialWorkspace;
         try {
           while (workspaceSwitchTarget.current != null) {
             const target = workspaceSwitchTarget.current;
             workspaceSwitchTarget.current = null;
-            if (target === sessionRef.current?.workspace) continue;
-
-            const previous = sessionRef.current;
-            if (!previous) continue;
-
-            // Paint the requested workspace immediately. The backend owns
-            // Session operation ordering, while this optimistic projection
-            // prevents navigation from waiting for third-party plugin code.
-            // The Rust response remains authoritative and replaces this
-            // projection when it arrives.
-            const optimistic = { ...previous, workspace: target };
-            sessionRef.current = optimistic;
-            setSession(optimistic);
+            if (target === lastCommittedWorkspace) continue;
 
             const next = await runSessionOp(() => switchWorkspaceApi(target), 'Workspace switch');
             if (!next) {
-              if (sessionRef.current?.workspace === target) {
-                sessionRef.current = previous;
-                setSession(previous);
+              if (
+                workspaceSwitchTarget.current == null &&
+                sessionRef.current?.workspace === target
+              ) {
+                const current = sessionRef.current;
+                if (current) {
+                  const rollback = { ...current, workspace: lastCommittedWorkspace };
+                  sessionRef.current = rollback;
+                  setNavigationSession(rollback);
+                }
               }
               continue;
             }
+            lastCommittedWorkspace = target;
             if (sessionRef.current?.workspace !== target) continue;
             sessionRef.current = next;
-            setSession(next);
+            setNavigationSession(next);
             if (boot?.safeMode) continue;
             if (target === 'play') {
               // Rack construction may execute third-party VST code for an
@@ -338,20 +390,29 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               void syncArrangeRuntime().catch(logNativeError('Arrange runtime sync'));
             }
           }
+        } catch (error) {
+          setAutosaveError(
+            `Workspace switch failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
         } finally {
           workspaceSwitchPromise.current = null;
         }
-      })();
+      });
       workspaceSwitchPromise.current = operation;
-      return operation;
+      // The operation is intentionally detached from the navigation event.
+      // The loop coalesces rapid targets without making the React event
+      // handler wait for VST/native work. Workspace persistence is deferred to
+      // the next production Session edit on the Rust side.
+      void operation;
     },
     [
       boot?.safeMode,
       restorePlayRack,
       runSessionOp,
+      setAutosaveError,
       setAudio,
       setEmergencyMute,
-      setSession,
+      setNavigationSession,
       switchWorkspaceApi,
       syncArrangeRuntime,
     ],
@@ -966,6 +1027,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       .catch(logNativeError('bootstrap'));
     let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingAudioStatus: AudioStatus | null = null;
+    let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = onAudioStatus((status) => {
       publishAudioMeters({
         inputPeak: status.inputPeak,
@@ -979,7 +1041,19 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         audioStatusTimer = null;
         const next = pendingAudioStatus;
         pendingAudioStatus = null;
-        if (!disposed && next != null) setAudio(next);
+        if (disposed || next == null) return;
+        // AudioStatus frames arrive continuously from the native side even
+        // when nothing meaningful changed. Reapplying an identical object
+        // would re-render the entire App tree on a fixed 100 ms cadence, so
+        // only propagate frames whose content actually differs.
+        if (
+          lastAppliedAudioStatus != null &&
+          audioStatusSignature(lastAppliedAudioStatus) === audioStatusSignature(next)
+        ) {
+          return;
+        }
+        lastAppliedAudioStatus = next;
+        setAudio(next);
       }, 100);
     });
     const unlistenMeters = onAudioMeters((meters: AudioMeters) => {
@@ -1421,4 +1495,51 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setScanMessage,
     api,
   };
+}
+
+function audioStatusSignature(status: AudioStatus): string {
+  return JSON.stringify([
+    status.state,
+    status.driver,
+    status.inputDevice,
+    status.inputChannel,
+    status.inputChannels,
+    status.outputDevice,
+    status.outputChannels,
+    status.sampleRate,
+    status.bufferSize,
+    status.roundTripMs,
+    status.timelineTick,
+    status.recording,
+    // PluginStateSummary: the full plugin status includes a binary stateData
+    // blob and the parameter list; stringifying those on every status frame
+    // would cost more than the re-render this signature is meant to avoid.
+    status.plugin == null
+      ? null
+      : [
+          status.plugin.loaded,
+          status.plugin.bypassed,
+          status.plugin.path,
+          status.plugin.name,
+          status.plugin.sampleRate,
+          status.plugin.blockSize,
+          status.plugin.inputChannels,
+          status.plugin.outputChannels,
+          status.plugin.bypassedBlocks,
+          status.plugin.processedBlocks,
+          status.plugin.contentionBlocks,
+          status.plugin.transitionBlocks,
+        ],
+    status.midiInputs,
+    status.midiOutputs,
+    status.midiInputActive,
+    status.midiMessages,
+    status.lastMidiNote,
+    status.midiPadMappings,
+    status.midiPadTriggers,
+    // Live peaks, invalid-sample counters, and feedback state are published
+    // through the dedicated audio-meters external store. Including them here
+    // would make every meter frame invalidate the whole App tree again.
+    status.message,
+  ]);
 }

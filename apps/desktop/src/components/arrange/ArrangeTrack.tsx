@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, Track } from '@/lib/domain';
+import type {
+  AudioAnalysis,
+  AudioClip,
+  CreativeSession,
+  MidiClip,
+  MonitoringState,
+  Track,
+} from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
@@ -61,10 +68,55 @@ interface ArrangeTrackProps {
   onToggleAutomation: () => void;
 }
 
+interface PendingTrackValues {
+  muted?: boolean;
+  solo?: boolean;
+  armed?: boolean;
+  monitoring?: MonitoringState;
+}
+
 export function ArrangeTrack(props: ArrangeTrackProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [pendingTrackValues, setPendingTrackValues] = useState<PendingTrackValues>({});
+
+  useEffect(() => {
+    setPendingTrackValues((current) => {
+      const next = { ...current };
+      if (next.muted === props.track.muted) delete next.muted;
+      if (next.solo === props.track.solo) delete next.solo;
+      if (next.armed === props.track.armed) delete next.armed;
+      if (next.monitoring === props.track.monitoring) delete next.monitoring;
+      return next;
+    });
+  }, [props.track.armed, props.track.monitoring, props.track.muted, props.track.solo]);
+
+  const commitTrackValue = (
+    field: 'muted' | 'solo' | 'armed' | 'monitoring',
+    value: boolean | MonitoringState,
+    success: string,
+  ) => {
+    setPendingTrackValues((current) => ({ ...current, [field]: value }));
+    const patch =
+      field === 'muted'
+        ? { muted: value as boolean }
+        : field === 'solo'
+          ? { solo: value as boolean }
+          : field === 'armed'
+            ? { armed: value as boolean }
+            : { monitoring: value as MonitoringState };
+    void props.onCommit(props.api.updateTrack(props.track.id, patch), success).then((result) => {
+      if (result == null) {
+        setPendingTrackValues((current) => {
+          if (current[field] !== value) return current;
+          const next = { ...current };
+          delete next[field];
+          return next;
+        });
+      }
+    });
+  };
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -128,12 +180,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     window.addEventListener('pointerup', onUp);
   };
 
+  const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;
   const monitoringClass =
-    props.track.monitoring === 'auto'
-      ? styles.monAuto
-      : props.track.monitoring === 'on'
-        ? styles.monOn
-        : '';
+    activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 
   return (
     <div
@@ -220,12 +269,14 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         </div>
         <div className={styles.trackSwitches}>
           <button
-            className={props.track.muted ? styles.muteActive : ''}
+            className={(pendingTrackValues.muted ?? props.track.muted) ? styles.muteActive : ''}
+            aria-pressed={pendingTrackValues.muted ?? props.track.muted}
             aria-label={`Mute ${props.track.name}`}
             title="Mute"
             onClick={() =>
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, { muted: !props.track.muted }),
+              commitTrackValue(
+                'muted',
+                !(pendingTrackValues.muted ?? props.track.muted),
                 `${props.track.name} mute updated.`,
               )
             }
@@ -233,12 +284,14 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             M
           </button>
           <button
-            className={props.track.solo ? styles.soloActive : ''}
+            className={(pendingTrackValues.solo ?? props.track.solo) ? styles.soloActive : ''}
+            aria-pressed={pendingTrackValues.solo ?? props.track.solo}
             aria-label={`Solo ${props.track.name}`}
             title="Solo"
             onClick={() =>
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, { solo: !props.track.solo }),
+              commitTrackValue(
+                'solo',
+                !(pendingTrackValues.solo ?? props.track.solo),
                 `${props.track.name} solo updated.`,
               )
             }
@@ -246,14 +299,19 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             S
           </button>
           <button
-            className={`${styles.armButton} ${props.track.armed ? styles.armActive : ''}`}
-            aria-pressed={props.track.armed}
-            aria-label={`${props.track.armed ? 'Disarm' : 'Arm'} ${props.track.name} for recording`}
-            title={props.track.armed ? 'Disarm for recording' : 'Arm for recording'}
+            className={`${styles.armButton} ${(pendingTrackValues.armed ?? props.track.armed) ? styles.armActive : ''}`}
+            aria-pressed={Boolean(pendingTrackValues.armed ?? props.track.armed)}
+            aria-label={`${(pendingTrackValues.armed ?? props.track.armed) ? 'Disarm' : 'Arm'} ${props.track.name} for recording`}
+            title={
+              (pendingTrackValues.armed ?? props.track.armed)
+                ? 'Disarm for recording'
+                : 'Arm for recording'
+            }
             onClick={() =>
-              void props.onCommit(
-                props.api.updateTrack(props.track.id, { armed: !props.track.armed }),
-                `${props.track.name} ${props.track.armed ? 'disarmed' : 'armed'}.`,
+              commitTrackValue(
+                'armed',
+                !(pendingTrackValues.armed ?? props.track.armed),
+                `${props.track.name} ${(pendingTrackValues.armed ?? props.track.armed) ? 'disarmed' : 'armed'}.`,
               )
             }
           >
@@ -263,25 +321,18 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             <button
               className={`${styles.monitoringButton} ${monitoringClass}`}
               aria-label={`Cycle input monitoring for ${props.track.name}`}
-              title={`Input monitoring: ${props.track.monitoring.toUpperCase()} (click to cycle)`}
+              title={`Input monitoring: ${activeMonitoring.toUpperCase()} (click to cycle)`}
               onClick={() => {
                 const next =
-                  props.track.monitoring === 'off'
-                    ? 'auto'
-                    : props.track.monitoring === 'auto'
-                      ? 'on'
-                      : 'off';
-                void props.onCommit(
-                  props.api.updateTrack(props.track.id, { monitoring: next }),
+                  activeMonitoring === 'off' ? 'auto' : activeMonitoring === 'auto' ? 'on' : 'off';
+                commitTrackValue(
+                  'monitoring',
+                  next,
                   `${props.track.name} monitoring set to ${next.toUpperCase()}.`,
                 );
               }}
             >
-              {props.track.monitoring === 'off'
-                ? 'IN'
-                : props.track.monitoring === 'auto'
-                  ? 'A'
-                  : 'ON'}
+              {activeMonitoring === 'off' ? 'IN' : activeMonitoring === 'auto' ? 'A' : 'ON'}
             </button>
           )}
         </div>

@@ -441,7 +441,11 @@ pub async fn switch_workspace(
     workspace: Workspace,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
-    run_blocking(app, move |state| {
+    // Navigation is view state and must not wait behind a durable Session
+    // operation (or a slow VST-related command). The application operation
+    // only performs a short in-memory workspace update and sends a best-effort
+    // runtime mode.
+    run_runtime_control(app, move |state| {
         application::switch_workspace(&app_context(state), workspace)
     })
     .await

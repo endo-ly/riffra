@@ -1,10 +1,10 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
 // Tauri can dispatch several async commands at once. Canonical-session
-// mutations are still kept in one FIFO for the legacy application operations
-// that read, persist, and return a complete session snapshot. Commands that
-// only change the active workspace or transport stay outside this list so a
-// slow third-party VST cannot delay navigation or critical controls.
+// mutations are still kept in one FIFO for the application operations that
+// read, persist, and return a complete session snapshot. Workspace navigation
+// is deliberately outside this list: it is view state and its Rust operation
+// no longer enters durable Session persistence.
 const serializedCommands = new Set([
   'save_scratch_session',
   'restore_recovery_generation',
@@ -151,6 +151,20 @@ const runtimeSerializedCommands = new Set([
 let serializedTail: Promise<void> = Promise.resolve();
 let runtimeSerializedTail: Promise<void> = Promise.resolve();
 
+interface LatestWaiter<T> {
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+interface LatestQueue<T> {
+  pendingArgs: Record<string, unknown> | null;
+  waiters: LatestWaiter<T>[];
+  running: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const latestQueues = new Map<string, LatestQueue<unknown>>();
+
 /**
  * Whether the Tauri runtime bridge is available. False in the browser preview
  * (Vite dev server without the Tauri shell), true inside the Tauri app. Tauri
@@ -184,6 +198,69 @@ export function invoke<T>(command: string, args: Record<string, unknown> = {}): 
   if (canonical) serializedTail = completed;
   if (runtime) runtimeSerializedTail = completed;
   return operation;
+}
+
+/**
+ * Coalesces a burst of same-key value updates before entering the native FIFO.
+ * The last payload is authoritative; all callers from the same burst receive
+ * that canonical response. This is used for controls such as track mute/solo
+ * where sending every intermediate click only creates persistence and runtime
+ * work that the user can no longer observe.
+ */
+export function invokeLatest<T>(
+  command: string,
+  args: Record<string, unknown>,
+  key: string,
+): Promise<T> {
+  let queue = latestQueues.get(key) as LatestQueue<T> | undefined;
+  if (!queue) {
+    queue = {
+      pendingArgs: null,
+      waiters: [],
+      running: false,
+      timer: null,
+    };
+    latestQueues.set(key, queue as LatestQueue<unknown>);
+  }
+
+  const promise = new Promise<T>((resolve, reject) => {
+    queue!.pendingArgs = args;
+    queue!.waiters.push({ resolve, reject });
+  });
+
+  if (!queue.running && queue.timer === null) {
+    queue.timer = setTimeout(() => {
+      queue!.timer = null;
+      void drainLatestQueue(command, key, queue!);
+    }, 16);
+  }
+  return promise;
+}
+
+async function drainLatestQueue<T>(
+  command: string,
+  key: string,
+  queue: LatestQueue<T>,
+): Promise<void> {
+  queue.running = true;
+  try {
+    while (queue.pendingArgs !== null) {
+      const args = queue.pendingArgs;
+      queue.pendingArgs = null;
+      const waiters = queue.waiters.splice(0);
+      try {
+        const result = await invoke<T>(command, args);
+        waiters.forEach(({ resolve }) => resolve(result));
+      } catch (error) {
+        waiters.forEach(({ reject }) => reject(error));
+      }
+    }
+  } finally {
+    queue.running = false;
+    if (queue.pendingArgs === null && queue.waiters.length === 0 && queue.timer === null) {
+      latestQueues.delete(key);
+    }
+  }
 }
 
 /**

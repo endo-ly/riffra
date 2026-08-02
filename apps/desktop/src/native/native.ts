@@ -42,7 +42,7 @@ import type {
 } from '@/lib/domain';
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
-import { invoke, invokeOrFallback, isNativeRuntime } from './invoke';
+import { invoke, invokeLatest, invokeOrFallback, isNativeRuntime } from './invoke';
 import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
 import type { AudioMeters } from '@/lib/audio-meters';
 
@@ -647,6 +647,18 @@ async function updateTrack(
     rack?: RackInstance;
   },
 ): Promise<CreativeSession> {
+  const fields = Object.keys(patch);
+  const latestField =
+    fields.length === 1 && ['muted', 'solo', 'armed', 'monitoring'].includes(fields[0] ?? '')
+      ? fields[0]
+      : null;
+  if (latestField) {
+    return await invokeLatest<CreativeSession>(
+      'update_track',
+      { trackId, patch },
+      `update_track:${trackId}:${latestField}`,
+    );
+  }
   return await invoke<CreativeSession>('update_track', { trackId, patch });
 }
 

@@ -17,11 +17,11 @@
 //!   the last active graph while it reports the failed target.
 //!
 //! - Pure-session operations ([`commit_session`],
-//!   [`save_session`], [`import_session`], [`restore_generation`],
-//!   [`open_asset_in_design`], [`switch_workspace`]) mutate the session and
-//!   persist it without touching the Audio Runtime, so they reuse
-//!   [`commit_session`] as the single validate-and-persist boundary and need no
-//!   rollback compensation.
+//!   [`save_session`], [`import_session`], [`restore_generation`], and
+//!   [`open_asset_in_design`]) mutate the session and persist it without
+//!   waiting for VST lifecycle work. Workspace navigation is view state: it is
+//!   returned as an in-memory snapshot and sends only a nonblocking desired
+//!   runtime mode, so navigation never enters the durable Session commit path.
 //!
 //! This layer takes concrete dependencies rather than `tauri::State`, so the
 //! orchestration is testable directly. There is no generic transaction
@@ -38,7 +38,7 @@ use crate::model::{AudioState, AudioStatus, SessionAudioPair};
 use crate::native_audio::{AudioSupervisor, NativeSamplePad};
 use crate::plugin_catalog;
 use crate::rack::{DeviceKind, RackDevice};
-use crate::runtime_reconciler::RuntimeReconciler;
+use crate::runtime_reconciler::{RuntimeDriver, RuntimeReconciler};
 use crate::session::actor::SessionActor;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioInputRoute, AudioTakeVariant,
@@ -49,9 +49,9 @@ use crate::session::{
 use crate::storage::{SessionStore, now_ms};
 
 /// Concrete dependencies a Session Application Operation needs.
-pub struct SessionContext<'a> {
+pub struct SessionContext<'a, D: RuntimeDriver = AudioSupervisor> {
     pub audio: &'a AudioSupervisor,
-    pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+    pub runtime: &'a RuntimeReconciler<D>,
     pub session_actor: &'a SessionActor,
     pub data_root: &'a Path,
     pub session: &'a Mutex<CreativeSession>,
@@ -66,6 +66,14 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
 
 fn audio_command_succeeded(status: &AudioStatus) -> bool {
     status.state != AudioState::Faulted && status.state != AudioState::Offline
+}
+
+/// `updatedAtMs` is also the public ordering token for Session snapshots at
+/// the UI boundary. Wall-clock milliseconds alone are not strictly monotonic
+/// when several commands commit in one millisecond, so every canonical commit
+/// advances beyond the previous value.
+fn next_session_update_timestamp(previous: u64, candidate: u64) -> u64 {
+    now_ms().max(candidate).max(previous.saturating_add(1))
 }
 
 /// Resolves the session's pad set into the runtime's native pad shape, failing
@@ -177,7 +185,8 @@ pub fn create_sample_pad(
         Some(status)
     };
 
-    session.updated_at_ms = now_ms();
+    session.updated_at_ms =
+        next_session_update_timestamp(previous_session.updated_at_ms, session.updated_at_ms);
     if let Err(error) = SessionStore::new(context.data_root).save(&session) {
         // Persistence failed after the runtime accepted the new pads. Restore
         // the previous pad set so the runtime and persisted session agree.
@@ -254,7 +263,8 @@ fn commit_pad_set(
         Some(status)
     };
 
-    session.updated_at_ms = now_ms();
+    session.updated_at_ms =
+        next_session_update_timestamp(previous_session.updated_at_ms, session.updated_at_ms);
     if let Err(error) = SessionStore::new(context.data_root).save(&session) {
         if !context.safe_mode {
             let previous_native = resolve_native_pads(
@@ -375,20 +385,36 @@ pub fn remove_sample_pad(
 /// normalize, persist to the SessionStore, refresh the Library index, and swap
 /// the in-memory session. This is the "save" boundary for Session Application
 /// Operations that do not also change the Audio Runtime.
-pub fn commit_session(
-    context: &SessionContext<'_>,
+pub fn commit_session<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     mut session: CreativeSession,
 ) -> Result<CreativeSession, String> {
     session = session.validate_and_normalize()?;
-    session.updated_at_ms = now_ms();
+    let (previous_updated_at, workspace_before_save) = {
+        let current = context.session.lock().map_err(lock_error)?;
+        (current.updated_at_ms, current.workspace)
+    };
+    session.updated_at_ms =
+        next_session_update_timestamp(previous_updated_at, session.updated_at_ms);
     SessionStore::new(context.data_root)
         .save(&session)
         .map_err(|error| format!("Session could not be saved: {error}"))?;
-    crate::queue_session_index(context.data_root, &session);
-    let committed = session.clone();
+    // Workspace navigation is an in-memory UI update and may have happened
+    // while the durable write was in progress. Merge that latest view inside
+    // the same lock that publishes the canonical snapshot so navigation cannot
+    // slip between a workspace read and the final assignment.
     context.session_actor.begin_commit();
-    *context.session.lock().map_err(lock_error)? = session;
+    let committed = {
+        let mut current = context.session.lock().map_err(lock_error)?;
+        if current.workspace != workspace_before_save {
+            session.workspace = current.workspace;
+        }
+        let committed = session.clone();
+        *current = session;
+        committed
+    };
     context.session_actor.mark_committed();
+    crate::queue_session_index(context.data_root, &committed);
     Ok(committed)
 }
 
@@ -411,16 +437,25 @@ pub(crate) fn commit_merged_session(
 ) -> Result<CommittedSession, String> {
     let _operation = actor.enter()?;
     let current = session_lock.lock().map_err(lock_error)?.clone();
+    let workspace_before_save = current.workspace;
     let mut merged = merge(&current, base, candidate).validate_and_normalize()?;
-    merged.updated_at_ms = now_ms();
+    merged.updated_at_ms =
+        next_session_update_timestamp(current.updated_at_ms, merged.updated_at_ms);
     SessionStore::new(data_root)
         .save(&merged)
         .map_err(|error| format!("Session could not be saved: {error}"))?;
-    crate::queue_session_index(data_root, &merged);
-    let committed = merged.clone();
     actor.begin_commit();
-    *session_lock.lock().map_err(lock_error)? = merged;
+    let committed = {
+        let mut current = session_lock.lock().map_err(lock_error)?;
+        if current.workspace != workspace_before_save {
+            merged.workspace = current.workspace;
+        }
+        let committed = merged.clone();
+        *current = merged;
+        committed
+    };
     actor.mark_committed();
+    crate::queue_session_index(data_root, &committed);
     Ok(CommittedSession { session: committed })
 }
 
@@ -860,8 +895,8 @@ pub(crate) fn runtime_snapshot_for_recording(
     runtime_timeline_snapshot(data_root, session)
 }
 
-fn submit_canonical_projection(
-    context: &SessionContext<'_>,
+fn submit_canonical_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     projection: crate::session::actor::CanonicalProjection,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     Ok(context.runtime.submit(
@@ -873,16 +908,33 @@ fn submit_canonical_projection(
     ))
 }
 
-/// Submits the canonical Session captured under the Actor. Session commands
-/// already own the Actor for their whole synchronous operation, so this path
-/// must use the non-reentrant, guard-aware capture method.
-fn sync_arrangement(
-    context: &SessionContext<'_>,
+fn submit_canonical_projection_nonblocking<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    projection: crate::session::actor::CanonicalProjection,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    Ok(context.runtime.submit_nonblocking(
+        runtime_timeline_snapshot(context.data_root, &projection.session),
+        crate::runtime_reconciler::ProjectionKey {
+            sequence: projection.sequence,
+            session_revision: projection.session.arrangement.revision,
+        },
+    ))
+}
+
+/// Enqueues the canonical Session captured under the Actor for the Audio
+/// Runtime without blocking on the reconcile cycle. Session commands already
+/// own the Actor for their whole synchronous operation, so this path must use
+/// the non-reentrant, guard-aware capture method. The Runtime applies the
+/// latest projection as soon as an in-flight cycle completes; workflows that
+/// need the graph active before returning (playback, recording) use
+/// [`sync_arrangement_runtime`] instead.
+fn sync_arrangement<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let projection = context
         .session_actor
         .capture_projection_while_held(context.session)?;
-    submit_canonical_projection(context, projection)
+    submit_canonical_projection_nonblocking(context, projection)
 }
 
 pub fn sync_arrangement_runtime(
@@ -893,8 +945,32 @@ pub fn sync_arrangement_runtime(
 }
 
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    let _ = sync_arrangement_runtime(context)?;
-    context.runtime.play().map(|_| ())
+    // Playback is the boundary where an eventually-consistent projection is
+    // no longer sufficient. If the latest Arrange graph is still preparing,
+    // starting the transport immediately can report "playing" while the
+    // native graph is still stale (or failed), which is perceived as silent
+    // Arrange playback. Wait for this exact canonical projection and surface
+    // a bounded error instead of silently starting the wrong graph.
+    let projection = context.session_actor.capture_projection(context.session)?;
+    context.runtime.apply_and_wait(
+        runtime_timeline_snapshot(context.data_root, &projection.session),
+        crate::runtime_reconciler::ProjectionKey {
+            sequence: projection.sequence,
+            session_revision: projection.session.arrangement.revision,
+        },
+        std::time::Duration::from_secs(30),
+    )?;
+    let played = context.runtime.play_if(|| {
+        context
+            .session
+            .lock()
+            .map(|session| session.workspace == Workspace::Arrange)
+            .unwrap_or(false)
+    })?;
+    if !played {
+        return Err("Arrange playback was cancelled because the workspace changed.".into());
+    }
+    Ok(())
 }
 
 pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
@@ -1119,26 +1195,47 @@ pub fn open_asset_in_design(
     commit_session(context, session)
 }
 
-/// Switches the active workspace. This is a pure workspace change (no design
-/// tool or target), persisted through the canonical commit.
+/// Returns the active workspace snapshot and updates the desired audio mode.
+///
+/// Workspace navigation is UI state, not production content. Persisting it as
+/// a full Session commit made every tab click copy the current recovery
+/// generation, serialize the whole arrangement, fsync, and wait behind any
+/// unrelated edit. The frontend applies this snapshot optimistically; the
+/// in-memory Session also retains the latest workspace so the next real edit
+/// persists it, but navigation itself creates no recovery generation. A
+/// stalled audio process is deliberately unable to block this operation
+/// because mode delivery is best-effort and nonblocking.
 pub fn switch_workspace(
     context: &SessionContext<'_>,
     workspace: Workspace,
 ) -> Result<CreativeSession, String> {
-    let previous_workspace = context.session.lock().map_err(lock_error)?.workspace;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
-    session.workspace = workspace;
-    let mode = workspace_processing_mode(workspace);
-    context.audio.set_processing_mode(mode)?;
-    match commit_session(context, session) {
-        Ok(committed) => Ok(committed),
-        Err(error) => {
-            let _ = context
-                .audio
-                .set_processing_mode(workspace_processing_mode(previous_workspace));
-            Err(error)
-        }
+    let session = {
+        let mut current = context.session.lock().map_err(lock_error)?;
+        current.workspace = workspace;
+        current.clone()
+    };
+    if workspace != Workspace::Arrange
+        && let Err(error) = context.runtime.stop_nonblocking()
+    {
+        tracing::warn!(
+            error = ?error,
+            workspace = ?workspace,
+            "Workspace snapshot returned, but stale Arrange transport could not be stopped."
+        );
     }
+    // This is deliberately not a SessionActor commit: workspace is view state
+    // and has no effect on the arrangement projection sequence. Keeping the
+    // latest value in memory lets the next real production edit persist it,
+    // while avoiding a full JSON/recovery-generation/fsync cycle per click.
+    let mode = workspace_processing_mode(workspace);
+    if let Err(error) = context.audio.set_processing_mode_nonblocking(mode) {
+        tracing::warn!(
+            error = ?error,
+            workspace = ?workspace,
+            "Workspace snapshot returned, but the audio processing mode could not be sent; recovery will retry the desired mode."
+        );
+    }
+    Ok(session)
 }
 
 fn workspace_processing_mode(workspace: Workspace) -> &'static str {
@@ -1659,8 +1756,8 @@ pub fn add_track(
     commit_structural_arrangement(context, session)
 }
 
-pub fn update_track(
-    context: &SessionContext<'_>,
+pub fn update_track<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     track_id: &str,
     patch: TrackPatch,
 ) -> Result<CreativeSession, String> {
@@ -2511,6 +2608,201 @@ pub fn replace_missing_track_plugin(
 mod tests {
     use super::*;
     use crate::session::RecordingTakeRecord;
+    use serde_json::Value;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    struct ClickStormDriver {
+        prepare_delay: Duration,
+        commit_delay: Duration,
+        loaded: Mutex<Vec<u64>>,
+        pending: Mutex<Option<u64>>,
+        generation: AtomicU64,
+    }
+
+    impl ClickStormDriver {
+        fn new(prepare_delay: Duration, commit_delay: Duration) -> Self {
+            Self {
+                prepare_delay,
+                commit_delay,
+                loaded: Mutex::new(Vec::new()),
+                pending: Mutex::new(None),
+                generation: AtomicU64::new(1),
+            }
+        }
+    }
+
+    impl crate::runtime_reconciler::RuntimeDriver for ClickStormDriver {
+        fn prepare_timeline_snapshot(
+            &self,
+            snapshot: Value,
+            _timeout: Duration,
+        ) -> Result<(), String> {
+            thread::sleep(self.prepare_delay);
+            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
+            Ok(())
+        }
+
+        fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
+            // Simulates a Sidecar commit that is slow because the graph
+            // (including an instrument VST) has to be switched on the audio
+            // thread before the acknowledgement is sent.
+            thread::sleep(self.commit_delay);
+            let revision = self
+                .pending
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| "No prepared timeline snapshot is available.".to_string())?;
+            self.loaded.lock().unwrap().push(revision);
+            Ok(())
+        }
+
+        fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), String> {
+            self.pending.lock().unwrap().take();
+            Ok(())
+        }
+
+        fn play_timeline(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_timeline(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn runtime_generation(&self) -> u64 {
+            self.generation.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[test]
+    fn workspace_navigation_updates_memory_without_creating_a_session_save() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-workspace-navigation-{}",
+            crate::storage::now_ms()
+        ));
+        let session = Mutex::new(CreativeSession::new(1));
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let runtime_driver = Arc::new(audio.clone());
+        let runtime = Arc::new(
+            crate::runtime_reconciler::RuntimeReconciler::new(runtime_driver, None).unwrap(),
+        );
+        let actor = SessionActor::default();
+        let context = SessionContext {
+            audio: &audio,
+            runtime: runtime.as_ref(),
+            session_actor: &actor,
+            data_root: &root,
+            session: &session,
+            safe_mode: false,
+        };
+
+        let next = switch_workspace(&context, Workspace::Arrange).unwrap();
+
+        assert_eq!(next.workspace, Workspace::Arrange);
+        assert_eq!(session.lock().unwrap().workspace, Workspace::Arrange);
+        assert!(!root.join("scratch").join("current.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_track_burst_latency_with_slow_runtime_commit() {
+        let root = std::env::temp_dir().join(format!("riffra-burst-{}", crate::storage::now_ms()));
+        let session = Mutex::new({
+            let mut session = CreativeSession::new(1);
+            session
+                .arrangement
+                .tracks
+                .push(Track::audio("track:a".into(), "Audio".into()));
+            session
+                .arrangement
+                .tracks
+                .push(Track::audio("track:b".into(), "Audio".into()));
+            session
+        });
+        let store = crate::storage::SessionStore::new(&root);
+        store.ensure_layout().unwrap();
+        let driver = Arc::new(ClickStormDriver::new(
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+        ));
+        let runtime = Arc::new(
+            crate::runtime_reconciler::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap(),
+        );
+        let actor = SessionActor::default();
+        let audio = crate::native_audio::AudioSupervisor::offline("benchmark");
+        let context = SessionContext {
+            audio: &audio,
+            runtime: runtime.as_ref(),
+            session_actor: &actor,
+            data_root: &root,
+            session: &session,
+            safe_mode: false,
+        };
+
+        let started = Instant::now();
+        for index in 0..12 {
+            let started_op = Instant::now();
+            let track_id = if index % 2 == 0 { "track:a" } else { "track:b" };
+            update_track(
+                &context,
+                track_id,
+                TrackPatch {
+                    muted: Some(index % 2 == 0),
+                    ..Default::default()
+                },
+            )
+            .expect("update_track must succeed");
+            eprintln!(
+                "op {index}: {:.1} ms",
+                started_op.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        let total = started.elapsed();
+        eprintln!(
+            "TOTAL for 12 sequential clicks: {:.1} ms (commit_delay = 500 ms)",
+            total.as_secs_f64() * 1000.0
+        );
+        // With a blocking submit each click waits ~500 ms behind the slow
+        // commit (12 clicks ≈ 6 s); the non-blocking path must stay far below.
+        assert!(total < Duration::from_secs(2));
+        let expected_revision = session.lock().unwrap().arrangement.revision;
+        let converged = {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let loaded = driver.loaded.lock().unwrap();
+                if loaded.last() == Some(&expected_revision) {
+                    break true;
+                }
+                if Instant::now() > deadline {
+                    break false;
+                }
+                drop(loaded);
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        eprintln!(
+            "Sidecar loaded revisions: {:?} (expected final revision {expected_revision})",
+            driver.loaded.lock().unwrap()
+        );
+        assert!(
+            converged,
+            "the runtime must eventually apply the latest session revision"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn canonical_commit_timestamp_is_strictly_monotonic_within_one_clock_tick() {
+        let first = next_session_update_timestamp(100, 0);
+        assert!(first >= 101);
+        let future = now_ms().saturating_add(10_000);
+        assert_eq!(next_session_update_timestamp(100, future), future);
+        assert!(next_session_update_timestamp(u64::MAX - 1, 0) >= u64::MAX - 1);
+    }
 
     #[test]
     fn missing_track_plugin_is_projected_as_a_runtime_placeholder() {

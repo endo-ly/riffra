@@ -97,6 +97,20 @@ describe('App driven by FakeNativeApi', () => {
     }
   });
 
+  it('does not wedge later navigation after clicking the active workspace', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+
+    const user = userEvent.setup();
+    const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
+    await user.click(within(workspaceNav).getByRole('button', { name: /Home/ }));
+    await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
+
+    await waitFor(() => expect(fake.calls).toContain('switchWorkspace'));
+    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('play'));
+  });
+
   it('previews master gain during a gesture and persists it once at the end', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
