@@ -70,6 +70,9 @@ struct AppState {
     session_actor: session::actor::SessionActor,
     rack_operation_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
+    /// Keeps a workspace's stop intent and processing-mode update together so
+    /// concurrent navigation commands cannot interleave the two writes.
+    workspace_runtime_gate: Mutex<()>,
     runtime: runtime_reconciler::RuntimeReconciler<AudioSupervisor>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
@@ -619,6 +622,7 @@ pub fn run() {
                 session_actor: session::actor::SessionActor::default(),
                 rack_operation_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
+                workspace_runtime_gate: Mutex::new(()),
                 runtime,
                 render_worker: RenderWorker::bundled()?,
                 audio_preferences: Mutex::new(effective_preferences),

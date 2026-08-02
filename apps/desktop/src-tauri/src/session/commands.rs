@@ -51,6 +51,27 @@ where
     .map_err(|error| format!("Runtime control operation failed: {error}"))?
 }
 
+/// Workspace navigation sends a stop intent and a processing-mode update as
+/// one short runtime transaction. It remains independent from Session
+/// persistence, but the pair must not interleave across rapid navigation
+/// commands.
+async fn run_workspace_control<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _workspace_runtime_gate = state
+            .workspace_runtime_gate
+            .lock()
+            .map_err(|error| format!("Workspace runtime gate was poisoned: {error}"))?;
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Workspace control operation failed: {error}"))?
+}
+
 fn app_context(state: &AppState) -> SessionContext<'_> {
     SessionContext {
         audio: state.core.audio(),
@@ -445,7 +466,7 @@ pub async fn switch_workspace(
     // operation (or a slow VST-related command). The application operation
     // only performs a short in-memory workspace update and sends a best-effort
     // runtime mode.
-    run_runtime_control(app, move |state| {
+    run_workspace_control(app, move |state| {
         application::switch_workspace(&app_context(state), workspace)
     })
     .await

@@ -5,110 +5,39 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 // read, persist, and return a complete session snapshot. Workspace navigation
 // is deliberately outside this list: it is view state and its Rust operation
 // no longer enters durable Session persistence.
-const serializedCommands = new Set([
+// A command belongs to the canonical Session lane, the runtime lane, or both.
+// Keeping the overlap in one list prevents a command from silently drifting
+// out of one of the ordering boundaries when a new operation is added.
+const canonicalOnlyCommands = [
   'save_scratch_session',
   'restore_recovery_generation',
   'import_scratch_session',
   'create_sample_pad',
   'update_sample_pad',
   'remove_sample_pad',
-  'add_audio_clip_to_arrangement',
-  'add_midi_clip_to_arrangement',
-  'update_audio_clip',
-  'remove_timeline_clips',
-  'trim_audio_clip',
-  'split_audio_clip',
-  'duplicate_audio_clip',
-  'move_audio_clips',
-  'update_midi_clip',
-  'move_midi_clips',
-  'trim_midi_clip',
-  'split_midi_clip',
-  'duplicate_midi_clip',
-  'paste_timeline_clips',
-  'crossfade_audio_clips',
-  'update_arrangement_timebase',
-  'update_timeline_loop_range',
-  'update_timeline_punch_range',
-  'update_session_settings',
-  'add_track',
-  'update_track',
-  'set_track_automation',
-  'set_track_audio_input',
-  'set_track_midi_input',
   'set_track_instrument',
   'clear_track_instrument',
-  'add_track_effect',
-  'remove_track_effect',
-  'reorder_track_effects',
-  'set_track_device_bypassed',
-  'set_track_device_parameter',
   'persist_track_plugin_state',
   'persist_track_plugin_parameter',
-  'remove_track',
-  'duplicate_track',
-  'reorder_track',
-  'add_marker',
-  'update_marker',
-  'remove_marker',
-  'add_midi_note',
-  'update_midi_note',
-  'update_midi_notes',
-  'remove_midi_note',
-  'quantize_midi_notes',
-  'duplicate_midi_notes',
-  'set_audio_clip_take_variant',
-  'activate_take',
-  'place_take_as_separate_clip',
   'set_master_gain_db',
   'start_recording',
-  'start_arrange_recording',
-  'record_another_take',
   'stop_recording',
-  'stop_arrange_recording',
-  'relink_missing_dependency',
-  'disable_missing_plugin',
-  'replace_missing_track_plugin',
-  'load_plugin_into_rack',
-  'clear_plugin_from_rack',
-  'set_rack_plugin_bypassed',
-  'set_rack_plugin_parameter',
-  'set_rack_macro_value',
   'map_rack_macro',
   'capture_snapshot',
-  'recall_snapshot',
-  'load_rack_definition_asset',
-]);
+];
+
+const runtimeOnlyCommands = [
+  'restore_current_rack',
+  'open_plugin_editor',
+  'open_track_plugin_editor',
+];
 
 // Runtime graph operations need a second FIFO for legacy Play-rack and editor
 // commands that still perform a synchronous native transaction. Arrangement
 // projection is owned by the backend Runtime Reconciler, and transport/play
 // commands have their own critical path, so neither is allowed to wait behind
 // a VST construction task here.
-const runtimeSerializedCommands = new Set([
-  'restore_current_rack',
-  'load_plugin_into_rack',
-  'clear_plugin_from_rack',
-  'open_plugin_editor',
-  'set_rack_plugin_bypassed',
-  'set_rack_plugin_parameter',
-  'set_rack_macro_value',
-  'recall_snapshot',
-  'load_rack_definition_asset',
-  'update_session_settings',
-  'update_track',
-  'set_track_audio_input',
-  'set_track_midi_input',
-  'add_track_effect',
-  'remove_track_effect',
-  'reorder_track_effects',
-  'set_track_device_bypassed',
-  'set_track_device_parameter',
-  'open_track_plugin_editor',
-  'add_track',
-  'remove_track',
-  'duplicate_track',
-  'reorder_track',
+const canonicalAndRuntimeCommands = [
   'add_audio_clip_to_arrangement',
   'add_midi_clip_to_arrangement',
   'update_audio_clip',
@@ -127,7 +56,20 @@ const runtimeSerializedCommands = new Set([
   'update_arrangement_timebase',
   'update_timeline_loop_range',
   'update_timeline_punch_range',
+  'update_session_settings',
+  'add_track',
+  'update_track',
   'set_track_automation',
+  'set_track_audio_input',
+  'set_track_midi_input',
+  'add_track_effect',
+  'remove_track_effect',
+  'reorder_track_effects',
+  'set_track_device_bypassed',
+  'set_track_device_parameter',
+  'remove_track',
+  'duplicate_track',
+  'reorder_track',
   'add_marker',
   'update_marker',
   'remove_marker',
@@ -146,7 +88,17 @@ const runtimeSerializedCommands = new Set([
   'relink_missing_dependency',
   'disable_missing_plugin',
   'replace_missing_track_plugin',
-]);
+  'load_plugin_into_rack',
+  'clear_plugin_from_rack',
+  'set_rack_plugin_bypassed',
+  'set_rack_plugin_parameter',
+  'set_rack_macro_value',
+  'recall_snapshot',
+  'load_rack_definition_asset',
+];
+
+const serializedCommands = new Set([...canonicalOnlyCommands, ...canonicalAndRuntimeCommands]);
+const runtimeSerializedCommands = new Set([...runtimeOnlyCommands, ...canonicalAndRuntimeCommands]);
 
 let serializedTail: Promise<void> = Promise.resolve();
 let runtimeSerializedTail: Promise<void> = Promise.resolve();

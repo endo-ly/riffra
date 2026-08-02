@@ -441,61 +441,17 @@ impl AudioSupervisor {
                         emit_audio_status(&event_app, &event_status);
                     }
                     CommandEvent::Error(error) => {
-                        mark_sidecar_terminated(&event_terminated_generations, generation);
                         let message = format!(
                             "{NATIVE_AUDIO_TRANSPORT_LOST}: communication failed ({error}). The engine is isolated and saved data is safe."
                         );
-                        set_faulted(&event_status, message.clone());
-                        fail_pending_requests(&event_responses, message);
-                        emit_audio_status(&event_app, &event_status);
-                        let planned = event_supervisor.take_planned_termination(generation);
-                        if !planned && !event_supervisor.shutting_down.load(Ordering::Acquire) {
-                            let supervisor = event_supervisor.clone();
-                            let app = event_app.clone();
-                            tauri::async_runtime::spawn_blocking(move || {
-                                if let Err(error) = supervisor.restart_sidecar_for_runtime(
-                                    &app,
-                                    generation,
-                                    Duration::from_secs(20),
-                                ) {
-                                    set_faulted(
-                                        &supervisor.status,
-                                        format!(
-                                            "Native audio sidecar could not auto-restart: {error}. Saved data remains safe."
-                                        ),
-                                    );
-                                }
-                            });
-                        }
+                        event_supervisor.handle_sidecar_exit(&event_app, generation, message);
                     }
                     CommandEvent::Terminated(payload) => {
-                        mark_sidecar_terminated(&event_terminated_generations, generation);
                         let message = format!(
                             "{NATIVE_AUDIO_TRANSPORT_LOST}: process stopped (code {:?}); the UI and saved session remain available.",
                             payload.code
                         );
-                        set_faulted(&event_status, message.clone());
-                        fail_pending_requests(&event_responses, message);
-                        emit_audio_status(&event_app, &event_status);
-                        let planned = event_supervisor.take_planned_termination(generation);
-                        if !planned && !event_supervisor.shutting_down.load(Ordering::Acquire) {
-                            let supervisor = event_supervisor.clone();
-                            let app = event_app.clone();
-                            tauri::async_runtime::spawn_blocking(move || {
-                                if let Err(error) = supervisor.restart_sidecar_for_runtime(
-                                    &app,
-                                    generation,
-                                    Duration::from_secs(20),
-                                ) {
-                                    set_faulted(
-                                        &supervisor.status,
-                                        format!(
-                                            "Native audio sidecar could not auto-restart: {error}. Saved data remains safe."
-                                        ),
-                                    );
-                                }
-                            });
-                        }
+                        event_supervisor.handle_sidecar_exit(&event_app, generation, message);
                     }
                     _ => {}
                 }
@@ -503,6 +459,38 @@ impl AudioSupervisor {
             mark_sidecar_terminated(&event_terminated_generations, generation);
         });
         Ok(child)
+    }
+
+    fn handle_sidecar_exit<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        generation: u64,
+        message: String,
+    ) {
+        mark_sidecar_terminated(&self.terminated_generations, generation);
+        set_faulted(&self.status, message.clone());
+        fail_pending_requests(&self.responses, message);
+        emit_audio_status(app, &self.status);
+
+        let planned = self.take_planned_termination(generation);
+        if planned || self.shutting_down.load(Ordering::Acquire) {
+            return;
+        }
+
+        let supervisor = self.clone();
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) =
+                supervisor.restart_sidecar_for_runtime(&app, generation, Duration::from_secs(20))
+            {
+                set_faulted(
+                    &supervisor.status,
+                    format!(
+                        "Native audio sidecar could not auto-restart: {error}. Saved data remains safe."
+                    ),
+                );
+            }
+        });
     }
 
     fn restart_sidecar<R: Runtime>(

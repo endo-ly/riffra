@@ -32,9 +32,10 @@ pub trait RuntimeDriver: Send + Sync + 'static {
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), String>;
     fn play_timeline(&self) -> Result<(), String>;
     fn stop_timeline(&self) -> Result<(), String>;
-    fn stop_timeline_nonblocking(&self) -> Result<(), String> {
-        self.stop_timeline()
-    }
+    /// Sends the stop intent without waiting for a native acknowledgement.
+    /// Drivers must implement this separately so a critical navigation path
+    /// cannot silently fall back to a blocking transport call.
+    fn stop_timeline_nonblocking(&self) -> Result<(), String>;
     fn runtime_generation(&self) -> u64;
     fn force_shutdown(&self) {}
 }
@@ -876,6 +877,10 @@ mod tests {
         fn stop_timeline(&self) -> Result<(), String> {
             self.stopped.fetch_add(1, Ordering::Relaxed);
             Ok(())
+        }
+
+        fn stop_timeline_nonblocking(&self) -> Result<(), String> {
+            self.stop_timeline()
         }
 
         fn runtime_generation(&self) -> u64 {

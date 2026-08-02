@@ -210,11 +210,13 @@ pub fn create_sample_pad(
         return Err(format!("The sample pad could not be saved: {error}"));
     }
 
-    crate::queue_session_index(context.data_root, &session);
-    let committed = session.clone();
-    context.session_actor.begin_commit();
-    *context.session.lock().map_err(lock_error)? = session;
-    context.session_actor.mark_committed();
+    let committed = publish_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        session,
+        previous_session.workspace,
+    )?;
 
     // In Safe Mode the runtime stayed isolated; report the current status so
     // React reflects the real (muted/offline) engine.
@@ -286,11 +288,13 @@ fn commit_pad_set(
         return Err(format!("The pad change could not be saved: {error}"));
     }
 
-    crate::queue_session_index(context.data_root, &session);
-    let committed = session.clone();
-    context.session_actor.begin_commit();
-    *context.session.lock().map_err(lock_error)? = session;
-    context.session_actor.mark_committed();
+    let committed = publish_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        session,
+        previous_session.workspace,
+    )?;
     let status = match runtime_status {
         Some(status) => status,
         None => context.audio.refresh_status()?,
@@ -381,6 +385,32 @@ pub fn remove_sample_pad(
 // the Audio Runtime. They share [`commit_session`] as the single
 // validate-and-persist boundary so the save path lives in one place.
 
+/// Publishes a session after its persistence or runtime boundary has completed.
+/// Workspace navigation is view state and may have changed while that boundary
+/// was in progress, so the latest in-memory workspace wins at the single
+/// Session/Projection exchange.
+fn publish_session(
+    actor: &SessionActor,
+    data_root: &Path,
+    session_lock: &Mutex<CreativeSession>,
+    mut session: CreativeSession,
+    workspace_before_boundary: Workspace,
+) -> Result<CreativeSession, String> {
+    actor.begin_commit();
+    let committed = {
+        let mut current = session_lock.lock().map_err(lock_error)?;
+        if current.workspace != workspace_before_boundary {
+            session.workspace = current.workspace;
+        }
+        let committed = session.clone();
+        *current = session;
+        committed
+    };
+    actor.mark_committed();
+    crate::queue_session_index(data_root, &committed);
+    Ok(committed)
+}
+
 /// Commits a mutated session through the canonical pipeline: validate +
 /// normalize, persist to the SessionStore, refresh the Library index, and swap
 /// the in-memory session. This is the "save" boundary for Session Application
@@ -399,23 +429,13 @@ pub fn commit_session<D: RuntimeDriver>(
     SessionStore::new(context.data_root)
         .save(&session)
         .map_err(|error| format!("Session could not be saved: {error}"))?;
-    // Workspace navigation is an in-memory UI update and may have happened
-    // while the durable write was in progress. Merge that latest view inside
-    // the same lock that publishes the canonical snapshot so navigation cannot
-    // slip between a workspace read and the final assignment.
-    context.session_actor.begin_commit();
-    let committed = {
-        let mut current = context.session.lock().map_err(lock_error)?;
-        if current.workspace != workspace_before_save {
-            session.workspace = current.workspace;
-        }
-        let committed = session.clone();
-        *current = session;
-        committed
-    };
-    context.session_actor.mark_committed();
-    crate::queue_session_index(context.data_root, &committed);
-    Ok(committed)
+    publish_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        session,
+        workspace_before_save,
+    )
 }
 
 /// Commits a long-running operation's changed portion onto the latest
@@ -444,18 +464,13 @@ pub(crate) fn commit_merged_session(
     SessionStore::new(data_root)
         .save(&merged)
         .map_err(|error| format!("Session could not be saved: {error}"))?;
-    actor.begin_commit();
-    let committed = {
-        let mut current = session_lock.lock().map_err(lock_error)?;
-        if current.workspace != workspace_before_save {
-            merged.workspace = current.workspace;
-        }
-        let committed = merged.clone();
-        *current = merged;
-        committed
-    };
-    actor.mark_committed();
-    crate::queue_session_index(data_root, &committed);
+    let committed = publish_session(
+        actor,
+        data_root,
+        session_lock,
+        merged,
+        workspace_before_save,
+    )?;
     Ok(CommittedSession { session: committed })
 }
 
@@ -483,15 +498,17 @@ pub fn restore_generation(
     context: &SessionContext<'_>,
     file_name: &str,
 ) -> Result<CreativeSession, String> {
+    let workspace_before_restore = context.session.lock().map_err(lock_error)?.workspace;
     let session = SessionStore::new(context.data_root)
         .restore_generation(file_name)
         .map_err(|error| format!("Recovery generation could not be restored: {error}"))?;
-    crate::queue_session_index(context.data_root, &session);
-    let restored = session.clone();
-    context.session_actor.begin_commit();
-    *context.session.lock().map_err(lock_error)? = session;
-    context.session_actor.mark_committed();
-    Ok(restored)
+    publish_session(
+        context.session_actor,
+        context.data_root,
+        context.session,
+        session,
+        workspace_before_restore,
+    )
 }
 
 /// Applies a Domain-level mutation to the current session's [`Arrangement`],
@@ -2671,6 +2688,10 @@ mod tests {
 
         fn stop_timeline(&self) -> Result<(), String> {
             Ok(())
+        }
+
+        fn stop_timeline_nonblocking(&self) -> Result<(), String> {
+            self.stop_timeline()
         }
 
         fn runtime_generation(&self) -> u64 {
