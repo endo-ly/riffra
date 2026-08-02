@@ -301,17 +301,25 @@ async function mapRackMacro(
   });
 }
 
+async function restoreCurrentRackStrict(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('restore_current_rack');
+}
+
 async function restoreCurrentRack(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('restore_current_rack');
+    return await restoreCurrentRackStrict();
   } catch (error) {
     return await audioCommandError('Restore rack', error);
   }
 }
 
+async function restoreSamplePadsStrict(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('restore_sample_pads');
+}
+
 async function restoreSamplePads(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('restore_sample_pads');
+    return await restoreSamplePadsStrict();
   } catch (error) {
     return await audioCommandError('Restore sample pads', error);
   }
@@ -881,12 +889,16 @@ async function syncArrangementRuntime(): Promise<RuntimeProjectionStatus> {
   return await invoke<RuntimeProjectionStatus>('sync_arrangement_runtime');
 }
 
-async function playTimeline(): Promise<void> {
-  await invoke<void>('play_timeline');
+async function playTimeline(transportSequence: number): Promise<void> {
+  await invoke<void>('play_timeline', { transportSequence });
 }
 
-async function stopTimeline(): Promise<void> {
-  await invoke<void>('stop_timeline');
+async function stopTimeline(transportSequence: number): Promise<void> {
+  await invoke<void>('stop_timeline', { transportSequence });
+}
+
+async function goToStartTimeline(transportSequence: number): Promise<void> {
+  await invoke<void>('go_to_start_timeline', { transportSequence });
 }
 
 async function seekTimeline(tick: number): Promise<void> {
@@ -940,8 +952,15 @@ async function openAssetInDesign(
   return invokeOrFallback<CreativeSession | null>('open_asset_in_design', { assetId, tool }, null);
 }
 
-async function switchWorkspace(workspace: Workspace): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('switch_workspace', { workspace }, null);
+async function switchWorkspace(
+  workspace: Workspace,
+  transportSequence: number,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'switch_workspace',
+    { workspace, transportSequence },
+    null,
+  );
 }
 
 async function updateSessionSettings(patch: {
@@ -998,7 +1017,9 @@ function createNativeApi(): NativeApi {
     setRackMacroValue,
     mapRackMacro,
     restoreCurrentRack,
+    restoreCurrentRackStrict,
     restoreSamplePads,
+    restoreSamplePadsStrict,
     captureSnapshot,
     recallSnapshot,
     previewAsset,
@@ -1077,6 +1098,7 @@ function createNativeApi(): NativeApi {
     syncArrangementRuntime,
     playTimeline,
     stopTimeline,
+    goToStartTimeline,
     seekTimeline,
     updateArrangementTimebase,
     updateTimelineLoopRange,

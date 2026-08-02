@@ -55,8 +55,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     openPluginEditor: openPluginEditorApi,
     setRackPluginBypassed,
     setRackPluginParameter,
-    restoreCurrentRack,
-    restoreSamplePads,
+    restoreCurrentRackStrict,
+    restoreSamplePadsStrict,
     createSamplePad: createSamplePadApi,
     updateSamplePad: updateSamplePadApi,
     removeSamplePad: removeSamplePadApi,
@@ -87,7 +87,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     persistTrackPluginParameter,
     playTimeline,
     stopTimeline,
-    seekTimeline,
+    goToStartTimeline,
     syncArrangementRuntime,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
@@ -137,7 +137,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const audioRef = useRef(audio);
   audioRef.current = audio;
   const workspaceSwitchPromise = useRef<Promise<void> | null>(null);
-  const workspaceSwitchTarget = useRef<Workspace | null>(null);
+  const workspaceSwitchTarget = useRef<{
+    workspace: Workspace;
+    transportSequence: number;
+  } | null>(null);
   const pendingPluginChanges = useRef(
     new Map<
       string,
@@ -155,6 +158,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const transportOperationPromise = useRef<Promise<void> | null>(null);
   const transportIntentVersion = useRef(0);
   const runtimeRecoveryPromise = useRef<Promise<void> | null>(null);
+  const runtimeRecoveryTargetGeneration = useRef(0);
+  const runtimeRecoveryCompletedGeneration = useRef(0);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -284,11 +289,14 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
     const operation = enqueueRuntimeReconciliation(
       'play',
-      () => restoreCurrentRack(),
+      () => restoreCurrentRackStrict(),
       () => audioRef.current,
     )
       .then((nextAudio) => {
         setAudio(nextAudio);
+        if (!audioCommandSucceeded(nextAudio)) {
+          throw new Error(nextAudio.message || 'Rack restoration returned a faulted state.');
+        }
         return nextAudio;
       })
       .catch((error: unknown) => {
@@ -302,7 +310,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       });
     playRackRestorePromise.current = operation;
     return operation;
-  }, [enqueueRuntimeReconciliation, restoreCurrentRack, setAudio]);
+  }, [enqueueRuntimeReconciliation, restoreCurrentRackStrict, setAudio]);
   const syncArrangeRuntime = useCallback((): Promise<void> => {
     const pending = arrangeRuntimeSyncPromise.current;
     if (pending) return pending;
@@ -319,31 +327,88 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     arrangeRuntimeSyncPromise.current = operation;
     return operation;
   }, [enqueueRuntimeReconciliation, syncArrangementRuntime]);
-  const recoverCurrentRuntime = useCallback((): Promise<void> => {
-    const pending = runtimeRecoveryPromise.current;
-    if (pending) return pending;
-    if (boot?.safeMode) return Promise.resolve();
+  const recoverCurrentRuntime = useCallback(
+    (generation: number): Promise<void> => {
+      runtimeRecoveryTargetGeneration.current = Math.max(
+        runtimeRecoveryTargetGeneration.current,
+        generation,
+      );
+      const pending = runtimeRecoveryPromise.current;
+      if (pending) return pending;
+      if (boot?.safeMode) {
+        runtimeRecoveryCompletedGeneration.current = Math.max(
+          runtimeRecoveryCompletedGeneration.current,
+          generation,
+        );
+        return Promise.resolve();
+      }
+      if (runtimeRecoveryTargetGeneration.current <= runtimeRecoveryCompletedGeneration.current) {
+        return Promise.resolve();
+      }
 
-    const operation = (async () => {
-      const nextAudio = await restoreSamplePads();
-      setAudio(nextAudio);
-      if (!audioCommandSucceeded(nextAudio)) return;
-      const workspace = sessionRef.current?.workspace;
-      if (workspace === 'play') {
-        await restorePlayRack();
-      } else if (workspace === 'arrange') {
-        await syncArrangeRuntime();
-      }
-    })().finally(() => {
-      if (runtimeRecoveryPromise.current === operation) {
-        runtimeRecoveryPromise.current = null;
-      }
-    });
-    runtimeRecoveryPromise.current = operation;
-    return operation;
-  }, [boot?.safeMode, restorePlayRack, restoreSamplePads, setAudio, syncArrangeRuntime]);
+      const operation = (async () => {
+        const maxRecoveryAttempts = 3;
+        let attempts = 0;
+        while (
+          runtimeRecoveryTargetGeneration.current > runtimeRecoveryCompletedGeneration.current
+        ) {
+          const targetGeneration = runtimeRecoveryTargetGeneration.current;
+          attempts += 1;
+          if (attempts > maxRecoveryAttempts) {
+            throw new Error(
+              `Audio Runtime recovery exceeded ${maxRecoveryAttempts} attempts while restoring generation ${targetGeneration}.`,
+            );
+          }
+          try {
+            const nextAudio = await restoreSamplePadsStrict();
+            setAudio(nextAudio);
+            if (!audioCommandSucceeded(nextAudio)) {
+              throw new Error(
+                nextAudio.message || 'Sample Pad restoration returned a faulted state.',
+              );
+            }
+            if (runtimeRecoveryTargetGeneration.current !== targetGeneration) continue;
+
+            const workspace = sessionRef.current?.workspace;
+            if (workspace === 'play') {
+              await restorePlayRack();
+            } else if (workspace === 'arrange') {
+              await syncArrangeRuntime();
+            }
+            runtimeRecoveryCompletedGeneration.current = Math.max(
+              runtimeRecoveryCompletedGeneration.current,
+              targetGeneration,
+            );
+          } catch (error) {
+            // A failed restore may itself have caused a fresh sidecar restart.
+            // Let the next generation supersede this failure; a failure without
+            // a newer generation remains visible to the caller.
+            if (runtimeRecoveryTargetGeneration.current > targetGeneration) continue;
+            throw error;
+          }
+        }
+      })()
+        .catch((error: unknown) => {
+          setScanMessage(
+            `Runtime recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          throw error;
+        })
+        .finally(() => {
+          if (runtimeRecoveryPromise.current === operation) {
+            runtimeRecoveryPromise.current = null;
+          }
+        });
+      runtimeRecoveryPromise.current = operation;
+      return operation;
+    },
+    [boot?.safeMode, restorePlayRack, restoreSamplePadsStrict, setAudio, syncArrangeRuntime],
+  );
   const switchWorkspace = useCallback(
     async (workspace: Workspace) => {
+      const transportSequence = transportIntentVersion.current + 1;
+      transportIntentVersion.current = transportSequence;
+      transportOperationPromise.current = null;
       const previous = sessionRef.current;
       const initialWorkspace = previous?.workspace ?? workspace;
       // Paint every navigation intent before looking at the runtime loop.
@@ -354,7 +419,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         sessionRef.current = optimistic;
         setNavigationSession(optimistic);
       }
-      workspaceSwitchTarget.current = workspace;
+      workspaceSwitchTarget.current = { workspace, transportSequence };
       const pending = workspaceSwitchPromise.current;
       // Painting the navigation intent is synchronous. A pending runtime loop
       // may continue in the background, but callers must not await the
@@ -369,11 +434,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         let lastCommittedWorkspace = initialWorkspace;
         try {
           while (workspaceSwitchTarget.current != null) {
-            const target = workspaceSwitchTarget.current;
+            const targetRequest = workspaceSwitchTarget.current;
             workspaceSwitchTarget.current = null;
+            const target = targetRequest.workspace;
             if (target === lastCommittedWorkspace) continue;
 
-            const next = await runSessionOp(() => switchWorkspaceApi(target), 'Workspace switch');
+            const next = await runSessionOp(
+              () => switchWorkspaceApi(target, targetRequest.transportSequence),
+              'Workspace switch',
+            );
             if (!next) {
               if (
                 workspaceSwitchTarget.current == null &&
@@ -806,15 +875,16 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const playTransport = useCallback(() => {
     if (transportOperationPromise.current) return transportOperationPromise.current;
-    const intentVersion = transportIntentVersion.current + 1;
-    transportIntentVersion.current = intentVersion;
-    const isCurrentIntent = () => transportIntentVersion.current === intentVersion;
+    const transportSequence = transportIntentVersion.current + 1;
+    transportIntentVersion.current = transportSequence;
+    const isCurrentIntent = () => transportIntentVersion.current === transportSequence;
     return runTransportOperation(async () => {
       const currentSession = sessionRef.current;
       if (!currentSession) return;
       const requestedWorkspace = currentSession.workspace;
       if (requestedWorkspace === 'arrange') {
-        await playTimeline();
+        if (!isCurrentIntent()) return;
+        await playTimeline(transportSequence);
         return;
       }
       let result = renderResult;
@@ -849,11 +919,16 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   ]);
 
   const stopTransport = useCallback(() => {
-    transportIntentVersion.current += 1;
+    const transportSequence = transportIntentVersion.current + 1;
+    transportIntentVersion.current = transportSequence;
+    // Stop is an explicit cancellation boundary. Detach the old Play
+    // promise so a subsequent Play can be submitted immediately; its finally
+    // handler cannot clear a newer promise because it checks identity.
+    transportOperationPromise.current = null;
     setTransportPlaying(false);
     return runImmediateTransportOperation(async () => {
       if (sessionRef.current?.workspace === 'arrange') {
-        await stopTimeline();
+        await stopTimeline(transportSequence);
         return;
       }
       setAudio(await stopSamplePreview());
@@ -862,18 +937,19 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, [runImmediateTransportOperation, setAudio, stopSamplePreview, stopTimeline]);
 
   const goToStart = useCallback(() => {
-    transportIntentVersion.current += 1;
+    const transportSequence = transportIntentVersion.current + 1;
+    transportIntentVersion.current = transportSequence;
+    transportOperationPromise.current = null;
     setTransportPlaying(false);
     return runImmediateTransportOperation(async () => {
       if (sessionRef.current?.workspace === 'arrange') {
-        await stopTimeline();
-        await seekTimeline(0);
+        await goToStartTimeline(transportSequence);
         return;
       }
       setAudio(await stopSamplePreview());
       setRenderPreviewing(false);
     });
-  }, [runImmediateTransportOperation, seekTimeline, setAudio, stopSamplePreview, stopTimeline]);
+  }, [goToStartTimeline, runImmediateTransportOperation, setAudio, stopSamplePreview]);
 
   const previewSamplePad = useCallback(
     async (pad: CreativeSession['playState']['sampleInstrument']['pads'][number]) => {
@@ -1006,8 +1082,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
               startupAudio = result.audio;
               setAudio(result.audio);
               setSession(result.session);
-              startupAudio = await restoreSamplePads();
+              startupAudio = await restoreSamplePadsStrict();
               setAudio(startupAudio);
+              if (!audioCommandSucceeded(startupAudio)) {
+                throw new Error(
+                  startupAudio.message || 'Sample Pad restoration returned a faulted state.',
+                );
+              }
               if (state.session.workspace === 'play') {
                 startupAudio = await restorePlayRack();
               }
@@ -1106,9 +1187,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     const unlistenTransport = onTransportStatus((status) =>
       setTransportPlaying(status.state === 'playing'),
     );
-    const unlistenRuntimeRestarted = onRuntimeRestarted(() => {
+    const unlistenRuntimeRestarted = onRuntimeRestarted((generation) => {
       if (disposed) return;
-      void recoverCurrentRuntime().catch(logNativeError('Runtime recovery'));
+      void recoverCurrentRuntime(generation).catch(logNativeError('Runtime recovery'));
     });
     let pluginSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let pluginSaveRunning = false;

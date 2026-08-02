@@ -693,6 +693,7 @@ pub fn run() {
             session::commands::restore_sample_pads,
             session::commands::play_timeline,
             session::commands::stop_timeline,
+            session::commands::go_to_start_timeline,
             session::commands::seek_timeline,
             session::commands::update_arrangement_timebase,
             session::commands::update_timeline_loop_range,

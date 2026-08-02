@@ -98,6 +98,69 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
   });
 
+  it('does not continue automatic recovery when Sample Pad restoration rejects', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'play' } },
+    });
+    let failRecovery = false;
+    fake.restoreSamplePadsStrict = async () => {
+      fake.calls.push('restoreSamplePads');
+      if (failRecovery) throw new Error('Sample Pad restore failed.');
+      return fake.audio;
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
+    const rackRestoreCount = fake.calls.filter((call) => call === 'restoreCurrentRack').length;
+    fake.calls.splice(0);
+    failRecovery = true;
+
+    fake.emitRuntimeRestarted(2);
+
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    expect(fake.calls.filter((call) => call === 'restoreCurrentRack')).toHaveLength(0);
+    expect(rackRestoreCount).toBe(1);
+  });
+
+  it('retries the latest runtime generation after a restart during recovery', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+    });
+    let holdNextRecovery = false;
+    let releaseFirstRecovery: () => void = () => undefined;
+    let firstRecoveryGate: Promise<void> | null = null;
+    const defaultRestoreSamplePads = fake.restoreSamplePadsStrict;
+    fake.restoreSamplePadsStrict = async () => {
+      if (holdNextRecovery) {
+        holdNextRecovery = false;
+        fake.calls.push('restoreSamplePads');
+        await firstRecoveryGate;
+        return fake.audio;
+      }
+      return defaultRestoreSamplePads();
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    fake.calls.splice(0);
+    firstRecoveryGate = new Promise<void>((resolve) => {
+      releaseFirstRecovery = resolve;
+    });
+    holdNextRecovery = true;
+
+    fake.emitRuntimeRestarted(2);
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    fake.emitRuntimeRestarted(3);
+    releaseFirstRecovery();
+
+    await waitFor(() =>
+      expect(fake.calls.filter((call) => call === 'restoreSamplePads')).toHaveLength(2),
+    );
+    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
+  });
+
   it('re-engages emergency mute when the audio driver changes', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);

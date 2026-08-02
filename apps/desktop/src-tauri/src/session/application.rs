@@ -982,12 +982,13 @@ pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, 
     Ok(status)
 }
 
-pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
     // Playback is the boundary where an eventually-consistent projection is
     // no longer sufficient. Register the Play intent before waiting for the
     // graph so a concurrent Stop can cancel the pending start.
     let projection = context.session_actor.capture_projection(context.session)?;
     let played = context.runtime.apply_and_play_if(
+        transport_sequence,
         runtime_timeline_snapshot(context.data_root, &projection.session),
         crate::runtime_reconciler::ProjectionKey {
             sequence: projection.sequence,
@@ -1008,8 +1009,17 @@ pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    context.runtime.stop().map(|_| ())
+pub fn stop_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
+    context.runtime.stop(transport_sequence).map(|_| ())
+}
+
+pub fn go_to_start_timeline(
+    context: &SessionContext<'_>,
+    transport_sequence: u64,
+) -> Result<(), String> {
+    context
+        .runtime
+        .stop_and_seek_to_start(transport_sequence, || context.audio.seek_timeline(0))
 }
 
 pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
@@ -1243,6 +1253,7 @@ pub fn open_asset_in_design(
 pub fn switch_workspace(
     context: &SessionContext<'_>,
     workspace: Workspace,
+    transport_sequence: u64,
 ) -> Result<CreativeSession, String> {
     let session = {
         let mut current = context.session.lock().map_err(lock_error)?;
@@ -1250,7 +1261,7 @@ pub fn switch_workspace(
         current.clone()
     };
     if workspace != Workspace::Arrange
-        && let Err(error) = context.runtime.stop_nonblocking()
+        && let Err(error) = context.runtime.stop_nonblocking(transport_sequence)
     {
         tracing::warn!(
             error = ?error,
@@ -2739,7 +2750,7 @@ mod tests {
             safe_mode: false,
         };
 
-        let next = switch_workspace(&context, Workspace::Arrange).unwrap();
+        let next = switch_workspace(&context, Workspace::Arrange, 1).unwrap();
 
         assert_eq!(next.workspace, Workspace::Arrange);
         assert_eq!(session.lock().unwrap().workspace, Workspace::Arrange);

@@ -757,7 +757,7 @@ export class FakeNativeApi implements NativeApi {
     }));
   };
 
-  restoreCurrentRack = async (): Promise<AudioStatus> => {
+  restoreCurrentRackStrict = async (): Promise<AudioStatus> => {
     this.calls.push('restoreCurrentRack');
     if (this.unsupportedRuntimeState) {
       throw new Error('The current rack is unsupported by the fake runtime.');
@@ -792,10 +792,14 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  restoreSamplePads = async (): Promise<AudioStatus> => {
+  restoreCurrentRack = async (): Promise<AudioStatus> => this.restoreCurrentRackStrict();
+
+  restoreSamplePadsStrict = async (): Promise<AudioStatus> => {
     this.calls.push('restoreSamplePads');
     return this.audio;
   };
+
+  restoreSamplePads = async (): Promise<AudioStatus> => this.restoreSamplePadsStrict();
 
   recallSnapshot = async (slot: 'A' | 'B'): Promise<SessionAudioPair> => {
     this.calls.push('recallSnapshot');
@@ -1939,12 +1943,16 @@ export class FakeNativeApi implements NativeApi {
     return this.runtimeProjection;
   };
 
-  playTimeline = async (): Promise<void> => {
+  playTimeline = async (_transportSequence: number): Promise<void> => {
     this.calls.push('playTimeline');
   };
 
-  stopTimeline = async (): Promise<void> => {
+  stopTimeline = async (_transportSequence: number): Promise<void> => {
     this.calls.push('stopTimeline');
+  };
+
+  goToStartTimeline = async (_transportSequence: number): Promise<void> => {
+    this.calls.push('goToStartTimeline');
   };
 
   seekTimeline = async (_tick: number): Promise<void> => {
@@ -2019,7 +2027,10 @@ export class FakeNativeApi implements NativeApi {
     return next;
   };
 
-  switchWorkspace = async (workspace: Workspace): Promise<CreativeSession | null> => {
+  switchWorkspace = async (
+    workspace: Workspace,
+    _transportSequence: number,
+  ): Promise<CreativeSession | null> => {
     this.calls.push('switchWorkspace');
     this.assertPersistence();
     const next: CreativeSession = {

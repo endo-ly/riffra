@@ -143,8 +143,12 @@ export interface NativeApi {
    * The session is already canonical, so a normal restore does not rewrite it.
    */
   restoreCurrentRack(): Promise<AudioStatus>;
+  /** Strict variant for automatic recovery; native failures reject. */
+  restoreCurrentRackStrict(): Promise<AudioStatus>;
   /** Rebuilds the persisted Sample Pad mapping after a fresh runtime process. */
   restoreSamplePads(): Promise<AudioStatus>;
+  /** Strict variant for automatic recovery; native failures reject. */
+  restoreSamplePadsStrict(): Promise<AudioStatus>;
   /**
    * Recalls an A/B session snapshot through one Rust Application Operation:
    * clears the runtime plugin, applies the snapshot's plugin (state + params +
@@ -337,8 +341,9 @@ export interface NativeApi {
   activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
   placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
   syncArrangementRuntime(): Promise<RuntimeProjectionStatus>;
-  playTimeline(): Promise<void>;
-  stopTimeline(): Promise<void>;
+  playTimeline(transportSequence: number): Promise<void>;
+  stopTimeline(transportSequence: number): Promise<void>;
+  goToStartTimeline(transportSequence: number): Promise<void>;
   seekTimeline(tick: number): Promise<void>;
   updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession>;
   updateTimelineLoopRange(
@@ -363,7 +368,7 @@ export interface NativeApi {
    * processing mode. Workspace navigation is UI state; production Session
    * persistence happens on the next real edit rather than on every tab click.
    */
-  switchWorkspace(workspace: Workspace): Promise<CreativeSession | null>;
+  switchWorkspace(workspace: Workspace, transportSequence: number): Promise<CreativeSession | null>;
   updateSessionSettings(patch: {
     projectName?: string | null;
     loopEnabled?: boolean;

@@ -393,13 +393,27 @@ pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioSt
 }
 
 #[tauri::command]
-pub async fn play_timeline(app: AppHandle) -> Result<(), String> {
-    run_runtime_control(app, |state| application::play_timeline(&app_context(state))).await
+pub async fn play_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
+    run_runtime_control(app, move |state| {
+        application::play_timeline(&app_context(state), transport_sequence)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn stop_timeline(app: AppHandle) -> Result<(), String> {
-    run_runtime_control(app, |state| application::stop_timeline(&app_context(state))).await
+pub async fn stop_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
+    run_runtime_control(app, move |state| {
+        application::stop_timeline(&app_context(state), transport_sequence)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn go_to_start_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
+    run_runtime_control(app, move |state| {
+        application::go_to_start_timeline(&app_context(state), transport_sequence)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -468,6 +482,7 @@ pub async fn open_asset_in_design(
 #[tauri::command]
 pub async fn switch_workspace(
     workspace: Workspace,
+    transport_sequence: u64,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     // Navigation is view state and must not wait behind a durable Session
@@ -475,7 +490,7 @@ pub async fn switch_workspace(
     // only performs a short in-memory workspace update and sends a best-effort
     // runtime mode.
     run_workspace_control(app, move |state| {
-        application::switch_workspace(&app_context(state), workspace)
+        application::switch_workspace(&app_context(state), workspace, transport_sequence)
     })
     .await
 }

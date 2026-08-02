@@ -124,6 +124,7 @@ struct ReconcilerState {
     running_operation_id: Option<u64>,
     active_projection: Option<ActiveProjection>,
     transport_intent: TransportIntent,
+    transport_sequence: u64,
     stop_requested: bool,
     status: RuntimeProjectionStatus,
 }
@@ -147,6 +148,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 running_operation_id: None,
                 active_projection: None,
                 transport_intent: TransportIntent::Stopped,
+                transport_sequence: 0,
                 stop_requested: false,
                 status: RuntimeProjectionStatus {
                     runtime_generation: generation,
@@ -323,7 +325,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         let deadline = Instant::now() + timeout;
         let submitted = self.submit_with_deadline(snapshot, key, Some(deadline));
         let (operation_id, requested_key) = submission_operation(submitted, key)?;
-        self.wait_for_operation(operation_id, requested_key, deadline, timeout)
+        self.wait_for_operation(operation_id, requested_key, deadline, timeout, None)
     }
 
     /// Applies a projection while recording the user's Play intent before the
@@ -332,6 +334,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// from starting playback after the user has already stopped.
     pub fn apply_and_play_if<F>(
         &self,
+        sequence: u64,
         snapshot: Value,
         key: ProjectionKey,
         timeout: Duration,
@@ -350,8 +353,21 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 .0
                 .lock()
                 .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
-            state.transport_intent = TransportIntent::Stopped;
+            if update_transport_intent(&mut state, sequence, TransportIntent::Stopped) {
+                self.state.1.notify_all();
+            }
             return Ok(false);
+        }
+
+        {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            if !update_transport_intent(&mut state, sequence, TransportIntent::Playing) {
+                return Ok(false);
+            }
         }
 
         let deadline = Instant::now() + timeout;
@@ -364,23 +380,31 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             .lock()
             .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
         observe_generation(&mut state, generation);
-        state.transport_intent = TransportIntent::Playing;
         let should_play_now = state.latest_target.is_none()
             && state.running_operation_id.is_none()
             && state.active_projection.is_some_and(|active| {
                 active.runtime_generation == generation && active.key == requested_key
             });
         if should_play_now && let Err(error) = self.driver.play_timeline() {
-            state.transport_intent = TransportIntent::Stopped;
+            if state.transport_sequence == sequence {
+                state.transport_intent = TransportIntent::Stopped;
+                self.state.1.notify_all();
+            }
             return Err(error);
         }
         drop(state);
         drop(_transport_gate);
 
-        match self.wait_for_operation(operation_id, requested_key, deadline, timeout) {
+        match self.wait_for_operation(
+            operation_id,
+            requested_key,
+            deadline,
+            timeout,
+            Some(sequence),
+        ) {
             Ok(_) => Ok(true),
             Err(error) => {
-                self.clear_play_intent();
+                self.clear_play_intent(sequence);
                 Err(error)
             }
         }
@@ -392,12 +416,21 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         key: ProjectionKey,
         deadline: Instant,
         timeout: Duration,
+        transport_sequence: Option<u64>,
     ) -> Result<RuntimeProjectionStatus, String> {
         let (lock, wake) = &*self.state;
         let mut state = lock
             .lock()
             .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
         loop {
+            if let Some(sequence) = transport_sequence
+                && (state.transport_sequence != sequence
+                    || state.transport_intent != TransportIntent::Playing)
+            {
+                return Err(format!(
+                    "Transport Play request sequence {sequence} was superseded by a newer transport intent."
+                ));
+            }
             if state.status.operation_id != operation_id {
                 return Err(format!(
                     "Runtime operation {operation_id} was superseded by a newer projection."
@@ -450,12 +483,16 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
     }
 
-    fn clear_play_intent(&self) {
+    fn clear_play_intent(&self, sequence: u64) {
         let Ok(_transport_gate) = self.transport_gate.lock() else {
             return;
         };
-        if let Ok(mut state) = self.state.0.lock() {
+        if let Ok(mut state) = self.state.0.lock()
+            && state.transport_sequence == sequence
+            && state.transport_intent == TransportIntent::Playing
+        {
             state.transport_intent = TransportIntent::Stopped;
+            self.state.1.notify_all();
         }
     }
 
@@ -468,7 +505,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// navigation that has already changed the desired view cannot be
     /// followed by a stale Play command.
     #[cfg(test)]
-    pub fn play_if<F>(&self, should_play: F) -> Result<bool, String>
+    pub fn play_if<F>(&self, sequence: u64, should_play: F) -> Result<bool, String>
     where
         F: FnOnce() -> bool,
     {
@@ -482,24 +519,31 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 .0
                 .lock()
                 .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
-            state.transport_intent = TransportIntent::Stopped;
+            if update_transport_intent(&mut state, sequence, TransportIntent::Stopped) {
+                self.state.1.notify_all();
+            }
             return Ok(false);
         }
-        let generation = self.driver.runtime_generation();
         let mut state = self
             .state
             .0
             .lock()
             .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+        if !update_transport_intent(&mut state, sequence, TransportIntent::Playing) {
+            return Ok(false);
+        }
+        let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
-        state.transport_intent = TransportIntent::Playing;
         let should_play_now = state.latest_target.is_none()
             && state.running_operation_id.is_none()
             && state
                 .active_projection
                 .is_some_and(|active| active.runtime_generation == generation);
         if should_play_now && let Err(error) = self.driver.play_timeline() {
-            state.transport_intent = TransportIntent::Stopped;
+            if state.transport_sequence == sequence {
+                state.transport_intent = TransportIntent::Stopped;
+                self.state.1.notify_all();
+            }
             return Err(error);
         }
         Ok(true)
@@ -507,18 +551,25 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
 
     /// Stop is a critical control path. It never waits for the latest VST
     /// preparation to finish before sending the stop command.
-    pub fn stop(&self) -> Result<RuntimeProjectionStatus, String> {
+    pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, String> {
         let _transport_gate = self
             .transport_gate
             .lock()
             .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
-        {
+        let accepted = {
             let mut state = self
                 .state
                 .0
                 .lock()
                 .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
-            state.transport_intent = TransportIntent::Stopped;
+            let accepted = update_transport_intent(&mut state, sequence, TransportIntent::Stopped);
+            if accepted {
+                self.state.1.notify_all();
+            }
+            accepted
+        };
+        if !accepted {
+            return Ok(self.status());
         }
         self.driver.stop_timeline()?;
         Ok(self.status())
@@ -527,21 +578,58 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// Clears pending Play intent and sends Stop without waiting for a native
     /// acknowledgement. Workspace navigation uses this path because it must
     /// invalidate stale transport work without joining a slow audio process.
-    pub fn stop_nonblocking(&self) -> Result<RuntimeProjectionStatus, String> {
+    pub fn stop_nonblocking(&self, sequence: u64) -> Result<RuntimeProjectionStatus, String> {
         let _transport_gate = self
             .transport_gate
             .lock()
             .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
-        {
+        let accepted = {
             let mut state = self
                 .state
                 .0
                 .lock()
                 .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
-            state.transport_intent = TransportIntent::Stopped;
+            let accepted = update_transport_intent(&mut state, sequence, TransportIntent::Stopped);
+            if accepted {
+                self.state.1.notify_all();
+            }
+            accepted
+        };
+        if !accepted {
+            return Ok(self.status());
         }
         self.driver.stop_timeline_nonblocking()?;
         Ok(self.status())
+    }
+
+    /// Stops playback and seeks to the beginning as one sequence-guarded
+    /// transport operation. Keeping the seek under the same gate prevents an
+    /// older Go to Start request from seeking after a newer Play request.
+    pub fn stop_and_seek_to_start<F>(&self, sequence: u64, seek: F) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let _transport_gate = self
+            .transport_gate
+            .lock()
+            .map_err(|_| "Runtime transport gate was poisoned.".to_string())?;
+        let accepted = {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .map_err(|_| "Runtime Reconciler lock was poisoned.".to_string())?;
+            let accepted = update_transport_intent(&mut state, sequence, TransportIntent::Stopped);
+            if accepted {
+                self.state.1.notify_all();
+            }
+            accepted
+        };
+        if !accepted {
+            return Ok(());
+        }
+        self.driver.stop_timeline()?;
+        seek()
     }
 }
 
@@ -560,6 +648,19 @@ impl<D: RuntimeDriver> Drop for RuntimeReconciler<D> {
             let _ = worker.take();
         }
     }
+}
+
+fn update_transport_intent(
+    state: &mut ReconcilerState,
+    sequence: u64,
+    intent: TransportIntent,
+) -> bool {
+    if sequence < state.transport_sequence {
+        return false;
+    }
+    state.transport_sequence = sequence;
+    state.transport_intent = intent;
+    true
 }
 
 fn submission_operation(
@@ -1066,7 +1167,7 @@ mod tests {
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
-        reconciler.stop().unwrap();
+        reconciler.stop(1).unwrap();
         assert!(started.elapsed() < Duration::from_millis(50));
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
@@ -1089,7 +1190,7 @@ mod tests {
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(7), key(7, 7));
 
-        reconciler.play_if(|| true).unwrap();
+        reconciler.play_if(1, || true).unwrap();
         let status = reconciler.status();
         assert!(matches!(
             status.state,
@@ -1105,14 +1206,60 @@ mod tests {
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
         let caller = Arc::clone(&reconciler);
         let play = thread::spawn(move || {
-            caller.apply_and_play_if(snapshot(71), key(71, 71), Duration::from_secs(1), || true)
+            caller.apply_and_play_if(1, snapshot(71), key(71, 71), Duration::from_secs(1), || {
+                true
+            })
         });
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.stop().unwrap();
+        reconciler.stop(2).unwrap();
 
-        assert!(play.join().unwrap().is_ok());
+        assert!(play.join().unwrap().is_err());
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn newer_stop_wins_when_an_older_play_enters_after_it() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+
+        reconciler.stop(2).unwrap();
+        let played = reconciler
+            .apply_and_play_if(1, snapshot(72), key(72, 72), Duration::from_secs(1), || {
+                true
+            })
+            .unwrap();
+
+        assert!(!played);
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_newer_play_can_start_after_stop_cancels_an_older_waiter() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
+        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
+        let first = Arc::clone(&reconciler);
+        let old_play = thread::spawn(move || {
+            first.apply_and_play_if(1, snapshot(73), key(73, 73), Duration::from_secs(1), || {
+                true
+            })
+        });
+
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
+        reconciler.stop(2).unwrap();
+        let new_play = reconciler.apply_and_play_if(
+            3,
+            snapshot(73),
+            key(73, 73),
+            Duration::from_secs(1),
+            || true,
+        );
+
+        assert!(old_play.join().unwrap().is_err());
+        assert!(new_play.is_ok());
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
 
@@ -1123,7 +1270,7 @@ mod tests {
         reconciler.submit(snapshot(8), key(8, 8));
         wait_until(|| reconciler.status().active_session_revision == Some(8));
 
-        assert!(!reconciler.play_if(|| false).unwrap());
+        assert!(!reconciler.play_if(1, || false).unwrap());
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
     }
 
@@ -1132,8 +1279,8 @@ mod tests {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit(snapshot(9), key(9, 9));
-        reconciler.play_if(|| true).unwrap();
-        reconciler.stop().unwrap();
+        reconciler.play_if(1, || true).unwrap();
+        reconciler.stop(2).unwrap();
 
         thread::sleep(Duration::from_millis(40));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
@@ -1205,7 +1352,7 @@ mod tests {
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
         reconciler.submit(snapshot(20), key(20, 20));
-        reconciler.play_if(|| true).unwrap();
+        reconciler.play_if(1, || true).unwrap();
         wait_until(|| driver.played.load(Ordering::Acquire) == 1);
         thread::sleep(Duration::from_millis(20));
 
