@@ -255,7 +255,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const {
     transportPlaying,
     nextTransportSequence,
-    cancelPendingTransport,
+    cancelPendingPlay,
     playTransport,
     stopTransport,
     goToStart,
@@ -280,7 +280,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restorePlayRack,
     syncArrangeRuntime,
     nextTransportSequence,
-    cancelPendingTransport,
+    cancelPendingPlay,
   });
   const openAssetInDesign = useCallback(
     async (assetId: AssetId, tool: DesignTool): Promise<void> => {

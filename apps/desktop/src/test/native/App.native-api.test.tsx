@@ -202,6 +202,83 @@ describe('App driven by FakeNativeApi', () => {
     );
   });
 
+  it('sends a new Play while an earlier Stop command is still pending', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+    });
+    const playSequences: number[] = [];
+    const stopSequences: number[] = [];
+    let releaseStop: () => void = () => undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const defaultPlayTimeline = fake.playTimeline;
+    fake.playTimeline = async (sequence) => {
+      playSequences.push(sequence);
+      await defaultPlayTimeline(sequence);
+    };
+    fake.stopTimeline = async (sequence) => {
+      stopSequences.push(sequence);
+      fake.emitTransportStatus({ state: 'stopped' });
+      await stopGate;
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Stop playback' }));
+    await waitFor(() => expect(stopSequences).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+
+    await waitFor(() => expect(playSequences).toHaveLength(2));
+    expect(playSequences[1]).toBeGreaterThan(stopSequences[0]);
+    releaseStop();
+  });
+
+  it('sends a new Play while an earlier Go to Start command is still pending', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+    });
+    const playSequences: number[] = [];
+    const goToStartSequences: number[] = [];
+    let releaseGoToStart: () => void = () => undefined;
+    const goToStartGate = new Promise<void>((resolve) => {
+      releaseGoToStart = resolve;
+    });
+    const defaultPlayTimeline = fake.playTimeline;
+    fake.playTimeline = async (sequence) => {
+      playSequences.push(sequence);
+      await defaultPlayTimeline(sequence);
+    };
+    fake.goToStartTimeline = async (sequence) => {
+      goToStartSequences.push(sequence);
+      fake.emitTransportStatus({ state: 'stopped' });
+      await goToStartGate;
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Stop and go to start' }));
+    await waitFor(() => expect(goToStartSequences).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+
+    await waitFor(() => expect(playSequences).toHaveLength(2));
+    expect(playSequences[1]).toBeGreaterThan(goToStartSequences[0]);
+    expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument();
+    releaseGoToStart();
+  });
+
   it('re-engages emergency mute when the audio driver changes', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);

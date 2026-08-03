@@ -430,6 +430,11 @@ impl AudioSupervisor {
         result
     }
 
+    /// Terminates the sidecar at an explicit application lifecycle boundary.
+    ///
+    /// `AudioSupervisor` is cloned by the event monitor, recovery worker, and
+    /// Runtime ports. Shutdown therefore must not be tied to `Drop`: releasing
+    /// any one of those clones must not stop a sidecar still owned by the app.
     pub(crate) fn force_shutdown(&self) {
         self.process.shutting_down.store(true, Ordering::Release);
         fail_pending_requests(&self.command_bus.responses, NativeAudioError::ShuttingDown);
@@ -454,24 +459,5 @@ impl AudioSupervisor {
             timeout,
             Some(expected_generation),
         )
-    }
-}
-
-impl Drop for AudioSupervisor {
-    fn drop(&mut self) {
-        if Arc::strong_count(&self.process.child) != 1 {
-            return;
-        }
-        self.process.shutting_down.store(true, Ordering::Release);
-        if let Ok(mut slot) = self.process.child.lock()
-            && let Some(child) = slot.take()
-        {
-            self.process
-                .mark_planned_termination(self.sidecar_generation());
-            // Drop is a hard safety boundary. A graceful shutdown write can
-            // block behind the same VST that caused the app to close, so kill
-            // the isolated process directly and let the OS reclaim it.
-            let _ = child.kill();
-        }
     }
 }

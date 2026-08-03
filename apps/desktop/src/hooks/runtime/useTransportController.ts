@@ -38,7 +38,7 @@ export function useTransportController({
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
-  const operationRef = useRef<Promise<void> | null>(null);
+  const pendingPlayRef = useRef<Promise<void> | null>(null);
   const sequenceRef = useRef(0);
 
   const nextTransportSequence = useCallback(() => {
@@ -46,12 +46,12 @@ export function useTransportController({
     return sequenceRef.current;
   }, []);
 
-  const cancelPendingTransport = useCallback(() => {
-    operationRef.current = null;
+  const cancelPendingPlay = useCallback(() => {
+    pendingPlayRef.current = null;
   }, []);
 
-  const runTransportOperation = useCallback((operation: () => Promise<void>): Promise<void> => {
-    const pending = operationRef.current;
+  const runPlayOperation = useCallback((operation: () => Promise<void>): Promise<void> => {
+    const pending = pendingPlayRef.current;
     if (pending) return pending;
 
     const current = Promise.resolve()
@@ -60,34 +60,27 @@ export function useTransportController({
         logNativeError('Transport operation')(error);
       })
       .finally(() => {
-        if (operationRef.current === current) {
-          operationRef.current = null;
+        if (pendingPlayRef.current === current) {
+          pendingPlayRef.current = null;
         }
       });
-    operationRef.current = current;
+    pendingPlayRef.current = current;
     return current;
   }, []);
 
   const runImmediateTransportOperation = useCallback((operation: () => Promise<void>) => {
-    const current = Promise.resolve()
+    return Promise.resolve()
       .then(operation)
       .catch((error: unknown) => {
         logNativeError('Immediate transport operation')(error);
-      })
-      .finally(() => {
-        if (operationRef.current === current) {
-          operationRef.current = null;
-        }
       });
-    operationRef.current = current;
-    return current;
   }, []);
 
   const playTransport = useCallback(() => {
-    const pending = operationRef.current;
+    const pending = pendingPlayRef.current;
     if (pending) return pending;
     const transportSequence = nextTransportSequence();
-    return runTransportOperation(async () => {
+    return runPlayOperation(async () => {
       const currentSession = sessionRef.current;
       if (!currentSession) return;
       const requestedWorkspace = currentSession.workspace;
@@ -127,12 +120,12 @@ export function useTransportController({
     sessionRef,
     setAudio,
     setRenderResult,
-    runTransportOperation,
+    runPlayOperation,
   ]);
 
   const stopTransport = useCallback(() => {
     const transportSequence = nextTransportSequence();
-    cancelPendingTransport();
+    cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
       if (sessionRef.current?.workspace === 'arrange') {
         await api.stopTimeline(transportSequence);
@@ -144,7 +137,7 @@ export function useTransportController({
     });
   }, [
     api,
-    cancelPendingTransport,
+    cancelPendingPlay,
     nextTransportSequence,
     sessionRef,
     setAudio,
@@ -154,7 +147,7 @@ export function useTransportController({
 
   const goToStart = useCallback(() => {
     const transportSequence = nextTransportSequence();
-    cancelPendingTransport();
+    cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
       if (sessionRef.current?.workspace === 'arrange') {
         await api.goToStartTimeline(transportSequence);
@@ -166,7 +159,7 @@ export function useTransportController({
     });
   }, [
     api,
-    cancelPendingTransport,
+    cancelPendingPlay,
     nextTransportSequence,
     sessionRef,
     setAudio,
@@ -183,7 +176,7 @@ export function useTransportController({
   return {
     transportPlaying: timelinePlaying || previewPlaying,
     nextTransportSequence,
-    cancelPendingTransport,
+    cancelPendingPlay,
     playTransport,
     stopTransport,
     goToStart,

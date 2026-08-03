@@ -20,7 +20,7 @@ interface WorkspaceNavigationOptions {
   restorePlayRack: () => Promise<AudioStatus>;
   syncArrangeRuntime: () => Promise<void>;
   nextTransportSequence: () => number;
-  cancelPendingTransport: () => void;
+  cancelPendingPlay: () => void;
 }
 
 /**
@@ -40,7 +40,7 @@ export function useWorkspaceNavigation({
   restorePlayRack,
   syncArrangeRuntime,
   nextTransportSequence,
-  cancelPendingTransport,
+  cancelPendingPlay,
 }: WorkspaceNavigationOptions) {
   const workspaceSwitchPromise = useRef<Promise<void> | null>(null);
   const workspaceSwitchTarget = useRef<{
@@ -51,7 +51,7 @@ export function useWorkspaceNavigation({
   return useCallback(
     async (workspace: Workspace) => {
       const transportSequence = nextTransportSequence();
-      cancelPendingTransport();
+      cancelPendingPlay();
       const previous = sessionRef.current;
       const initialWorkspace = previous?.workspace ?? workspace;
 
@@ -124,7 +124,7 @@ export function useWorkspaceNavigation({
     },
     [
       api,
-      cancelPendingTransport,
+      cancelPendingPlay,
       nextTransportSequence,
       restorePlayRack,
       runSessionOp,
