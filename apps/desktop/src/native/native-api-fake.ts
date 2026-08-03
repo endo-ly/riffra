@@ -1971,14 +1971,17 @@ export class FakeNativeApi implements NativeApi {
 
   playTimeline = async (_transportSequence: number): Promise<void> => {
     this.calls.push('playTimeline');
+    this.emitTransportStatus({ state: 'playing' });
   };
 
   stopTimeline = async (_transportSequence: number): Promise<void> => {
     this.calls.push('stopTimeline');
+    this.emitTransportStatus({ state: 'stopped' });
   };
 
   goToStartTimeline = async (_transportSequence: number): Promise<void> => {
     this.calls.push('goToStartTimeline');
+    this.emitTransportStatus({ state: 'stopped' });
   };
 
   seekTimeline = async (_tick: number): Promise<void> => {

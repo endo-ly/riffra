@@ -1,107 +1,13 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
-// Tauri can dispatch several async commands at once. Canonical-session
-// mutations are still kept in one FIFO for the application operations that
-// read, persist, and return a complete session snapshot. Workspace navigation
-// is deliberately outside this list: it is view state and its Rust operation
-// no longer enters durable Session persistence.
-// A command belongs to the canonical Session lane, the runtime lane, or both.
-// Keeping the overlap in one list prevents a command from silently drifting
-// out of one of the ordering boundaries when a new operation is added.
-const canonicalOnlyCommands = [
-  'save_scratch_session',
-  'restore_recovery_generation',
-  'import_scratch_session',
-  'create_sample_pad',
-  'update_sample_pad',
-  'remove_sample_pad',
-  'set_track_instrument',
-  'clear_track_instrument',
-  'persist_track_plugin_state',
-  'persist_track_plugin_parameter',
-  'set_master_gain_db',
-  'start_recording',
-  'stop_recording',
-  'map_rack_macro',
-  'capture_snapshot',
-  'add_audio_clip_to_arrangement',
-  'add_midi_clip_to_arrangement',
-  'update_audio_clip',
-  'remove_timeline_clips',
-  'trim_audio_clip',
-  'split_audio_clip',
-  'duplicate_audio_clip',
-  'move_audio_clips',
-  'update_midi_clip',
-  'move_midi_clips',
-  'trim_midi_clip',
-  'split_midi_clip',
-  'duplicate_midi_clip',
-  'paste_timeline_clips',
-  'crossfade_audio_clips',
-  'update_arrangement_timebase',
-  'update_timeline_loop_range',
-  'update_timeline_punch_range',
-  'update_session_settings',
-  'add_track',
-  'update_track',
-  'set_track_automation',
-  'set_track_audio_input',
-  'set_track_midi_input',
-  'add_track_effect',
-  'remove_track_effect',
-  'reorder_track_effects',
-  'remove_track',
-  'duplicate_track',
-  'reorder_track',
-  'add_marker',
-  'update_marker',
-  'remove_marker',
-  'add_midi_note',
-  'update_midi_note',
-  'update_midi_notes',
-  'remove_midi_note',
-  'quantize_midi_notes',
-  'duplicate_midi_notes',
-  'set_audio_clip_take_variant',
-  'activate_take',
-  'place_take_as_separate_clip',
-  'relink_missing_dependency',
-  'disable_missing_plugin',
-  'replace_missing_track_plugin',
-];
-
-const runtimeOnlyCommands = [
-  'restore_current_rack',
-  'restore_sample_pads',
-  'open_plugin_editor',
-  'open_track_plugin_editor',
-];
-
-// Runtime operations need a second FIFO only when the command still performs a
-// synchronous native transaction outside the backend Runtime Reconciler.
-// Ordinary Session edits submit the latest projection asynchronously and must
-// not wait behind a VST construction task here.
-const canonicalAndRuntimeCommands = [
-  'set_track_device_bypassed',
-  'set_track_device_parameter',
-  'start_arrange_recording',
-  'record_another_take',
-  'stop_arrange_recording',
-  'load_plugin_into_rack',
-  'clear_plugin_from_rack',
-  'set_rack_plugin_bypassed',
-  'set_rack_plugin_parameter',
-  'set_rack_macro_value',
-  'recall_snapshot',
-  'load_rack_definition_asset',
-];
-
-const serializedCommands = new Set([...canonicalOnlyCommands, ...canonicalAndRuntimeCommands]);
-const runtimeSerializedCommands = new Set([...runtimeOnlyCommands, ...canonicalAndRuntimeCommands]);
-
-let serializedTail: Promise<void> = Promise.resolve();
-let runtimeSerializedTail: Promise<void> = Promise.resolve();
+/**
+ * Thin bridge to Tauri. Ordering that affects Session or Runtime correctness
+ * is owned by the Rust Session Actor and Runtime Reconciler; this module only
+ * coalesces high-frequency UI updates through invokeLatest below.
+ */
+export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  return tauriInvoke<T>(command, args);
+}
 
 interface LatestWaiter<T> {
   resolve: (value: T) => void;
@@ -127,33 +33,7 @@ export function isNativeRuntime(): boolean {
 }
 
 /**
- * Invokes a native command, serializing canonical mutations while allowing
- * independent probes and meter/status reads to run immediately.
- */
-export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (!isNativeRuntime()) {
-    return tauriInvoke<T>(command, args);
-  }
-
-  const waits: Promise<void>[] = [];
-  const canonical = serializedCommands.has(command);
-  const runtime = runtimeSerializedCommands.has(command);
-  if (canonical) waits.push(serializedTail.catch(() => undefined));
-  if (runtime) waits.push(runtimeSerializedTail.catch(() => undefined));
-  if (waits.length === 0) return tauriInvoke<T>(command, args);
-
-  const operation = Promise.all(waits).then(() => tauriInvoke<T>(command, args));
-  const completed = operation.then(
-    () => undefined,
-    () => undefined,
-  );
-  if (canonical) serializedTail = completed;
-  if (runtime) runtimeSerializedTail = completed;
-  return operation;
-}
-
-/**
- * Coalesces a burst of same-key value updates before entering the native FIFO.
+ * Coalesces a burst of same-key value updates before entering the native bridge.
  * The last payload is authoritative; all callers from the same burst receive
  * that canonical response. This is used for controls such as track mute/solo
  * where sending every intermediate click only creates persistence and runtime
