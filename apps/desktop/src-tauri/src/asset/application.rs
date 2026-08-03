@@ -79,14 +79,17 @@ pub fn preview_asset(
     if !path.is_file() {
         return Err(format!("Preview source does not exist: {}", path.display()));
     }
-    context.audio.preview_sample(
-        &path,
-        options.start_ms,
-        options.end_ms,
-        options.looped,
-        options.gain,
-        options.voice_key,
-    )
+    context
+        .audio
+        .preview_sample(
+            &path,
+            options.start_ms,
+            options.end_ms,
+            options.looped,
+            options.gain,
+            options.voice_key,
+        )
+        .map_err(String::from)
 }
 
 /// Validates SMF bytes, persists them under `assets/imports/`, and registers a

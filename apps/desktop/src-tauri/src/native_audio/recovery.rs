@@ -1,4 +1,5 @@
 use super::AudioSupervisor;
+use super::error::{NativeAudioError, NativeAudioResult};
 use crate::audio_preferences::AudioPreferences;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -31,7 +32,7 @@ pub(crate) struct RecoveryState {
     pub(crate) runtime_controls: Arc<Mutex<RuntimeControlState>>,
     pub(crate) restart_preferences: Arc<Mutex<AudioPreferences>>,
     pub(crate) restart_gate: Arc<Mutex<()>>,
-    pub(crate) restart_outcomes: Arc<Mutex<HashMap<u64, Result<(), String>>>>,
+    pub(crate) restart_outcomes: Arc<Mutex<HashMap<u64, NativeAudioResult<()>>>>,
 }
 
 impl RecoveryState {
@@ -49,7 +50,7 @@ impl AudioSupervisor {
     pub(super) fn completed_restart_outcome(
         &self,
         previous_generation: u64,
-    ) -> Option<Result<(), String>> {
+    ) -> Option<NativeAudioResult<()>> {
         self.recovery
             .restart_outcomes
             .lock()
@@ -61,7 +62,7 @@ impl AudioSupervisor {
     pub(super) fn record_restart_outcome(
         &self,
         previous_generation: u64,
-        result: &Result<(), String>,
+        result: &NativeAudioResult<()>,
     ) {
         let Ok(mut outcomes) = self.recovery.restart_outcomes.lock() else {
             return;
@@ -74,26 +75,28 @@ impl AudioSupervisor {
         outcomes.insert(previous_generation, result.clone());
     }
 
-    pub(super) fn restore_runtime_controls(&self, deadline: Instant) -> Result<(), String> {
+    pub(super) fn restore_runtime_controls(&self, deadline: Instant) -> NativeAudioResult<()> {
         let controls = self
             .recovery
             .runtime_controls
             .lock()
-            .map_err(|error| format!("Runtime control lock was poisoned: {error}"))?
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Runtime control",
+            })?
             .clone();
         self.wait_for_command(
             serde_json::json!({
                 "type": "setProcessingMode",
                 "mode": controls.processing_mode,
             }),
-            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         self.wait_for_command(
             serde_json::json!({
                 "type": "setMasterGainDb",
                 "gainDb": controls.master_gain_db,
             }),
-            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         self.wait_for_command(
             serde_json::json!({
@@ -103,7 +106,7 @@ impl AudioSupervisor {
                     "disableMidiListening"
                 },
             }),
-            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         // A recovered process must remain muted until the user explicitly
         // confirms that audio should fade back in. The other control values
@@ -111,7 +114,7 @@ impl AudioSupervisor {
         // auto-cleared.
         self.wait_for_command(
             serde_json::json!({"type": "setEmergencyMute", "muted": true}),
-            super::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         if let Ok(mut current) = self.recovery.runtime_controls.lock() {
             current.processing_mode_sent = Some(current.processing_mode.clone());
@@ -120,12 +123,12 @@ impl AudioSupervisor {
         Ok(())
     }
 
-    pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> Result<(), String> {
-        *self
-            .recovery
-            .restart_preferences
-            .lock()
-            .map_err(|error| format!("Audio preference lock was poisoned: {error}"))? = preferences;
+    pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> NativeAudioResult<()> {
+        *self.recovery.restart_preferences.lock().map_err(|_| {
+            NativeAudioError::LockPoisoned {
+                resource: "Audio preference",
+            }
+        })? = preferences;
         Ok(())
     }
 }
@@ -137,7 +140,7 @@ mod tests {
     #[test]
     fn restart_coordinator_reuses_the_result_for_a_stale_generation() {
         let supervisor = AudioSupervisor::offline("test");
-        let result = Err("restart failed".to_string());
+        let result = Err(NativeAudioError::process("restart failed"));
         supervisor.record_restart_outcome(7, &result);
 
         assert_eq!(supervisor.completed_restart_outcome(7), Some(result));

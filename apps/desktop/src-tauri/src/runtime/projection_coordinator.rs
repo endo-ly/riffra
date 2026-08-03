@@ -78,7 +78,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         driver: Arc<D>,
         recovery: Option<RuntimeRecovery>,
         on_activated: ProjectionActivationHook,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RuntimeError> {
         let generation = driver.runtime_generation();
         let state = Arc::new((
             Mutex::new(ProjectionState {
@@ -109,7 +109,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     worker_activation,
                 )
             })
-            .map_err(|error| format!("Runtime Projection Coordinator could not start: {error}"))?;
+            .map_err(|error| {
+                RuntimeError::Internal(format!(
+                    "Runtime Projection Coordinator could not start: {error}"
+                ))
+            })?;
         Ok(Self {
             driver,
             state,

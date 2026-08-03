@@ -31,3 +31,9 @@ impl Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+impl From<RuntimeError> for String {
+    fn from(error: RuntimeError) -> Self {
+        error.to_string()
+    }
+}

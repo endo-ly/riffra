@@ -35,15 +35,17 @@ impl<D: TransportDriver> TransportExecutor<D> {
         }
     }
 
-    pub(crate) fn acquire(&self) -> Result<TransportExecutionLease<'_, D>, String> {
+    pub(crate) fn acquire(&self) -> Result<TransportExecutionLease<'_, D>, RuntimeError> {
         let (execution, available) = &*self.execution;
-        let mut in_flight = execution
-            .lock()
-            .map_err(|_| "Runtime transport execution state was poisoned.".to_string())?;
+        let mut in_flight = execution.lock().map_err(|_| {
+            RuntimeError::Internal("Runtime transport execution state was poisoned.".to_string())
+        })?;
         while *in_flight {
-            in_flight = available
-                .wait(in_flight)
-                .map_err(|_| "Runtime transport execution state was poisoned.".to_string())?;
+            in_flight = available.wait(in_flight).map_err(|_| {
+                RuntimeError::Internal(
+                    "Runtime transport execution state was poisoned.".to_string(),
+                )
+            })?;
         }
         *in_flight = true;
         drop(in_flight);
@@ -63,7 +65,7 @@ impl<D: TransportDriver> TransportExecutor<D> {
         &self,
         projection: ProjectionKey,
     ) -> Result<(), RuntimeError> {
-        let guard = self.acquire().map_err(RuntimeError::Internal)?;
+        let guard = self.acquire()?;
         let sequence = self
             .controller
             .lock()

@@ -195,7 +195,8 @@ fn queue_startup_maintenance(
                             .audio()
                             .set_restart_preferences(effective.clone())
                         {
-                            let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                            let message = error.to_string();
+                            let _ = diagnostics::record(&data_root, "startup-audio", &message);
                         }
                         if let Ok(mut current) = state.audio_preferences.lock() {
                             *current = effective;
@@ -207,7 +208,8 @@ fn queue_startup_maintenance(
                 }
             },
             Err(error) => {
-                let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                let message = error.to_string();
+                let _ = diagnostics::record(&data_root, "startup-audio", &message);
             }
         }
 
@@ -226,7 +228,8 @@ fn queue_startup_maintenance(
             session::Workspace::Home | session::Workspace::Design => "passive",
         };
         if let Err(error) = state.core.audio().set_processing_mode(mode) {
-            let _ = diagnostics::record(&data_root, "startup-audio", &error);
+            let message = error.to_string();
+            let _ = diagnostics::record(&data_root, "startup-audio", &message);
         }
         if workspace == session::Workspace::Arrange {
             let snapshot =
@@ -443,7 +446,10 @@ fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
 
 #[tauri::command]
 async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, String> {
-    run_blocking(app, |state| state.core.audio().refresh_meters()).await
+    run_blocking(app, |state| {
+        state.core.audio().refresh_meters().map_err(String::from)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -457,7 +463,11 @@ async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), Stri
         return Err("Master gain must be finite.".into());
     }
     run_blocking(app, move |state| {
-        state.core.audio().preview_master_gain_db(gain_db)
+        state
+            .core
+            .audio()
+            .preview_master_gain_db(gain_db)
+            .map_err(String::from)
     })
     .await
 }
@@ -465,7 +475,11 @@ async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), Stri
 #[tauri::command]
 async fn set_emergency_mute(muted: bool, app: AppHandle) -> Result<AudioStatus, String> {
     run_blocking(app, move |state| {
-        state.core.audio().set_emergency_mute(muted)
+        state
+            .core
+            .audio()
+            .set_emergency_mute(muted)
+            .map_err(String::from)
     })
     .await
 }
@@ -477,7 +491,11 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if state.core.safe_mode() {
             return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
         }
-        state.core.audio().recover_audio_device(&operation_app)
+        state
+            .core
+            .audio()
+            .recover_audio_device(&operation_app)
+            .map_err(String::from)
     })
     .await
 }
@@ -491,14 +509,25 @@ async fn enable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
                     .into(),
             );
         }
-        state.core.audio().enable_midi_listening()
+        state
+            .core
+            .audio()
+            .enable_midi_listening()
+            .map_err(String::from)
     })
     .await
 }
 
 #[tauri::command]
 async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
-    run_blocking(app, |state| state.core.audio().disable_midi_listening()).await
+    run_blocking(app, |state| {
+        state
+            .core
+            .audio()
+            .disable_midi_listening()
+            .map_err(String::from)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -510,20 +539,27 @@ async fn send_midi_to_plugin(bytes: Vec<u8>, app: AppHandle) -> Result<(), Strin
                     .into(),
             );
         }
-        state.core.audio().send_midi(&bytes)
+        state.core.audio().send_midi(&bytes).map_err(String::from)
     })
     .await
 }
 
 #[tauri::command]
 async fn stop_preview(app: AppHandle) -> Result<AudioStatus, String> {
-    run_blocking(app, |state| state.core.audio().stop_preview()).await
+    run_blocking(app, |state| {
+        state.core.audio().stop_preview().map_err(String::from)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn stop_preview_for_key(voice_key: i32, app: AppHandle) -> Result<AudioStatus, String> {
     run_blocking(app, move |state| {
-        state.core.audio().stop_preview_for_key(voice_key)
+        state
+            .core
+            .audio()
+            .stop_preview_for_key(voice_key)
+            .map_err(String::from)
     })
     .await
 }
@@ -602,7 +638,7 @@ pub fn run() {
                         expected_generation,
                         timeout,
                     )
-                .map_err(crate::native_audio::map_native_error)
+                .map_err(crate::runtime::error::RuntimeError::from)
                 });
             let runtime = runtime::RuntimeReconciler::new(
                 std::sync::Arc::new(audio.clone()),

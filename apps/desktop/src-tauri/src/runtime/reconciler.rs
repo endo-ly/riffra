@@ -5,6 +5,7 @@
 //! keeping the existing application-facing API stable.
 
 use crate::model::RuntimeProjectionStatus;
+use crate::runtime::error::RuntimeError;
 use crate::runtime::model::ProjectionKey;
 use crate::runtime::ports::RuntimeDriver;
 use crate::runtime::projection_coordinator::{ProjectionCoordinator, RuntimeRecovery};
@@ -20,7 +21,7 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
-    pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, String> {
+    pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, RuntimeError> {
         let transport = Arc::new(TransportExecutor::new(Arc::clone(&driver)));
         let activation_transport = Arc::clone(&transport);
         let on_activated = Arc::new(move |key| activation_transport.play_after_projection(key));
@@ -52,22 +53,19 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         snapshot: Value,
         key: ProjectionKey,
         timeout: Duration,
-    ) -> Result<RuntimeProjectionStatus, String> {
+    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let deadline = Instant::now() + timeout;
         let operation = self
             .projection
-            .submit_with_deadline(snapshot, key, Some(deadline))
-            .map_err(|error| error.to_string())?;
-        self.projection
-            .wait_for_operation(
-                operation.operation_id,
-                operation.key,
-                deadline,
-                timeout,
-                None,
-                None,
-            )
-            .map_err(|error| error.to_string())
+            .submit_with_deadline(snapshot, key, Some(deadline))?;
+        self.projection.wait_for_operation(
+            operation.operation_id,
+            operation.key,
+            deadline,
+            timeout,
+            None,
+            None,
+        )
     }
 
     pub fn apply_and_play_if<F>(
@@ -77,7 +75,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         key: ProjectionKey,
         timeout: Duration,
         should_play: F,
-    ) -> Result<bool, String>
+    ) -> Result<bool, RuntimeError>
     where
         F: FnOnce() -> bool,
     {
@@ -104,7 +102,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             Ok(operation) => operation,
             Err(error) => {
                 drop(lease);
-                return Err(error.to_string());
+                return Err(error);
             }
         };
         let should_play_now = self.projection.is_ready_for(operation.key)
@@ -114,7 +112,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         {
             self.projection.notify();
             drop(lease);
-            return Err(error.to_string());
+            return Err(error);
         }
         drop(lease);
 
@@ -131,44 +129,42 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
                 rollback.disarm();
                 Ok(true)
             }
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(error),
         }
     }
 
-    pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, String> {
+    pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
         if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
             return Ok(self.status());
         }
         self.projection.notify();
-        lease.stop().map_err(|error| error.to_string())?;
+        lease.stop()?;
         drop(lease);
         Ok(self.status())
     }
 
-    pub fn stop_nonblocking(&self, sequence: u64) -> Result<RuntimeProjectionStatus, String> {
+    pub fn stop_nonblocking(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
         if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
             return Ok(self.status());
         }
         self.projection.notify();
-        lease
-            .stop_nonblocking()
-            .map_err(|error| error.to_string())?;
+        lease.stop_nonblocking()?;
         drop(lease);
         Ok(self.status())
     }
 
-    pub fn stop_and_seek_to_start<F>(&self, sequence: u64, seek: F) -> Result<(), String>
+    pub fn stop_and_seek_to_start<F>(&self, sequence: u64, seek: F) -> Result<(), RuntimeError>
     where
-        F: FnOnce() -> Result<(), String>,
+        F: FnOnce() -> Result<(), RuntimeError>,
     {
         let lease = self.transport.acquire()?;
         if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
             return Ok(());
         }
         self.projection.notify();
-        lease.stop().map_err(|error| error.to_string())?;
+        lease.stop()?;
         seek()
     }
 }
@@ -556,7 +552,7 @@ mod tests {
         let error = reconciler
             .apply_and_wait(snapshot(10), key(10, 10), Duration::from_secs(1))
             .unwrap_err();
-        assert!(error.contains("superseded by newer canonical Session"));
+        assert!(matches!(error, RuntimeError::Superseded { .. }));
 
         wait_until(|| reconciler.status().active_projection_sequence == Some(11));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);

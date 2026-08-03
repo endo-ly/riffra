@@ -1,23 +1,25 @@
 use crate::native_audio::AudioSupervisor;
+use crate::native_audio::error::NativeAudioError;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::ports::{ProjectionDriver, TransportDriver};
 use serde_json::Value;
 use std::time::Duration;
 
-/// Converts the legacy String-based AudioSupervisor boundary into the typed
-/// error contract used by the Runtime ports. The conversion belongs to the
-/// native adapter, not to the projection or transport coordinators.
-pub(crate) fn map_native_error(message: String) -> RuntimeError {
-    if message.contains("did not acknowledge") || message.contains("graph boundary") {
-        return RuntimeError::Timeout { message };
+impl From<NativeAudioError> for RuntimeError {
+    fn from(error: NativeAudioError) -> Self {
+        match error {
+            NativeAudioError::Timeout { message } => Self::Timeout { message },
+            NativeAudioError::TransportLost { message } => Self::TransportLost { message },
+            NativeAudioError::GenerationChanged { expected, actual } => {
+                Self::GenerationChanged { expected, actual }
+            }
+            error @ NativeAudioError::DeadlineExpired => Self::Timeout {
+                message: error.to_string(),
+            },
+            NativeAudioError::ShuttingDown => Self::ShuttingDown,
+            error => Self::NativeRejected(error.to_string()),
+        }
     }
-    if crate::native_audio::is_transport_loss_error(&message) {
-        return RuntimeError::TransportLost { message };
-    }
-    if message.to_ascii_lowercase().contains("shutting down") {
-        return RuntimeError::ShuttingDown;
-    }
-    RuntimeError::NativeRejected(message)
 }
 
 impl ProjectionDriver for AudioSupervisor {
@@ -27,15 +29,15 @@ impl ProjectionDriver for AudioSupervisor {
         timeout: Duration,
     ) -> Result<(), RuntimeError> {
         AudioSupervisor::prepare_timeline_snapshot(self, snapshot, timeout)
-            .map_err(map_native_error)
+            .map_err(RuntimeError::from)
     }
 
     fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError> {
-        AudioSupervisor::commit_timeline_snapshot(self, timeout).map_err(map_native_error)
+        AudioSupervisor::commit_timeline_snapshot(self, timeout).map_err(RuntimeError::from)
     }
 
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError> {
-        AudioSupervisor::discard_timeline_snapshot(self, timeout).map_err(map_native_error)
+        AudioSupervisor::discard_timeline_snapshot(self, timeout).map_err(RuntimeError::from)
     }
 
     fn runtime_generation(&self) -> u64 {
@@ -51,17 +53,17 @@ impl TransportDriver for AudioSupervisor {
     fn play_timeline(&self) -> Result<(), RuntimeError> {
         AudioSupervisor::play_timeline(self)
             .map(|_| ())
-            .map_err(map_native_error)
+            .map_err(RuntimeError::from)
     }
 
     fn stop_timeline(&self) -> Result<(), RuntimeError> {
         AudioSupervisor::stop_timeline(self)
             .map(|_| ())
-            .map_err(map_native_error)
+            .map_err(RuntimeError::from)
     }
 
     fn stop_timeline_nonblocking(&self) -> Result<(), RuntimeError> {
-        AudioSupervisor::stop_timeline_nonblocking(self).map_err(map_native_error)
+        AudioSupervisor::stop_timeline_nonblocking(self).map_err(RuntimeError::from)
     }
 }
 
@@ -71,9 +73,9 @@ mod tests {
 
     #[test]
     fn classifies_native_timeout_without_mixing_driver_ports() {
-        let message = "Native audio did not acknowledge the command within 15 seconds.";
-
-        let error = map_native_error(message.into());
+        let error = RuntimeError::from(NativeAudioError::Timeout {
+            message: "Native audio command acknowledgement timed out".into(),
+        });
 
         assert!(matches!(error, RuntimeError::Timeout { .. }));
     }

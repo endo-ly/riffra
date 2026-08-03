@@ -316,7 +316,7 @@ pub fn open_plugin_editor(context: &RackContext<'_>) -> Result<AudioStatus, Stri
     if context.safe_mode {
         return Err("Safe Mode blocks external VST3 editors.".into());
     }
-    context.audio.open_plugin_editor()
+    context.audio.open_plugin_editor().map_err(String::from)
 }
 
 /// Sets the bypass flag on the rack plugin device, applying it to the runtime
@@ -396,7 +396,7 @@ pub fn set_rack_plugin_parameter(
 pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, String> {
     let session = context.session.lock().map_err(lock_error)?.clone();
     if context.safe_mode {
-        return context.audio.refresh_status();
+        return context.audio.refresh_status().map_err(String::from);
     }
     let current = context.audio.refresh_status()?;
     if !audio_command_succeeded(&current) {
@@ -445,7 +445,10 @@ pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, St
             .as_ref()
             .is_some_and(|plugin| plugin.bypassed != device.bypassed)
         {
-            return context.audio.set_plugin_bypassed(device.bypassed);
+            return context
+                .audio
+                .set_plugin_bypassed(device.bypassed)
+                .map_err(String::from);
         }
         return Ok(current);
     }

@@ -205,7 +205,7 @@ pub fn sync_arrangement_runtime(
 /// has been replaced. This does not mutate canonical state.
 pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
     if context.safe_mode {
-        return context.audio.refresh_status();
+        return context.audio.refresh_status().map_err(String::from);
     }
     let session = context.session.lock().map_err(lock_error)?.clone();
     let native_pads = resolve_native_pads(
@@ -250,7 +250,11 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
 }
 
 pub fn stop_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    context.runtime.stop(transport_sequence).map(|_| ())
+    context
+        .runtime
+        .stop(transport_sequence)
+        .map(|_| ())
+        .map_err(String::from)
 }
 
 pub fn go_to_start_timeline(
@@ -259,11 +263,17 @@ pub fn go_to_start_timeline(
 ) -> Result<(), String> {
     context
         .runtime
-        .stop_and_seek_to_start(transport_sequence, || context.audio.seek_timeline(0))
+        .stop_and_seek_to_start(transport_sequence, || {
+            context
+                .audio
+                .seek_timeline(0)
+                .map_err(crate::runtime::error::RuntimeError::from)
+        })
+        .map_err(String::from)
 }
 
 pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
-    context.audio.seek_timeline(tick.0)
+    context.audio.seek_timeline(tick.0).map_err(String::from)
 }
 
 /// Returns the active workspace snapshot and updates the desired audio mode.

@@ -1236,7 +1236,10 @@ pub fn open_track_plugin_editor(
         return Err(format!("Track Device is not registered: {device_id}"));
     }
     drop(session);
-    context.audio.open_track_plugin_editor(track_id, device_id)
+    context
+        .audio
+        .open_track_plugin_editor(track_id, device_id)
+        .map_err(String::from)
 }
 
 /// Persists state captured from the native Track Plugin Editor into the
@@ -1884,25 +1887,31 @@ pub fn start_take_comparison(
     let processed_start_frame = processed_source.source_start_sample;
     let processed_end_frame = processed_source.source_end_sample;
     drop(session);
-    context.audio.start_take_comparison(
-        Path::new(&raw.content_location),
-        Path::new(&processed.content_location),
-        raw_start_frame,
-        raw_end_frame,
-        processed_start_frame,
-        processed_end_frame,
-    )
+    context
+        .audio
+        .start_take_comparison(
+            Path::new(&raw.content_location),
+            Path::new(&processed.content_location),
+            raw_start_frame,
+            raw_end_frame,
+            processed_start_frame,
+            processed_end_frame,
+        )
+        .map_err(String::from)
 }
 
 pub fn switch_take_comparison_variant(
     context: &SessionContext<'_>,
     variant: AudioTakeVariant,
 ) -> Result<AudioStatus, String> {
-    context.audio.switch_take_comparison_variant(variant)
+    context
+        .audio
+        .switch_take_comparison_variant(variant)
+        .map_err(String::from)
 }
 
 pub fn stop_take_comparison(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
-    context.audio.stop_take_comparison()
+    context.audio.stop_take_comparison().map_err(String::from)
 }
 
 pub fn activate_take(
