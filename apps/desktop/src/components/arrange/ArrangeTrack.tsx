@@ -5,16 +5,18 @@ import type {
   CreativeSession,
   MidiClip,
   MonitoringState,
+  ProjectTimebase,
   Track,
 } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
-  layoutClipLanes,
-  timelineObjectEndTick,
   ticksPerBar,
   trackLaneHeight,
+  type ArrangeAudioTimelineItem,
+  type ArrangeMidiTimelineItem,
+  type TrackTimeline,
   type TrackSize,
 } from '@/lib/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/lib/arrange-drag';
@@ -22,9 +24,8 @@ import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
   track: Track;
-  clips: AudioClip[];
-  midiClips: MidiClip[];
-  session: CreativeSession;
+  timeline: TrackTimeline;
+  timebase: ProjectTimebase;
   analyses: Record<string, AudioAnalysis | null>;
   selectedClipIds: string[];
   selected: boolean;
@@ -38,7 +39,7 @@ interface ArrangeTrackProps {
     operation: Promise<CreativeSession | null>,
     success: string,
   ) => Promise<CreativeSession | null>;
-  onDrop: (event: React.DragEvent, trackId: string) => void;
+  onDrop: (event: React.DragEvent, trackId: string, trackKind: Track['kind']) => void;
   onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
   onMoveMidi: (event: React.PointerEvent<HTMLButtonElement>, clip: MidiClip) => void;
@@ -130,23 +131,15 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  const layout = layoutClipLanes(
-    props.clips.map((clip) => ({
-      id: clip.id,
-      startTick: clip.startTick,
-      endTick: timelineObjectEndTick(clip, props.session.arrangement.timebase),
-    })),
+  const audioItems = props.timeline.items.filter(
+    (item): item is ArrangeAudioTimelineItem => item.kind === 'audio',
   );
-  const midiLayout = layoutClipLanes(
-    props.midiClips.map((clip) => ({
-      id: clip.id,
-      startTick: clip.startTick,
-      endTick: timelineObjectEndTick(clip, props.session.arrangement.timebase),
-    })),
+  const midiItems = props.timeline.items.filter(
+    (item): item is ArrangeMidiTimelineItem => item.kind === 'midi',
   );
-  const laneCount = Math.max(layout.count, midiLayout.count);
+  const laneCount = props.timeline.laneCount;
   const laneHeight = trackLaneHeight(props.trackSize);
-  const barTicks = ticksPerBar(props.session.arrangement.timebase);
+  const barTicks = ticksPerBar(props.timebase);
   const bars = Array.from(
     { length: Math.ceil(props.timelineTicks / barTicks) },
     (_, index) => index,
@@ -192,7 +185,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       data-track-id={props.track.id}
       data-selected={props.selected || undefined}
       onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => props.onDrop(event, props.track.id)}
+      onDrop={(event) => props.onDrop(event, props.track.id, props.track.kind)}
     >
       <aside
         className={styles.trackHeader}
@@ -263,8 +256,8 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </div>
           <small>
             {props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO'} ·{' '}
-            {props.clips.length + props.midiClips.length} CLIP
-            {props.clips.length + props.midiClips.length === 1 ? '' : 'S'}
+            {props.timeline.items.length} CLIP
+            {props.timeline.items.length === 1 ? '' : 'S'}
           </small>
         </div>
         <div className={styles.trackSwitches}>
@@ -457,7 +450,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         onDrop={(event) => {
           event.stopPropagation();
           setDragOver(false);
-          props.onDrop(event, props.track.id);
+          props.onDrop(event, props.track.id, props.track.kind);
         }}
         onContextMenu={(event) => {
           if ((event.target as HTMLElement).closest('[data-clip-id]')) return;
@@ -469,14 +462,14 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         {bars.map((bar) => (
           <i key={bar} style={{ left: bar * barTicks * props.pixelsPerTick }} />
         ))}
-        {props.clips.map((clip) => (
+        {audioItems.map(({ clip, key }) => (
           <AudioClipView
-            key={clip.id}
+            key={key}
             clip={clip}
             analysis={props.analyses[clip.assetId]}
-            timebase={props.session.arrangement.timebase}
+            timebase={props.timebase}
             pixelsPerTick={props.pixelsPerTick}
-            lane={layout.lanes.get(clip.id) ?? 0}
+            lane={props.timeline.lanes.get(key) ?? 0}
             laneHeight={laneHeight}
             selected={props.selectedClipIds.includes(clip.id)}
             missing={props.unavailableClipIds.includes(clip.id)}
@@ -487,12 +480,12 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             onContextMenu={props.onAudioClipContextMenu}
           />
         ))}
-        {props.midiClips.map((clip) => (
+        {midiItems.map(({ clip, key }) => (
           <MidiClipView
-            key={clip.id}
+            key={key}
             clip={clip}
             pixelsPerTick={props.pixelsPerTick}
-            lane={midiLayout.lanes.get(clip.id) ?? 0}
+            lane={props.timeline.lanes.get(key) ?? 0}
             laneHeight={laneHeight}
             selected={props.selectedClipIds.includes(clip.id)}
             onSelect={props.onSelect}

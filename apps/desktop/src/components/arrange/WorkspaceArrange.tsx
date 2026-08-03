@@ -15,6 +15,7 @@ import type {
   Marker,
   MidiClip,
   PluginEntry,
+  TrackKind,
 } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeRuler } from './ArrangeRuler';
@@ -26,6 +27,7 @@ import { PluginPicker } from './PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import {
   BASE_PIXELS_PER_QUARTER,
+  buildTrackTimeline,
   timelineObjectEndTick,
   clipDurationTicks,
   formatClock,
@@ -102,29 +104,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   );
   const analyses = useWaveformAnalyses(props.api, arrangement.audioClips);
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
-  // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
-  // delivers the file contents rather than the OS path, so the bytes are
-  // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
-  const handleOsMidiDrop = useCallback(
-    async (files: FileList, trackId?: string): Promise<void> => {
-      for (const file of Array.from(files)) {
-        if (!/\.midi?$/i.test(file.name)) continue;
-        const stem = file.name.replace(/\.(mid|midi)$/i, '');
-        try {
-          const assetId = await api.importMidiBytes(
-            stem,
-            Array.from(new Uint8Array(await file.arrayBuffer())),
-          );
-          if (!assetId) continue;
-          const next = await api.addMidiClipToArrangement(assetId, stem, undefined, trackId);
-          if (next) setSession(next);
-        } catch {
-          /* import or placement failure surfaces through the library notice path */
-        }
-      }
-    },
-    [api, setSession],
-  );
   const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
@@ -161,6 +140,34 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     analyses,
     onSplitToolUsed: () => setTool('select'),
   });
+  const { setMessage } = editor;
+  // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
+  // delivers the file contents rather than the OS path, so the bytes are
+  // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
+  const handleOsMidiDrop = useCallback(
+    async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
+      if (trackKind === 'audio') {
+        setMessage('MIDI Assets can only be placed on an Instrument Track.');
+        return;
+      }
+      for (const file of Array.from(files)) {
+        if (!/\.midi?$/i.test(file.name)) continue;
+        const stem = file.name.replace(/\.(mid|midi)$/i, '');
+        try {
+          const assetId = await api.importMidiBytes(
+            stem,
+            Array.from(new Uint8Array(await file.arrayBuffer())),
+          );
+          if (!assetId) continue;
+          const next = await api.addMidiClipToArrangement(assetId, stem, undefined, trackId);
+          if (next) setSession(next);
+        } catch {
+          /* import or placement failure surfaces through the library notice path */
+        }
+      }
+    },
+    [api, setMessage, setSession],
+  );
   const playbackOutOfSync =
     editor.runtimeOutOfSync || Boolean(transport && transport.revision !== arrangement.revision);
   const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
@@ -1023,9 +1030,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               <Fragment key={track.id}>
                 <ArrangeTrack
                   track={track}
-                  clips={arrangement.audioClips.filter((clip) => clip.trackId === track.id)}
-                  midiClips={arrangement.midiClips.filter((clip) => clip.trackId === track.id)}
-                  session={props.session}
+                  timeline={buildTrackTimeline(
+                    track.id,
+                    arrangement.audioClips,
+                    arrangement.midiClips,
+                    timebase,
+                  )}
+                  timebase={timebase}
                   analyses={analyses}
                   selectedClipIds={selectedClipIds}
                   unavailableClipIds={transport?.unavailableClipIds ?? []}
@@ -1039,12 +1050,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   trackSize={trackSizes[track.id] ?? trackSize}
                   api={props.api}
                   onCommit={editor.commit}
-                  onDrop={(event, trackId) => {
+                  onDrop={(event, trackId, trackKind) => {
                     if (event.dataTransfer.files?.length) {
-                      void handleOsMidiDrop(event.dataTransfer.files, trackId);
+                      void handleOsMidiDrop(event.dataTransfer.files, trackId, trackKind);
                       return;
                     }
-                    void editor.dropAsset(event, trackId);
+                    void editor.dropAsset(event, trackId, trackKind);
                   }}
                   onContextMenu={openTrackLaneContextMenu}
                   onMove={editor.beginMove}

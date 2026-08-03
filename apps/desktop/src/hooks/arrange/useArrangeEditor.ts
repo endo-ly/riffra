@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CreativeSession } from '@/lib/domain';
+import type { AudioAnalysis, CreativeSession, TrackKind } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
@@ -146,11 +146,20 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     [edgeTicks, pixelsPerTick, snap, timebase],
   );
 
-  const dropAsset = async (event: React.DragEvent, trackId?: string) => {
+  const dropAsset = async (event: React.DragEvent, trackId?: string, trackKind?: TrackKind) => {
     event.preventDefault();
     const asset = readAssetDrag(event.dataTransfer);
     if (!asset) {
       setMessage('The dragged Library item is not a valid Audio or MIDI Asset.');
+      return;
+    }
+    const expectedTrackKind = asset.kind === 'audio' ? 'audio' : 'instrument';
+    if (trackKind && trackKind !== expectedTrackKind) {
+      setMessage(
+        asset.kind === 'audio'
+          ? 'Audio Assets can only be placed on an Audio Track.'
+          : 'MIDI Assets can only be placed on an Instrument Track.',
+      );
       return;
     }
     const timeline = event.currentTarget.closest('[data-arrange-timeline]');

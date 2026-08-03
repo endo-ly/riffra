@@ -3000,6 +3000,73 @@ mod tests {
     }
 
     #[test]
+    fn moving_audio_clip_to_an_instrument_track_is_rejected() {
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+
+        let error = arrangement
+            .move_audio_clips(vec![AudioClipMove {
+                clip_id: "clip:1".into(),
+                start_tick: TimelineTick(0),
+                track_id: "instrument".into(),
+            }])
+            .unwrap_err();
+
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+        assert_eq!(arrangement.audio_clips[0].track_id, "main");
+    }
+
+    #[test]
+    fn moving_midi_clip_to_an_audio_track_is_rejected() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        let error = arrangement
+            .move_midi_clips(vec![MidiClipMove {
+                clip_id: "midi-clip:1".into(),
+                start_tick: TimelineTick(0),
+                track_id: "audio".into(),
+            }])
+            .unwrap_err();
+
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+        assert_eq!(arrangement.midi_clips[0].track_id, "instrument");
+    }
+
+    #[test]
+    fn updating_midi_clip_to_an_audio_track_is_rejected() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        let error = arrangement
+            .update_midi_clip(
+                "midi-clip:1",
+                MidiClipPatch {
+                    track_id: Some("audio".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+        assert_eq!(arrangement.midi_clips[0].track_id, "instrument");
+    }
+
+    #[test]
     fn update_audio_clip_rejects_inverted_source_range_after_patch() {
         let mut arrangement = arrangement_with_clip(mint_asset_id());
         let error = arrangement

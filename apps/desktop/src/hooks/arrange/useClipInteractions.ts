@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip } from '@/lib/domain';
+import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, TrackKind } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import {
   clipDurationTicks,
@@ -32,6 +32,8 @@ interface ClipInteractionOptions {
 export function useClipInteractions(options: ClipInteractionOptions) {
   const { arrangement } = options.session;
   const { timebase } = arrangement;
+  const trackAcceptsKind = (trackId: string, kind: TrackKind) =>
+    arrangement.tracks.some((track) => track.id === trackId && track.kind === kind);
   const splitClip = useCallback(
     async (clip: AudioClip, tick: number) => {
       const target = options.snapTick(tick);
@@ -129,17 +131,20 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }
       const tracks = arrangement.tracks.map((track) => track.id);
       const trackDelta = tracks.indexOf(pendingTrack) - tracks.indexOf(clip.trackId);
+      const targetMoves = selected.map((item) => ({
+        clipId: item.id,
+        startTick: Math.max(0, item.startTick + deltaTick),
+        trackId:
+          tracks[
+            Math.max(0, Math.min(tracks.length - 1, tracks.indexOf(item.trackId) + trackDelta))
+          ] ?? item.trackId,
+      }));
+      if (targetMoves.some((move) => !trackAcceptsKind(move.trackId, 'audio'))) {
+        options.setMessage('Audio Clips can only be placed on an Audio Track.');
+        return;
+      }
       void options.commit(
-        options.api.moveAudioClips(
-          selected.map((item) => ({
-            clipId: item.id,
-            startTick: Math.max(0, item.startTick + deltaTick),
-            trackId:
-              tracks[
-                Math.max(0, Math.min(tracks.length - 1, tracks.indexOf(item.trackId) + trackDelta))
-              ] ?? item.trackId,
-          })),
-        ),
+        options.api.moveAudioClips(targetMoves),
         `${movingIds.length} clip${movingIds.length === 1 ? '' : 's'} moved.`,
       );
     };
@@ -219,6 +224,8 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           options.api.pasteTimelineClips([], movingIds, pendingTick),
           'MIDI clip duplicated.',
         );
+      } else if (targetMoves.some((move) => !trackAcceptsKind(move.trackId, 'instrument'))) {
+        options.setMessage('MIDI Clips can only be placed on an Instrument Track.');
       } else {
         void options.commit(options.api.moveMidiClips(targetMoves), 'MIDI clip moved.');
       }

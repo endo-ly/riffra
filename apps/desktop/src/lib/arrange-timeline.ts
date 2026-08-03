@@ -8,6 +8,30 @@ export type SnapGrid = 'bar' | '1/2' | '1/4' | '1/8' | '1/16' | '1/32' | '1/8t' 
 export type ArrangeTool = 'select' | 'split';
 export type TrackSize = 'compact' | 'normal' | 'large';
 
+export interface ArrangeAudioTimelineItem {
+  kind: 'audio';
+  key: string;
+  clip: AudioClip;
+  startTick: number;
+  endTick: number;
+}
+
+export interface ArrangeMidiTimelineItem {
+  kind: 'midi';
+  key: string;
+  clip: MidiClip;
+  startTick: number;
+  endTick: number;
+}
+
+export type ArrangeTimelineItem = ArrangeAudioTimelineItem | ArrangeMidiTimelineItem;
+
+export interface TrackTimeline {
+  items: readonly ArrangeTimelineItem[];
+  lanes: ReadonlyMap<string, number>;
+  laneCount: number;
+}
+
 export function clipDurationTicks(clip: AudioClip, timebase: ProjectTimebase) {
   return Math.max(
     1,
@@ -77,10 +101,18 @@ export function formatClock(tick: number, timebase: ProjectTimebase) {
   return `${minutes}:${(seconds % 60).toFixed(2).padStart(5, '0')}`;
 }
 
-export function layoutClipLanes(clips: { id: string; startTick: number; endTick: number }[]) {
+export function layoutClipLanes(
+  clips: readonly { id: string; startTick: number; endTick: number }[],
+) {
   const laneEnds: number[] = [];
   const lanes = new Map<string, number>();
-  for (const clip of [...clips].sort((left, right) => left.startTick - right.startTick)) {
+  for (const clip of [...clips].sort((left, right) => {
+    const byStart = left.startTick - right.startTick;
+    if (byStart !== 0) return byStart;
+    const byEnd = left.endTick - right.endTick;
+    if (byEnd !== 0) return byEnd;
+    return left.id.localeCompare(right.id);
+  })) {
     const end = clip.endTick;
     const openLane = laneEnds.findIndex((laneEnd) => laneEnd <= clip.startTick);
     const lane = openLane < 0 ? laneEnds.length : openLane;
@@ -88,6 +120,42 @@ export function layoutClipLanes(clips: { id: string; startTick: number; endTick:
     lanes.set(clip.id, lane);
   }
   return { lanes, count: Math.max(1, laneEnds.length) };
+}
+
+export function buildTrackTimeline(
+  trackId: string,
+  audioClips: readonly AudioClip[],
+  midiClips: readonly MidiClip[],
+  timebase: ProjectTimebase,
+): TrackTimeline {
+  const items: ArrangeTimelineItem[] = [
+    ...audioClips
+      .filter((clip) => clip.trackId === trackId)
+      .map((clip) => ({
+        kind: 'audio' as const,
+        key: `audio:${clip.id}`,
+        clip,
+        startTick: clip.startTick,
+        endTick: timelineObjectEndTick(clip, timebase),
+      })),
+    ...midiClips
+      .filter((clip) => clip.trackId === trackId)
+      .map((clip) => ({
+        kind: 'midi' as const,
+        key: `midi:${clip.id}`,
+        clip,
+        startTick: clip.startTick,
+        endTick: timelineObjectEndTick(clip, timebase),
+      })),
+  ];
+  const layout = layoutClipLanes(
+    items.map((item) => ({
+      id: item.key,
+      startTick: item.startTick,
+      endTick: item.endTick,
+    })),
+  );
+  return { items, lanes: layout.lanes, laneCount: layout.count };
 }
 
 export function trackLaneHeight(size: TrackSize) {

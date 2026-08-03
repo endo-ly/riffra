@@ -136,8 +136,8 @@ export interface FakeNativeApiOptions {
  * emit, with mutable state so a test can drive scenarios (mute, device
  * disconnect, recording integrity, plugin failure). Methods are arrow fields so
  * they keep their `this` binding when destructured by the App, matching how the
- * production NativeApi is consumed. It deliberately does not fabricate success
- * paths that the product never yields.
+ * production NativeApi is consumed. It mirrors the production command
+ * invariants instead of fabricating success paths that the product never yields.
  */
 export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
@@ -594,6 +594,19 @@ export class FakeNativeApi implements NativeApi {
   private assertAsset(assetId: AssetId): void {
     if (this.missingAssetIds.has(assetId)) {
       throw new Error(`Asset is not registered: ${assetId}`);
+    }
+  }
+
+  private assertTrackKind(
+    arrangement: CreativeSession['arrangement'],
+    trackId: string,
+    expected: TrackKind,
+  ): void {
+    const track = arrangement.tracks.find((candidate) => candidate.id === trackId);
+    if (!track) throw new Error(`Track is not registered: ${trackId}`);
+    if (track.kind !== expected) {
+      const label = expected === 'audio' ? 'Audio' : 'Instrument';
+      throw new Error(`Track is not an ${label} Track: ${trackId}`);
     }
   }
 
@@ -1424,12 +1437,15 @@ export class FakeNativeApi implements NativeApi {
     this.assertAsset(assetId);
     this.assertPersistence();
     const session = this.bootstrapState.session;
-    const selectedTrack = trackId ?? session.arrangement.tracks[0]?.id ?? `track:${Date.now()}`;
-    const tracks = session.arrangement.tracks.length
+    const selectedTrack =
+      trackId ?? session.arrangement.tracks.find((track) => track.kind === 'audio')?.id;
+    const targetId = selectedTrack ?? `track:${Date.now()}`;
+    const tracks = selectedTrack
       ? session.arrangement.tracks
       : [
+          ...session.arrangement.tracks,
           {
-            id: selectedTrack,
+            id: targetId,
             name: 'Audio 1',
             kind: 'audio' as const,
             gainDb: 0,
@@ -1442,6 +1458,7 @@ export class FakeNativeApi implements NativeApi {
             rack: { devices: [], macros: [] },
           },
         ];
+    this.assertTrackKind({ ...session.arrangement, tracks }, targetId, 'audio');
     const appendTick = session.arrangement.audioClips.reduce(
       (end, clip) =>
         Math.max(
@@ -1469,7 +1486,7 @@ export class FakeNativeApi implements NativeApi {
           {
             id: `clip:${assetId}:${Date.now()}`,
             name,
-            trackId: selectedTrack,
+            trackId: targetId,
             assetId,
             startTick: startTick ?? appendTick,
             sourceRange: { start: 0, end: 48_000 },
@@ -1521,6 +1538,7 @@ export class FakeNativeApi implements NativeApi {
             },
           ];
       const targetId = selectedTrack ?? nextTrack[nextTrack.length - 1].id;
+      this.assertTrackKind({ ...current.arrangement, tracks: nextTrack }, targetId, 'instrument');
       return {
         ...current,
         workspace: 'arrange',
@@ -1563,13 +1581,14 @@ export class FakeNativeApi implements NativeApi {
     const session = this.bootstrapState.session;
     const next = edit(session.arrangement.audioClips);
     if (!next) return null;
+    const arrangement = { ...session.arrangement, audioClips: next };
+    for (const clip of next) this.assertTrackKind(arrangement, clip.trackId, 'audio');
     const updated: CreativeSession = {
       ...session,
       updatedAtMs: Date.now(),
       arrangement: {
-        ...session.arrangement,
+        ...arrangement,
         revision: session.arrangement.revision + 1,
-        audioClips: next,
       },
     };
     this.bootstrapState = { ...this.bootstrapState, session: updated };
@@ -1621,27 +1640,31 @@ export class FakeNativeApi implements NativeApi {
     patch: MidiClipPatch,
   ): Promise<CreativeSession | null> => {
     this.calls.push('updateMidiClip');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                name: patch.name ?? clip.name,
-                trackId: patch.trackId ?? clip.trackId,
-                startTick: patch.startTick ?? clip.startTick,
-                durationTicks: patch.durationTicks ?? clip.durationTicks,
-                muted: patch.muted ?? clip.muted,
-                loopEnabled: patch.loopEnabled ?? clip.loopEnabled,
-              }
-            : clip,
-        ),
-      },
-    }));
+    return this.commitSession((current) => {
+      const midiClips = current.arrangement.midiClips.map((clip) =>
+        clip.id === clipId
+          ? {
+              ...clip,
+              name: patch.name ?? clip.name,
+              trackId: patch.trackId ?? clip.trackId,
+              startTick: patch.startTick ?? clip.startTick,
+              durationTicks: patch.durationTicks ?? clip.durationTicks,
+              muted: patch.muted ?? clip.muted,
+              loopEnabled: patch.loopEnabled ?? clip.loopEnabled,
+            }
+          : clip,
+      );
+      const arrangement = { ...current.arrangement, midiClips };
+      for (const clip of midiClips) this.assertTrackKind(arrangement, clip.trackId, 'instrument');
+      return {
+        ...current,
+        updatedAtMs: Date.now(),
+        arrangement: {
+          ...arrangement,
+          revision: current.arrangement.revision + 1,
+        },
+      };
+    });
   };
 
   removeTimelineClips = async (
@@ -1768,16 +1791,18 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('moveMidiClips');
     return this.commitSession((current) => {
       const byId = new Map(moves.map((move) => [move.clipId, move]));
+      const midiClips = current.arrangement.midiClips.map((clip) => {
+        const move = byId.get(clip.id);
+        return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
+      });
+      const arrangement = { ...current.arrangement, midiClips };
+      for (const clip of midiClips) this.assertTrackKind(arrangement, clip.trackId, 'instrument');
       return {
         ...current,
         updatedAtMs: Date.now(),
         arrangement: {
-          ...current.arrangement,
+          ...arrangement,
           revision: current.arrangement.revision + 1,
-          midiClips: current.arrangement.midiClips.map((clip) => {
-            const move = byId.get(clip.id);
-            return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
-          }),
         },
       };
     });
