@@ -17,7 +17,7 @@ Riffra は現在 Windows 向けの Tauri + React + C++/JUCE sidecar 構成。AI 
 目指す形：
 
 - Linux 上で動作する
-- 外部 VST3 プラグインに依存せず、内蔵音源エンジンまたは MIDI / オーディオクリップで完結する
+- 外部 VST3 プラグインに依存せず、音源エンジンまたは MIDI / オーディオクリップで完結する
 - AI エージェントがプログラムから操作できる
 - 状態を保持しながら連続的に操作できる
 
@@ -97,10 +97,10 @@ riffra-cli --interactive --project ./project/project.json
 入力例：
 
 ```json
-{"protocolVersion":1,"requestId":"1","type":"addTrack","params":{"name":"audio-1","kind":"audio"}}
-{"protocolVersion":1,"requestId":"2","type":"addAudioClip","params":{"trackId":"track-1","startTick":0}}
-{"protocolVersion":1,"requestId":"3","type":"render","params":{"outPath":"./output.wav"}}
-{"protocolVersion":1,"requestId":"4","type":"getStatus","params":{}}
+{"protocolVersion":2,"requestId":"1","type":"addTrack","params":{"name":"audio-1","kind":"audio"}}
+{"protocolVersion":2,"requestId":"2","type":"addAudioClip","params":{"trackId":"track-1","startTick":0}}
+{"protocolVersion":2,"requestId":"3","type":"render","params":{"outPath":"./output.wav"}}
+{"protocolVersion":2,"requestId":"4","type":"getStatus","params":{}}
 ```
 
 ---
@@ -148,18 +148,73 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 - ネットワーク・認証・ポート管理が不要
 - 後から HTTP 層を追加しても `riffra-core` は変えなくて済む
 
-まず実装するコマンド例：
+まず実装するコマンド例です。プロトコルの詳細は「プロトコル設計」を参照してください。
 
-| カテゴリ     | コマンド                                                            |
-| ------------ | ------------------------------------------------------------------- |
-| プロジェクト | `loadProject`, `saveProject`, `createProject`                       |
-| トラック     | `addTrack`, `removeTrack`, `updateTrack`, `listTracks`              |
-| クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip` |
-| 再生         | `play`, `stop`, `seek`, `getTransportStatus`                        |
-| 録音         | `startRecording`, `stopRecording`                                   |
-| 音源         | `loadInstrument`, `setInstrumentParameter`                          |
-| 書き出し     | `render`, `getJobStatus`                                            |
-| 状態         | `getStatus`, `getSession`                                           |
+| カテゴリ     | 書き込み                                                                                  | 読み出し                                 |
+| ------------ | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
+| プロジェクト | `createProject`, `loadProject`, `saveProject`                                             | `getSession`                             |
+| トラック     | `addTrack`, `removeTrack`, `updateTrack`                                                  | `listTracks`, `getTrack`, `getRackChain` |
+| クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip`                       | `listClips`, `getClip`                   |
+| 音符         | `updateNote`（ピッチ、ベロシティ、CC、タイミング）                                        | `getNotes`                               |
+| 再生         | `play`, `stop`, `seek`                                                                    | `getTransportStatus`                     |
+| 録音         | `startRecording`, `stopRecording`                                                         | —                                        |
+| 音源         | `loadInstrument`, `setInstrumentParameter`                                                | `listInstruments`, `getInstrument`       |
+| 書き出し     | `render`, `cancelJob`                                                                     | `getJobs`, `getJob`                      |
+| 状態         | —                                                                                         | `getStatus`                              |
+| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`, `saveSnapshot`, `loadSnapshot` | `listSnapshots`                          |
+
+---
+
+## プロトコル設計
+
+対話モードのJSON Linesは、リクエスト・レスポンス・イベントの3種類のフレームで構成する。1リクエストにつき1行のJSONで、`protocolVersion`でプロトコルを判別する。
+
+```json
+{"protocolVersion":2,"requestId":"1","type":"addTrack","params":{"name":"drums","kind":"audio"}}
+{"status":"ok","requestId":"1","result":{"trackId":"track-1"}}
+{"type":"event","requestId":"5","eventType":"jobProgress","payload":{"jobId":"j-1","progress":0.5}}
+```
+
+| フレーム | 方向             | 内容                                                             |
+| -------- | ---------------- | ---------------------------------------------------------------- |
+| request  | エージェント→CLI | コマンド呼び出し。`requestId`と`params`を持つ                    |
+| response | CLI→エージェント | `status`、`result`、または`diagnostics`。`requestId`で対応を取る |
+| event    | CLI→エージェント | `eventType`を持つ非同期通知。`requestId`に紐付く場合がある       |
+
+エラーは共通のDiagnostics形式（`code`、`severity`、`message`、`detail`）で返す。外部エンジンの失敗もこの形式へ正規化する。
+
+### 読み出し
+
+書けるものはすべて読めることを原則とする。書き込みコマンドと対になる読み出しコマンドを揃える。音符はフィルター付きで参照できる。
+
+```json
+{
+  "protocolVersion": 2,
+  "requestId": "7",
+  "type": "getNotes",
+  "params": { "trackId": "track-1", "rangeTicks": [0, 1920], "velocityRange": [1, 40] }
+}
+```
+
+時刻はtickとbar.beatの両方を受け付ける。ユーザーの指示（「2小節目のベロシティを上げる」など）をそのまま渡せるようにする。
+
+### 非同期ジョブ
+
+`render`や`startRecording`など時間のかかる操作は、ジョブとして即座に`jobId`を返す。進行状況は`jobProgress`イベントで通知し、完了時は`jobDone`、失敗時は`jobFailed`を送る。`cancelJob`で中止できる。レスポンスを待つ間もほかのコマンドを受け付けられる。
+
+### 編集の安全
+
+| 機能             | コマンド                                        | 内容                                             |
+| ---------------- | ----------------------------------------------- | ------------------------------------------------ |
+| 原子性           | 全コマンド                                      | 1コマンドは1つの原子操作。失敗時に状態が壊れない |
+| 取り消し         | `undo`, `redo`                                  | セッションの操作履歴を戻す、やり直す             |
+| トランザクション | `beginEdit`, `commitEdit`, `rollbackEdit`       | 複数コマンドの編集をまとめて適用または破棄する   |
+| スナップショット | `saveSnapshot`, `listSnapshots`, `loadSnapshot` | 状態を保存し、後から復元できる                   |
+| 冪等性           | リクエスト側                                    | 処理済み`requestId`の再送は無視する。再送に安全  |
+
+### 外部エンジンとの境界
+
+riffra-cliはセッション状態と編集の責務を持ち、音源やレンダリングの実体は独立した外部プロセスへ委譲できる。境界ではMIDIやイベント列など標準的なデータだけを渡し、riffra-coreは外部エンジンの内部構造を知らない。外部エンジンの診断はDiagnostics形式へ正規化する。
 
 ---
 
@@ -198,6 +253,10 @@ CMake targetは機能別に分ける。
 - 対話モード（`--interactive`）を実装する
 - JSON Lines コマンドディスパッチを実装する
 - 最小コマンドセットを動かす
+- 読み出しコマンドとフィルター付き音符参照を実装する
+- イベントフレームとジョブ状態を実装する
+- `undo` / `redo` とトランザクションを実装する
+- 処理済み`requestId`の冪等処理を実装する
 
 ### Linux リアルタイム音声
 
