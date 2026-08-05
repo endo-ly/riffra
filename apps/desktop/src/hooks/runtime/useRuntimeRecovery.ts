@@ -14,6 +14,7 @@ interface RuntimeRecoveryOptions {
   setScanMessage: (message: string) => void;
   restoreCurrentRackStrict: NativeApi['restoreCurrentRackStrict'];
   restoreSamplePadsStrict: NativeApi['restoreSamplePadsStrict'];
+  setEmergencyMute: NativeApi['setEmergencyMute'];
   syncArrangementRuntime: NativeApi['syncArrangementRuntime'];
 }
 
@@ -32,6 +33,7 @@ export function useRuntimeRecovery({
   setScanMessage,
   restoreCurrentRackStrict,
   restoreSamplePadsStrict,
+  setEmergencyMute,
   syncArrangementRuntime,
 }: RuntimeRecoveryOptions) {
   const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
@@ -40,10 +42,11 @@ export function useRuntimeRecovery({
   const recoveryPromise = useRef<Promise<void> | null>(null);
   const recoveryTargetGeneration = useRef(0);
   const recoveryCompletedGeneration = useRef(0);
+  const startupAutoUnmutePending = useRef(true);
 
   const enqueueRuntimeReconciliation = useCallback(
     <T>(
-      expectedWorkspace: CreativeSession['workspace'],
+      expectedWorkspace: CreativeSession['workspace'] | null,
       operation: () => Promise<T>,
       staleResult: () => T,
     ): Promise<T> => {
@@ -52,7 +55,9 @@ export function useRuntimeRecovery({
         .then(() => {
           // A queued VST operation may outlive the workspace that requested
           // it. Do not begin stale work after navigation has moved elsewhere.
-          if (sessionRef.current?.workspace !== expectedWorkspace) return staleResult();
+          if (expectedWorkspace !== null && sessionRef.current?.workspace !== expectedWorkspace) {
+            return staleResult();
+          }
           return operation();
         });
       runtimeReconciliationTail.current = current.then(
@@ -94,6 +99,28 @@ export function useRuntimeRecovery({
     playRackRestorePromise.current = operation;
     return operation;
   }, [audioRef, enqueueRuntimeReconciliation, restoreCurrentRackStrict, setAudio, setScanMessage]);
+
+  const restoreSamplePads = useCallback((): Promise<AudioStatus> => {
+    const operation = enqueueRuntimeReconciliation(
+      null,
+      () => restoreSamplePadsStrict(),
+      () => audioRef.current,
+    )
+      .then((nextAudio) => {
+        setAudio(nextAudio);
+        if (!audioCommandSucceeded(nextAudio)) {
+          throw new Error(nextAudio.message || 'Sample Pad restoration returned a faulted state.');
+        }
+        return nextAudio;
+      })
+      .catch((error: unknown) => {
+        setScanMessage(
+          `Sample Pad restore failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      });
+    return operation;
+  }, [audioRef, enqueueRuntimeReconciliation, restoreSamplePadsStrict, setAudio, setScanMessage]);
 
   const syncArrangeRuntime = useCallback((): Promise<void> => {
     const pending = arrangeRuntimeSyncPromise.current;
@@ -140,13 +167,7 @@ export function useRuntimeRecovery({
             );
           }
           try {
-            const nextAudio = await restoreSamplePadsStrict();
-            setAudio(nextAudio);
-            if (!audioCommandSucceeded(nextAudio)) {
-              throw new Error(
-                nextAudio.message || 'Sample Pad restoration returned a faulted state.',
-              );
-            }
+            await restoreSamplePads();
             if (recoveryTargetGeneration.current !== targetGeneration) continue;
 
             const workspace = sessionRef.current?.workspace;
@@ -179,13 +200,54 @@ export function useRuntimeRecovery({
       recoveryPromise.current = operation;
       return operation;
     },
+    [restorePlayRack, restoreSamplePads, safeMode, sessionRef, setScanMessage, syncArrangeRuntime],
+  );
+
+  const initializeStartupRuntime = useCallback(
+    async (workspace: CreativeSession['workspace']): Promise<AudioStatus> => {
+      while (startupAutoUnmutePending.current) {
+        const targetGeneration = recoveryTargetGeneration.current;
+        const pendingRecovery = recoveryPromise.current;
+        if (pendingRecovery) await pendingRecovery;
+
+        let nextAudio = await restoreSamplePads();
+        if (workspace === 'play') {
+          nextAudio = await restorePlayRack();
+        } else if (workspace === 'arrange') {
+          await syncArrangeRuntime();
+        }
+
+        if (recoveryTargetGeneration.current !== targetGeneration) continue;
+        if (nextAudio.feedbackSuspected) return nextAudio;
+
+        const unmuted = await enqueueRuntimeReconciliation(
+          null,
+          () => setEmergencyMute(false),
+          () => audioRef.current,
+        );
+        setAudio(unmuted);
+
+        if (recoveryTargetGeneration.current !== targetGeneration) continue;
+
+        if (
+          audioCommandSucceeded(unmuted) &&
+          unmuted.state !== 'muted' &&
+          !unmuted.feedbackSuspected
+        ) {
+          startupAutoUnmutePending.current = false;
+        }
+        return unmuted;
+      }
+
+      return audioRef.current;
+    },
     [
+      audioRef,
+      enqueueRuntimeReconciliation,
       restorePlayRack,
-      restoreSamplePadsStrict,
-      safeMode,
-      sessionRef,
+      restoreSamplePads,
       setAudio,
-      setScanMessage,
+      setEmergencyMute,
       syncArrangeRuntime,
     ],
   );
@@ -203,6 +265,7 @@ export function useRuntimeRecovery({
   }, [api, recoverCurrentRuntime]);
 
   return {
+    initializeStartupRuntime,
     restorePlayRack,
     syncArrangeRuntime,
   };

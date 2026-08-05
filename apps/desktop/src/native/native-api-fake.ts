@@ -452,6 +452,12 @@ export class FakeNativeApi implements NativeApi {
   };
 
   emitRuntimeRestarted = (generation = this.runtimeProjection.runtimeGeneration): void => {
+    this.audio = {
+      ...this.audio,
+      state: 'muted',
+      outputPeak: 0,
+      message: 'Fake audio runtime restarted; output remains muted until restored.',
+    };
     this.runtimeRestartListeners.forEach((callback) => callback(generation));
   };
 

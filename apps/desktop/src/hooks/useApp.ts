@@ -240,7 +240,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { restorePlayRack, syncArrangeRuntime } = useRuntimeRecovery({
+  const { initializeStartupRuntime, restorePlayRack, syncArrangeRuntime } = useRuntimeRecovery({
     api,
     safeMode: boot?.safeMode,
     sessionRef,
@@ -249,6 +249,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setScanMessage,
     restoreCurrentRackStrict,
     restoreSamplePadsStrict,
+    setEmergencyMute,
     syncArrangementRuntime,
   });
 
@@ -741,37 +742,16 @@ export function useApp(api: NativeApi = defaultNativeApi) {
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
         void (async () => {
-          let startupAudio: AudioStatus | null = null;
-          let runtimeReady = state.safeMode;
           if (!state.safeMode) {
             try {
               const result = await setMasterGainDb(state.session.settings.masterDb);
-              startupAudio = result.audio;
               setAudio(result.audio);
               setSession(result.session);
-              startupAudio = await restoreSamplePadsStrict();
-              setAudio(startupAudio);
-              if (!audioCommandSucceeded(startupAudio)) {
-                throw new Error(
-                  startupAudio.message || 'Sample Pad restoration returned a faulted state.',
-                );
-              }
-              if (state.session.workspace === 'play') {
-                startupAudio = await restorePlayRack();
-              }
-              runtimeReady = true;
+              await initializeStartupRuntime(state.session.workspace);
             } catch (error) {
               setScanMessage(
                 `Startup audio initialization failed: ${error instanceof Error ? error.message : String(error)}`,
               );
-            }
-            if (
-              runtimeReady &&
-              startupAudio &&
-              audioCommandSucceeded(startupAudio) &&
-              !startupAudio.feedbackSuspected
-            ) {
-              setAudio(await setEmergencyMute(false));
             }
           }
           if (disposed) return;

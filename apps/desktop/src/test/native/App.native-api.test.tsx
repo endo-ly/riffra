@@ -50,6 +50,50 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.audio.state).toBe('muted');
   });
 
+  it('releases startup mute after a sidecar restart during initialization', async () => {
+    const fake = new FakeNativeApi();
+    let releaseStartupRestore: () => void = () => undefined;
+    const startupRestoreGate = new Promise<void>((resolve) => {
+      releaseStartupRestore = resolve;
+    });
+    let restoreCount = 0;
+    fake.restoreSamplePadsStrict = async () => {
+      fake.calls.push('restoreSamplePads');
+      restoreCount += 1;
+      if (restoreCount === 1) await startupRestoreGate;
+      return fake.audio;
+    };
+
+    renderApp(fake);
+    await waitForAppShell();
+    await waitFor(() => expect(restoreCount).toBe(1));
+
+    fake.emitRuntimeRestarted(2);
+    releaseStartupRestore();
+
+    await waitFor(() => expect(fake.audio.state).toBe('ready'));
+    expect(restoreCount).toBeGreaterThan(1);
+    expect(fake.calls.filter((call) => call === 'setEmergencyMute')).toHaveLength(1);
+    expect(fake.calls.lastIndexOf('setEmergencyMute')).toBeGreaterThan(
+      fake.calls.lastIndexOf('restoreSamplePads'),
+    );
+  });
+
+  it('keeps the runtime muted after a sidecar restart following startup', async () => {
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+
+    await waitForAppShell();
+    await waitFor(() => expect(fake.audio.state).toBe('ready'));
+    fake.calls.splice(0);
+
+    fake.emitRuntimeRestarted(2);
+
+    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    expect(fake.audio.state).toBe('muted');
+    expect(fake.calls).not.toContain('setEmergencyMute');
+  });
+
   it('restores the Play rack when entering Play instead of during Home startup', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
