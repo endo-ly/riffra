@@ -121,11 +121,6 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         })
     }
 
-    pub(crate) fn submit(&self, snapshot: Value, key: ProjectionKey) -> RuntimeProjectionStatus {
-        let _ = self.submit_with_deadline(snapshot, key, None);
-        self.status()
-    }
-
     pub(crate) fn submit_nonblocking(
         &self,
         snapshot: Value,
@@ -755,9 +750,9 @@ mod tests {
         let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
         let coordinator =
             ProjectionCoordinator::new(Arc::clone(&driver), None, activation).unwrap();
-        coordinator.submit(snapshot(1), key(1, 1));
-        coordinator.submit(snapshot(2), key(2, 2));
-        coordinator.submit(snapshot(3), key(3, 3));
+        coordinator.submit_nonblocking(snapshot(1), key(1, 1));
+        coordinator.submit_nonblocking(snapshot(2), key(2, 2));
+        coordinator.submit_nonblocking(snapshot(3), key(3, 3));
 
         wait_until(|| coordinator.status().active_session_revision == Some(3));
         let loaded = driver.loaded.lock().unwrap().clone();

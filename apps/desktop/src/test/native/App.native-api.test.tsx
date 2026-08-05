@@ -33,7 +33,7 @@ async function waitForAppShell() {
 }
 
 describe('App driven by FakeNativeApi', () => {
-  it('releases the startup safety mute and toggles emergency mute through the injected api', async () => {
+  it('leaves startup audio initialization to the native runtime', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
 
@@ -42,41 +42,13 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.calls).toContain('bootstrap');
     await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
     expect(fake.calls).not.toContain('restoreCurrentRack');
-    expect(fake.calls).toContain('setEmergencyMute');
+    expect(fake.calls).not.toContain('restoreSamplePads');
+    expect(fake.calls).not.toContain('setEmergencyMute');
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(fake.audio.state).toBe('muted');
-  });
-
-  it('releases startup mute after a sidecar restart during initialization', async () => {
-    const fake = new FakeNativeApi();
-    let releaseStartupRestore: () => void = () => undefined;
-    const startupRestoreGate = new Promise<void>((resolve) => {
-      releaseStartupRestore = resolve;
-    });
-    let restoreCount = 0;
-    fake.restoreSamplePadsStrict = async () => {
-      fake.calls.push('restoreSamplePads');
-      restoreCount += 1;
-      if (restoreCount === 1) await startupRestoreGate;
-      return fake.audio;
-    };
-
-    renderApp(fake);
-    await waitForAppShell();
-    await waitFor(() => expect(restoreCount).toBe(1));
-
-    fake.emitRuntimeRestarted(2);
-    releaseStartupRestore();
-
-    await waitFor(() => expect(fake.audio.state).toBe('ready'));
-    expect(restoreCount).toBeGreaterThan(1);
-    expect(fake.calls.filter((call) => call === 'setEmergencyMute')).toHaveLength(1);
-    expect(fake.calls.lastIndexOf('setEmergencyMute')).toBeGreaterThan(
-      fake.calls.lastIndexOf('restoreSamplePads'),
-    );
   });
 
   it('keeps the runtime muted after a sidecar restart following startup', async () => {
@@ -96,6 +68,7 @@ describe('App driven by FakeNativeApi', () => {
 
   it('restores the Play rack when entering Play instead of during Home startup', async () => {
     const fake = new FakeNativeApi();
+    fake.setAudioState('muted');
     renderApp(fake);
 
     await waitForAppShell();
@@ -108,6 +81,8 @@ describe('App driven by FakeNativeApi', () => {
       }),
     );
     await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
+    expect(fake.calls).not.toContain('setEmergencyMute');
+    expect(fake.audio.state).toBe('muted');
   });
 
   it('rehydrates the current Play runtime after a sidecar restart', async () => {
@@ -117,7 +92,6 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
 
     await waitForAppShell();
-    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
     fake.calls.splice(0);
 
     fake.emitRuntimeRestarted(2);
@@ -133,7 +107,6 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
 
     await waitForAppShell();
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
     fake.calls.splice(0);
 
     fake.emitRuntimeRestarted(2);
@@ -155,7 +128,6 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
 
     await waitForAppShell();
-    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
     const rackRestoreCount = fake.calls.filter((call) => call === 'restoreCurrentRack').length;
     fake.calls.splice(0);
     failRecovery = true;
@@ -164,7 +136,7 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
     expect(fake.calls.filter((call) => call === 'restoreCurrentRack')).toHaveLength(0);
-    expect(rackRestoreCount).toBe(1);
+    expect(rackRestoreCount).toBe(0);
   });
 
   it('retries the latest runtime generation after a restart during recovery', async () => {
@@ -187,7 +159,6 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
 
     await waitForAppShell();
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
     fake.calls.splice(0);
     firstRecoveryGate = new Promise<void>((resolve) => {
       releaseFirstRecovery = resolve;
@@ -381,7 +352,7 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(screen.getByText('-12.0 dB')).toBeInTheDocument());
     await waitFor(() => {
-      expect(fake.calls.filter((call) => call === 'setMasterGainDb')).toHaveLength(2);
+      expect(fake.calls.filter((call) => call === 'setMasterGainDb')).toHaveLength(1);
     });
   });
 
@@ -391,8 +362,11 @@ describe('App driven by FakeNativeApi', () => {
     });
     renderApp(fake);
     await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
 
-    expect(screen.getByText(/acoustic feedback suspected/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/acoustic feedback suspected/i)).toBeInTheDocument(),
+    );
   });
 
   it('keeps output safe when the device is faulted and recovers into emergency mute', async () => {
@@ -554,8 +528,9 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(fake.audio.state).toBe('faulted'));
     await waitFor(() => {
-      const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.devices.some((device) => device.kind === 'plugin')).toBe(false);
+      expect(
+        fake.bootstrapState.session.rack.devices.some((device) => device.kind === 'plugin'),
+      ).toBe(false);
     });
   });
 
@@ -659,8 +634,9 @@ describe('App driven by FakeNativeApi', () => {
     await waitForAppShell();
 
     await waitFor(() => {
-      const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const loaded = saved.rack.devices.find((device) => device.kind === 'plugin');
+      const loaded = fake.bootstrapState.session.rack.devices.find(
+        (device) => device.kind === 'plugin',
+      );
       expect(loaded).toBeDefined();
       expect(loaded?.parameterValues).toEqual([0.3, 0.7]);
     });

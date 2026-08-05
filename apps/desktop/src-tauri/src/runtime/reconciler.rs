@@ -32,10 +32,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         })
     }
 
-    pub fn submit(&self, snapshot: Value, key: ProjectionKey) -> RuntimeProjectionStatus {
-        self.projection.submit(snapshot, key)
-    }
-
     pub fn submit_nonblocking(
         &self,
         snapshot: Value,
@@ -299,10 +295,10 @@ mod tests {
     fn does_not_publish_superseded_prepared_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(1), key(1, 1));
+        reconciler.submit_nonblocking(snapshot(1), key(1, 1));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.submit(snapshot(2), key(2, 2));
+        reconciler.submit_nonblocking(snapshot(2), key(2, 2));
 
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[2]);
@@ -315,10 +311,10 @@ mod tests {
     fn does_not_regress_an_active_revision_when_requests_arrive_out_of_order() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(10), key(10, 10));
+        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_session_revision == Some(10));
 
-        let status_before = reconciler.submit(snapshot(9), key(9, 9));
+        let status_before = reconciler.submit_nonblocking(snapshot(9), key(9, 9));
         assert_eq!(status_before.target_session_revision, Some(10));
 
         let status = reconciler.status();
@@ -331,7 +327,7 @@ mod tests {
     fn ignores_a_response_from_an_old_runtime_generation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(4), key(4, 4));
+        reconciler.submit_nonblocking(snapshot(4), key(4, 4));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         driver.generation.store(2, Ordering::Release);
 
@@ -350,7 +346,7 @@ mod tests {
     fn stop_does_not_wait_for_runtime_preparation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(5), key(5, 5));
+        reconciler.submit_nonblocking(snapshot(5), key(5, 5));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -363,7 +359,7 @@ mod tests {
     fn dropping_the_reconciler_does_not_join_a_stalled_runtime_worker() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(500)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(6), key(6, 6));
+        reconciler.submit_nonblocking(snapshot(6), key(6, 6));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -431,7 +427,7 @@ mod tests {
     fn superseded_play_does_not_leave_play_intent_armed() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(2), key(2, 2));
+        reconciler.submit_nonblocking(snapshot(2), key(2, 2));
 
         let play = reconciler.apply_and_play_if(
             10,
@@ -462,7 +458,7 @@ mod tests {
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
 
-        reconciler.submit(snapshot(31), key(31, 31));
+        reconciler.submit_nonblocking(snapshot(31), key(31, 31));
         wait_until(|| reconciler.status().active_session_revision == Some(31));
         thread::sleep(Duration::from_millis(20));
 
@@ -522,7 +518,7 @@ mod tests {
             Ok(())
         });
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
-        reconciler.submit(snapshot(11), key(11, 11));
+        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
 
         wait_until(|| reconciler.status().active_session_revision == Some(11));
         assert_eq!(recoveries.load(Ordering::Relaxed), 1);
@@ -533,10 +529,10 @@ mod tests {
     fn rejects_a_late_lower_projection_sequence_while_a_newer_graph_is_preparing() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(20), key(20, 20));
+        reconciler.submit_nonblocking(snapshot(20), key(20, 20));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
-        let status = reconciler.submit(snapshot(19), key(19, 19));
+        let status = reconciler.submit_nonblocking(snapshot(19), key(19, 19));
         assert_eq!(status.target_projection_sequence, Some(20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
@@ -546,7 +542,7 @@ mod tests {
     fn apply_and_wait_reports_a_stale_submission_instead_of_following_newer_work() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(11), key(11, 11));
+        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let error = reconciler
@@ -562,7 +558,7 @@ mod tests {
     fn reuses_an_active_projection_without_repreparing_before_play() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(20), key(20, 20));
+        reconciler.submit_nonblocking(snapshot(20), key(20, 20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
@@ -585,10 +581,10 @@ mod tests {
     fn accepts_a_restored_session_with_a_lower_arrangement_revision() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        reconciler.submit(snapshot(100), key(1, 100));
+        reconciler.submit_nonblocking(snapshot(100), key(1, 100));
         wait_until(|| reconciler.status().active_projection_sequence == Some(1));
 
-        reconciler.submit(snapshot(40), key(2, 40));
+        reconciler.submit_nonblocking(snapshot(40), key(2, 40));
         wait_until(|| reconciler.status().active_projection_sequence == Some(2));
         assert_eq!(reconciler.status().active_session_revision, Some(40));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[100, 40]);

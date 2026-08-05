@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CreativeSession, Workspace } from '@/lib/domain';
-import { audioCommandSucceeded } from '@/lib/audio-safety';
 import { logNativeError } from '@/native/invoke';
 import type { NativeApi } from '@/native/native-api';
 
@@ -14,8 +13,6 @@ interface WorkspaceNavigationOptions {
     operation: () => Promise<CreativeSession | null>,
     label: string,
   ) => Promise<CreativeSession | null>;
-  setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  setEmergencyMute: NativeApi['setEmergencyMute'];
   setAutosaveError: Dispatch<SetStateAction<string | null>>;
   restorePlayRack: () => Promise<AudioStatus>;
   syncArrangeRuntime: () => Promise<void>;
@@ -34,8 +31,6 @@ export function useWorkspaceNavigation({
   sessionRef,
   setNavigationSession,
   runSessionOp,
-  setAudio,
-  setEmergencyMute,
   setAutosaveError,
   restorePlayRack,
   syncArrangeRuntime,
@@ -96,17 +91,7 @@ export function useWorkspaceNavigation({
             setNavigationSession(next);
             if (safeMode) continue;
             if (target === 'play') {
-              void restorePlayRack()
-                .then(async (nextAudio) => {
-                  if (
-                    sessionRef.current?.workspace === 'play' &&
-                    audioCommandSucceeded(nextAudio) &&
-                    !nextAudio.feedbackSuspected
-                  ) {
-                    setAudio(await setEmergencyMute(false));
-                  }
-                })
-                .catch(logNativeError('Play rack restore'));
+              void restorePlayRack().catch(logNativeError('Play rack restore'));
             } else if (target === 'arrange') {
               void syncArrangeRuntime().catch(logNativeError('Arrange runtime sync'));
             }
@@ -130,9 +115,7 @@ export function useWorkspaceNavigation({
       runSessionOp,
       safeMode,
       sessionRef,
-      setAudio,
       setAutosaveError,
-      setEmergencyMute,
       setNavigationSession,
       syncArrangeRuntime,
     ],

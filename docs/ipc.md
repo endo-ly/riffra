@@ -157,6 +157,8 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 
 VST3のインスタンス生成・初期化・破棄とArrangement Snapshotの準備は、C++のstdin読み取りスレッドを塞がないワーカースレッドで行う。処理中も再生・停止・ワークスペース操作の要求は受け付け、同じプラグイン状態を同時に変更する要求には `pluginBusy` または `timelineBusy` を返す。
 
+Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
+
 ### 4.2 メッセージ種別（C++ → Rust）
 
 通常稼働時は次の5種類を使用する。フィールド詳細はcodeを真実源とする。
@@ -173,7 +175,7 @@ VST3のインスタンス生成・初期化・破棄とArrangement Snapshotの�
 
 ### 4.3 コマンドカタログ（Rust → C++）
 
-真実源は `apps/desktop/src-tauri/src/native_audio.rs` の `AudioSupervisor` 各メソッドと、`AudioMain.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
+真実源は `apps/desktop/src-tauri/src/native_audio/` の `AudioSupervisor` 各メソッドと、`AudioMain.cpp` のディスパッチ部。C++側で処理される `type` の一覧:
 
 - **状態照会**: `status` / `meterStatus`
 - **オーディオ設定**: `setEmergencyMute` / `setMasterGainDb` / `setAudioDriver` / `recoverAudioDevice`
@@ -202,9 +204,9 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
                  └────┬─────┘
                       ↓ 初回 status 受信
                  ┌──────────┐
-                 │  muted   │  ←─── ラック復元中・復旧後の安全状態
+                 │  muted   │  ←─── 起動・復旧中の安全状態
                  └────┬─────┘
-                      │ Master設定とラック復元に成功
+                      │ Rustの起動調整と安全確認が完了
                       ↓
                  ┌──────────┐  デバイス消失  ┌──────────┐
                  │  ready   │ ────────────→ │ faulted  │
@@ -216,7 +218,9 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
                  └──────────┘
 ```
 
-- 起動直後は `starting` → `muted` と進み、Master設定とラック復元の完了後に自動で `ready` へ遷移する
+- 起動直後は `starting` → 初回 `audioStatus` 受信 → `muted` と進む。Rustが保存済みMaster GainをRuntimeへ適用し、processing modeをpassiveにしてからSample Pad・Workspace固有Runtimeを復元する
+- Sample Pad、Rack、Arrange Runtimeの復元失敗は、それだけでは音声デバイス障害と判定しない。デバイス状態が正常でFeedbackがなければ、Rustの起動調整が緊急ミュートを解除する
+- 起動調整中にSidecar世代が変わった場合は、その世代の復元結果を採用せず、最新世代で起動調整をやり直す。起動完了後のRuntime再起動は緊急ミュートを維持する
 - `faulted` はC++側の `SafetyAudioCallback::setDeviceFaulted(true)` が検出時に出力される
 - `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる
 - 不明な状態文字列はRust側で `offline` にフォールバックする
@@ -251,6 +255,8 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 - C++側は `--parent-pid` 引数で親PIDを受け取り、親プロセス終了を検出したら自終了する（watchdog）
 - Rust側はsidecarの`Terminated` / `Error` / `Stderr` イベントを検出すると `faulted` 状態へ遷移させる
 - `sidecar_generation`（`AtomicU64`）で世代を管理し、古いイベントが新しい世代へ影響しないようにする
+- 初回 `audioStatus` の受信を世代ごとのReady境界とし、Ready前のコマンド送信を禁止する
+- 起動調整が完了するまではRuntime再起動イベントをUIの復旧処理へ渡さず、Rustが最新世代の起動調整を継続する
 - `recoverAudioDevice` / `setAudioDriver` が行き詰まった場合、sidecarを再起動してから再送する
 
 ### 4.7 Safe Mode

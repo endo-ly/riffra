@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
+use super::{AudioSupervisor, COMMAND_ACK_TIMEOUT, SIDECAR_READY_TIMEOUT};
 
 #[derive(Default)]
 pub(crate) struct CommandResponse {
@@ -39,7 +39,7 @@ impl AudioSupervisor {
         command: Value,
         message: &str,
     ) -> NativeAudioResult<AudioStatus> {
-        self.send_command_with_timeout(command, message, Duration::from_secs(3))
+        self.send_command_with_timeout(command, message, COMMAND_ACK_TIMEOUT)
     }
 
     pub(super) fn send_command_with_timeout(
@@ -88,23 +88,46 @@ impl AudioSupervisor {
         let payload = serde_json::to_string(&command).map_err(|error| {
             NativeAudioError::protocol(format!("Audio command could not be encoded: {error}"))
         })?;
-        let mut child_slot =
-            self.process
-                .child
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Audio child",
-                })?;
-        let child = child_slot.as_mut().ok_or_else(|| {
-            NativeAudioError::transport_lost(
-                "Native audio transport lost: the requested audio command was not sent.",
-            )
-        })?;
-        child
-            .write(format!("{payload}\n").as_bytes())
-            .map_err(|error| {
-                NativeAudioError::transport_lost(format!("Native audio transport lost: {error}"))
-            })
+        let mut expected_generation = self.sidecar_generation();
+        for _ in 0..3 {
+            expected_generation = self.sidecar_generation();
+            self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
+            let _command_gate =
+                self.process
+                    .command_gate
+                    .lock()
+                    .map_err(|_| NativeAudioError::LockPoisoned {
+                        resource: "Audio command gate",
+                    })?;
+            if self.sidecar_generation() != expected_generation
+                || !self.process.is_ready(expected_generation)
+            {
+                continue;
+            }
+            let mut child_slot =
+                self.process
+                    .child
+                    .lock()
+                    .map_err(|_| NativeAudioError::LockPoisoned {
+                        resource: "Audio child",
+                    })?;
+            let child = child_slot.as_mut().ok_or_else(|| {
+                NativeAudioError::transport_lost(
+                    "Native audio transport lost: the requested audio command was not sent.",
+                )
+            })?;
+            return child
+                .write(format!("{payload}\n").as_bytes())
+                .map_err(|error| {
+                    NativeAudioError::transport_lost(format!(
+                        "Native audio transport lost: {error}"
+                    ))
+                });
+        }
+        Err(NativeAudioError::GenerationChanged {
+            expected: expected_generation,
+            actual: self.sidecar_generation(),
+        })
     }
 
     pub(super) fn wait_for_command(
@@ -118,42 +141,67 @@ impl AudioSupervisor {
             NativeAudioError::protocol(format!("Audio command could not be encoded: {error}"))
         })?;
         let (response_lock, response_ready) = &*self.command_bus.responses;
-        {
-            let mut response =
-                response_lock
-                    .lock()
-                    .map_err(|_| NativeAudioError::LockPoisoned {
-                        resource: "Audio response",
-                    })?;
-            response.results.insert(request_id, None);
-        }
-
-        let write_result = {
-            let mut child_slot =
+        let mut sent = false;
+        let mut expected_generation = self.sidecar_generation();
+        for _ in 0..3 {
+            expected_generation = self.sidecar_generation();
+            self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
+            let _command_gate =
                 self.process
-                    .child
+                    .command_gate
                     .lock()
                     .map_err(|_| NativeAudioError::LockPoisoned {
-                        resource: "Audio child",
+                        resource: "Audio command gate",
                     })?;
-            let child = child_slot.as_mut().ok_or_else(|| {
-                NativeAudioError::transport_lost(
-                    "Native audio transport lost: the requested audio command was not sent.",
-                )
-            });
-            child.and_then(|child| {
-                child
-                    .write(format!("{payload}\n").as_bytes())
-                    .map_err(|error| NativeAudioError::transport_lost(format!(
-                        "Native audio transport lost: command could not reach the isolated audio process: {error}"
-                    )))
-            })
-        };
-        if let Err(error) = write_result {
-            if let Ok(mut response) = response_lock.lock() {
-                response.results.remove(&request_id);
+            if self.sidecar_generation() != expected_generation
+                || !self.process.is_ready(expected_generation)
+            {
+                continue;
             }
-            return Err(error);
+            {
+                let mut response =
+                    response_lock
+                        .lock()
+                        .map_err(|_| NativeAudioError::LockPoisoned {
+                            resource: "Audio response",
+                        })?;
+                response.results.insert(request_id, None);
+            }
+            let write_result = {
+                let mut child_slot =
+                    self.process
+                        .child
+                        .lock()
+                        .map_err(|_| NativeAudioError::LockPoisoned {
+                            resource: "Audio child",
+                        })?;
+                let child = child_slot.as_mut().ok_or_else(|| {
+                    NativeAudioError::transport_lost(
+                        "Native audio transport lost: the requested audio command was not sent.",
+                    )
+                });
+                child.and_then(|child| {
+                    child
+                        .write(format!("{payload}\n").as_bytes())
+                        .map_err(|error| NativeAudioError::transport_lost(format!(
+                            "Native audio transport lost: command could not reach the isolated audio process: {error}"
+                        )))
+                })
+            };
+            if let Err(error) = write_result {
+                if let Ok(mut response) = response_lock.lock() {
+                    response.results.remove(&request_id);
+                }
+                return Err(error);
+            }
+            sent = true;
+            break;
+        }
+        if !sent {
+            return Err(NativeAudioError::GenerationChanged {
+                expected: expected_generation,
+                actual: self.sidecar_generation(),
+            });
         }
 
         let response = response_lock
@@ -204,6 +252,7 @@ pub(super) fn record_command_response(
     let (response_lock, response_ready) = &**responses;
     if let Ok(mut response) = response_lock.lock()
         && let Some(result) = response.results.get_mut(&request_id)
+        && result.is_none()
     {
         *result = Some(match error {
             Some(error) => Err(error),
@@ -272,6 +321,24 @@ mod tests {
         assert!(matches!(
             response.results.get(&8),
             Some(Some(Err(NativeAudioError::TransportLost { message }))) if message == "plugin process stopped"
+        ));
+    }
+
+    #[test]
+    fn late_acknowledgement_cannot_replace_a_completed_failure() {
+        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
+        responses.0.lock().unwrap().results.insert(
+            42,
+            Some(Err(NativeAudioError::transport_lost("sidecar restarted"))),
+        );
+
+        record_command_response(&responses, 42, None);
+
+        let response = responses.0.lock().unwrap();
+        assert!(matches!(
+            response.results.get(&42),
+            Some(Some(Err(NativeAudioError::TransportLost { message })))
+                if message == "sidecar restarted"
         ));
     }
 }

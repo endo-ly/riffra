@@ -62,6 +62,7 @@ impl AudioSupervisor {
             command_bus: Arc::new(CommandBus::new()),
             process: Arc::new(SidecarProcess::new(true)),
             recovery: Arc::new(RecoveryState::new(AudioPreferences::default())),
+            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -98,6 +99,7 @@ impl AudioSupervisor {
             command_bus: Arc::new(CommandBus::new()),
             process: Arc::new(SidecarProcess::new(false)),
             recovery: Arc::new(RecoveryState::new(preferences)),
+            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(app, generation) {
@@ -123,6 +125,40 @@ impl AudioSupervisor {
 
     pub(crate) fn sidecar_generation(&self) -> u64 {
         self.process.current_generation()
+    }
+
+    pub(crate) fn wait_until_ready(
+        &self,
+        generation: u64,
+        timeout: Duration,
+    ) -> NativeAudioResult<()> {
+        if self.process.shutting_down.load(Ordering::Acquire) {
+            return Err(NativeAudioError::ShuttingDown);
+        }
+        if self.process.wait_for_ready(generation, timeout) {
+            return Ok(());
+        }
+        let actual = self.sidecar_generation();
+        if actual != generation {
+            return Err(NativeAudioError::GenerationChanged {
+                expected: generation,
+                actual,
+            });
+        }
+        if self.process.terminated_generation.load(Ordering::Acquire) == generation {
+            return Err(NativeAudioError::transport_lost(
+                "Native audio sidecar terminated before it became ready.",
+            ));
+        }
+        if self.process.shutting_down.load(Ordering::Acquire) {
+            return Err(NativeAudioError::ShuttingDown);
+        }
+        Err(NativeAudioError::Timeout {
+            message: format!(
+                "Native audio sidecar did not become ready within {} seconds.",
+                timeout.as_secs().max(1)
+            ),
+        })
     }
 
     fn spawn_sidecar<R: Runtime>(
@@ -185,6 +221,12 @@ impl AudioSupervisor {
                 }
                 match event {
                     CommandEvent::Stdout(bytes) => {
+                        let Ok(_event_gate) = event_process.command_gate.lock() else {
+                            continue;
+                        };
+                        if event_generation.load(Ordering::Acquire) != generation {
+                            continue;
+                        }
                         if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                             match payload.get("type").and_then(serde_json::Value::as_str) {
                                 Some("transportStatus") => {
@@ -213,6 +255,9 @@ impl AudioSupervisor {
                             // frames also use a small payload so they do not
                             // serialize the full plugin/session status 20 times
                             // per second or invalidate the entire React tree.
+                            if matches!(response.event, NativeEvent::AudioStatus) {
+                                event_process.mark_ready(generation);
+                            }
                             match response.event {
                                 NativeEvent::AudioStatus => {
                                     emit_audio_status(&event_app, &event_status)
@@ -225,6 +270,12 @@ impl AudioSupervisor {
                         }
                     }
                     CommandEvent::Stderr(bytes) => {
+                        let Ok(_event_gate) = event_process.command_gate.lock() else {
+                            continue;
+                        };
+                        if event_generation.load(Ordering::Acquire) != generation {
+                            continue;
+                        }
                         let detail = String::from_utf8_lossy(&bytes);
                         set_faulted(
                             &event_status,
@@ -325,6 +376,13 @@ impl AudioSupervisor {
             return Err(NativeAudioError::ShuttingDown);
         }
 
+        let _command_gate =
+            self.process
+                .command_gate
+                .lock()
+                .map_err(|_| NativeAudioError::LockPoisoned {
+                    resource: "Audio command gate",
+                })?;
         let current_generation = self.sidecar_generation();
         if let Some(expected_generation) = expected_generation
             && current_generation != expected_generation
@@ -409,6 +467,7 @@ impl AudioSupervisor {
             }
             *slot = Some(child);
             drop(slot);
+            drop(_command_gate);
             if let Err(error) = self.restore_runtime_controls(deadline) {
                 set_faulted(
                     &self.status,
@@ -421,7 +480,7 @@ impl AudioSupervisor {
             Ok(())
         })();
         self.record_restart_outcome(previous_generation, &result);
-        if result.is_ok() {
+        if result.is_ok() && self.startup_complete() {
             let _ = app.emit(
                 "runtime-restarted",
                 serde_json::json!({ "generation": self.sidecar_generation() }),
@@ -437,7 +496,9 @@ impl AudioSupervisor {
     /// any one of those clones must not stop a sidecar still owned by the app.
     pub(crate) fn force_shutdown(&self) {
         self.process.shutting_down.store(true, Ordering::Release);
+        self.process.readiness.1.notify_all();
         fail_pending_requests(&self.command_bus.responses, NativeAudioError::ShuttingDown);
+        let _command_gate = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
         {

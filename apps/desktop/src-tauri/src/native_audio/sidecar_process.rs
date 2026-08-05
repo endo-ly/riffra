@@ -10,6 +10,10 @@ use tauri_plugin_shell::process::CommandChild;
 pub(crate) struct SidecarProcess {
     pub(crate) child: Arc<Mutex<Option<CommandChild>>>,
     pub(crate) generation: Arc<AtomicU64>,
+    pub(crate) ready_generation: Arc<AtomicU64>,
+    pub(crate) terminated_generation: Arc<AtomicU64>,
+    pub(crate) readiness: Arc<(Mutex<()>, Condvar)>,
+    pub(crate) command_gate: Arc<Mutex<()>>,
     pub(crate) terminated_generations: Arc<(Mutex<HashSet<u64>>, Condvar)>,
     pub(crate) planned_terminations: Arc<Mutex<HashSet<u64>>>,
     pub(crate) shutting_down: Arc<AtomicBool>,
@@ -20,6 +24,10 @@ impl SidecarProcess {
         Self {
             child: Arc::new(Mutex::new(None)),
             generation: Arc::new(AtomicU64::new(0)),
+            ready_generation: Arc::new(AtomicU64::new(0)),
+            terminated_generation: Arc::new(AtomicU64::new(0)),
+            readiness: Arc::new((Mutex::new(()), Condvar::new())),
+            command_gate: Arc::new(Mutex::new(())),
             terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
             planned_terminations: Arc::new(Mutex::new(HashSet::new())),
             shutting_down: Arc::new(AtomicBool::new(shutting_down)),
@@ -27,11 +35,44 @@ impl SidecarProcess {
     }
 
     pub(crate) fn next_generation(&self) -> u64 {
-        self.generation.fetch_add(1, Ordering::AcqRel) + 1
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.readiness.1.notify_all();
+        generation
     }
 
     pub(crate) fn current_generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn is_ready(&self, generation: u64) -> bool {
+        self.current_generation() == generation
+            && self.ready_generation.load(Ordering::Acquire) == generation
+    }
+
+    pub(crate) fn wait_for_ready(&self, generation: u64, timeout: Duration) -> bool {
+        if self.is_ready(generation) {
+            return true;
+        }
+        let (readiness, changed) = &*self.readiness;
+        let guard = match readiness.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        let _ = match changed.wait_timeout_while(guard, timeout, |_| {
+            !self.is_ready(generation)
+                && self.current_generation() == generation
+                && self.terminated_generation.load(Ordering::Acquire) != generation
+                && !self.shutting_down.load(Ordering::Acquire)
+        }) {
+            Ok(result) => result,
+            Err(_) => return false,
+        };
+        self.is_ready(generation)
+    }
+
+    pub(crate) fn mark_ready(&self, generation: u64) {
+        self.ready_generation.store(generation, Ordering::Release);
+        self.readiness.1.notify_all();
     }
 
     pub(crate) fn mark_planned_termination(&self, generation: u64) {
@@ -63,6 +104,9 @@ impl SidecarProcess {
     }
 
     pub(crate) fn mark_terminated(&self, generation: u64) {
+        self.terminated_generation
+            .fetch_max(generation, Ordering::AcqRel);
+        self.readiness.1.notify_all();
         let (terminated, changed) = &*self.terminated_generations;
         if let Ok(mut generations) = terminated.lock() {
             generations.insert(generation);
@@ -82,5 +126,20 @@ mod tests {
 
         assert!(process.take_planned_termination(3));
         assert!(!process.take_planned_termination(3));
+    }
+
+    #[test]
+    fn readiness_is_scoped_to_the_sidecar_generation() {
+        let process = SidecarProcess::new(false);
+        let first_generation = process.next_generation();
+
+        assert!(!process.wait_for_ready(first_generation, Duration::ZERO));
+
+        process.mark_ready(first_generation);
+        assert!(process.wait_for_ready(first_generation, Duration::ZERO));
+
+        let second_generation = process.next_generation();
+        assert!(!process.wait_for_ready(second_generation, Duration::ZERO));
+        assert!(!process.is_ready(first_generation));
     }
 }

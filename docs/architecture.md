@@ -54,6 +54,8 @@ Riffraは、ArrangeとDesignの二領域を、共通のセッション、素材�
 
 制作領域は同じSessionを参照する。領域の切替によって録音、再生、ミュート、選択、履歴を作り直さない。
 
+初回のAudio Runtime調整はRustがSidecar世代の準備完了を待って行う。Rustは保存済みSessionのMaster Gain、processing mode、Sample Pad、Workspace固有RuntimeをRuntimeへ反映し、デバイス状態とFeedbackを確認したうえで起動時の緊急ミュートを解除する。Reactの起動処理とWorkspace遷移はこの解除を行わない。
+
 ### 3.2 共通領域
 
 - **Library**は素材とプラグインを検索し、選択中の制作領域へ渡す

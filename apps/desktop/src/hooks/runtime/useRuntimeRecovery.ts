@@ -14,7 +14,6 @@ interface RuntimeRecoveryOptions {
   setScanMessage: (message: string) => void;
   restoreCurrentRackStrict: NativeApi['restoreCurrentRackStrict'];
   restoreSamplePadsStrict: NativeApi['restoreSamplePadsStrict'];
-  setEmergencyMute: NativeApi['setEmergencyMute'];
   syncArrangementRuntime: NativeApi['syncArrangementRuntime'];
 }
 
@@ -33,7 +32,6 @@ export function useRuntimeRecovery({
   setScanMessage,
   restoreCurrentRackStrict,
   restoreSamplePadsStrict,
-  setEmergencyMute,
   syncArrangementRuntime,
 }: RuntimeRecoveryOptions) {
   const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
@@ -42,7 +40,6 @@ export function useRuntimeRecovery({
   const recoveryPromise = useRef<Promise<void> | null>(null);
   const recoveryTargetGeneration = useRef(0);
   const recoveryCompletedGeneration = useRef(0);
-  const startupAutoUnmutePending = useRef(true);
 
   const enqueueRuntimeReconciliation = useCallback(
     <T>(
@@ -203,55 +200,6 @@ export function useRuntimeRecovery({
     [restorePlayRack, restoreSamplePads, safeMode, sessionRef, setScanMessage, syncArrangeRuntime],
   );
 
-  const initializeStartupRuntime = useCallback(
-    async (workspace: CreativeSession['workspace']): Promise<AudioStatus> => {
-      while (startupAutoUnmutePending.current) {
-        const targetGeneration = recoveryTargetGeneration.current;
-        const pendingRecovery = recoveryPromise.current;
-        if (pendingRecovery) await pendingRecovery;
-
-        let nextAudio = await restoreSamplePads();
-        if (workspace === 'play') {
-          nextAudio = await restorePlayRack();
-        } else if (workspace === 'arrange') {
-          await syncArrangeRuntime();
-        }
-
-        if (recoveryTargetGeneration.current !== targetGeneration) continue;
-        if (nextAudio.feedbackSuspected) return nextAudio;
-
-        const unmuted = await enqueueRuntimeReconciliation(
-          null,
-          () => setEmergencyMute(false),
-          () => audioRef.current,
-        );
-        setAudio(unmuted);
-
-        if (recoveryTargetGeneration.current !== targetGeneration) continue;
-
-        if (
-          audioCommandSucceeded(unmuted) &&
-          unmuted.state !== 'muted' &&
-          !unmuted.feedbackSuspected
-        ) {
-          startupAutoUnmutePending.current = false;
-        }
-        return unmuted;
-      }
-
-      return audioRef.current;
-    },
-    [
-      audioRef,
-      enqueueRuntimeReconciliation,
-      restorePlayRack,
-      restoreSamplePads,
-      setAudio,
-      setEmergencyMute,
-      syncArrangeRuntime,
-    ],
-  );
-
   useEffect(() => {
     let disposed = false;
     const unlisten = api.onRuntimeRestarted((generation) => {
@@ -265,7 +213,6 @@ export function useRuntimeRecovery({
   }, [api, recoverCurrentRuntime]);
 
   return {
-    initializeStartupRuntime,
     restorePlayRack,
     syncArrangeRuntime,
   };

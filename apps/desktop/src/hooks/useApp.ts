@@ -65,8 +65,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     stopSamplePreview,
     stopSamplePreviewKey,
     getAudioStatus,
-    setEmergencyMute,
-    setMasterGainDb,
     getMissingDependencies,
     relinkMissingDependency,
     disableMissingPlugin,
@@ -240,7 +238,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { initializeStartupRuntime, restorePlayRack, syncArrangeRuntime } = useRuntimeRecovery({
+  const { restorePlayRack, syncArrangeRuntime } = useRuntimeRecovery({
     api,
     safeMode: boot?.safeMode,
     sessionRef,
@@ -249,7 +247,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setScanMessage,
     restoreCurrentRackStrict,
     restoreSamplePadsStrict,
-    setEmergencyMute,
     syncArrangementRuntime,
   });
 
@@ -275,8 +272,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     sessionRef,
     setNavigationSession,
     runSessionOp,
-    setAudio,
-    setEmergencyMute,
     setAutosaveError,
     restorePlayRack,
     syncArrangeRuntime,
@@ -741,60 +736,43 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         void getMissingDependencies()
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
-        void (async () => {
-          if (!state.safeMode) {
-            try {
-              const result = await setMasterGainDb(state.session.settings.masterDb);
-              setAudio(result.audio);
-              setSession(result.session);
-              await initializeStartupRuntime(state.session.workspace);
-            } catch (error) {
-              setScanMessage(
-                `Startup audio initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          }
-          if (disposed) return;
+        if (disposed) return;
 
-          // Let the first workspace paint before starting filesystem/device
-          // discovery. These jobs are useful, but none is required to render
-          // the initial shell and they can otherwise compete with VST setup.
-          deferredStartupTimer = setTimeout(() => {
-            if (disposed) return;
-            void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
-            void listSeparations().then(setSeparations).catch(logNativeError('listSeparations'));
-            void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
-            void probeAudioDevices()
-              .then(setDeviceProbe)
-              .catch(logNativeError('probeAudioDevices'));
-            void enableMidi().catch(logNativeError('enableMidi'));
-            void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
-            void runBackgroundJob(
-              () => startScanJob(state.vst3Root),
-              (report) => {
-                setPlugins(report.plugins);
-                setMissingPluginPaths(
-                  state.session.rack.devices
-                    .filter((device) => device.kind === 'plugin' && device.path)
-                    .filter(
-                      (device) =>
-                        !report.plugins.some(
-                          (plugin) =>
-                            plugin.path === device.path && plugin.scanState === 'validated',
-                        ),
-                    )
-                    .map((device) => device.path as string),
-                );
-                setScanMessage(
-                  report.issues.length
-                    ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-                    : `${report.plugins.length}件を検出`,
-                );
-              },
-              (message) => setScanMessage(`VST3 scan failed: ${message}`),
-            );
-          }, 150);
-        })().catch(logNativeError('startup runtime initialization'));
+        // Let the first workspace paint before starting filesystem/device
+        // discovery. These jobs are useful, but none is required to render
+        // the initial shell and they can otherwise compete with VST setup.
+        deferredStartupTimer = setTimeout(() => {
+          if (disposed) return;
+          void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
+          void listSeparations().then(setSeparations).catch(logNativeError('listSeparations'));
+          void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
+          void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
+          void enableMidi().catch(logNativeError('enableMidi'));
+          void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
+          void runBackgroundJob(
+            () => startScanJob(state.vst3Root),
+            (report) => {
+              setPlugins(report.plugins);
+              setMissingPluginPaths(
+                state.session.rack.devices
+                  .filter((device) => device.kind === 'plugin' && device.path)
+                  .filter(
+                    (device) =>
+                      !report.plugins.some(
+                        (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
+                      ),
+                  )
+                  .map((device) => device.path as string),
+              );
+              setScanMessage(
+                report.issues.length
+                  ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+                  : `${report.plugins.length}件を検出`,
+              );
+            },
+            (message) => setScanMessage(`VST3 scan failed: ${message}`),
+          );
+        }, 150);
       })
       .catch(logNativeError('bootstrap'));
     let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;

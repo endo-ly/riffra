@@ -77,7 +77,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     cancelled: overrides.recording?.cancelled ?? false,
   };
   return {
-    state: 'muted',
+    state: 'ready',
     driver: 'Fake Driver',
     inputDevice: 'Input 1',
     inputChannel: 0,
@@ -104,7 +104,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     outputPeak: 0,
     invalidSamples: 0,
     feedbackSuspected: false,
-    message: 'Fake audio supervisor is muted and ready for an explicit unmute.',
+    message: 'Fake audio supervisor is ready through the safety limiter.',
     ...overrides,
   };
 }

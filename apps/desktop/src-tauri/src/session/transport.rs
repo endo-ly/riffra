@@ -8,6 +8,9 @@ use crate::runtime::ports::RuntimeDriver;
 use crate::session::context::{SessionContext, lock_error};
 use crate::session::{CreativeSession, SamplePad, TimelineTick, Workspace};
 use std::path::Path;
+use std::time::Duration;
+
+const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) fn audio_command_succeeded(status: &AudioStatus) -> bool {
     status.state != AudioState::Faulted && status.state != AudioState::Offline
@@ -152,19 +155,6 @@ pub(crate) fn runtime_snapshot_for_recording(
     runtime_timeline_snapshot(data_root, session)
 }
 
-pub(crate) fn submit_canonical_projection<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    projection: crate::session::actor::CanonicalProjection,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    Ok(context.runtime.submit(
-        runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime::model::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        },
-    ))
-}
-
 pub(crate) fn submit_canonical_projection_nonblocking<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     projection: crate::session::actor::CanonicalProjection,
@@ -198,7 +188,17 @@ pub fn sync_arrangement_runtime(
     context: &SessionContext<'_>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let projection = context.session_actor.capture_projection(context.session)?;
-    submit_canonical_projection(context, projection)
+    context
+        .runtime
+        .apply_and_wait(
+            runtime_timeline_snapshot(context.data_root, &projection.session),
+            crate::runtime::model::ProjectionKey {
+                sequence: projection.sequence,
+                session_revision: projection.session.arrangement.revision,
+            },
+            ARRANGEMENT_RUNTIME_TIMEOUT,
+        )
+        .map_err(String::from)
 }
 
 /// Rebuilds the persisted Sample Pad mapping after the isolated Audio Runtime

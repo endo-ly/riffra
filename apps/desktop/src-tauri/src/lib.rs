@@ -41,6 +41,7 @@ mod render;
 mod runtime;
 mod separation;
 mod session;
+mod startup;
 mod storage;
 #[cfg(test)]
 mod types;
@@ -174,9 +175,15 @@ fn queue_startup_maintenance(
             return;
         }
 
-        match state.core.audio().refresh_status() {
-            Ok(status) => match audio_preferences::AudioPreferences::from_effective_status(&status)
-            {
+        let status = match startup::initialize_audio_runtime(&state) {
+            Ok(status) => Some(status),
+            Err(error) => {
+                let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                state.core.audio().refresh_status().ok()
+            }
+        };
+        if let Some(status) = status {
+            match audio_preferences::AudioPreferences::from_effective_status(&status) {
                 Ok(effective) => {
                     let preferences_unchanged = state
                         .audio_preferences
@@ -206,41 +213,7 @@ fn queue_startup_maintenance(
                 Err(error) => {
                     let _ = diagnostics::record(&data_root, "startup-audio", &error);
                 }
-            },
-            Err(error) => {
-                let message = error.to_string();
-                let _ = diagnostics::record(&data_root, "startup-audio", &message);
             }
-        }
-
-        let projection = match state.session_actor.capture_projection(state.core.session()) {
-            Ok(projection) => projection,
-            Err(error) => {
-                let _ = diagnostics::record(&data_root, "startup-runtime", &error);
-                return;
-            }
-        };
-        let current_session = projection.session;
-        let workspace = current_session.workspace;
-        let mode = match workspace {
-            session::Workspace::Play => "play",
-            session::Workspace::Arrange => "arrange",
-            session::Workspace::Home | session::Workspace::Design => "passive",
-        };
-        if let Err(error) = state.core.audio().set_processing_mode(mode) {
-            let message = error.to_string();
-            let _ = diagnostics::record(&data_root, "startup-audio", &message);
-        }
-        if workspace == session::Workspace::Arrange {
-            let snapshot =
-                session::application::runtime_snapshot_for_recording(&data_root, &current_session);
-            let _ = state.runtime.submit(
-                snapshot,
-                crate::runtime::model::ProjectionKey {
-                    sequence: projection.sequence,
-                    session_revision: current_session.arrangement.revision,
-                },
-            );
         }
     });
 }
