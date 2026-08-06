@@ -32,6 +32,7 @@ impl Default for RuntimeControlState {
 /// and command acknowledgements are represented by separate internal types.
 pub(crate) struct RecoveryState {
     pub(crate) runtime_controls: Arc<Mutex<RuntimeControlState>>,
+    pub(crate) emergency_mute_gate: Arc<Mutex<()>>,
     pub(crate) restart_preferences: Arc<Mutex<AudioPreferences>>,
     pub(crate) restart_gate: Arc<Mutex<()>>,
     pub(crate) restart_outcomes: Arc<Mutex<HashMap<u64, NativeAudioResult<()>>>>,
@@ -41,6 +42,7 @@ impl RecoveryState {
     pub(crate) fn new(preferences: AudioPreferences) -> Self {
         Self {
             runtime_controls: Arc::new(Mutex::new(RuntimeControlState::default())),
+            emergency_mute_gate: Arc::new(Mutex::new(())),
             restart_preferences: Arc::new(Mutex::new(preferences)),
             restart_gate: Arc::new(Mutex::new(())),
             restart_outcomes: Arc::new(Mutex::new(HashMap::new())),
@@ -49,17 +51,6 @@ impl RecoveryState {
 }
 
 impl AudioSupervisor {
-    pub(crate) fn startup_unmute_allowed(&self) -> NativeAudioResult<bool> {
-        let controls =
-            self.recovery
-                .runtime_controls
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                })?;
-        Ok(!controls.manual_emergency_mute)
-    }
-
     pub(super) fn completed_restart_outcome(
         &self,
         previous_generation: u64,
@@ -125,13 +116,20 @@ impl AudioSupervisor {
         // confirms that audio should fade back in. The other control values
         // are restored exactly, but safety mute is deliberately not
         // auto-cleared.
-        self.wait_for_command(
-            serde_json::json!({"type": "setEmergencyMute", "muted": true}),
-            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
-        )?;
-        if let Ok(mut current) = self.recovery.runtime_controls.lock() {
-            current.processing_mode_sent = Some(current.processing_mode.clone());
-            current.emergency_muted = true;
+        {
+            let _mute_gate = self.recovery.emergency_mute_gate.lock().map_err(|_| {
+                NativeAudioError::LockPoisoned {
+                    resource: "Emergency mute gate",
+                }
+            })?;
+            self.wait_for_command(
+                serde_json::json!({"type": "setEmergencyMute", "muted": true}),
+                super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+            )?;
+            if let Ok(mut current) = self.recovery.runtime_controls.lock() {
+                current.processing_mode_sent = Some(current.processing_mode.clone());
+                current.emergency_muted = true;
+            }
         }
         Ok(())
     }
@@ -158,21 +156,5 @@ mod tests {
 
         assert_eq!(supervisor.completed_restart_outcome(7), Some(result));
         assert!(supervisor.completed_restart_outcome(8).is_none());
-    }
-
-    #[test]
-    fn startup_unmute_respects_manual_mute_intent() {
-        let supervisor = AudioSupervisor::offline("test");
-
-        assert!(supervisor.startup_unmute_allowed().unwrap());
-
-        supervisor
-            .recovery
-            .runtime_controls
-            .lock()
-            .unwrap()
-            .manual_emergency_mute = true;
-
-        assert!(!supervisor.startup_unmute_allowed().unwrap());
     }
 }

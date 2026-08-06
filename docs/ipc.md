@@ -221,8 +221,9 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 - 起動直後は `starting` → 初回 `audioStatus` 受信 → `muted` と進む。Rustが保存済みMaster GainをRuntimeへ適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認した時点で、機能Runtimeの復元を待たずに緊急ミュートを解除する
 - Sample Pad、Rack、Arrange Runtimeの復元は解除後に行う。復元中はpassiveを維持し、復元失敗だけでは音声デバイス障害と判定しない。復元に成功した場合だけWorkspaceに対応するprocessing modeへ切り替える
 - 安全初期化または機能Runtime復元中にSidecar世代が変わった場合は、その世代の結果を採用せず、最新世代で安全初期化からやり直す。起動完了後のRuntime再起動は緊急ミュートを維持する
+- 起動時解除とユーザーの緊急ミュート操作は専用の直列化境界を共有する。起動解除は手動ミュート意図を再確認し、解除処理ではその意図を変更しない
 - `faulted` はC++側の `SafetyAudioCallback::setDeviceFaulted(true)` が検出時に出力される
-- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる
+- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる。起動安全確認が `Failed` または未完了なら、復旧成功後に安全初期化と初期Runtime復元を再実行する
 - 不明な状態文字列はRust側で `offline` にフォールバックする
 
 ### 4.5 エラー表現
@@ -256,6 +257,7 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 - Rust側はsidecarの`Terminated` / `Error` / `Stderr` イベントを検出すると `faulted` 状態へ遷移させる
 - `sidecar_generation`（`AtomicU64`）で世代を管理し、古いイベントが新しい世代へ影響しないようにする
 - 初回 `audioStatus` の受信を世代ごとのReady境界とし、Ready前のコマンド送信を禁止する
+- 世代発行、終了記録、起動完了判定は同じ短い遷移境界で順序付ける。終了が先なら新世代で起動調整を継続し、完了が先ならその後の終了を起動完了後の障害として扱う
 - 起動調整が完了するまではRuntime再起動イベントをUIの復旧処理へ渡さず、Rustが安全初期化と機能Runtime復元を最新世代へ収束させる
 - `recoverAudioDevice` / `setAudioDriver` が行き詰まった場合、sidecarを再起動してから再送する
 

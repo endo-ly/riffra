@@ -186,6 +186,7 @@ fn queue_startup_maintenance(
                 }
             }
         };
+        state.core.audio().emit_status(&app_handle);
 
         if state.core.safe_mode() {
             queue_session_index(&data_root, &session);
@@ -461,7 +462,7 @@ async fn set_emergency_mute(muted: bool, app: AppHandle) -> Result<AudioStatus, 
         state
             .core
             .audio()
-            .set_emergency_mute(muted)
+            .set_emergency_mute_from_user(muted)
             .map_err(String::from)
     })
     .await
@@ -474,11 +475,17 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if state.core.safe_mode() {
             return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
         }
-        state
+        let recovered = state
             .core
             .audio()
             .recover_audio_device(&operation_app)
-            .map_err(String::from)
+            .map_err(String::from)?;
+        if !state.core.audio().startup_completed() {
+            state.core.audio().mark_startup_pending();
+            return startup::initialize_audio_runtime(state, || {})
+                .map(|initialization| initialization.status);
+        }
+        Ok(recovered)
     })
     .await
 }

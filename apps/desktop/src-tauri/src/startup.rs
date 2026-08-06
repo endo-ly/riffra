@@ -103,8 +103,10 @@ trait StartupAudioPort {
     fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus>;
     fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus>;
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus>;
-    fn startup_unmute_allowed(&self) -> NativeAudioResult<bool>;
-    fn set_emergency_mute(&self, muted: bool) -> NativeAudioResult<AudioStatus>;
+    fn release_startup_mute_if_allowed(
+        &self,
+        generation: u64,
+    ) -> NativeAudioResult<Option<AudioStatus>>;
 }
 
 impl StartupAudioPort for AudioSupervisor {
@@ -140,12 +142,11 @@ impl StartupAudioPort for AudioSupervisor {
         AudioSupervisor::refresh_status(self)
     }
 
-    fn startup_unmute_allowed(&self) -> NativeAudioResult<bool> {
-        AudioSupervisor::startup_unmute_allowed(self)
-    }
-
-    fn set_emergency_mute(&self, muted: bool) -> NativeAudioResult<AudioStatus> {
-        AudioSupervisor::set_emergency_mute(self, muted)
+    fn release_startup_mute_if_allowed(
+        &self,
+        generation: u64,
+    ) -> NativeAudioResult<Option<AudioStatus>> {
+        AudioSupervisor::release_startup_mute_if_allowed(self, generation)
     }
 }
 
@@ -302,19 +303,17 @@ fn initialize_safety_generation<A: StartupAudioPort>(
 
     let status = audio.refresh_status().map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
-    if !safe_to_release_startup_mute(&status)
-        || !audio
-            .startup_unmute_allowed()
-            .map_err(StartupError::Control)?
-    {
+    if !safe_to_release_startup_mute(&status) {
         return Ok(status);
     }
 
-    let status = audio
-        .set_emergency_mute(false)
-        .map_err(StartupError::Control)?;
-    ensure_generation(audio, generation)?;
-    Ok(status)
+    match audio
+        .release_startup_mute_if_allowed(generation)
+        .map_err(StartupError::Control)?
+    {
+        Some(status) => Ok(status),
+        None => Ok(status),
+    }
 }
 
 /// Restores feature-specific runtime state after the safety mute has already
@@ -394,57 +393,73 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         return Err(StartupRuntimeError::TargetChanged);
     }
 
-    let mode = workspace_processing_mode(target.session.workspace);
     if failures.is_empty() {
-        let mode_error = state
-            .core
-            .audio()
-            .set_processing_mode_nonblocking(mode)
-            .err();
-        if let Some(error) = mode_error {
-            if sidecar_transitioned(state, generation) {
-                return Err(StartupRuntimeError::GenerationChanged(
-                    generation_changed_message(state.core.audio(), generation),
-                ));
-            }
-            let passive_error = state
-                .core
-                .audio()
-                .set_processing_mode_nonblocking("passive")
-                .err();
-            let message = match passive_error {
-                Some(passive_error) => format!(
-                    "startup processing mode could not be applied: {error}; passive mode could not be maintained: {passive_error}"
-                ),
-                None => format!("startup processing mode could not be applied: {error}"),
-            };
-            return Err(StartupRuntimeError::Feature(message));
-        }
+        apply_startup_processing_mode(state, generation, &target, true)
+    } else {
+        apply_startup_processing_mode(state, generation, &target, false)?;
+        Err(StartupRuntimeError::Feature(failures.join("; ")))
+    }
+}
+
+fn apply_startup_processing_mode(
+    state: &AppState,
+    generation: u64,
+    target: &CanonicalProjection,
+    fallback_to_passive: bool,
+) -> Result<(), StartupRuntimeError> {
+    let _workspace_runtime_gate = state.workspace_runtime_gate.lock().map_err(|error| {
+        StartupRuntimeError::Feature(format!("workspace runtime gate was poisoned: {error}"))
+    })?;
+    let current = state
+        .session_actor
+        .capture_projection(state.core.session())
+        .map_err(StartupRuntimeError::Feature)?;
+    if current.sequence != target.sequence || current.session.workspace != target.session.workspace
+    {
+        return Err(StartupRuntimeError::TargetChanged);
+    }
+
+    let mode = if fallback_to_passive {
+        workspace_processing_mode(current.session.workspace)
+    } else {
+        "passive"
+    };
+    let mode_error = state
+        .core
+        .audio()
+        .set_processing_mode_nonblocking(mode)
+        .err();
+    let Some(error) = mode_error else {
         if sidecar_transitioned(state, generation) {
             return Err(StartupRuntimeError::GenerationChanged(
                 generation_changed_message(state.core.audio(), generation),
             ));
         }
-        Ok(())
-    } else {
-        state
-            .core
-            .audio()
-            .set_processing_mode_nonblocking("passive")
-            .map_err(|error| {
-                if sidecar_transitioned(state, generation) {
-                    StartupRuntimeError::GenerationChanged(generation_changed_message(
-                        state.core.audio(),
-                        generation,
-                    ))
-                } else {
-                    StartupRuntimeError::Feature(format!(
-                        "startup passive mode could not be maintained: {error}"
-                    ))
-                }
-            })?;
-        Err(StartupRuntimeError::Feature(failures.join("; ")))
+        return Ok(());
+    };
+    if sidecar_transitioned(state, generation) {
+        return Err(StartupRuntimeError::GenerationChanged(
+            generation_changed_message(state.core.audio(), generation),
+        ));
     }
+    if !fallback_to_passive {
+        return Err(StartupRuntimeError::Feature(format!(
+            "startup passive mode could not be maintained: {error}"
+        )));
+    }
+
+    let passive_error = state
+        .core
+        .audio()
+        .set_processing_mode_nonblocking("passive")
+        .err();
+    let message = match passive_error {
+        Some(passive_error) => format!(
+            "startup processing mode could not be applied: {error}; passive mode could not be maintained: {passive_error}"
+        ),
+        None => format!("startup processing mode could not be applied: {error}"),
+    };
+    Err(StartupRuntimeError::Feature(message))
 }
 
 fn sidecar_transitioned(state: &AppState, generation: u64) -> bool {
@@ -601,22 +616,21 @@ mod tests {
             Ok(Self::status(self.status_state))
         }
 
-        fn startup_unmute_allowed(&self) -> NativeAudioResult<bool> {
-            Ok(self.allow_startup_unmute)
-        }
-
-        fn set_emergency_mute(&self, muted: bool) -> NativeAudioResult<AudioStatus> {
-            if !muted {
-                self.unmute_calls
-                    .lock()
-                    .unwrap()
-                    .push(self.current_generation());
+        fn release_startup_mute_if_allowed(
+            &self,
+            generation: u64,
+        ) -> NativeAudioResult<Option<AudioStatus>> {
+            if self.current_generation() != generation {
+                return Err(NativeAudioError::GenerationChanged {
+                    expected: generation,
+                    actual: self.current_generation(),
+                });
             }
-            Ok(Self::status(if muted {
-                AudioState::Muted
-            } else {
-                AudioState::Ready
-            }))
+            if !self.allow_startup_unmute {
+                return Ok(None);
+            }
+            self.unmute_calls.lock().unwrap().push(generation);
+            Ok(Some(Self::status(AudioState::Ready)))
         }
     }
 

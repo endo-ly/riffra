@@ -32,6 +32,8 @@ pub(super) fn remaining_timeout(
 
 impl AudioSupervisor {
     pub fn offline(message: impl Into<String>) -> Self {
+        let process = Arc::new(SidecarProcess::new(true));
+        let startup_transition_gate = Arc::clone(&process.startup_transition_gate);
         Self {
             status: Arc::new(Mutex::new(AudioStatus {
                 state: AudioState::Offline,
@@ -61,12 +63,12 @@ impl AudioSupervisor {
                 message: message.into(),
             })),
             command_bus: Arc::new(CommandBus::new()),
-            process: Arc::new(SidecarProcess::new(true)),
+            process,
             recovery: Arc::new(RecoveryState::new(AudioPreferences::default())),
             startup_state: Arc::new(std::sync::atomic::AtomicU8::new(
                 StartupState::Completed as u8,
             )),
-            startup_transition_gate: Arc::new(Mutex::new(())),
+            startup_transition_gate,
         }
     }
 
@@ -98,15 +100,17 @@ impl AudioSupervisor {
             feedback_suspected: false,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
+        let process = Arc::new(SidecarProcess::new(false));
+        let startup_transition_gate = Arc::clone(&process.startup_transition_gate);
         let supervisor = Self {
             status: Arc::clone(&status),
             command_bus: Arc::new(CommandBus::new()),
-            process: Arc::new(SidecarProcess::new(false)),
+            process,
             recovery: Arc::new(RecoveryState::new(preferences)),
             startup_state: Arc::new(std::sync::atomic::AtomicU8::new(
                 StartupState::Pending as u8,
             )),
-            startup_transition_gate: Arc::new(Mutex::new(())),
+            startup_transition_gate,
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(app, generation) {
@@ -134,6 +138,10 @@ impl AudioSupervisor {
         self.process.current_generation()
     }
 
+    pub(crate) fn emit_status<R: Runtime>(&self, app: &AppHandle<R>) {
+        emit_audio_status(app, &self.status);
+    }
+
     pub(crate) fn wait_until_ready(
         &self,
         generation: u64,
@@ -152,7 +160,7 @@ impl AudioSupervisor {
                 actual,
             });
         }
-        if self.process.terminated_generation.load(Ordering::Acquire) == generation {
+        if self.process.is_terminated(generation) {
             return Err(NativeAudioError::transport_lost(
                 "Native audio sidecar terminated before it became ready.",
             ));

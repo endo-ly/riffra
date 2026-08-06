@@ -12,6 +12,7 @@ pub(crate) struct SidecarProcess {
     pub(crate) generation: Arc<AtomicU64>,
     pub(crate) ready_generation: Arc<AtomicU64>,
     pub(crate) terminated_generation: Arc<AtomicU64>,
+    pub(crate) startup_transition_gate: Arc<Mutex<()>>,
     pub(crate) readiness: Arc<(Mutex<()>, Condvar)>,
     pub(crate) command_gate: Arc<Mutex<()>>,
     pub(crate) terminated_generations: Arc<(Mutex<HashSet<u64>>, Condvar)>,
@@ -26,6 +27,7 @@ impl SidecarProcess {
             generation: Arc::new(AtomicU64::new(0)),
             ready_generation: Arc::new(AtomicU64::new(0)),
             terminated_generation: Arc::new(AtomicU64::new(0)),
+            startup_transition_gate: Arc::new(Mutex::new(())),
             readiness: Arc::new((Mutex::new(()), Condvar::new())),
             command_gate: Arc::new(Mutex::new(())),
             terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
@@ -35,6 +37,10 @@ impl SidecarProcess {
     }
 
     pub(crate) fn next_generation(&self) -> u64 {
+        let _transition = self
+            .startup_transition_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.readiness.1.notify_all();
         generation
@@ -91,7 +97,7 @@ impl SidecarProcess {
     }
 
     pub(crate) fn is_terminated(&self, generation: u64) -> bool {
-        self.terminated_generation.load(Ordering::Acquire) == generation
+        generation != 0 && self.terminated_generation.load(Ordering::Acquire) == generation
     }
 
     pub(crate) fn mark_ready(&self, generation: u64) {
@@ -128,6 +134,10 @@ impl SidecarProcess {
     }
 
     pub(crate) fn mark_terminated(&self, generation: u64) {
+        let _transition = self
+            .startup_transition_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.terminated_generation
             .fetch_max(generation, Ordering::AcqRel);
         self.readiness.1.notify_all();

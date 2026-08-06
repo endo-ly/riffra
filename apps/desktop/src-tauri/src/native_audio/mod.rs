@@ -60,7 +60,8 @@ impl AudioSupervisor {
         let Ok(_transition) = self.startup_transition_gate.lock() else {
             return false;
         };
-        if self.process.current_generation() != generation {
+        if self.process.current_generation() != generation || self.process.is_terminated(generation)
+        {
             return false;
         }
         self.startup_state
@@ -74,6 +75,14 @@ impl AudioSupervisor {
         };
         self.startup_state
             .store(StartupState::Failed as u8, Ordering::Release);
+    }
+
+    pub(crate) fn mark_startup_pending(&self) {
+        let Ok(_transition) = self.startup_transition_gate.lock() else {
+            return;
+        };
+        self.startup_state
+            .store(StartupState::Pending as u8, Ordering::Release);
     }
 
     pub(crate) fn startup_completed(&self) -> bool {
@@ -107,6 +116,33 @@ mod tests {
         assert!(!supervisor.mark_startup_completed(1));
         assert_eq!(supervisor.startup_state(), StartupState::Pending);
         assert!(supervisor.mark_startup_completed(0));
+        assert!(supervisor.startup_completed());
+    }
+
+    #[test]
+    fn startup_completion_is_rejected_after_generation_termination() {
+        let supervisor = AudioSupervisor::offline("test");
+        supervisor
+            .startup_state
+            .store(StartupState::Pending as u8, Ordering::Release);
+        let generation = supervisor.process.next_generation();
+        supervisor.process.mark_terminated(generation);
+
+        assert!(!supervisor.mark_startup_completed(generation));
+        assert_eq!(supervisor.startup_state(), StartupState::Pending);
+    }
+
+    #[test]
+    fn startup_completion_wins_when_recorded_before_generation_termination() {
+        let supervisor = AudioSupervisor::offline("test");
+        supervisor
+            .startup_state
+            .store(StartupState::Pending as u8, Ordering::Release);
+        let generation = supervisor.process.next_generation();
+
+        assert!(supervisor.mark_startup_completed(generation));
+        supervisor.process.mark_terminated(generation);
+
         assert!(supervisor.startup_completed());
     }
 }

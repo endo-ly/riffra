@@ -67,5 +67,8 @@ export function offlineAudioStatus(
  * the startup message.
  */
 export function startingAudioStatus(): AudioStatus {
-  return { ...offlineAudioStatus('Audio supervisor is starting.'), state: 'starting' };
+  return {
+    ...offlineAudioStatus('Native audio sidecar is starting in emergency-mute state.'),
+    state: 'starting',
+  };
 }
