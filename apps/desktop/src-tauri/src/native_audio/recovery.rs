@@ -12,6 +12,7 @@ pub(crate) struct RuntimeControlState {
     pub(crate) master_gain_db: f64,
     pub(crate) midi_listening: bool,
     pub(crate) emergency_muted: bool,
+    pub(crate) manual_emergency_mute: bool,
 }
 
 impl Default for RuntimeControlState {
@@ -22,6 +23,7 @@ impl Default for RuntimeControlState {
             master_gain_db: -18.0,
             midi_listening: false,
             emergency_muted: true,
+            manual_emergency_mute: false,
         }
     }
 }
@@ -47,6 +49,17 @@ impl RecoveryState {
 }
 
 impl AudioSupervisor {
+    pub(crate) fn startup_unmute_allowed(&self) -> NativeAudioResult<bool> {
+        let controls =
+            self.recovery
+                .runtime_controls
+                .lock()
+                .map_err(|_| NativeAudioError::LockPoisoned {
+                    resource: "Runtime control",
+                })?;
+        Ok(!controls.manual_emergency_mute)
+    }
+
     pub(super) fn completed_restart_outcome(
         &self,
         previous_generation: u64,
@@ -145,5 +158,21 @@ mod tests {
 
         assert_eq!(supervisor.completed_restart_outcome(7), Some(result));
         assert!(supervisor.completed_restart_outcome(8).is_none());
+    }
+
+    #[test]
+    fn startup_unmute_respects_manual_mute_intent() {
+        let supervisor = AudioSupervisor::offline("test");
+
+        assert!(supervisor.startup_unmute_allowed().unwrap());
+
+        supervisor
+            .recovery
+            .runtime_controls
+            .lock()
+            .unwrap()
+            .manual_emergency_mute = true;
+
+        assert!(!supervisor.startup_unmute_allowed().unwrap());
     }
 }

@@ -70,6 +70,30 @@ impl SidecarProcess {
         self.is_ready(generation)
     }
 
+    pub(crate) fn wait_for_next_generation(
+        &self,
+        generation: u64,
+        timeout: Duration,
+    ) -> Option<u64> {
+        if self.current_generation() > generation {
+            return Some(self.current_generation());
+        }
+        let (readiness, changed) = &*self.readiness;
+        let guard = readiness.lock().ok()?;
+        let _ = changed
+            .wait_timeout_while(guard, timeout, |_| {
+                self.current_generation() <= generation
+                    && !self.shutting_down.load(Ordering::Acquire)
+            })
+            .ok()?;
+        let current = self.current_generation();
+        (current > generation).then_some(current)
+    }
+
+    pub(crate) fn is_terminated(&self, generation: u64) -> bool {
+        self.terminated_generation.load(Ordering::Acquire) == generation
+    }
+
     pub(crate) fn mark_ready(&self, generation: u64) {
         self.ready_generation.store(generation, Ordering::Release);
         self.readiness.1.notify_all();
@@ -141,5 +165,20 @@ mod tests {
         let second_generation = process.next_generation();
         assert!(!process.wait_for_ready(second_generation, Duration::ZERO));
         assert!(!process.is_ready(first_generation));
+    }
+
+    #[test]
+    fn waits_for_a_replacement_generation_after_termination() {
+        let process = Arc::new(SidecarProcess::new(false));
+        let first_generation = process.next_generation();
+        process.mark_terminated(first_generation);
+
+        let waiter_process = Arc::clone(&process);
+        let waiter = std::thread::spawn(move || {
+            waiter_process.wait_for_next_generation(first_generation, Duration::from_secs(1))
+        });
+        let second_generation = process.next_generation();
+
+        assert_eq!(waiter.join().unwrap(), Some(second_generation));
     }
 }

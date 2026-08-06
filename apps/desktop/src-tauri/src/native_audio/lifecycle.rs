@@ -1,4 +1,5 @@
 use super::AudioSupervisor;
+use super::StartupState;
 use super::command_bus::{CommandBus, fail_pending_requests, record_command_response};
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::protocol::{
@@ -62,7 +63,10 @@ impl AudioSupervisor {
             command_bus: Arc::new(CommandBus::new()),
             process: Arc::new(SidecarProcess::new(true)),
             recovery: Arc::new(RecoveryState::new(AudioPreferences::default())),
-            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            startup_state: Arc::new(std::sync::atomic::AtomicU8::new(
+                StartupState::Completed as u8,
+            )),
+            startup_transition_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -99,7 +103,10 @@ impl AudioSupervisor {
             command_bus: Arc::new(CommandBus::new()),
             process: Arc::new(SidecarProcess::new(false)),
             recovery: Arc::new(RecoveryState::new(preferences)),
-            startup_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            startup_state: Arc::new(std::sync::atomic::AtomicU8::new(
+                StartupState::Pending as u8,
+            )),
+            startup_transition_gate: Arc::new(Mutex::new(())),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(app, generation) {
@@ -159,6 +166,32 @@ impl AudioSupervisor {
                 timeout.as_secs().max(1)
             ),
         })
+    }
+
+    pub(crate) fn wait_for_next_generation(
+        &self,
+        generation: u64,
+        timeout: Duration,
+    ) -> NativeAudioResult<u64> {
+        if self.process.shutting_down.load(Ordering::Acquire) {
+            return Err(NativeAudioError::ShuttingDown);
+        }
+        if let Some(next_generation) = self.process.wait_for_next_generation(generation, timeout) {
+            return Ok(next_generation);
+        }
+        if self.process.shutting_down.load(Ordering::Acquire) {
+            return Err(NativeAudioError::ShuttingDown);
+        }
+        Err(NativeAudioError::Timeout {
+            message: format!(
+                "Native audio sidecar did not start a replacement generation within {} seconds.",
+                timeout.as_secs().max(1)
+            ),
+        })
+    }
+
+    pub(crate) fn sidecar_terminated(&self, generation: u64) -> bool {
+        self.process.is_terminated(generation)
     }
 
     fn spawn_sidecar<R: Runtime>(
@@ -480,7 +513,7 @@ impl AudioSupervisor {
             Ok(())
         })();
         self.record_restart_outcome(previous_generation, &result);
-        if result.is_ok() && self.startup_complete() {
+        if result.is_ok() && self.startup_completed() {
             let _ = app.emit(
                 "runtime-restarted",
                 serde_json::json!({ "generation": self.sidecar_generation() }),

@@ -591,13 +591,15 @@ impl AudioSupervisor {
                 "Audio faded in from silence through the safety limiter."
             },
         )?;
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })?
-            .emergency_muted = muted;
+        let mut controls =
+            self.recovery
+                .runtime_controls
+                .lock()
+                .map_err(|_| NativeAudioError::LockPoisoned {
+                    resource: "Runtime control",
+                })?;
+        controls.emergency_muted = muted;
+        controls.manual_emergency_mute = muted;
         Ok(status)
     }
 }

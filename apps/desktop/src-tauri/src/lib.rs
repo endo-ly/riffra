@@ -168,20 +168,30 @@ fn queue_startup_maintenance(
 ) {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
-        if let Err(error) = library::sync_session(&data_root, &session) {
-            let _ = diagnostics::record(&data_root, "startup-library", &error);
-        }
+        let status = if state.core.safe_mode() {
+            None
+        } else {
+            match startup::initialize_audio_runtime(&state, || {
+                queue_session_index(&data_root, &session);
+            }) {
+                Ok(initialization) => {
+                    if let Some(error) = initialization.runtime_error.as_deref() {
+                        let _ = diagnostics::record(&data_root, "startup-runtime", error);
+                    }
+                    Some(initialization.status)
+                }
+                Err(error) => {
+                    let _ = diagnostics::record(&data_root, "startup-audio", &error);
+                    None
+                }
+            }
+        };
+
         if state.core.safe_mode() {
+            queue_session_index(&data_root, &session);
             return;
         }
 
-        let status = match startup::initialize_audio_runtime(&state) {
-            Ok(status) => Some(status),
-            Err(error) => {
-                let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                state.core.audio().refresh_status().ok()
-            }
-        };
         if let Some(status) = status {
             match audio_preferences::AudioPreferences::from_effective_status(&status) {
                 Ok(effective) => {
