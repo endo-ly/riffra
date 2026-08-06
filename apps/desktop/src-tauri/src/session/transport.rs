@@ -324,7 +324,7 @@ fn workspace_processing_mode(workspace: Workspace) -> &'static str {
     match workspace {
         Workspace::Play => "play",
         Workspace::Arrange => "arrange",
-        Workspace::Home | Workspace::Design => "passive",
+        Workspace::Design => "passive",
     }
 }
 
@@ -363,6 +363,19 @@ mod tests {
         assert_eq!(session.lock().unwrap().workspace, Workspace::Arrange);
         assert!(!root.join("scratch").join("current.json").exists());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_processing_mode_matches_workspace() {
+        let cases = [
+            (Workspace::Play, "play"),
+            (Workspace::Arrange, "arrange"),
+            (Workspace::Design, "passive"),
+        ];
+
+        for (workspace, expected_mode) in cases {
+            assert_eq!(workspace_processing_mode(workspace), expected_mode);
+        }
     }
 
     #[test]

@@ -409,6 +409,35 @@ void writeJson(
         outputWriter.enqueue(std::move(line), kind);
 }
 
+juce::var probedAudioDevice(
+    juce::AudioIODeviceType& type,
+    const juce::String& name,
+    const bool input,
+    const bool sameDevice) {
+    auto device = std::unique_ptr<juce::AudioIODevice>(
+        sameDevice ? type.createDevice(name, name)
+                   : (input ? type.createDevice(juce::String {}, name)
+                            : type.createDevice(name, juce::String {})));
+    juce::Array<juce::var> channels;
+    if (device != nullptr) {
+        const auto names = input ? device->getInputChannelNames() : device->getOutputChannelNames();
+        for (int index = 0; index < names.size(); ++index) {
+            auto* channel = new juce::DynamicObject();
+            channel->setProperty("index", index);
+            channel->setProperty(
+                "name",
+                names[index].isNotEmpty()
+                    ? names[index]
+                    : (input ? "Input " : "Output ") + juce::String(index + 1));
+            channels.add(juce::var(channel));
+        }
+    }
+    auto* result = new juce::DynamicObject();
+    result->setProperty("name", name);
+    result->setProperty("channels", channels);
+    return juce::var(result);
+}
+
 juce::var probeAudioDevices() {
     juce::AudioDeviceManager manager;
     juce::OwnedArray<juce::AudioIODeviceType> types;
@@ -420,18 +449,19 @@ juce::var probeAudioDevices() {
         auto* driver = new juce::DynamicObject();
         driver->setProperty("name", type->getTypeName());
         driver->setProperty("accessMode", accessModeForDriver(type->getTypeName()));
+        const auto sameDevice = driverRequiresSameDevice(type->getTypeName());
         driver->setProperty(
             "devicePairing",
-            driverRequiresSameDevice(type->getTypeName()) ? "sameDevice" : "independent");
+            sameDevice ? "sameDevice" : "independent");
 
         juce::Array<juce::var> inputs;
         for (const auto& name : type->getDeviceNames(true))
-            inputs.add(name);
+            inputs.add(probedAudioDevice(*type, name, true, sameDevice));
         driver->setProperty("inputs", inputs);
 
         juce::Array<juce::var> outputs;
         for (const auto& name : type->getDeviceNames(false))
-            outputs.add(name);
+            outputs.add(probedAudioDevice(*type, name, false, sameDevice));
         driver->setProperty("outputs", outputs);
         driverTypes.add(juce::var(driver));
     }

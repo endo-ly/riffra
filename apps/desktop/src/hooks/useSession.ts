@@ -25,7 +25,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const [undoStack, setUndoStack] = useState<CreativeSession[]>([]);
   const [redoStack, setRedoStack] = useState<CreativeSession[]>([]);
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
-  const [exportMessage, setExportMessage] = useState('Autosave remains the primary session copy.');
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const previousSession = useRef<CreativeSession | null>(null);
   const historySkip = useRef(false);
   const sessionRef = useRef<CreativeSession | null>(null);

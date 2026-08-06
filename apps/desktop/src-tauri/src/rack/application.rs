@@ -439,7 +439,7 @@ pub fn restore_current_rack(context: &RackContext<'_>) -> Result<AudioStatus, St
         // Workspace navigation is a runtime reconciliation, not a request to
         // recreate a third-party plugin. Reusing the live instance preserves
         // editor/plugin state and, critically, avoids paying VST construction
-        // time on every Play -> Home -> Play transition.
+        // time on every workspace transition.
         if current
             .plugin
             .as_ref()

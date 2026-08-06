@@ -41,6 +41,65 @@
     monospace;
   letter-spacing: 0.12em;
 }
+
+.shellNotice {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  z-index: 10;
+  display: grid;
+  gap: 5px;
+  width: min(760px, calc(100% - 32px));
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  font-size: 9px;
+  line-height: 1.5;
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+}
+
+.shellNotice strong {
+  font:
+    700 8px 'DM Mono',
+    Consolas,
+    monospace;
+  letter-spacing: 0.12em;
+}
+
+.safeModeNotice {
+  color: #f1d69a;
+  background: rgba(74, 52, 22, 0.96);
+  border: 1px solid rgba(231, 181, 93, 0.55);
+}
+
+.safeModeNotice strong {
+  color: var(--amber);
+}
+
+.safeModeNotice code {
+  color: #f6e6b8;
+  font-family: 'DM Mono', monospace;
+}
+
+.recoveryNotice {
+  color: #b9cfe0;
+  background: rgba(37, 70, 97, 0.96);
+  border: 1px solid rgba(104, 170, 216, 0.5);
+}
+
+.safeModeNotice ~ .recoveryNotice {
+  top: 150px;
+}
+
+.recoveryNotice strong {
+  color: #8bd2ef;
+}
+
+.recoveryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
 .exitFocus {
   position: fixed;
   right: 14px;

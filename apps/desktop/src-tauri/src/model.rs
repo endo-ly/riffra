@@ -128,11 +128,19 @@ pub struct PluginStatus {
     pub state_data: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioChannelInfo {
     pub index: u32,
     pub name: String,
+}
+
+/// An audio device and the channels exposed by the device probe.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDeviceInfo {
+    pub name: String,
+    pub channels: Vec<AudioChannelInfo>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -188,8 +196,8 @@ pub struct AudioDriverInfo {
     pub name: String,
     pub access_mode: AudioAccessMode,
     pub device_pairing: AudioDevicePairing,
-    pub inputs: Vec<String>,
-    pub outputs: Vec<String>,
+    pub inputs: Vec<AudioDeviceInfo>,
+    pub outputs: Vec<AudioDeviceInfo>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]

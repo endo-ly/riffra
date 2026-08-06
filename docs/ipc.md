@@ -173,6 +173,35 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 
 起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_midi_probe` 等で処理される。
 
+`audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels` には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
+
+```json
+{
+  "type": "audioDeviceProbe",
+  "drivers": [
+    {
+      "name": "ASIO",
+      "accessMode": "driverManaged",
+      "devicePairing": "sameDevice",
+      "inputs": [
+        {
+          "name": "Audio Interface",
+          "channels": [{ "index": 0, "name": "Input 1" }]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Audio Interface",
+          "channels": [{ "index": 0, "name": "Output 1" }]
+        }
+      ]
+    }
+  ],
+  "midiInputs": [],
+  "midiOutputs": []
+}
+```
+
 ### 4.3 コマンドカタログ（Rust → C++）
 
 真実源は `apps/desktop/src-tauri/src/native_audio/` の `AudioSupervisor` 各メソッドと、`AudioMain.cpp` のディスパッチ部。C++側で処理される `type` の一覧:

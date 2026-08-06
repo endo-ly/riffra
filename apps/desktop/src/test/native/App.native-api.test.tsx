@@ -44,11 +44,48 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.calls).not.toContain('restoreCurrentRack');
     expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('setEmergencyMute');
+    expect(fake.bootstrapState.session.workspace).toBe('arrange');
+    expect(
+      within(screen.getByRole('navigation', { name: /Workspace/ })).getAllByRole('button'),
+    ).toHaveLength(3);
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(fake.audio.state).toBe('muted');
+  });
+
+  it('keeps shell notices and project actions available without a home surface', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: {
+        safeMode: true,
+        recoveredFromGeneration: true,
+        recoveryCandidates: [
+          {
+            fileName: 'generation-1.json',
+            updatedAtMs: 1,
+            sessionId: 'scratch-1',
+            projectName: 'Recovered Project',
+            note: 'Stable generation',
+          },
+        ],
+      },
+    });
+    renderApp(fake);
+
+    await waitForAppShell();
+    expect(screen.getByText('SAFE MODE')).toBeInTheDocument();
+    expect(screen.getByText('RECOVERY CHOICE')).toBeInTheDocument();
+
+    const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
+    expect(within(workspaceNav).getAllByRole('button')).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: /Home/ })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Search or command/ }));
+    expect(screen.getByText('Import Project')).toBeInTheDocument();
+    expect(screen.getByText('Export Project')).toBeInTheDocument();
+    expect(screen.getByText('Audio Settings')).toBeInTheDocument();
   });
 
   it('keeps the runtime muted after a sidecar restart following startup', async () => {
@@ -66,7 +103,7 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.calls).not.toContain('setEmergencyMute');
   });
 
-  it('restores the Play rack when entering Play instead of during Home startup', async () => {
+  it('restores the Play rack when entering Play instead of during startup', async () => {
     const fake = new FakeNativeApi();
     fake.setAudioState('muted');
     renderApp(fake);
@@ -301,11 +338,14 @@ describe('App driven by FakeNativeApi', () => {
 
     const user = userEvent.setup();
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
+    await waitFor(() => expect(fake.calls).toContain('probeAudioDevices'));
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /96,000 Hz/ })).toBeInTheDocument(),
+      expect(screen.getByRole('button', { name: /Open Audio Settings/ })).toBeInTheDocument(),
     );
-    await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
+    await user.click(screen.getByRole('button', { name: /Open Audio Settings/ }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sample rate' }), '96000');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(screen.getByText(/EMERGENCY MUTE ENGAGED/)).toBeInTheDocument();
@@ -332,7 +372,7 @@ describe('App driven by FakeNativeApi', () => {
 
     const user = userEvent.setup();
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
-    await user.click(within(workspaceNav).getByRole('button', { name: /Home/ }));
+    await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
     await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
 
     await waitFor(() => expect(fake.calls).toContain('switchWorkspace'));
@@ -379,7 +419,9 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.audio.state).toBe('faulted');
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: /Recover device/ }));
+    await waitFor(() => expect(fake.calls).toContain('probeAudioDevices'));
+    await user.click(screen.getByRole('button', { name: /Open Audio Settings/ }));
+    await user.click(screen.getByRole('button', { name: /Recover Audio/ }));
     await waitFor(() => expect(fake.audio.state).toBe('muted'));
     expect(fake.calls).toContain('recoverAudioDevice');
   });
@@ -419,7 +461,7 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(screen.getByRole('button', { name: '＋' }));
     await waitFor(() => expect(fake.calls).toContain('captureSnapshot'));
 
-    await user.click(within(workspaceNav).getByRole('button', { name: /Home/ }));
+    await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
     await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
 
     // The captured snapshot must survive workspace switches and reach persistence.
@@ -587,17 +629,19 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
     await waitForAppShell();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /96,000 Hz/ })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(fake.calls).toContain('probeAudioDevices'));
     const savesBeforeSelection = fake.savedSessions.length;
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /96,000 Hz/ }));
+    await user.click(screen.getByRole('button', { name: /Open Audio Settings/ }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sample rate' }), '96000');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() => expect(fake.calls).toContain('setAudioDriver'));
     await waitFor(() => expect(fake.audio.sampleRate).toBe(96_000));
     expect(fake.audio.driver).toBe('Fake Driver');
+    expect(fake.calls).not.toContain('switchWorkspace');
+    expect(fake.bootstrapState.session.workspace).toBe('arrange');
     expect(fake.savedSessions).toHaveLength(savesBeforeSelection);
   });
 

@@ -315,9 +315,9 @@ struct NativeAudioDriver {
     access_mode: model::AudioAccessMode,
     device_pairing: model::AudioDevicePairing,
     #[serde(default)]
-    inputs: Vec<String>,
+    inputs: Vec<model::AudioDeviceInfo>,
     #[serde(default)]
-    outputs: Vec<String>,
+    outputs: Vec<model::AudioDeviceInfo>,
 }
 
 #[tauri::command]
@@ -810,10 +810,20 @@ mod tests {
     #[test]
     fn parses_midi_probe_with_unicode_device_names() {
         let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":["Focusrite"],"outputs":["Focusrite"]}],"midiInputs":[{"id":"midi-in-1","name":"Keyboard"}],"midiOutputs":[{"id":"midi-out-1","name":"Microsoft GS Wavetable Synth"}]}"#,
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}],"midiInputs":[{"id":"midi-in-1","name":"Keyboard"}],"midiOutputs":[{"id":"midi-out-1","name":"Microsoft GS Wavetable Synth"}]}"#,
         )
         .unwrap();
         assert_eq!(probe.drivers[0].name, "ASIO");
+        assert_eq!(probe.drivers[0].inputs[0].name, "Focusrite");
+        assert_eq!(probe.drivers[0].inputs[0].channels[0].name, "Input 1");
+        assert_eq!(probe.drivers[0].outputs[0].channels[0].index, 0);
+        assert_eq!(probe.drivers[0].outputs[0].channels[0].name, "Output 1");
+        assert_eq!(
+            probe.drivers[1].device_pairing,
+            crate::model::AudioDevicePairing::Independent
+        );
+        assert!(probe.drivers[1].inputs.is_empty());
+        assert!(probe.drivers[1].outputs.is_empty());
         assert_eq!(probe.midi_inputs[0].id, "midi-in-1");
         assert_eq!(probe.midi_inputs[0].name, "Keyboard");
         assert_eq!(probe.midi_outputs[0].id, "midi-out-1");

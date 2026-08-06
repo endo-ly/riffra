@@ -15,6 +15,7 @@ export type {
   AudioClip,
   AudioClipMove,
   AudioClipPatch,
+  AudioDeviceInfo,
   AudioInputRoute,
   AudioDevicePairing,
   AudioDeviceProbe,
@@ -179,7 +180,7 @@ export const defaultSession = (): CreativeSession => ({
   sessionId: 'scratch-browser-preview',
   updatedAtMs: Date.now(),
   projectName: null,
-  workspace: 'home',
+  workspace: 'arrange',
   designContext: { activeTool: 'sample' },
   playState: { sampleInstrument: { pads: [] } },
   arrangement: {

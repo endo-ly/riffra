@@ -8,10 +8,8 @@ import { workspaces } from '@/constants';
 import { isOutputMuted } from '@/lib/audio-safety';
 import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
 import {
-  AudioDriverPicker,
+  AudioSettingsDialog,
   Icon,
-  WorkspaceHome,
-  AudioDevices,
   WorkspacePlay,
   WorkspaceAnalyze,
   WorkspaceSample,
@@ -32,6 +30,7 @@ import styles from './App.module.css';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const {
     boot,
     session,
@@ -136,6 +135,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     api: nativeApi,
   } = useApp(api);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
+  const refreshAudioDevices = async () => {
+    const nextProbe = await nativeApi.probeAudioDevices();
+    setDeviceProbe(nextProbe);
+    return nextProbe;
+  };
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
@@ -161,7 +165,57 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onRenameSession={renameSession}
         onToggleMute={toggleMute}
         onOpenCommand={() => setCommandOpen(true)}
+        onOpenAudioSettings={() => setAudioSettingsOpen(true)}
+        audioSettingsOpen={audioSettingsOpen}
       />
+
+      <AudioSettingsDialog
+        open={audioSettingsOpen}
+        audio={audio}
+        probe={deviceProbe}
+        safeMode={boot.safeMode}
+        recordingActive={audio.recording.active || recordingCommandPending}
+        onClose={() => setAudioSettingsOpen(false)}
+        onRefresh={refreshAudioDevices}
+        onApply={selectAudioDriver}
+        onRecover={recoverAudio}
+      />
+
+      {boot.safeMode && (
+        <div className={`${styles.shellNotice} ${styles.safeModeNotice}`} role="status">
+          <strong>SAFE MODE</strong>
+          <span>
+            External VST3, MIDI input, driver changes, live preview and new recordings are isolated.
+            Project open, library access, offline analysis, render and export remain available.
+            Restart without <code>--safe-mode</code> to reconnect devices.
+          </span>
+        </div>
+      )}
+
+      {boot.recoveredFromGeneration && boot.recoveryCandidates.length > 0 && (
+        <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
+          <strong>RECOVERY CHOICE</strong>
+          <span>
+            The current session was recovered from an autosave generation. Choose a previous stable
+            generation if needed.
+          </span>
+          <div className={styles.recoveryActions}>
+            {boot.recoveryCandidates.slice(0, 5).map((candidate) => (
+              <button
+                className="text-button"
+                key={candidate.fileName}
+                onClick={() => void restoreRecovery(candidate.fileName)}
+              >
+                {candidate.projectName ?? 'Untitled'} ·{' '}
+                {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
+              </button>
+            ))}
+            <button className="text-button" onClick={dismissRecovery}>
+              Keep recovered session
+            </button>
+          </div>
+        </div>
+      )}
 
       {!boot.nativeAvailable && (
         <div className={styles.runtimeBanner}>
@@ -232,42 +286,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       />
 
       <section className="workspace">
-        {session.workspace === 'home' && (
-          <div className="workspace-scroll home-grid">
-            <WorkspaceHome
-              state={boot}
-              onWorkspace={switchWorkspace}
-              onQuickRecord={() => void toggleRecording()}
-              recordingActive={audio.recording.active || recordingCommandPending}
-              onRecoverAudioDevice={() => void recoverAudio()}
-              onExportProject={() => void exportSession()}
-              onImportProject={() => void importSession()}
-              onRestoreRecovery={(fileName) => void restoreRecovery(fileName)}
-              onDismissRecovery={dismissRecovery}
-              exportMessage={exportMessage}
-            />
-            <AudioDevices
-              probe={deviceProbe}
-              onRefresh={() =>
-                void nativeApi
-                  .probeAudioDevices()
-                  .then(setDeviceProbe)
-                  .catch(logNativeError('probeAudioDevices'))
-              }
-            />
-            <AudioDriverPicker
-              probe={deviceProbe}
-              current={audio.driver}
-              inputDevice={audio.inputDevice}
-              inputChannel={audio.inputChannel}
-              inputChannels={audio.inputChannels}
-              outputDevice={audio.outputDevice}
-              sampleRate={audio.sampleRate}
-              bufferSize={audio.bufferSize}
-              onSelect={(config) => void selectAudioDriver(config)}
-            />
-          </div>
-        )}
         {session.workspace === 'play' && (
           <WorkspacePlay
             session={session}
@@ -395,6 +413,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onToggleRecording={toggleRecording}
         autosaveError={autosaveError}
         audioPreferenceMessage={audioPreferenceMessage}
+        projectActionMessage={exportMessage}
         api={nativeApi}
       />
 
@@ -436,6 +455,35 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 <kbd>{item.key}</kbd>
               </button>
             ))}
+            <span className="eyebrow">PROJECT</span>
+            <button
+              onClick={() => {
+                setCommandOpen(false);
+                void importSession();
+              }}
+            >
+              <span>Import Project</span>
+              <small>Open a project.json manifest</small>
+            </button>
+            <button
+              onClick={() => {
+                setCommandOpen(false);
+                void exportSession();
+              }}
+            >
+              <span>Export Project</span>
+              <small>Write a collected project manifest</small>
+            </button>
+            <span className="eyebrow">SETTINGS</span>
+            <button
+              onClick={() => {
+                setCommandOpen(false);
+                setAudioSettingsOpen(true);
+              }}
+            >
+              <span>Audio Settings</span>
+              <small>Configure driver and Windows devices</small>
+            </button>
             <footer>
               <span>↑↓ Navigate</span>
               <span>↵ Select</span>

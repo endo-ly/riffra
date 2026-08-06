@@ -212,7 +212,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   // the same workspace guard. This includes internal App work (startup,
   // plugin-state flushes, and rack operations), not only setters passed to
   // child components. A slow Arrange/VST response must not overwrite a newer
-  // optimistic Play/Home navigation.
+  // optimistic workspace navigation.
   const setSession = setSessionFromChildOperation;
   const setNavigationSession = useCallback(
     (nextSession: CreativeSession) => {

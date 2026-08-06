@@ -531,8 +531,16 @@ export class FakeNativeApi implements NativeApi {
           name: 'Fake Driver',
           accessMode: 'driverManaged',
           devicePairing: 'independent',
-          inputs: ['Input 1'],
-          outputs: ['Output 1'],
+          inputs: [{ name: 'Input 1', channels: [{ index: 0, name: 'Input 1' }] }],
+          outputs: [
+            {
+              name: 'Output 1',
+              channels: [
+                { index: 0, name: 'Output 1' },
+                { index: 1, name: 'Output 2' },
+              ],
+            },
+          ],
         },
       ],
       midiInputs: [],

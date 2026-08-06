@@ -19,6 +19,7 @@ interface TransportBarProps {
   onToggleRecording: () => void;
   autosaveError: string | null;
   audioPreferenceMessage: string | null;
+  projectActionMessage: string | null;
   api: NativeApi;
 }
 
@@ -36,6 +37,7 @@ export function TransportBar(props: TransportBarProps) {
     onToggleRecording,
     autosaveError,
     audioPreferenceMessage,
+    projectActionMessage,
     api,
   } = props;
   const meters = useAudioMeters();
@@ -220,7 +222,7 @@ export function TransportBar(props: TransportBarProps) {
         <span className={clsx(styles.statusDot, styles[statusDotState])} />
         {audio.recording.active
           ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`
-          : (autosaveError ?? audioPreferenceMessage ?? audio.message)}
+          : (autosaveError ?? audioPreferenceMessage ?? projectActionMessage ?? audio.message)}
       </div>
     </footer>
   );

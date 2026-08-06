@@ -8,6 +8,7 @@ export type { AudioChannelInfo } from './AudioChannelInfo';
 export type { AudioClip } from './AudioClip';
 export type { AudioClipMove } from './AudioClipMove';
 export type { AudioClipPatch } from './AudioClipPatch';
+export type { AudioDeviceInfo } from './AudioDeviceInfo';
 export type { AudioDevicePairing } from './AudioDevicePairing';
 export type { AudioDeviceProbe } from './AudioDeviceProbe';
 export type { AudioDriverConfig } from './AudioDriverConfig';

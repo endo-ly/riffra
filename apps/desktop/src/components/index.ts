@@ -5,10 +5,7 @@ export { InspectorPanel } from './layout/InspectorPanel';
 export { LibraryPanel } from './layout/LibraryPanel';
 export { TransportBar } from './layout/TransportBar';
 export { MissingDependencies } from './layout/MissingDependencies';
-
-export { WorkspaceHome } from './home/WorkspaceHome';
-export { AudioDevices } from './home/AudioDevices';
-export { AudioDriverPicker } from './home/AudioDriverPicker';
+export { AudioSettingsDialog } from './settings/AudioSettingsDialog';
 
 export { WorkspacePlay } from './play/WorkspacePlay';
 export { MidiDevices } from './play/MidiDevices';

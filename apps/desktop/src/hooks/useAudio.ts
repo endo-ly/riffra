@@ -32,14 +32,16 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
 
   const recoverAudio = useCallback(async () => {
     setAudioPreferenceMessage(null);
-    setAudio(await recoverAudioDevice());
+    const nextAudio = await recoverAudioDevice();
+    setAudio(nextAudio);
+    return nextAudio;
   }, [recoverAudioDevice, setAudio]);
 
   const selectAudioDriver = useCallback(
     async (config: AudioDriverConfig) => {
       const nextAudio = await setAudioDriver(config);
       setAudio(nextAudio);
-      if (!audioCommandSucceeded(nextAudio)) return;
+      if (!audioCommandSucceeded(nextAudio)) return nextAudio;
       const effective = reconcileAudioSettings(
         {
           driver: config.driver,
@@ -49,6 +51,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
         nextAudio,
       );
       setAudioPreferenceMessage(effective.message);
+      return nextAudio;
     },
     [setAudio, setAudioDriver],
   );

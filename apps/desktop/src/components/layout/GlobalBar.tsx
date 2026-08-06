@@ -16,6 +16,8 @@ interface GlobalBarProps {
   onRenameSession: () => void;
   onToggleMute: () => void;
   onOpenCommand: () => void;
+  onOpenAudioSettings: () => void;
+  audioSettingsOpen: boolean;
 }
 
 export function GlobalBar(props: GlobalBarProps) {
@@ -31,6 +33,8 @@ export function GlobalBar(props: GlobalBarProps) {
     onRenameSession,
     onToggleMute,
     onOpenCommand,
+    onOpenAudioSettings,
+    audioSettingsOpen,
   } = props;
   return (
     <header className="global-bar">
@@ -82,10 +86,19 @@ export function GlobalBar(props: GlobalBarProps) {
         <Icon name="search" />
         Search or command<kbd>Ctrl K</kbd>
       </button>
-      <button className={`engine-pill ${audio.state}`}>
+      <button
+        className={`engine-pill ${audio.state} ${audioSettingsOpen ? 'is-open' : ''}`}
+        onClick={onOpenAudioSettings}
+        aria-label="Open Audio Settings"
+        aria-haspopup="dialog"
+        aria-expanded={audioSettingsOpen}
+        title="Open Audio Settings"
+        data-audio-settings-trigger
+      >
         <span />
-        {audio.state === 'ready' ? audio.driver : audio.state}
+        <strong>{audio.state === 'ready' ? audio.driver : audio.state}</strong>
         <small>{audio.roundTripMs ? `${audio.roundTripMs} ms` : 'Audio'}</small>
+        <Icon name="chevron" />
       </button>
       <button
         className={clsx(styles.emergencyButton, isMuted && styles.active)}

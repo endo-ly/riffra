@@ -103,12 +103,11 @@ pub struct TimelinePunchRange {
     pub end_tick: TimelineTick,
 }
 
-/// The four fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
+/// The three fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
 /// workspaces; they are [`DesignTool`]s reached from [`Workspace::Design`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Workspace {
-    Home,
     Play,
     Design,
     Arrange,
@@ -2090,14 +2089,14 @@ fn default_macros() -> Vec<RackMacro> {
 }
 
 impl CreativeSession {
-    /// Creates a fresh session in the Home workspace with the default rack,
+    /// Creates a fresh session in the Arrange workspace with the default rack,
     /// arrangement, and safe (muted) settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
             session_id: format!("scratch-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
-            workspace: Workspace::Home,
+            workspace: Workspace::Arrange,
             design_context: DesignContext::default(),
             play_state: PlayState::default(),
             arrangement: Arrangement::default(),
@@ -2710,15 +2709,26 @@ mod tests {
     }
 
     #[test]
-    fn workspace_has_exactly_four_variants() {
-        let all = [
-            Workspace::Home,
-            Workspace::Play,
-            Workspace::Design,
-            Workspace::Arrange,
-        ];
-        assert_eq!(all.len(), 4);
-        assert!(matches!(CreativeSession::new(0).workspace, Workspace::Home));
+    fn workspace_has_exactly_three_variants() {
+        let all = [Workspace::Play, Workspace::Design, Workspace::Arrange];
+        assert_eq!(all.len(), 3);
+        assert!(matches!(
+            CreativeSession::new(0).workspace,
+            Workspace::Arrange
+        ));
+    }
+
+    #[test]
+    fn workspace_serializes_to_stable_lowercase_values() {
+        assert_eq!(
+            serde_json::to_string(&Workspace::Arrange).unwrap(),
+            "\"arrange\""
+        );
+        assert_eq!(serde_json::to_string(&Workspace::Play).unwrap(), "\"play\"");
+        assert_eq!(
+            serde_json::to_string(&Workspace::Design).unwrap(),
+            "\"design\""
+        );
     }
 
     #[test]

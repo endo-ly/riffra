@@ -380,7 +380,7 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
                 failures.push(format!("arrange runtime restoration failed: {error}"));
             }
         }
-        Workspace::Home | Workspace::Design => {}
+        Workspace::Design => {}
     }
 
     if sidecar_transitioned(state, generation) {
@@ -502,7 +502,7 @@ fn workspace_processing_mode(workspace: Workspace) -> &'static str {
     match workspace {
         Workspace::Play => "play",
         Workspace::Arrange => "arrange",
-        Workspace::Home | Workspace::Design => "passive",
+        Workspace::Design => "passive",
     }
 }
 

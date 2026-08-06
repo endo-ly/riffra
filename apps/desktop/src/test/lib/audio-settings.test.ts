@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { AudioStatus } from '@/lib/domain';
+import type { AudioDeviceProbe, AudioStatus } from '@/lib/domain';
 import {
   chooseInitialDriverRoute,
+  createAudioSettingsDraft,
   includeEffectiveOption,
+  isAudioSettingsDraftValid,
+  normalizeAudioSettingsDraft,
   reconcileAudioSettings,
+  selectDriverForDraft,
 } from '@/lib/audio-settings';
 
 function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
@@ -103,8 +107,16 @@ describe('audio setting reconciliation', () => {
           name: 'ASIO',
           accessMode: 'driverManaged',
           devicePairing: 'sameDevice',
-          inputs: ['Ableton Move', 'Focusrite USB ASIO', 'GT-1'],
-          outputs: ['Ableton Move', 'Focusrite USB ASIO', 'GT-1'],
+          inputs: [
+            { name: 'Ableton Move', channels: [] },
+            { name: 'Focusrite USB ASIO', channels: [{ index: 0, name: 'Input 1' }] },
+            { name: 'GT-1', channels: [] },
+          ],
+          outputs: [
+            { name: 'Ableton Move', channels: [] },
+            { name: 'Focusrite USB ASIO', channels: [{ index: 0, name: 'Output 1' }] },
+            { name: 'GT-1', channels: [] },
+          ],
         },
         'Analogue 1 + 2 (Focusrite USB Audio)',
         'Speakers (Focusrite USB Audio)',
@@ -114,4 +126,105 @@ describe('audio setting reconciliation', () => {
       outputDevice: 'Focusrite USB ASIO',
     });
   });
+
+  it('creates a draft from the effective route and preserves non-standard formats', () => {
+    const probe = audioProbe();
+    const draft = createAudioSettingsDraft(
+      audioStatus({
+        driver: 'ASIO',
+        inputDevice: 'Focusrite USB ASIO',
+        inputChannel: 1,
+        inputChannels: [{ index: 1, name: 'Input 2' }],
+        outputDevice: 'Focusrite USB ASIO',
+        sampleRate: 48_000,
+        bufferSize: 480,
+      }),
+      probe,
+    );
+
+    expect(draft).toEqual({
+      driver: 'ASIO',
+      inputDevice: 'Focusrite USB ASIO',
+      inputChannel: 1,
+      outputDevice: 'Focusrite USB ASIO',
+      sampleRate: 48_000,
+      bufferSize: 480,
+    });
+  });
+
+  it('changes the driver and selects a valid channel from the selected device', () => {
+    const probe = audioProbe();
+    const draft = selectDriverForDraft(
+      {
+        driver: 'Windows Audio',
+        inputDevice: 'Mic',
+        inputChannel: 0,
+        outputDevice: 'Speakers',
+        sampleRate: 48_000,
+        bufferSize: 128,
+      },
+      probe.drivers[1],
+    );
+
+    expect(draft).toEqual({
+      driver: 'ASIO',
+      inputDevice: 'Focusrite USB ASIO',
+      inputChannel: 0,
+      outputDevice: 'Focusrite USB ASIO',
+      sampleRate: 48_000,
+      bufferSize: 128,
+    });
+  });
+
+  it('normalizes a removed driver, device, and channel', () => {
+    const normalized = normalizeAudioSettingsDraft(
+      {
+        driver: 'Removed Driver',
+        inputDevice: 'Removed mic',
+        inputChannel: 4,
+        outputDevice: 'Removed speakers',
+        sampleRate: 48_000,
+        bufferSize: 128,
+      },
+      audioProbe(),
+    );
+
+    expect(normalized.inputDevice).toBe('Mic');
+    expect(normalized.inputChannel).toBe(0);
+    expect(normalized.outputDevice).toBe('Speakers');
+    expect(isAudioSettingsDraftValid(normalized, audioProbe())).toBe(true);
+  });
 });
+
+function audioProbe(): AudioDeviceProbe {
+  return {
+    drivers: [
+      {
+        name: 'Windows Audio',
+        accessMode: 'shared',
+        devicePairing: 'independent',
+        inputs: [{ name: 'Mic', channels: [{ index: 0, name: 'Mic 1' }] }],
+        outputs: [{ name: 'Speakers', channels: [{ index: 0, name: 'Left' }] }],
+      },
+      {
+        name: 'ASIO',
+        accessMode: 'driverManaged',
+        devicePairing: 'sameDevice',
+        inputs: [
+          {
+            name: 'Focusrite USB ASIO',
+            channels: [
+              { index: 0, name: 'Input 1' },
+              { index: 1, name: 'Input 2' },
+            ],
+          },
+        ],
+        outputs: [{ name: 'Focusrite USB ASIO', channels: [{ index: 0, name: 'Output 1' }] }],
+      },
+    ],
+    midiInputs: [],
+    midiOutputs: [],
+    refreshedAtMs: 1,
+    message: 'Audio device list refreshed.',
+  };
+}
