@@ -1,6 +1,7 @@
 import clsx from 'clsx';
+import { useState } from 'react';
 import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
-import { toAssetId } from '@/lib/domain';
+import type { Track } from '@/lib/domain';
 import { librarySections } from '@/constants';
 import type { InboxController } from '@/hooks/useInbox';
 import { writeAssetDrag } from '@/lib/arrange-drag';
@@ -18,18 +19,17 @@ interface LibraryPanelProps {
     searchQuery: string;
     selectedAsset: LibraryAsset | null;
     relatedAssets: LibraryAsset[];
-    rackDefinitions: LibraryAsset[];
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
     onEditAsset: () => void;
     onOpenInDesign: (asset: LibraryAsset) => void;
-    onLoadRackDefinition: (assetId: AssetId) => void;
     onImportMidi: () => void;
   };
   rack: {
     plugins: PluginEntry[];
     visiblePlugins: PluginEntry[];
-    onLoadPlugin: (plugin: PluginEntry) => void;
+    focusedTrack: Track | null;
+    onAddPlugin: (plugin: PluginEntry, target: 'instrument' | 'effect') => void;
   };
   recordings: {
     visibleRecordings: RecordingAsset[];
@@ -40,6 +40,8 @@ interface LibraryPanelProps {
 }
 
 export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelProps) {
+  const [pluginTarget, setPluginTarget] = useState<PluginEntry | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const showHandledError = (operation: Promise<unknown>) => {
     void operation.catch(() => undefined);
   };
@@ -164,11 +166,21 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               <button
                 className={styles.pluginRow}
                 key={plugin.id}
-                onClick={() => void rack.onLoadPlugin(plugin)}
+                onClick={() => {
+                  if (!rack.focusedTrack) {
+                    setPluginTarget(null);
+                    setMessage('Select a Track before adding a Plugin.');
+                    return;
+                  }
+                  setMessage(null);
+                  setPluginTarget(plugin);
+                }}
                 disabled={plugin.scanState !== 'validated'}
                 title={
                   plugin.scanState === 'validated'
-                    ? `Load ${plugin.name}`
+                    ? rack.focusedTrack
+                      ? `Add ${plugin.name} to ${rack.focusedTrack.name}`
+                      : `Select a Track before adding ${plugin.name}`
                     : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
                 }
               >
@@ -180,39 +192,39 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                 <i className={clsx(styles.stability, styles[plugin.scanState])} />
               </button>
             ))}
+            {message && <small className={styles.inboxMessage}>{message}</small>}
+            {pluginTarget && rack.focusedTrack && (
+              <div className={styles.pluginTargetMenu} role="menu">
+                <strong>Add to {rack.focusedTrack.name}</strong>
+                {rack.focusedTrack.kind === 'instrument' && (
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      rack.onAddPlugin(pluginTarget, 'instrument');
+                      setPluginTarget(null);
+                    }}
+                  >
+                    {rack.focusedTrack.instrument ? 'Replace Instrument' : 'Use as Instrument'}
+                  </button>
+                )}
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    rack.onAddPlugin(pluginTarget, 'effect');
+                    setPluginTarget(null);
+                  }}
+                >
+                  Add as Effect
+                </button>
+                <button className="text-button" onClick={() => setPluginTarget(null)}>
+                  Cancel
+                </button>
+              </div>
+            )}
             {rack.visiblePlugins.length === 0 && (
               <div className={styles.libraryEmpty}>
                 <span>一致するVST3がありません</span>
                 <small>検索語を変えるか、VST3フォルダを確認してください。</small>
-              </div>
-            )}
-          </>
-        ) : library.section === 'Racks' ? (
-          <>
-            <small className={styles.scanMessage}>
-              {library.rackDefinitions.length}件のRackDefinition
-            </small>
-            {library.rackDefinitions.map((rack) => (
-              <button
-                className={styles.pluginRow}
-                key={rack.id}
-                onClick={() => library.onLoadRackDefinition(toAssetId(rack.id))}
-                title={`Load ${rack.name}`}
-              >
-                <span>R</span>
-                <div>
-                  <strong>{rack.name}</strong>
-                  <small>{rack.kind}</small>
-                </div>
-                <i className={clsx(styles.stability, styles.validated)} />
-              </button>
-            ))}
-            {library.rackDefinitions.length === 0 && (
-              <div className={styles.libraryEmpty}>
-                <span>保存済みRackがありません</span>
-                <small>
-                  Playワークスペースの Save Rack から Canonical Asset として保存できます。
-                </small>
               </div>
             )}
           </>

@@ -1,0 +1,142 @@
+.panel {
+  position: relative;
+  min-height: 150px;
+  height: var(--panel-height);
+  max-height: min(900px, 55vh);
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  overflow: hidden;
+  color: #dbe8ec;
+  background: #0d151a;
+  border-top: 1px solid #50636d;
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.24);
+}
+
+.panel.collapsed {
+  min-height: 44px;
+  grid-template-rows: 44px;
+}
+
+.resizeHandle {
+  position: absolute;
+  z-index: 2;
+  top: -5px;
+  left: 0;
+  width: 100%;
+  height: 10px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: ns-resize;
+}
+
+.resizeHandle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 58px;
+  height: 3px;
+  transform: translateX(-50%);
+  background: #708994;
+  border-radius: 3px;
+}
+
+.resizeHandle:hover::after {
+  background: var(--cyan);
+}
+
+.header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  background: #151f26;
+  border-bottom: 1px solid #334650;
+}
+
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.tabs button,
+.actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: #9dafb7;
+  font-size: 10px;
+  font-weight: 550;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.tabs button:hover:not(:disabled),
+.actions button:hover:not(:disabled) {
+  color: #f1fbfc;
+  background: #203039;
+  border-color: #3c535e;
+}
+
+.tabs button:disabled {
+  color: #56656e;
+  cursor: not-allowed;
+}
+
+.tabs .activeTab {
+  color: #baf7f5;
+  background: #1b4149;
+  border-color: #4c8c94;
+}
+
+.context {
+  min-width: 0;
+  overflow: hidden;
+  color: #c9d9de;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.actions button {
+  color: #a9bac1;
+  background: #111a20;
+  border-color: #3a4d57;
+}
+
+.actions button:last-child {
+  color: #c3d1d5;
+}
+
+.content {
+  min-height: 0;
+  overflow: auto;
+  background: #0d151a;
+}
+
+@media (max-width: 720px) {
+  .header {
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+  .context {
+    display: none;
+  }
+
+  .tabs button,
+  .actions button {
+    padding: 0 7px;
+  }
+}

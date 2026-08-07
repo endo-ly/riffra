@@ -162,6 +162,31 @@
 .pluginRow:hover {
   background: var(--surface-2);
 }
+.pluginTargetMenu {
+  display: grid;
+  gap: 5px;
+  margin: 5px 0 10px;
+  padding: 8px;
+  background: rgba(85, 217, 232, 0.05);
+  border: 1px solid rgba(85, 217, 232, 0.2);
+  border-radius: 5px;
+}
+.pluginTargetMenu strong {
+  color: #cbd3dc;
+  font-size: 9px;
+}
+.pluginTargetMenu button {
+  padding: 4px 6px;
+  color: #9cdbe2;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+.pluginTargetMenu button:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
 .pluginRow > span {
   width: 28px;
   height: 28px;

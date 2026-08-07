@@ -14,7 +14,7 @@ Riffraは、演奏しながら音を作り、録音や生成結果を素材と�
 
 ### 4.1 制作の全体像
 
-ArrangeとDesignは、同じSessionとLibraryを共有する二つの制作領域である。利用者は任意の領域から制作を始め、同じ素材を保ったまま領域を往復する。Arrangeが主画面であり、演奏、監視、録音、構成を一つの作業空間で行う。演奏への集中はArrange内のRigモードが担う。
+ArrangeとDesignは、同じSessionとLibraryを共有する二つの制作領域である。利用者は任意の領域から制作を始め、同じ素材を保ったまま領域を往復する。Arrangeが主画面であり、演奏、監視、録音、構成を一つの作業空間で行う。通常の演奏入力はArrange下部のPlay Surfaceが担う。
 
 ```mermaid
 flowchart LR
@@ -34,7 +34,7 @@ flowchart LR
 | Arrange  | 演奏しながら音を決め、曲にする | Track、Input、Rack、Plugin、Instrument    | Recording、Tone、Rack、Snapshot、曲  |
 | Design   | 音の材料と構造を作る           | Audio Asset、生成定義、Instrument Mapping | One Shot、Loop、Instrument、派生素材 |
 
-ArrangeのRigモードは、演奏と音作りに画面を集中させる表示モードであり、独立した制作領域ではない。
+Play Surfaceは、Focused Instrument Trackを対象に、Timelineを見ながら音源を試し、必要に応じて録音できるArrange内の下部パネルである。
 
 ### 4.2 起動とSession
 
@@ -90,7 +90,6 @@ Library
 ├─ Recording
 ├─ Audio Asset
 ├─ Instrument
-├─ Rack / Tone / Snapshot
 ├─ MIDI
 ├─ Project / Export
 └─ Inbox
@@ -106,39 +105,43 @@ Browserには、利用可能な種類と実データを表示する。検索結�
 
 Browserで選択した対象は、制作領域に応じたPrimary Actionを持つ。
 
-| 選択対象    | Arrange                | Design                |
-| ----------- | ---------------------- | --------------------- |
-| Plugin      | Track Rackへ追加       | Source処理に使用      |
-| Recording   | Timelineへ配置         | Sourceとして開く      |
-| Audio Asset | Timelineへ配置         | 編集・加工する        |
-| Instrument  | MIDI Trackへ割り当てる | Mappingを編集する     |
-| Rack / Tone | Trackへ読み込む        | 処理に使用する        |
-| MIDI        | Timelineへ配置         | Mapping確認に使用する |
+| 選択対象    | Arrange                              | Design                |
+| ----------- | ------------------------------------ | --------------------- |
+| Plugin      | Focused Trackへ追加                  | Source処理に使用      |
+| Recording   | Timelineへ配置                       | Sourceとして開く      |
+| Audio Asset | Timelineへ配置                       | 編集・加工する        |
+| Instrument  | Focused Instrument Trackへ割り当てる | Mappingを編集する     |
+| MIDI        | Timelineへ配置                       | Mapping確認に使用する |
 
-Primary ActionとDrag & Dropは同じ結果を生む。投入先が複数ある場合は、実行前に対象のTrack、Rack、Padなどを選択できる。
+Primary ActionとDrag & Dropは同じ結果を生む。Pluginの投入先が複数ある場合は、実行前にFocused Trackを選択できる。
 
 ### 4.5 SelectionとInspector
 
-Browser、Rack、Design Canvas、Timelineで選択した対象は、一つの共通Selectionとして扱う。
+Browser、Track、Design Canvas、Timelineで編集対象を選択するObject Selectionを持つ。Arrangeでは、演奏とPlugin投入の対象を示すFocused Trackを別に持つ。
 
 ```mermaid
 flowchart LR
-    B["Browser"] --> S["Selection"]
-    T["Arrange Track Rack"] --> S
+    B["Browser"] --> S["Object Selection"]
+    T["Arrange Track"] --> S
     D["Design Canvas"] --> S
     A["Arrange Timeline"] --> S
+    T --> F["Focused Track"]
     S --> I["Inspector"]
+    F --> I
     S --> W["Workspaceに応じた操作"]
+    F --> P["Plugin投入 / Play Surface"]
 ```
 
 選択できる主な対象:
 
 - Input / Output Device
-- Track / Rack / Plugin / Internal Processor
+- Track / Plugin / Internal Processor
 - Recording / Audio Asset / Generated Definition
 - Instrument / Pad / Key Mapping
 - Track / Audio Clip / MIDI Clip / MIDI Note
 - Snapshot / Job / Missing Dependency
+
+Object Selectionは編集対象を表し、Focused TrackはInspector、Plugin投入、Play Surfaceの対象を表す。MIDI ClipやNoteを選択してもFocused Trackは失われない。Focused Trackがない場合、Play Surfaceは演奏入力を受け付けない。
 
 制作領域を切り替えてもSelectionは保持される。Inspectorは選択対象に応じて内容を切り替え、同じ対象が別の制作領域でどのように利用されるかを示す。
 
@@ -163,7 +166,7 @@ Meter、Device、Plugin、Asset、再生位置、時間は、現在のSessionと
 
 | 段階     | 内容                                                                                       |
 | -------- | ------------------------------------------------------------------------------------------ |
-| Basic    | Input / Output、Plugin追加、Mute、Record、Preview、Timeline配置、Rigモード                 |
+| Basic    | Input / Output、Plugin追加、Mute、Record、Preview、Timeline配置、Play Surface              |
 | Edit     | Parameter、Macro、Snapshot、Clip、Pad、Track、Reference、Render                            |
 | Advanced | Driver、Sample Rate、Buffer、Channel Routing、生成Graph、Provenance、Diagnostics、Recovery |
 
@@ -217,7 +220,7 @@ Arrangeは、入力された音を聞きながら音を作り、録音し、時�
 │ Take 02    │ MIDI   │ [Chord Progression────────────]      │ Volume / Pan │
 │            │                                               │ Provenance   │
 │ Samples    │                                               │              │
-│ MIDI       │  [Rig Mode] タイムラインを畳んで演奏に集中     │              │
+│ MIDI       │  [Play Surface] Focused Trackを演奏            │              │
 │ Inbox      │                                               │              │
 ├────────────┴───────────────────────────────────────────────┴─────────────┤
 │ Timeline  001.01.000   ◀  ▶  ■  ●   120 BPM  4/4  Loop   Master -6 dB │
@@ -231,55 +234,43 @@ Arrangeで行う主な操作:
 - Pluginと内部処理をTrack Rackへ追加し、順序を変更する
 - VST3 Editorを開き、演奏しながら音を調整する
 - Bypass、Mute、Gain、Pan、Macroを操作する
-- ToneとRackをSnapshotとして比較・保存する
+- TrackのInstrumentとEffectを操作し、必要な状態を確認する
 - Raw、Processed、MIDI、録音条件を一つのRecordingとして保存する
 - Audio ClipとMIDI Clipの配置、編集、分割、ループ
 - Tempo、拍子、Marker、Loop Range、基本的なAutomation
 - Master、Track、Stem、MIDIの書出し
 
-#### Rig モード
+#### Arrange Lower Panel
 
-Rigモードは、タイムラインを畳んで演奏に集中する表示モードである。Main Workspaceには実際のSignal Flowを表示する。
-
-```mermaid
-flowchart LR
-    IN["Input<br/>AXE I/O · Input 1"] --> GUARD["Input Safety<br/>Meter / Gain"]
-    GUARD --> RACK["Track Rack<br/>AmpliTube 5"]
-    RACK --> OUTGUARD["Output Safety<br/>Meter / Limiter"]
-    OUTGUARD --> OUT["Output<br/>AXE I/O · 1/2"]
-    GUARD --> RAW["Raw Recording"]
-    RACK --> PROCESSED["Processed Recording"]
-```
+通常のArrange表示では、Timelineの下にLower Panelを開く。Lower PanelはPlay SurfaceとMIDI Editorを同じ領域で切り替え、Timelineの位置、Zoom、Object Selection、Focused Trackを保持する。
 
 ```text
-┌ Browser ────┬──────────────────── Rig ────────────────────┬ Inspector ──┐
-│ Search      │ Input          Rack                 Output    │ AmpliTube 5 │
-│             │ ┌────────┐  ┌──────────────┐     ┌────────┐  │ Active      │
-│ Plugins     │ │ IN 1   │→ │ AmpliTube 5  │ →   │ OUT 1/2│  │ Preset      │
-│ AmpliTube 5 │ │ Meter  │  │ Open  Bypass │     │ Meter  │  │ Macros      │
-│             │ └────────┘  └──────────────┘     └────────┘  │ Parameters  │
-│ Racks       │                [+ Add Device]                  │ Routing     │
-│             │                                                │             │
-│ Inbox       │ タイピングキーボード／ドラムパッド（アーム時）  │             │
+┌ Browser ────┬──────────────────── Arrange ─────────────────┬ Inspector ──┐
+│ Search      │ Timeline / Track / Clip                       │ Focused     │
+│ Plugins     │                                                │ Track       │
+│ Recordings  │                                                │ Instrument  │
+│ Inbox       │                                                │ Effects     │
 ├─────────────┴────────────────────────────────────────────────┴─────────────┤
-│ Live Input · Monitoring   ▶/■   ● Record   IN ▰▰  OUT ▰▰   Master -18 dB │
+│ Lower Panel · [Play Surface] [MIDI Editor]                  │
+│ Instrument Track · Keyboard / Drum Pads                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Timeline · Position · ▶/■ · ● Record · 120 BPM · Loop       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Rigモードで行う主な操作:
+Lower Panelで行う主な操作:
 
-- アーム済みトラックのInput MeterとGainを確認する
-- Pluginと内部処理をRackへ追加し、順序を変更する
-- VST3 Editorを開き、演奏しながら音を調整する
-- Bypass、Mute、Gain、Pan、Macroを操作する
-- ToneとRackをSnapshotとして比較・保存する
-- Raw、Processed、MIDIを一つのRecordingとして録音する
+- Focused Instrument TrackへPlay Surfaceを開く
+- Keyboard / Drum Pads、Octave、Velocity、Computer Keyboardを操作する
+- MIDI ClipをMIDI Editorで編集する
+- Timelineの位置とZoomを保ったままPlay SurfaceとMIDI Editorを切り替える
+- Record ArmされたFocused Trackで演奏MIDIを録音する
 
-Rackは、Audio Engineで有効なDeviceを処理順に表示する。Plugin CatalogはBrowserに表示し、Rackへ追加するとSignal Flowに現れる。
+Track Inspectorは、Audio Engineで有効なInstrumentとEffectを処理順に表示する。Plugin CatalogはBrowserに表示し、Focused Trackへ追加するとTrack InspectorとRuntimeへ反映する。
 
 VST3 EditorはPluginが提供する実画面をNative Windowで表示する。Editorを閉じてもRackの音声処理は継続する。
 
-インストゥルメントトラックをアームすると、タイピングキーボード／ドラムパッドが表示され、MIDI鍵盤なしで演奏・録音できる。
+Play Surfaceを開くと、タイピングキーボード／ドラムパッドが表示され、Focused Instrument Trackを対象にMIDI鍵盤なしで演奏できる。Record Armは録音対象を決める別状態であり、Play Surfaceを開いても自動で変更しない。
 
 ### 5.3 Design
 
@@ -302,7 +293,7 @@ flowchart LR
 │ Raw DI 07  ├───────────────────────────────────────────────┤ Loop        │
 │            │                                               │ Gain        │
 │ Samples    │              Design Canvas                    │ Provenance  │
-│ Racks      │        Waveform / Graph / Mapping             │ Used by     │
+│ Assets     │        Waveform / Graph / Mapping             │ Used by     │
 │            │                                               │             │
 │ Inbox      ├───────────────────────────────────────────────┤             │
 │            │ Result: Guitar Loop 01  [Save] [Play] [Place]│             │
@@ -329,12 +320,12 @@ AI支援は、選択中のSource、Tool、Resultに対する説明、候補、Ch
 
 トラックが使う入力と監視は、ArrangeのトラックヘッダーとInspectorで扱う。
 
-| 項目         | 場所            | 内容                                              |
-| ------------ | --------------- | ------------------------------------------------- |
-| Input Device | Track Inspector | トラックが使うオーディオ/MIDI入力機器とチャンネル |
-| Monitoring   | Track Header    | Off / Auto（アーム中のみ） / On                   |
-| Input Meter  | Rigモード       | アーム中の入力レベル                              |
-| Track Rack   | Track Inspector | トラック固有の音声処理                            |
+| 項目         | 場所                        | 内容                                              |
+| ------------ | --------------------------- | ------------------------------------------------- |
+| Input Device | Track Inspector             | トラックが使うオーディオ/MIDI入力機器とチャンネル |
+| Monitoring   | Track Header                | Off / Auto（アーム中のみ） / On                   |
+| Input Meter  | Track Header / Play Surface | アーム中の入力レベル                              |
+| Track Rack   | Track Inspector             | トラック固有の音声処理                            |
 
 監視音は、録音対象となる信号と明確に分離する。監視中に音量、パン、ラックを変更しても、録音済みのRawには影響しない。
 
@@ -346,11 +337,11 @@ Browserは左サイドパネルにあり、すべての制作領域で共通利�
 ┌ Browser ─────────────────────┐
 │ Search assets and plugins…   │
 │ All  Audio  Instruments      │
-│ Racks  MIDI  Plugins         │
+│ MIDI  Plugins                 │
 ├──────────────────────────────┤
 │ Raw DI 07        Recording   │
 │ Guitar Loop 01   Loop        │
-│ Night Practice   Rack        │
+│ Night Practice   Recording   │
 │ AmpliTube 5      Plugin      │
 ├──────────────────────────────┤
 │ Inbox · 3                    │
@@ -402,14 +393,13 @@ Inspectorの共通構造:
 
 Transportは画面下部にあり、現在の再生対象を明示して操作する。
 
-| 制作領域 | 再生対象                                   | 主な操作                                                                 |
-| -------- | ------------------------------------------ | ------------------------------------------------------------------------ |
-| Arrange  | Timeline（RigモードではLive Input / Rack） | Position、Play、Stop、Record、Tempo、拍子、Loop Range、Monitoring、Meter |
-| Design   | Selected Asset / Instrument                | Preview、Stop、Loop、Preview Position                                    |
+| 制作領域 | 再生対象                    | 主な操作                                                                 |
+| -------- | --------------------------- | ------------------------------------------------------------------------ |
+| Arrange  | Timeline + Lower Panel      | Position、Play、Stop、Record、Tempo、拍子、Loop Range、Monitoring、Meter |
+| Design   | Selected Asset / Instrument | Preview、Stop、Loop、Preview Position                                    |
 
 ```text
-Arrange  Timeline · Untitled Scratch
-Rig      Live Input · AXE I/O → AmpliTube 5
+Arrange  Timeline + Play Surface · Untitled Scratch
 Design   Selected Asset · Guitar Loop 01
 ```
 
@@ -483,7 +473,7 @@ sequenceDiagram
     U->>R: Track Rackへ追加する
     R->>V: VST3を読み込む
     V-->>A: Plugin状態とEditorを提供する
-    U->>A: Rigモードで演奏する
+    U->>A: Play Surfaceで演奏する
     A-->>U: 加工音、Output Meter、Latencyを表示する
 ```
 
@@ -569,9 +559,9 @@ flowchart LR
     EDIT --> MIX["Gain・Pan・Mute・Solo"]
     MIX --> PLAY["Timelineで確認"]
     PLAY --> DECIDE{"音を調整する"}
-    DECIDE -->|弾き直す| RIG["Rigモードで演奏・録音"]
+    DECIDE -->|弾き直す| SURFACE["Play Surfaceで演奏・録音"]
     DECIDE -->|音作り| D["Design"]
-    RIG --> PLACE
+    SURFACE --> PLACE
     D --> PLACE
     DECIDE -->|完成| EXPORT["Master・Stem・MIDIを書き出す"]
 ```
@@ -581,7 +571,7 @@ flowchart LR
 - AudioとMIDIをTrackへ配置できる
 - Track、Clip、時間、再生位置の関係が分かる
 - Timeline上で主要編集を直接行える
-- RigモードとDesignで作り直した素材へ差し替えられる
+- Play SurfaceとDesignで作り直した素材へ差し替えられる
 - Master、Track、Stem、MIDIの書出し結果がLibraryに残る
 
 ### 6.7 障害から復旧する
@@ -606,7 +596,7 @@ flowchart LR
 ### 6.8 制作体験の共通条件
 
 - Arrange、Designを切り替えてもSession、Selection、再生、録音、Mute、素材参照を失わない
-- RigモードとTimelineを行き来しても録音、ラック、Selectionを失わない
+- Play SurfaceとTimelineを行き来しても録音、ラック、Selectionを失わない
 - Browserの選択対象とMain Workspace、Inspectorの表示が一致する
 - Primary ActionとDrag & Dropが同じ制作結果を生む
 - Empty、Ready、Working、Muted、Recoverable、Failedを区別できる

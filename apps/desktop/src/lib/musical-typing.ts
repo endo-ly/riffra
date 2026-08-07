@@ -40,6 +40,18 @@ export const MUSICAL_TYPING_OCTAVE_UP_KEY = 'x';
 /** General MIDI percussion channel (0-indexed: 9 = MIDI channel 10). */
 export const GM_DRUM_CHANNEL = 9;
 
+/** Returns whether a keyboard event originated in a control that owns text input. */
+export function isEditableTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return Boolean(
+    element &&
+    (element.tagName === 'INPUT' ||
+      element.tagName === 'TEXTAREA' ||
+      element.tagName === 'SELECT' ||
+      element.isContentEditable),
+  );
+}
+
 /** MIDI note number for C{octave}. C4 → 60, C5 → 72, etc. */
 export function baseNoteForOctave(octave: number): number {
   return (octave + 1) * 12;
@@ -63,12 +75,12 @@ export function isBlackKey(semitone: number): boolean {
   return [1, 3, 6, 8, 10].includes(withinOctave);
 }
 
-/** Encode a Note On message as raw MIDI bytes suitable for sendMidiToPlugin. */
+/** Encode a Note On message as raw MIDI bytes suitable for targeted Track input. */
 export function encodeNoteOn(note: number, velocity: number, channel = 0): number[] {
   return [0x90 | (channel & 0x0f), note & 0x7f, velocity & 0x7f];
 }
 
-/** Encode a Note Off message as raw MIDI bytes suitable for sendMidiToPlugin. */
+/** Encode a Note Off message as raw MIDI bytes suitable for targeted Track input. */
 export function encodeNoteOff(note: number, channel = 0): number[] {
   return [0x80 | (channel & 0x0f), note & 0x7f, 0];
 }

@@ -34,6 +34,9 @@ function Harness({
       selection={selection}
       setSelection={setSelection}
       api={api}
+      audio={api.audio}
+      focusedTrackId={null}
+      onFocusTrack={() => undefined}
     />
   );
 }
@@ -87,6 +90,52 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerDown(ruler, { clientX: 92 });
 
     expect(api.calls).toContain('seekTimeline');
+  });
+
+  it('opens the MIDI Editor and adds a note from an empty piano-roll cell', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi',
+      name: 'MIDI Clip',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    const clip = container.querySelector('[data-clip-id="clip:midi"]')!;
+    fireEvent.doubleClick(clip);
+
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('div[class*="laneViewport"] > div')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 864, width: 400, height: 864 }),
+    });
+    fireEvent.pointerDown(lane, { clientX: 30, clientY: 36 });
+    fireEvent.pointerUp(window, { clientX: 30, clientY: 36 });
+
+    await waitFor(() => expect(api.calls).toContain('addMidiNote'));
+    expect(api.bootstrapState.session.arrangement.midiClips[0]?.notes).toHaveLength(1);
+    expect(api.bootstrapState.session.arrangement.midiClips[0]?.notes[0]?.startTick).toBe(240);
   });
 
   it('deletes an empty Audio Track from its Track Header', async () => {

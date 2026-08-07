@@ -22,13 +22,18 @@ export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProp
             aria-label={`${pad.name} (MIDI ${pad.note}, key ${pad.key.toUpperCase()})`}
             onPointerDown={(e) => {
               e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
               onPadDown(pad.note);
             }}
-            onPointerUp={() => onPadUp(pad.note)}
-            onPointerLeave={() => {
-              if (active) onPadUp(pad.note);
+            onPointerUp={(e) => {
+              onPadUp(pad.note);
+              e.currentTarget.releasePointerCapture?.(e.pointerId);
             }}
-            onPointerCancel={() => onPadUp(pad.note)}
+            onLostPointerCapture={() => onPadUp(pad.note)}
+            onPointerCancel={(e) => {
+              onPadUp(pad.note);
+              e.currentTarget.releasePointerCapture?.(e.pointerId);
+            }}
           >
             <span className={styles.padIndex}>{index + 1}</span>
             <span className={styles.padName}>{pad.shortName}</span>

@@ -33,7 +33,7 @@ Riffra 固有の機能によって、DAW として必要な基本品質の不足
 Arrange は、Riffra にある音楽素材を「時間を持った音楽」へ変える場所である。
 
 ```text
-演奏する・音を作る・監視する（Arrange / Rig モード）
+演奏する・音を作る・監視する（Arrange / Play Surface）
         │
         ▼
 Recording
@@ -97,16 +97,16 @@ Arrange では、以下の作業を完結できる。
 
 演奏、監視、録音の機能はすべて Arrange 内に配置される。
 
-| 機能                               | 配置                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------- |
-| 入出力の監視                       | Track の Monitoring（§5.5）と Rig モード（§3.7）                                  |
-| グローバル Rack                    | Track Rack で構成し、セッション全体のグローバル Rack は再生・録音経路へ参加しない |
-| Snapshot A / B                     | セッションのスナップショット（ラック＋マスタ状態）として保存・比較                |
-| Raw / Processed 録音               | Track の Arming による録音（§7.4）と同じ経路で保持                                |
-| タイピングキーボード／ドラムパッド | インストゥルメントトラック アーム時のパネル（§3.8）                               |
+| 機能                 | 配置                                                               |
+| -------------------- | ------------------------------------------------------------------ |
+| 入出力の監視         | Track の Monitoring（§5.5）とTrack Header                          |
+| Track Rack           | Track InspectorでInstrumentとEffectを処理順に扱う                  |
+| Snapshot A / B       | セッションのスナップショット（ラック＋マスタ状態）として保存・比較 |
+| Raw / Processed 録音 | Track の Arming による録音（§7.4）と同じ経路で保持                 |
+| Play Surface         | Arrange Lower PanelでFocused Instrument Trackを演奏（§3.8）        |
 
-- Rig モードは独立した制作領域ではなく、Arrange の表示モードである
-- セッションのグローバル Rack は、Arrange の再生・録音経路へ参加しない
+- FocusとRecord Armは別の状態であり、Play Surfaceを開いてもArmを変更しない
+- Desktop UIはSession共通Rackを操作せず、Track RackだけをArrangeの対象として扱う
 
 ---
 
@@ -279,7 +279,8 @@ Arrange は Riffra 共通の Application Shell 内に配置する。
 │              │              │                      │               │
 │              │              │                      │               │
 │              ├──────────────┴──────────────────────┤               │
-│              │ MIDI Editor / Detail Editor         │               │
+│              │ Lower Panel                         │               │
+│              │ Play Surface / MIDI Editor          │               │
 ├──────────────┴─────────────────────────────────────┴───────────────┤
 │ Transport                                                          │
 └────────────────────────────────────────────────────────────────────┘
@@ -289,17 +290,17 @@ Arrange は Riffra 共通の Application Shell 内に配置する。
 
 ### 3.2 領域の役割
 
-| 領域         | 役割                           |
-| ------------ | ------------------------------ |
-| Library      | Asset を探して配置する         |
-| Track Header | Track 状態を操作する           |
-| Timeline     | 音楽を時間軸上で編集する       |
-| Editor Panel | MIDI などの詳細編集を行う      |
-| Inspector    | 選択対象を精密編集する         |
-| Transport    | 再生・録音・時間情報を操作する |
+| 領域         | 役割                                  |
+| ------------ | ------------------------------------- |
+| Library      | Asset を探して配置する                |
+| Track Header | Track 状態を操作する                  |
+| Timeline     | 音楽を時間軸上で編集する              |
+| Lower Panel  | Play SurfaceとMIDI Editorを切り替える |
+| Inspector    | 選択対象を精密編集する                |
+| Transport    | 再生・録音・時間情報を操作する        |
 
 - Library と Inspector は個別に折りたためる
-- Editor Panel は必要なときだけ開く
+- Lower Panel は必要なときだけ開き、Play SurfaceとMIDI Editorを同時表示しない
 - Timeline を常に最大の作業領域として扱う
 
 ---
@@ -398,66 +399,76 @@ Playback stopped
 
 ---
 
-### 3.7 Rig モード
+### 3.7 Arrange Lower Panel
 
-Rig モードは、タイムラインを畳んで演奏に集中する Arrange の表示モードである。独立した画面やワークスペースにはせず、同じ Arrange のビューとして切り替える。
+Lower PanelはTimelineの下に開く共有領域である。Play SurfaceとMIDI Editorを一つのパネル内で切り替え、同時には表示しない。
 
 ```text
-Timeline 表示
-┌──┬──────────────┬──┐
-│  │  Track / Clip │  │
-└──┴──────────────┴──┘
-        ↓ Rig モード
+Closed
 ┌─────────────────────────────┐
-│ Input │ Track Rack │ Output │
-│ Meter │  Plugin    │ Meter  │
-│       │  Open      │        │
-│       │  Bypass    │        │
-│       │  [+ Add]   │        │
+│ Timeline                     │
+└─────────────────────────────┘
+
+Compact
+┌─────────────────────────────┐
+│ Timeline                     │
 ├─────────────────────────────┤
-│ タイピングキーボード／パッド │
+│ Lower Panel · [Play Surface] │
+└─────────────────────────────┘
+
+Expanded
+┌─────────────────────────────┐
+│ Timeline                     │
+├─────────────────────────────┤
+│ [Play Surface] [MIDI Editor] │
+│ Focused Track / Clip content │
 └─────────────────────────────┘
 ```
 
-#### 対象と切り替え
+- ClosedはTimelineだけを表示する
+- Compactは共通ヘッダーとタブだけを表示する
+- Expandedは選択中のPlay SurfaceまたはMIDI Editorを表示する
+- 上端のResize Handleで高さを変更し、初期高さは約260px、下限は150pxとする
+- `Play Surface`と`MIDI Editor`は共通のHeader、Tab、Close、Resizeを持つ
+- Instrument Trackの鍵盤ボタンでFocused Trackを設定し、Play Surfaceを開く
+- MIDI Clipのダブルクリックで対象Clipを保持したままMIDI Editorを開く
+- Closeでパネル全体を閉じる。パネルの開閉や切替はProduction Stateを変更しない
+- Timelineの位置、Zoom、Object Selection、Focused Trackはパネル操作で失わない
 
-- Rig モードの対象は、アーム中または選択中の Audio / Instrument Track である
-- モードを抜けると、タイムラインは元の位置・選択・編集状態で戻る
-- 再生、録音、メーターは Timeline と共通の Transport を使う
-- 録音は通常のトラック録音と同じ経路で、停止後は Timeline に Clip として残る
-
-#### 表示内容
-
-| 領域       | 内容                                                                   |
-| ---------- | ---------------------------------------------------------------------- |
-| Input      | 入力チャンネル名、Input Meter、Gain、Monitoring 状態                   |
-| Track Rack | トラックの処理 Device を処理順に表示。Open、Bypass、Remove、追加       |
-| Output     | Output Meter、出力デバイス、Master 状態                                |
-| 演奏パネル | インストゥルメントトラックではタイピングキーボード／ドラムパッドを表示 |
-
-- VST3 Editor は Native Window で表示し、Rig モード中は編集画面を主役にできる
-- タイムラインのスクロール、Zoom、再生位置の追従は Rig モード中は表示しない
-- 演奏中にラックやパラメーターを変更しても、音声処理を停止しない
-
-#### スナップショット
-
-Rig モードでは Track Rack の状態をスナップショットとして保存し、演奏中に比較・切り替えできる。スナップショットはトラック単位で保存し、Timeline 編集には影響しない。
+RigのようなTimelineを畳む表示プリセットは、Play Surfaceの必須経路ではない。必要な場合は、将来のArrange表示プリセットとして別に扱う。
 
 ---
 
-### 3.8 タイピングキーボード／ドラムパッド
+### 3.8 Play Surface
 
-MIDI 鍵盤がない場合、コンピューターのキーボードを楽器として使える。インストゥルメントトラックを Record Arm すると表示されるパネルとして提供する。
+Play SurfaceはFocused Instrument TrackへMIDIを送る演奏面である。Arrangeを離れずに音源を試し、Armedかつ録音中の場合は同じTrackへMIDIを記録する。
 
-| モード  | 内容                                                       |
-| ------- | ---------------------------------------------------------- |
-| Melodic | キーボードの行を音階として演奏。オクターブを切り替えられる |
-| Drum    | パッド割り当てでドラムキットを演奏                         |
+| 状態                    | 挙動                                                             |
+| ----------------------- | ---------------------------------------------------------------- |
+| Focused Trackなし       | 演奏入力を無効にし、Instrument Trackの選択を促す                 |
+| Audio TrackがFocused    | 演奏入力を無効にし、Instrument Trackの選択を促す                 |
+| Instrument未割当        | `Choose Instrument`を表示する                                    |
+| Runtime同期中・利用不可 | 入力を無効にし、準備中または利用不可の理由を表示する             |
+| Missing Plugin          | `Replace Instrument`またはMissing Dependencyの復旧操作を表示する |
 
-- パネルは Timeline 表示と Rig モードの両方で利用できる
-- 演奏した MIDI は、アーム中のインストゥルメントトラックへ送信され、そのまま録音できる
-- 録音時は MIDI Recording（§7.9）と同じ規則に従い、演奏タイミングを自動 Quantize しない
-- パネルの開閉でトラックの設定やタイムラインの編集状態を変更しない
+#### 演奏面
+
+- `Keyboard`と`Drum Pads`を切り替える
+- Keyboardは音階、オクターブ変更、MIDIノート名を表示する
+- Drum Padsは4×4 Grid、GM Drum Map、Pad名、MIDI Noteを表示する
+- Velocityは1〜127で変更する
+- `Computer Keyboard`は初期状態OFFとし、明示的にONにしたときだけWindowの入力を受け取る
+- Play Surfaceを開いてもRecord Armを自動変更しない
+
+#### 入力と録音
+
+- 画面鍵盤、Pad、Computer Keyboard、Pointer、TouchはFocused Trackへ直接送る
+- 外部MIDI DeviceのRouteとChannelによる既存経路は置き換えない
+- Focused TrackがArmedでなくても音は鳴るが、録音データは作らない
+- Focused TrackがArmedで録音中の場合、MIDIの入力源を`riffra:play-surface`として記録する
+- 演奏タイミングは自動Quantizeしない
+- Pointer DownでPointer Captureを取得し、Pointer Up、Pointer Cancel、Lost Pointer CaptureでNote Offを送る
+- Focused Track変更、Octave変更、Computer Keyboard OFF、Window Blur、Component Unmount、Panel Close、Workspace変更では保持中のNoteを元のTrackへ解放する
 
 ---
 
@@ -1052,6 +1063,8 @@ Piano Roll では、以下を直接操作できる。
 - Duplicate Note
 - Multiple Selection
 - Velocity
+
+上部の操作列では、編集単位を `Snap` で選び、`Zoom` でPiano Rollを拡大・縮小する。`Quantize`、`Duplicate`、選択ノートの `Velocity` 変更は、ノートを選択したときに実行できる。表示領域は横方向・縦方向にスクロールできるため、拡大後もクリップ全体と細かなノート位置を確認できる。
 
 数値フォームを主要操作にはしない。
 

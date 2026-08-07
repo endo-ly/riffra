@@ -10,6 +10,7 @@ import {
   baseNoteForOctave,
   encodeNoteOff,
   encodeNoteOn,
+  isEditableTypingTarget,
 } from '@/lib/musical-typing';
 
 interface UseMusicalTypingOptions {
@@ -19,8 +20,10 @@ interface UseMusicalTypingOptions {
   octave?: number;
   /** Velocity 0-127 sent with each Note On. */
   velocity?: number;
-  /** Receives encoded MIDI bytes; usually `api.sendMidiToPlugin`. */
-  sendMidi: (bytes: number[]) => void | Promise<void>;
+  /** The Instrument Track that receives encoded MIDI bytes. */
+  targetTrackId: string | null;
+  /** Receives encoded MIDI bytes for the target Instrument Track. */
+  sendMidi: (trackId: string, bytes: number[]) => void | Promise<void>;
   /** Called when the user presses Z or X to shift the octave down or up. */
   onOctaveChange?: (delta: number) => void;
 }
@@ -33,21 +36,26 @@ export function useMusicalTyping({
   enabled,
   octave = MUSICAL_TYPING_DEFAULT_OCTAVE,
   velocity = MUSICAL_TYPING_DEFAULT_VELOCITY,
+  targetTrackId,
   sendMidi,
   onOctaveChange,
 }: UseMusicalTypingOptions) {
   const [activeNotes, setActiveNotes] = useState<ReadonlySet<number>>(() => new Set());
   const heldKeysRef = useRef<Set<string>>(new Set());
   const heldNoteCountsRef = useRef<Map<number, number>>(new Map());
-  const paramsRef = useRef({ octave, velocity, sendMidi, onOctaveChange });
-  paramsRef.current = { octave, velocity, sendMidi, onOctaveChange };
+  const heldNoteTargetsRef = useRef<Map<number, string>>(new Map());
+  const previousTargetTrackIdRef = useRef(targetTrackId);
+  const paramsRef = useRef({ octave, velocity, targetTrackId, sendMidi, onOctaveChange });
+  paramsRef.current = { octave, velocity, targetTrackId, sendMidi, onOctaveChange };
 
   const noteOn = useCallback((note: number) => {
-    const { velocity: vel, sendMidi: sm } = paramsRef.current;
+    const { velocity: vel, targetTrackId: trackId, sendMidi: sm } = paramsRef.current;
+    if (!trackId) return;
     const count = (heldNoteCountsRef.current.get(note) ?? 0) + 1;
     heldNoteCountsRef.current.set(note, count);
     if (count === 1) {
-      void sm(encodeNoteOn(note, vel));
+      heldNoteTargetsRef.current.set(note, trackId);
+      void sm(trackId, encodeNoteOn(note, vel));
       setActiveNotes((prev) => {
         const next = new Set(prev);
         next.add(note);
@@ -57,10 +65,14 @@ export function useMusicalTyping({
   }, []);
 
   const noteOff = useCallback((note: number) => {
-    const count = (heldNoteCountsRef.current.get(note) ?? 0) - 1;
+    const currentCount = heldNoteCountsRef.current.get(note);
+    if (currentCount == null) return;
+    const count = currentCount - 1;
     if (count <= 0) {
       heldNoteCountsRef.current.delete(note);
-      void paramsRef.current.sendMidi(encodeNoteOff(note));
+      const trackId = heldNoteTargetsRef.current.get(note);
+      heldNoteTargetsRef.current.delete(note);
+      if (trackId) void paramsRef.current.sendMidi(trackId, encodeNoteOff(note));
       setActiveNotes((prev) => {
         const next = new Set(prev);
         next.delete(note);
@@ -72,37 +84,41 @@ export function useMusicalTyping({
   }, []);
 
   const releaseHeldNotes = useCallback(() => {
-    const { octave: oc, sendMidi: sm } = paramsRef.current;
-    const base = baseNoteForOctave(oc);
-    heldKeysRef.current.forEach((key) => {
-      const semitone = TYPING_KEY_BY_LOWER.get(key);
-      if (semitone === undefined) return;
-      void sm(encodeNoteOff(base + semitone));
+    const { sendMidi: sm } = paramsRef.current;
+    heldNoteTargetsRef.current.forEach((trackId, note) => {
+      void sm(trackId, encodeNoteOff(note));
     });
     heldKeysRef.current.clear();
     heldNoteCountsRef.current.clear();
+    heldNoteTargetsRef.current.clear();
     setActiveNotes(new Set());
   }, []);
 
   // Release notes whenever typing becomes disabled or the component unmounts.
   useEffect(() => {
-    if (enabled) return;
-    releaseHeldNotes();
-    return () => {
-      // No-op; cleanup of the active listener effect handles detach.
-    };
+    if (!enabled) {
+      releaseHeldNotes();
+      return;
+    }
+    return releaseHeldNotes;
   }, [enabled, releaseHeldNotes]);
 
   // If the octave changes while notes are held, release them so they do not hang.
   useEffect(() => {
-    if (heldKeysRef.current.size === 0) return;
+    if (heldNoteTargetsRef.current.size === 0) return;
     releaseHeldNotes();
   }, [octave, releaseHeldNotes]);
+
+  useEffect(() => {
+    if (previousTargetTrackIdRef.current !== targetTrackId) releaseHeldNotes();
+    previousTargetTrackIdRef.current = targetTrackId;
+  }, [releaseHeldNotes, targetTrackId]);
 
   useEffect(() => {
     if (!enabled) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTypingTarget(event.target)) return;
       if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();

@@ -1,26 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, BootstrapState, CreativeSession } from '@/lib/domain';
+import type { BootstrapState, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 
 interface UseSessionOptions {
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
-  setAudio: (audio: AudioStatus) => void;
-  setMissingPluginPaths: (paths: string[]) => void;
 }
 
 export function useSession(api: NativeApi, options: UseSessionOptions) {
   const {
     saveSession,
     updateSessionSettings,
-    captureSnapshot: captureSnapshotApi,
     exportSession: exportSessionApi,
     importSession: importSessionApi,
     restoreRecoveryGeneration,
-    recallSnapshot: recallSnapshotApi,
     syncArrangementRuntime,
   } = api;
-  const { setBoot, setAudio, setMissingPluginPaths } = options;
+  const { setBoot } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
   const [undoStack, setUndoStack] = useState<CreativeSession[]>([]);
   const [redoStack, setRedoStack] = useState<CreativeSession[]>([]);
@@ -84,27 +80,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     }
   }, [applyNativeSession, redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
 
-  const captureSnapshot = useCallback(
-    async (slot: 'A' | 'B') => {
-      const { session: nextSession, audio: nextAudio } = await captureSnapshotApi(slot);
-      applyNativeSession(nextSession);
-      setAudio(nextAudio);
-    },
-    [applyNativeSession, captureSnapshotApi, setAudio],
-  );
-
-  const recallSnapshot = useCallback(
-    async (slot: 'A' | 'B') => {
-      // Snapshot recall is a single Rust Application Operation: runtime plugin
-      // restore + session rack/macros/master commit happen together, so React
-      // never re-derives the rack or sequences low-level plugin calls itself.
-      const { session: nextSession, audio: nextAudio } = await recallSnapshotApi(slot);
-      applyNativeSession(nextSession);
-      setAudio(nextAudio);
-    },
-    [applyNativeSession, recallSnapshotApi, setAudio],
-  );
-
   useEffect(() => {
     if (!session) return;
     const previous = previousSession.current;
@@ -148,7 +123,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
       return;
     }
     setSession(imported);
-    setMissingPluginPaths([]);
     setBoot((current) =>
       current ? { ...current, session: imported, recoveredFromGeneration: false } : current,
     );
@@ -200,8 +174,6 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     historySkip,
     undo,
     redo,
-    captureSnapshot,
-    recallSnapshot,
     renameSession,
     exportSession,
     importSession,

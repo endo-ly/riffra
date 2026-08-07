@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, Workspace } from '@/lib/domain';
+import type { CreativeSession, Workspace } from '@/lib/domain';
 import { logNativeError } from '@/native/invoke';
 import type { NativeApi } from '@/native/native-api';
 
@@ -14,7 +14,6 @@ interface WorkspaceNavigationOptions {
     label: string,
   ) => Promise<CreativeSession | null>;
   setAutosaveError: Dispatch<SetStateAction<string | null>>;
-  restorePlayRack: () => Promise<AudioStatus>;
   syncArrangeRuntime: () => Promise<void>;
   nextTransportSequence: () => number;
   cancelPendingPlay: () => void;
@@ -32,7 +31,6 @@ export function useWorkspaceNavigation({
   setNavigationSession,
   runSessionOp,
   setAutosaveError,
-  restorePlayRack,
   syncArrangeRuntime,
   nextTransportSequence,
   cancelPendingPlay,
@@ -89,10 +87,7 @@ export function useWorkspaceNavigation({
             if (sessionRef.current?.workspace !== target) continue;
             sessionRef.current = next;
             setNavigationSession(next);
-            if (safeMode) continue;
-            if (target === 'play') {
-              void restorePlayRack().catch(logNativeError('Play rack restore'));
-            } else if (target === 'arrange') {
+            if (!safeMode && target === 'arrange') {
               void syncArrangeRuntime().catch(logNativeError('Arrange runtime sync'));
             }
           }
@@ -111,7 +106,6 @@ export function useWorkspaceNavigation({
       api,
       cancelPendingPlay,
       nextTransportSequence,
-      restorePlayRack,
       runSessionOp,
       safeMode,
       sessionRef,

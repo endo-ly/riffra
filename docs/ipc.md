@@ -45,7 +45,7 @@ Riffraは3言語を3つのIPC境界で繋ぐ。各境界は異なる性質を持
 - **Tauri命令**: UIから起こるすべての副作用。ファイルIO・永続化・バックグラウンドジョブ・ビジネスロジック
 - **sidecar**: リアルタイム性が重要な処理。JUCEオーディオスレッド・VST3ホスティング・デバイス管理・録音ストリーム・低レイテンシMIDI
 
-Tauri命令の一部は「runtime（sidecar）への反映」と「session（永続化）への反映」を両方行う（例: プラグインロード・マスターゲイン設定・サンプルパッド操作）。この二段階の同期はApplication層のOperationsが担保し、片方だけを成功扱いにしない。詳細は `architecture.md §4`。
+Tauri命令の一部は「runtime（sidecar）への反映」と「session（永続化）への反映」を両方行う（例: サンプルパッド操作・マスターゲイン設定）。この二段階の同期はApplication層のOperationsが担保し、片方だけを成功扱いにしない。詳細は `architecture.md §4`。
 
 ---
 
@@ -57,40 +57,38 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`apps/desktop/src-tauri
 
 `get_bootstrap_state` / `export_scratch_session` / `get_background_job` / `cancel_background_job` / `probe_audio_devices` / `probe_midi_devices` / `get_audio_status` / `preview_master_gain_db` / `set_emergency_mute` / `recover_audio_device` / `open_midi_input` / `close_midi_input` / `stop_preview` / `stop_preview_for_key`
 
-### 2.2 Rack Application Operations（`rack/commands.rs`）
+### 2.2 Session Application Operations（`session/commands.rs`）
 
-`load_plugin_into_rack` / `clear_plugin_from_rack` / `open_plugin_editor` / `set_rack_plugin_bypassed` / `set_rack_plugin_parameter` / `set_rack_macro_value` / `map_rack_macro` / `restore_current_rack` / `capture_snapshot` / `recall_snapshot` / `save_rack_definition` / `list_rack_definitions` / `load_rack_definition_asset`
-
-### 2.3 Session Application Operations（`session/commands.rs`）
-
-`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `trim_audio_clip` / `split_audio_clip` / `duplicate_audio_clip` / `move_audio_clips` / `paste_timeline_clips` / `remove_timeline_clips` / `crossfade_audio_clips` / `add_track` / `update_track` / `remove_track` / `duplicate_track` / `reorder_track` / `update_arrangement_timebase` / `update_timeline_loop_range` / `sync_arrangement_runtime` / `play_timeline` / `stop_timeline` / `seek_timeline` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
+`save_scratch_session` / `restore_recovery_generation` / `import_scratch_session` / `create_sample_pad` / `update_sample_pad` / `remove_sample_pad` / `add_audio_clip_to_arrangement` / `update_audio_clip` / `trim_audio_clip` / `split_audio_clip` / `duplicate_audio_clip` / `move_audio_clips` / `paste_timeline_clips` / `remove_timeline_clips` / `crossfade_audio_clips` / `add_track` / `update_track` / `remove_track` / `duplicate_track` / `reorder_track` / `update_arrangement_timebase` / `update_timeline_loop_range` / `sync_arrangement_runtime` / `play_timeline` / `stop_timeline` / `seek_timeline` / `send_midi_to_track` / `panic_midi_track` / `open_asset_in_design` / `switch_workspace` / `update_session_settings` / `apply_ai_suggestion` / `set_master_gain_db` / `relink_missing_dependency` / `disable_missing_plugin` / `get_missing_dependencies`
 
 Timelineの複数選択操作は `paste_timeline_clips` と `remove_timeline_clips` を使用する。AudioとMIDIのIDは別配列で渡し、Runtime SnapshotもTrack配下の `audioClips` / `midiClips` を正規形とする。
 
-### 2.4 Audio Preferences（`audio_preferences.rs`）
+`send_midi_to_track` と `panic_midi_track` はArrangeのFocused Instrument Trackだけを対象とするRuntime Controlであり、Sessionを変更せず保存もしない。Safe Mode、非Arrange、未登録Track、Audio Track、Instrument未割当、形式不正のMIDIはRust境界で拒否する。
+
+### 2.3 Audio Preferences（`audio_preferences.rs`）
 
 `set_audio_driver` — アプリケーション設定（CreativeSession外）とランタイムの同時更新
 
-### 2.5 Asset Application Operations（`asset/commands.rs`）
+### 2.4 Asset Application Operations（`asset/commands.rs`）
 
 `preview_asset` / `import_midi_file`
 
-### 2.6 Recording Application Operations（`recording/commands.rs`）
+### 2.5 Recording Application Operations（`recording/commands.rs`）
 
 `list_recordings` / `rename_recording` / `delete_recording` / `archive_recording` / `promote_recording` / `tag_recording` / `detect_duplicate_recordings` / `start_recording` / `stop_recording`
 
-### 2.7 Library Read Model（`library/commands.rs`）
+### 2.6 Library Read Model（`library/commands.rs`）
 
 `search_library` / `update_library_asset` / `related_library_assets`
 
-### 2.8 Background Jobs（各featureの `commands.rs`）
+### 2.7 Background Jobs（各featureの `commands.rs`）
 
 - Analysis: `start_analysis_job` / `analyze_asset`
 - Separation: `start_separation_job` / `list_separations`
 - Render: `render_timeline`
 - Plugins: `scan_vst3_folder` / `start_scan_job`
 
-### 2.9 エラー型
+### 2.8 エラー型
 
 Tauri命令の戻り値は `Result<T, String>`。文字列は利用者向けの表示メッセージ。構造化エラーは `apps/desktop/src-tauri/src/errors.rs` の `DomainError` enum で定義し、`Display` 経由で小文字のメッセージに変換する。
 
@@ -113,8 +111,9 @@ DomainError::InvalidRecordingTransition { from: String, to: String }
 ### 3.1 対応規則
 
 - `NativeApi` の各メソッドは1つのTauri命令と1:1で対応する
-- メソッド名はcamelCase、対応するTauri命令名はsnake_case（例: `loadPluginIntoRack()` ↔ `load_plugin_into_rack`）
+- メソッド名はcamelCase、対応するTauri命令名はsnake_case（例: `playTimeline()` ↔ `play_timeline`）
 - 戻り値が `CreativeSession` と `AudioStatus` の組の場合、Rust側はタプル `[CreativeSession, AudioStatus]` を返し、TS側でオブジェクト `{ session, audio }` に詰め替える
+- `sendMidiToTrack()` と `panicMidiTrack()` は成功時に `null`、失敗時に `AudioStatus` を返す。成功応答をSessionへ流さず、入力元のTrack IDを含む境界で対象を固定する
 - 真実源は `apps/desktop/src/native/native-api.ts`（契約）と `apps/desktop/src/native/native.ts`（invoke 実装）
 
 ### 3.2 ブラウザプレビュー時の振る舞い
@@ -208,16 +207,16 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 
 - **状態照会**: `status` / `meterStatus`
 - **オーディオ設定**: `setEmergencyMute` / `setMasterGainDb` / `setAudioDriver` / `recoverAudioDevice`
-- **プラグイン**: `loadPlugin` / `clearPlugin` / `setPluginBypassed` / `openPluginEditor` / `setPluginParameter` / `setPluginState` / `pluginParameterStatus`
+- **プラグイン**: `setPluginState`
 - **録音**: `startRecording` / `stopRecording`
 - **プレビュー**: `previewSample` / `stopPreview` / `stopPreviewForKey`
 - **タイムライン**: `loadTimelineSnapshot` / `playTimeline` / `stopTimeline` / `seekTimeline`
-- **MIDI・サンプルパッド**: `openMidiInput` / `closeMidiInput` / `configureSamplePads` / `probeMidiDevices` / `sendMidi`
+- **MIDI・サンプルパッド**: `openMidiInput` / `closeMidiInput` / `configureSamplePads` / `probeMidiDevices` / `sendTrackMidi` / `panicTrackMidi`
 - **シャットダウン**: `shutdown`
 
 命名はすべてcamelCase。Rust側の `AudioSupervisor` メソッドが対応する。未対応の `type` は C++側で `protocol` スコープのエラーになる。
 
-通常の `audioStatus` にプラグインのパラメータ一覧とstateDataは含めない。パラメータ一覧は `pluginParameterStatus` の応答で取得し、プラグイン状態はSessionからランタイムへ復元するときだけ渡す。Masterのドラッグ中は `preview_master_gain_db` がAudio Runtimeだけを更新し、操作確定時に `set_master_gain_db` がSessionへ保存する。
+Masterのドラッグ中は `preview_master_gain_db` がAudio Runtimeだけを更新し、操作確定時に `set_master_gain_db` がSessionへ保存する。
 
 Timeline Snapshotは`protocolVersion: 1`とArrangement revisionを持つ。RustはAssetIdを解決済みパスとSource Frame情報へ変換し、利用不能AssetはSnapshotから除外して`unavailableClipIds`へ残す。C++はファイルopen、read-ahead、Sample Rate補正、作業バッファ確保を専用ワーカースレッドで完了してから交換する。Audio CallbackはファイルI/O・JSON解析・メモリ確保を行わない。
 
@@ -248,7 +247,7 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 ```
 
 - 起動直後は `starting` → 初回 `audioStatus` 受信 → `muted` と進む。Rustが保存済みMaster GainをRuntimeへ適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認した時点で、機能Runtimeの復元を待たずに緊急ミュートを解除する
-- Sample Pad、Rack、Arrange Runtimeの復元は解除後に行う。復元中はpassiveを維持し、復元失敗だけでは音声デバイス障害と判定しない。復元に成功した場合だけWorkspaceに対応するprocessing modeへ切り替える
+- Sample Pad、Arrange Runtimeの復元は解除後に行う。復元中はpassiveを維持し、復元失敗だけでは音声デバイス障害と判定しない。復元に成功した場合だけWorkspaceに対応するprocessing modeへ切り替える
 - 安全初期化または機能Runtime復元中にSidecar世代が変わった場合は、その世代の結果を採用せず、最新世代で安全初期化からやり直す。起動完了後のRuntime再起動は緊急ミュートを維持する
 - 起動時解除とユーザーの緊急ミュート操作は専用の直列化境界を共有する。起動解除は手動ミュート意図を再確認し、解除処理ではその意図を変更しない
 - `faulted` はC++側の `SafetyAudioCallback::setDeviceFaulted(true)` が検出時に出力される
@@ -294,7 +293,7 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 
 `--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数で、sidecarを起動せず一部コマンドをブロックする。Application Operationsは Safe Mode を検知して runtime への指令をスキップし、session 永続化のみを行う。
 
-- **隔離対象**: VST3発見・MIDI入力・ドライバ変更・ライブプレビュー・新規録音
+- **隔離対象**: VST3発見・MIDI入力・Play Surface MIDI・ドライバ変更・ライブプレビュー・新規録音
 - **許可対象**: プロジェクト開・ライブラリ・オフライン解析・レンダ・マニフェスト入出力
 
 Safe Modeでも「失敗を成功として表示しない」契約は維持する。隔離された機能は利用不可状態として表示する。

@@ -2,12 +2,12 @@
 
 ## 1. 全体構造
 
-Riffraは、ArrangeとDesignの二領域を、共通のセッション、素材、音声処理、保存機構で支える。演奏、監視、録音はトラックとRigモードが担う。
+Riffraは、ArrangeとDesignの二領域を、共通のセッション、素材、音声処理、保存機構で支える。演奏、監視、録音はTrackとArrange下部のPlay Surfaceが担う。
 
 ```text
 ┌─────────────────────────────────────────────────────┐
 │ 表示と操作                                            │
-│ Arrange / Design（Rig モード含む）                    │
+│ Arrange / Design                                      │
 │ Library / Inspector / Transport                      │
 └───────────────────────┬─────────────────────────────┘
                         │ 操作と表示状態
@@ -49,12 +49,12 @@ Riffraは、ArrangeとDesignの二領域を、共通のセッション、素材�
 
 ### 3.1 制作領域
 
-- **Arrange**は音声・MIDI入力、VST3、ラック、監視、録音に加え、revision付き音楽時間軸、トラック、Clip配置、リアルタイム再生、MIDI編集、ミキサー、書出しを扱う。演奏への集中はRigモード（タイムラインを畳んだ表示モード）が担う
+- **Arrange**は音声・MIDI入力、VST3、ラック、監視、録音に加え、revision付き音楽時間軸、トラック、Clip配置、リアルタイム再生、MIDI編集、ミキサー、書出しを扱う。演奏入力はFocused Instrument Trackを対象にするPlay Surfaceから行う
 - **Design**は信号生成、波形編集、音源化、分析、参照比較、音源分離を扱う
 
 制作領域は同じSessionを参照する。領域の切替によって録音、再生、ミュート、選択、履歴を作り直さない。
 
-初回のAudio Runtime調整はRustがSidecar世代の準備完了を待って行う。Rustは保存済みSessionのMaster Gainを適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認したうえで、起動時の緊急ミュートを先に解除する。その後、Sample PadとWorkspace固有Runtimeを復元し、復元に成功した場合だけplayまたはarrangeへ切り替える。起動時解除とユーザーのミュート操作は同じ短い操作境界で直列化し、ユーザーの手動ミュート意図を自動解除処理が上書きしない。Reactの起動処理とWorkspace遷移は緊急ミュートを解除しない。起動安全確認が未完了の状態でデバイス復旧に成功した場合は、同じ起動調整へ再接続する。
+初回のAudio Runtime調整はRustがSidecar世代の準備完了を待って行う。Rustは保存済みSessionのMaster Gainを適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認したうえで、起動時の緊急ミュートを先に解除する。その後、Sample PadとArrange Runtimeを復元し、復元に成功した場合だけArrangeの処理へ切り替える。Designではpassiveを維持する。起動時解除とユーザーのミュート操作は同じ短い操作境界で直列化し、ユーザーの手動ミュート意図を自動解除処理が上書きしない。Reactの起動処理とWorkspace遷移は緊急ミュートを解除しない。起動安全確認が未完了の状態でデバイス復旧に成功した場合は、同じ起動調整へ再接続する。
 
 ### 3.2 共通領域
 
@@ -70,6 +70,8 @@ ArrangeのplayheadはC++のEngine Clockを正本とする。Rustは保存済みA
 Arrangeの波形はAsset分析結果から派生する表示状態であり、Sessionへ重複保存しない。Trim、Split、Duplicate、Gain、Pan、Fadeの確定操作はRustのArrangement編集へ渡し、返された正準Sessionで表示とRuntimeを収束させる。MIDI Clipも同じCommit境界を使うが、位置・長さはTimelineTickのまま扱う。
 
 ArrangeのRuntime SnapshotはTrack単位でAudio ClipとMIDI Clipを渡す。Instrument TrackではMIDI ClipおよびライブMIDIをTrack Rackへ送り、Audio TrackではAudio ClipをTrack Rackへ送り、Track Gain/PanとPDCを経てMasterへ混ぜる。Seek、Stop、Loop境界ではTrack Rackへ全Note停止を発行し、Noteが鳴り続ける状態を残さない。MIDI ClipのCC、Pitch Bend、Channel PressureはNoteとは別のイベントとして保存し、同じSchedulerから送信する。
+
+Play SurfaceからのMIDIは、Focused Instrument TrackのInstrument Rackへ直接送る。Focused TrackがArmedで録音中の場合だけ、同じイベントを`riffra:play-surface`の入力源としてそのTrackへ記録する。外部MIDIのDevice／Channel Routeはこの経路と分離して維持する。
 
 録音停止時は、Native RuntimeのRaw/Processed/MIDI出力をCanonical Assetへ登録し、ArmされたTrackごとにRecordingSessionRecord、RecordingTakeRecord、Timeline Clipを同一Session Commitで作成する。Reactは停止結果のBootstrapでSessionを再取得するため、録音結果をLibraryから手動配置する必要がない。Input MonitoringはTrackのOff/Auto/OnをRuntime Snapshotへ渡し、録音経路とAudition/Monitoring経路を分離する。
 

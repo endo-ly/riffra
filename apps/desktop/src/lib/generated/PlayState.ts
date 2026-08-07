@@ -2,6 +2,6 @@
 import type { SampleInstrumentState } from "./SampleInstrumentState";
 
 /**
- * Play-side live state (instrument and performance configuration).
+ * Live sample performance state (instrument and performance configuration).
  */
 export type PlayState = { sampleInstrument: SampleInstrumentState, };

@@ -117,47 +117,11 @@ export interface NativeApi {
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
 
   /**
-   * Loads a plugin into the rack as a single production operation: applies it to
-   * the Audio Runtime, projects it into the persisted CreativeSession rack, and
-   * returns both. React does not re-derive the rack. A faulted runtime leaves
-   * the session unchanged and is reflected in the returned audio status.
+   * Rebuilds the persisted Sample Pad mapping after a fresh runtime process.
    */
-  loadPluginIntoRack(
-    path: string,
-    parameterValues: number[],
-    bypassed: boolean,
-    stateData: string | null,
-  ): Promise<SessionAudioPair>;
-  /** Clears the plugin from the rack (runtime + session) as one operation. */
-  clearPluginFromRack(): Promise<SessionAudioPair>;
-  /** Opens the native editor for the plugin instance currently processing the rack. */
-  openPluginEditor(): Promise<AudioStatus>;
-  /** Sets the rack plugin bypass flag across the runtime and session. */
-  setRackPluginBypassed(bypassed: boolean): Promise<SessionAudioPair>;
-  /** Sets a single rack plugin parameter across the runtime and session. */
-  setRackPluginParameter(index: number, value: number): Promise<SessionAudioPair>;
-  setRackMacroValue(macroId: string, value: number): Promise<SessionAudioPair>;
-  mapRackMacro(macroId: string, parameterIndex: number | null): Promise<SessionAudioPair>;
-  /**
-   * Synchronizes the current session rack into the Audio Runtime at startup.
-   * The session is already canonical, so a normal restore does not rewrite it.
-   */
-  restoreCurrentRack(): Promise<AudioStatus>;
-  /** Strict variant for automatic recovery; native failures reject. */
-  restoreCurrentRackStrict(): Promise<AudioStatus>;
-  /** Rebuilds the persisted Sample Pad mapping after a fresh runtime process. */
   restoreSamplePads(): Promise<AudioStatus>;
   /** Strict variant for automatic recovery; native failures reject. */
   restoreSamplePadsStrict(): Promise<AudioStatus>;
-  /**
-   * Recalls an A/B session snapshot through one Rust Application Operation:
-   * clears the runtime plugin, applies the snapshot's plugin (state + params +
-   * bypass) to the runtime, then commits the snapshot's rack devices, macros,
-   * and master gain to the canonical session. React never re-derives the rack
-   * or sequences low-level runtime calls itself.
-   */
-  recallSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair>;
-  captureSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair>;
   /**
    * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
    * content-location resolution, file-existence checks, and the Audio Runtime
@@ -196,14 +160,10 @@ export interface NativeApi {
   enableMidiListening(): Promise<AudioStatus>;
   /** Stops all MIDI input devices and silences any held notes. */
   disableMidiListening(): Promise<AudioStatus>;
-  /**
-   * Enqueues a raw MIDI message (1-3 bytes: status, data1, data2) for the
-   * currently loaded rack plugin. Intended for computer-keyboard performance
-   * and headless rendering when no MIDI device is connected. Successful
-   * messages return `null`; an error returns the latest AudioStatus so the UI
-   * can surface the safety state without copying full plugin state per note.
-   */
-  sendMidiToPlugin(bytes: number[]): Promise<AudioStatus | null>;
+  /** Sends a live MIDI message to one assigned Instrument Track in Arrange. */
+  sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
+  /** Sends the targeted Instrument Track panic messages without changing the session. */
+  panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
@@ -379,20 +339,6 @@ export interface NativeApi {
     aiContext?: string[];
   }): Promise<CreativeSession>;
   applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
-
-  saveRackDefinition(name: string, path: string): Promise<AssetId | null>;
-  /**
-   * Lists every canonical `RackDefinition` Asset so the Library Racks section
-   * can present and load them via `loadRackDefinitionAsset`.
-   */
-  listRackDefinitions(): Promise<LibraryAsset[]>;
-  /**
-   * Loads a canonical `RackDefinition` Asset, applies it to the Audio Runtime,
-   * updates the persisted CreativeSession, and returns both. Returns null when
-   * the asset is missing, unsupported by the current runtime, or the runtime
-   * rejects the change.
-   */
-  loadRackDefinitionAsset(assetId: AssetId): Promise<SessionAudioPair | null>;
 
   getMissingDependencies(): Promise<MissingDependency[]>;
   /**

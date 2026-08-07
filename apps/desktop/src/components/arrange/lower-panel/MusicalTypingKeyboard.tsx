@@ -29,20 +29,23 @@ export function MusicalTypingKeyboard({
 }: MusicalTypingKeyboardProps) {
   const base = baseNoteForOctave(octave);
 
-  const keyHandlers = (note: number, active: boolean) => ({
+  const keyHandlers = (note: number) => ({
     onPointerDown: (e: React.PointerEvent) => {
       if (onNoteDown === undefined) return;
       e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
       onNoteDown(note);
     },
-    onPointerUp: () => {
-      if (onNoteUp !== undefined && active) onNoteUp(note);
+    onPointerUp: (e: React.PointerEvent) => {
+      if (onNoteUp !== undefined) onNoteUp(note);
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
     },
-    onPointerLeave: () => {
-      if (onNoteUp !== undefined && active) onNoteUp(note);
+    onLostPointerCapture: () => {
+      if (onNoteUp !== undefined) onNoteUp(note);
     },
-    onPointerCancel: () => {
-      if (onNoteUp !== undefined && active) onNoteUp(note);
+    onPointerCancel: (e: React.PointerEvent) => {
+      if (onNoteUp !== undefined) onNoteUp(note);
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
     },
   });
 
@@ -56,7 +59,7 @@ export function MusicalTypingKeyboard({
         className={`${styles.key} ${styles.white}${active ? ` ${styles.active}` : ''}`}
         key={semitone}
         data-note={note}
-        {...keyHandlers(note, active)}
+        {...keyHandlers(note)}
       >
         {typingKey && <span className={styles.keyLetter}>{typingKey}</span>}
         {isC && <span className={styles.keyNote}>{midiNoteName(note)}</span>}
@@ -100,7 +103,7 @@ export function MusicalTypingKeyboard({
             key={entry.semitone}
             data-note={entry.note}
             style={{ left: `${entry.leftPercent}%` }}
-            {...keyHandlers(entry.note, entry.active)}
+            {...keyHandlers(entry.note)}
           >
             {entry.typingKey && <span className={styles.keyLetter}>{entry.typingKey}</span>}
           </li>

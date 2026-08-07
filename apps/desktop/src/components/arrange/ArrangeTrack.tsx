@@ -29,6 +29,7 @@ interface ArrangeTrackProps {
   analyses: Record<string, AudioAnalysis | null>;
   selectedClipIds: string[];
   selected: boolean;
+  focused: boolean;
   unavailableClipIds: string[];
   timelineWidth: number;
   timelineTicks: number;
@@ -50,6 +51,7 @@ interface ArrangeTrackProps {
   ) => void;
   onSelect: (clipId: string) => void;
   onSelectTrack: () => void;
+  onOpenPlaySurface?: () => void;
   onTrim: (
     event: React.PointerEvent<HTMLSpanElement>,
     clip: AudioClip,
@@ -184,6 +186,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       data-arrange-track
       data-track-id={props.track.id}
       data-selected={props.selected || undefined}
+      data-focused={props.focused || undefined}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => props.onDrop(event, props.track.id, props.track.kind)}
     >
@@ -261,6 +264,19 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </small>
         </div>
         <div className={styles.trackSwitches}>
+          {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
+            <button
+              className={styles.playSurfaceButton}
+              aria-label={`Open Play Surface for ${props.track.name}`}
+              title="Open Play Surface"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onOpenPlaySurface?.();
+              }}
+            >
+              ⌨
+            </button>
+          )}
           <button
             className={(pendingTrackValues.muted ?? props.track.muted) ? styles.muteActive : ''}
             aria-pressed={pendingTrackValues.muted ?? props.track.muted}

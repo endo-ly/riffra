@@ -218,12 +218,14 @@ Tauri命令は変換と委譲に限定し、主要な制作規則は単体テス
 3. VST3またはテスト用処理をTrack Rackへ入れる
 4. パラメーターを変更する
 5. 迂回とミュートを切り替える
-6. Rig モードへ切り替え、Timelineへ戻っても状態が保たれる
-7. 原音と加工音の録音を開始・停止する
-8. Inboxに録音が現れ、TimelineにClipが残る
-9. 試聴、名称変更、タグを行う
-10. セッションを読み直して録音を参照できる
-11. ラック状態を保存して読み直す
+6. Instrument TrackをFocused TrackにしてPlay Surfaceを開く。Record Armが自動変更されないことを確認する
+7. Keyboard／Drum Pads、Computer Keyboard、Pointer入力を確認し、Focused TrackへだけMIDIが届くことを確認する
+8. Armedかつ録音中のFocused Trackへ演奏し、MIDIが記録されることを確認する
+9. 原音と加工音の録音を開始・停止する
+10. Inboxに録音が現れ、TimelineにClipが残る
+11. 試聴、名称変更、タグを行う
+12. セッションを読み直して録音を参照できる
+13. ラック状態を保存して読み直す
 
 ### 7.2 Design
 
@@ -272,7 +274,7 @@ Tauri命令は変換と委譲に限定し、主要な制作規則は単体テス
 - 実VST3の走査、読込み、音声処理、編集画面、状態復元
 - MIDI機器の接続、切断、発音停止
 - 緊急ミュートと音量変化
-- Rig モードとTimelineの切替、タイピングキーボード／ドラムパッドの演奏
+- Play SurfaceとMIDI Editorの切替、タイピングキーボード／ドラムパッドの演奏、Note Off
 - 時間軸と編集画面への到達性
 
 ### 8.2 Design

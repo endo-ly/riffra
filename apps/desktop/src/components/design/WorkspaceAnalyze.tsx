@@ -19,7 +19,7 @@ export function WorkspaceAnalyze({ analysis }: { analysis: AudioAnalysis | null 
   }
   return (
     <div className="workspace-scroll analysis-view">
-      <section className="play-header">
+      <section className="workspace-header">
         <div>
           <span className="eyebrow">ANALYSIS RESULT</span>
           <h1>{analysis.path.split('\\').pop() ?? 'Audio'}</h1>

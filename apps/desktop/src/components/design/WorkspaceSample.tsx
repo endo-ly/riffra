@@ -17,7 +17,7 @@ export function WorkspaceSample({
   );
   return (
     <div className="workspace-scroll sample-view">
-      <section className="play-header">
+      <section className="workspace-header">
         <div>
           <span className="eyebrow">SAMPLE INSTRUMENT</span>
           <h1>Audio → Pad / Keyboard</h1>

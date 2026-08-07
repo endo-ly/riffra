@@ -12,7 +12,6 @@ interface RuntimeRecoveryOptions {
   audioRef: { current: AudioStatus };
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
   setScanMessage: (message: string) => void;
-  restoreCurrentRackStrict: NativeApi['restoreCurrentRackStrict'];
   restoreSamplePadsStrict: NativeApi['restoreSamplePadsStrict'];
   syncArrangementRuntime: NativeApi['syncArrangementRuntime'];
 }
@@ -30,12 +29,10 @@ export function useRuntimeRecovery({
   audioRef,
   setAudio,
   setScanMessage,
-  restoreCurrentRackStrict,
   restoreSamplePadsStrict,
   syncArrangementRuntime,
 }: RuntimeRecoveryOptions) {
   const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
-  const playRackRestorePromise = useRef<Promise<AudioStatus> | null>(null);
   const arrangeRuntimeSyncPromise = useRef<Promise<void> | null>(null);
   const recoveryPromise = useRef<Promise<void> | null>(null);
   const recoveryTargetGeneration = useRef(0);
@@ -65,37 +62,6 @@ export function useRuntimeRecovery({
     },
     [sessionRef],
   );
-
-  const restorePlayRack = useCallback((): Promise<AudioStatus> => {
-    const pending = playRackRestorePromise.current;
-    if (pending) return pending;
-
-    const operation = enqueueRuntimeReconciliation(
-      'play',
-      () => restoreCurrentRackStrict(),
-      () => audioRef.current,
-    )
-      .then((nextAudio) => {
-        setAudio(nextAudio);
-        if (!audioCommandSucceeded(nextAudio)) {
-          throw new Error(nextAudio.message || 'Rack restoration returned a faulted state.');
-        }
-        return nextAudio;
-      })
-      .catch((error: unknown) => {
-        setScanMessage(
-          `Rack restore failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        throw error;
-      })
-      .finally(() => {
-        if (playRackRestorePromise.current === operation) {
-          playRackRestorePromise.current = null;
-        }
-      });
-    playRackRestorePromise.current = operation;
-    return operation;
-  }, [audioRef, enqueueRuntimeReconciliation, restoreCurrentRackStrict, setAudio, setScanMessage]);
 
   const restoreSamplePads = useCallback((): Promise<AudioStatus> => {
     const operation = enqueueRuntimeReconciliation(
@@ -168,9 +134,7 @@ export function useRuntimeRecovery({
             if (recoveryTargetGeneration.current !== targetGeneration) continue;
 
             const workspace = sessionRef.current?.workspace;
-            if (workspace === 'play') {
-              await restorePlayRack();
-            } else if (workspace === 'arrange') {
+            if (workspace === 'arrange') {
               await syncArrangeRuntime();
             }
             recoveryCompletedGeneration.current = Math.max(
@@ -197,7 +161,7 @@ export function useRuntimeRecovery({
       recoveryPromise.current = operation;
       return operation;
     },
-    [restorePlayRack, restoreSamplePads, safeMode, sessionRef, setScanMessage, syncArrangeRuntime],
+    [restoreSamplePads, safeMode, sessionRef, setScanMessage, syncArrangeRuntime],
   );
 
   useEffect(() => {
@@ -213,7 +177,6 @@ export function useRuntimeRecovery({
   }, [api, recoverCurrentRuntime]);
 
   return {
-    restorePlayRack,
     syncArrangeRuntime,
   };
 }
