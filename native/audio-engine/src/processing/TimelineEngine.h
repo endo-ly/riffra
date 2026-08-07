@@ -48,6 +48,13 @@ public:
     [[nodiscard]] bool enqueueLiveMidi(
         const juce::MidiMessage& message,
         const juce::String& deviceId = {}) noexcept;
+    [[nodiscard]] bool enqueueTargetedMidi(
+        const juce::String& trackId,
+        const juce::MidiMessage& message,
+        juce::String& error) noexcept;
+    [[nodiscard]] bool panicTargetedMidi(
+        const juce::String& trackId,
+        juce::String& error) noexcept;
     bool setDeviceBypassed(
         const juce::String& trackId,
         const juce::String& deviceId,
@@ -229,6 +236,23 @@ private:
         PreparedTimeline& timeline,
         const float* const* inputChannels,
         int inputChannelCount,
+        float* const* outputChannels,
+        int channelCount,
+        std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
+    void processLiveInstrumentTracks(
+        PreparedTimeline& timeline,
+        float* const* outputChannels,
+        int channelCount,
+        int sampleCount) noexcept;
+    void processInstrumentTrack(
+        Track& track,
+        int sampleCount,
+        const juce::MidiBuffer* timelineMidi) noexcept;
+    void mixProcessedTrack(
+        Track& track,
+        bool audible,
         float* const* outputChannels,
         int channelCount,
         std::int64_t rangeStart,

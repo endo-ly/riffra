@@ -3,6 +3,7 @@
 #include "ArrangeRecordingSession.h"
 #include "OfflineRenderer.h"
 #include "SafetyAudioCallback.h"
+#include "TestAudioProcessor.h"
 #include "TestSupport.h"
 #include "TimelineTestSupport.h"
 
@@ -21,6 +22,68 @@ namespace riffra {
 
 class TimelineEngineTestPeer final {
 public:
+    static bool liveInstrumentProcessesWhileStopped() {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+
+        auto* timebase = new juce::DynamicObject();
+        timebase->setProperty("ppq", 960);
+        timebase->setProperty("bpm", 120.0);
+        timebase->setProperty("timeSignatureNumerator", 4);
+        timebase->setProperty("timeSignatureDenominator", 4);
+        auto* track = new juce::DynamicObject();
+        track->setProperty("id", "track:live-instrument");
+        track->setProperty("kind", "instrument");
+        track->setProperty("gainDb", 0.0);
+        track->setProperty("pan", 0.0);
+        track->setProperty("muted", false);
+        track->setProperty("solo", false);
+        track->setProperty("armed", false);
+        track->setProperty("monitoring", "off");
+        auto* rack = new juce::DynamicObject();
+        rack->setProperty("devices", juce::Array<juce::var> {});
+        track->setProperty("rack", juce::var(rack));
+        track->setProperty("audioClips", juce::Array<juce::var> {});
+        track->setProperty("midiClips", juce::Array<juce::var> {});
+        track->setProperty("automation", juce::Array<juce::var> {});
+        juce::Array<juce::var> tracks;
+        tracks.add(juce::var(track));
+        auto* snapshot = new juce::DynamicObject();
+        snapshot->setProperty("revision", 1);
+        snapshot->setProperty("timebase", juce::var(timebase));
+        snapshot->setProperty("tracks", tracks);
+
+        if (!engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 32, error))
+            return false;
+
+        InstrumentTrace trace;
+        auto instrumentRack = PluginRackTestPeer::install(
+            std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
+        if (instrumentRack == nullptr)
+            return false;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
+                return false;
+            engine.timeline->tracks.front()->instrumentRack = std::move(instrumentRack);
+        }
+
+        if (!engine.enqueueTargetedMidi(
+                "track:live-instrument", juce::MidiMessage::noteOn(1, 60, 0.8f), error))
+            return false;
+
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        std::array<float*, 2> outputs { left.data(), right.data() };
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+        const auto peak = std::max(
+            *std::max_element(left.begin(), left.end()),
+            *std::max_element(right.begin(), right.end()));
+        return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f;
+    }
+
     static juce::var run(const juce::File& directory) {
         auto* result = new juce::DynamicObject();
         result->setProperty("type", "timelineSelfTest");
@@ -55,6 +118,7 @@ public:
         bool longRecordingPassed = false;
         bool productionWriterPassed = false;
         bool productionWriterPartialPassed = false;
+        const auto liveInstrumentWhileStopped = liveInstrumentProcessesWhileStopped();
         int diagPartialSegments = 0;
         int diagPartialRaw = 0;
         int diagPartialProcessed = 0;
@@ -1231,6 +1295,9 @@ public:
         addCheck(
             "Production ThreadedWriter Partial Pass",
             productionWriterPartialPassed);
+        addCheck(
+            "Stopped Transport processes live Instrument MIDI",
+            liveInstrumentWhileStopped);
         result->setProperty("checks", checks);
         result->setProperty("message", error);
         result->setProperty("partialSegments", diagPartialSegments);
@@ -1261,7 +1328,8 @@ public:
                 && mutablePluginStateKeepsTopology && recordingTapIsolated
                 && loopCaptureSegments && syntheticLoopPassed
                 && partialPassPassed && blockSizePassed && longRecordingPassed
-                && productionWriterPassed && productionWriterPartialPassed);
+                && productionWriterPassed && productionWriterPartialPassed
+                && liveInstrumentWhileStopped);
         mono.deleteFile();
         stereo.deleteFile();
         directory.getChildFile("offline-selection.wav").deleteFile();

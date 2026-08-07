@@ -17,6 +17,7 @@
 #include <limits>
 #include <vector>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -390,6 +391,52 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
     object->setProperty("message", message);
     object->setProperty("dataSafe", true);
     return juce::var(object);
+}
+
+bool parseMidiBytes(
+    const juce::var& value,
+    juce::MidiMessage& message,
+    juce::String& error) {
+    if (!value.isArray()) {
+        error = "A bytes array of MIDI data is required.";
+        return false;
+    }
+    const auto bytesArray = *value.getArray();
+    if (bytesArray.isEmpty() || bytesArray.size() > 3) {
+        error = "MIDI bytes must contain between 1 and 3 bytes.";
+        return false;
+    }
+    std::array<std::uint8_t, 3> bytes{};
+    for (int index = 0; index < bytesArray.size(); ++index) {
+        const auto& valueAtIndex = bytesArray[index];
+        if (!valueAtIndex.isInt() && !valueAtIndex.isInt64() && !valueAtIndex.isDouble()) {
+            error = "MIDI bytes must be integer values.";
+            return false;
+        }
+        const auto numeric = static_cast<double>(valueAtIndex);
+        if (!std::isfinite(numeric) || std::floor(numeric) != numeric
+            || numeric < 0.0 || numeric > 255.0) {
+            error = "MIDI bytes must be integers from 0 through 255.";
+            return false;
+        }
+        bytes[static_cast<std::size_t>(index)] = static_cast<std::uint8_t>(numeric);
+    }
+    if ((bytes[0] & 0x80u) == 0u) {
+        error = "The first MIDI byte must be a status byte.";
+        return false;
+    }
+    for (int index = 1; index < bytesArray.size(); ++index) {
+        if (bytes[static_cast<std::size_t>(index)] > 0x7fu) {
+            error = "MIDI data bytes must be below 128.";
+            return false;
+        }
+    }
+    message = juce::MidiMessage(
+        bytes[0],
+        bytesArray.size() > 1 ? bytes[1] : 0,
+        bytesArray.size() > 2 ? bytes[2] : 0,
+        bytesArray.size());
+    return true;
 }
 
 void writeJson(
@@ -1251,11 +1298,11 @@ int serve(
                 continue;
             }
             if (type == "playTimeline") {
-                // Workspace mode delivery is intentionally nonblocking during
+                // Processing mode delivery is intentionally nonblocking during
                 // navigation. Make Arrange playback self-contained so a Play
                 // click cannot race the preceding mode command and leave the
                 // TimelineEngine playing while the audio callback still runs
-                // in passive/Play mode (which produces silence).
+                // in passive/live-input mode (which produces silence).
                 callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 timelineEngine.play();
                 writeJson(timelineEngine.status());
@@ -1291,96 +1338,6 @@ int serve(
                 if (reportStatus)
                     writeJson(currentStatus(
                         manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
-                continue;
-            }
-            if (type == "loadPlugin") {
-                const auto path = command.getProperty("path", {}).toString();
-                auto* device = manager.getCurrentAudioDevice();
-                const auto sampleRate = callback.getSampleRate();
-                const auto blockSize =
-                    device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
-                if (path.isEmpty()) {
-                    writeJson(makeError("pluginPath", "VST3 path is required."));
-                    continue;
-                }
-                if (sampleRate <= 0.0 || blockSize <= 0) {
-                    writeJson(makeError("pluginInitialization",
-                                        "VST3 loading requires an active audio device."));
-                    continue;
-                }
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "Another Play rack operation is still loading a VST3. The current runtime remains available."));
-                    continue;
-                }
-                const auto requestId = currentRequestId;
-                const auto persistedState = command.getProperty("persistedState", {});
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit(
-                    [&, path, requestId, sampleRate, blockSize, persistedState] {
-                        std::optional<riffra::PluginLoadError> pluginError;
-                        try {
-                            pluginError = pluginEditor->load(
-                                path,
-                                sampleRate,
-                                blockSize,
-                                persistedState);
-                        } catch (const std::exception& exception) {
-                            pluginError = riffra::PluginLoadError {
-                                "pluginInstance",
-                                "VST3 loading raised an exception: " + juce::String(exception.what())};
-                        } catch (...) {
-                            pluginError = riffra::PluginLoadError {
-                                "pluginInstance",
-                                "VST3 loading failed with an unknown exception."};
-                        }
-                        pluginOperationRunning.store(false, std::memory_order_release);
-                        if (pluginError.has_value()) {
-                            writeJson(makeError(pluginError->scope, pluginError->message), requestId);
-                            return;
-                        }
-                        writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                    },
-                    std::chrono::seconds(30));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
-                continue;
-            }
-            if (type == "clearPlugin") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "Another Play rack operation is still changing the VST3. The current runtime remains available."));
-                    continue;
-                }
-                const auto requestId = currentRequestId;
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId] {
-                    juce::String clearError;
-                    bool cleared = false;
-                    try {
-                        cleared = pluginEditor->clear(clearError);
-                    } catch (const std::exception& exception) {
-                        clearError =
-                            "VST3 clearing raised an exception: " + juce::String(exception.what());
-                    } catch (...) {
-                        clearError = "VST3 clearing failed with an unknown exception.";
-                    }
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    if (!cleared) {
-                        writeJson(makeError("pluginLifecycle", clearError), requestId);
-                        return;
-                    }
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                },
-                std::chrono::seconds(30));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
                 continue;
             }
             if (type == "probeMidiDevices") {
@@ -1659,95 +1616,11 @@ int serve(
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
-            if (type == "setPluginBypassed") {
+if (type == "setPluginState") {
                 if (pluginOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "pluginBusy",
-                        "Another Play rack operation is still changing the VST3. The current runtime remains available."));
-                    continue;
-                }
-                const auto requestId = currentRequestId;
-                const auto bypassed = static_cast<bool>(command.getProperty("bypassed", true));
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId, bypassed] {
-                    rack.setBypassed(bypassed);
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                }, std::chrono::seconds(10));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
-                continue;
-            }
-            if (type == "openPluginEditor") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still loading a VST3. The editor can be opened when it finishes."));
-                    continue;
-                }
-                const auto requestId = currentRequestId;
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId] {
-                    juce::String editorError;
-                    bool opened = false;
-                    try {
-                        opened = pluginEditor->open(editorError);
-                    } catch (const std::exception& exception) {
-                        editorError =
-                            "Play VST3 editor opening raised an exception: "
-                            + juce::String(exception.what());
-                    } catch (...) {
-                        editorError = "Play VST3 editor opening failed with an unknown exception.";
-                    }
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    if (!opened) {
-                        writeJson(makeError("pluginEditor", editorError), requestId);
-                        return;
-                    }
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                },
-                std::chrono::seconds(30));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
-                continue;
-            }
-            if (type == "setPluginParameter") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still loading a VST3. Parameter changes can be retried shortly."));
-                    continue;
-                }
-                const auto index = static_cast<int>(command.getProperty("index", -1));
-                const auto value = static_cast<float>(command.getProperty("value", 0.0));
-                const auto requestId = currentRequestId;
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId, index, value] {
-                    juce::String parameterError;
-                    const auto changed = rack.setParameter(index, value, parameterError);
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    if (!changed) {
-                        writeJson(makeError("plugin", parameterError), requestId);
-                        return;
-                    }
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                },
-                std::chrono::seconds(10));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
-                continue;
-            }
-            if (type == "setPluginState") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still loading a VST3. State changes can be retried shortly."));
+                        "The global rack is still loading a VST3. State changes can be retried shortly."));
                     continue;
                 }
                 const auto stateData = command.getProperty("stateData", {}).toString();
@@ -1770,55 +1643,32 @@ int serve(
                 }
                 continue;
             }
-            if (type == "pluginParameterStatus") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
+if (type == "sendTrackMidi" || type == "panicTrackMidi") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still loading a VST3. Parameter status will be available when it finishes."));
+                        "timelineBusy",
+                        "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."));
                     continue;
                 }
-                auto status = currentStatus(manager, callback, &rack, &midiMonitor);
-                status.getDynamicObject()->setProperty("plugin", rack.parameterStatus());
-                writeJson(status);
-                continue;
-            }
-            if (type == "sendMidi") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The Play rack is still loading a VST3. MIDI input can be sent when it finishes."));
-                    continue;
-                }
-                if (!rack.isLoaded()) {
-                    writeJson(makeError("plugin", "No VST3 plugin is loaded."));
-                    continue;
-                }
-                const auto bytesValue = command.getProperty("bytes", {});
-                juce::Array<juce::var> bytesArray;
-                if (bytesValue.isArray()) {
-                    bytesArray = *bytesValue.getArray();
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                juce::String timelineError;
+                bool accepted = false;
+                if (type == "sendTrackMidi") {
+                    juce::MidiMessage message;
+                    juce::String midiError;
+                    if (!parseMidiBytes(command.getProperty("bytes", {}), message, midiError)) {
+                        writeJson(makeError("midi", midiError));
+                        continue;
+                    }
+                    accepted = timelineEngine.enqueueTargetedMidi(
+                        trackId, message, timelineError);
                 } else {
-                    writeJson(makeError("midi", "A bytes array of MIDI data is required."));
+                    accepted = timelineEngine.panicTargetedMidi(trackId, timelineError);
+                }
+                if (!accepted) {
+                    writeJson(makeError("targetedMidi", timelineError));
                     continue;
                 }
-                if (bytesArray.isEmpty() || bytesArray.size() > 3) {
-                    writeJson(makeError("midi", "MIDI bytes must contain between 1 and 3 bytes."));
-                    continue;
-                }
-                std::array<std::uint8_t, 3> bytes{};
-                for (int i = 0; i < bytesArray.size(); ++i)
-                    bytes[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(
-                        juce::jlimit(0, 255, static_cast<int>(bytesArray[i])));
-                const auto message = juce::MidiMessage(
-                    bytes[0],
-                    bytesArray.size() > 1 ? bytes[1] : 0,
-                    bytesArray.size() > 2 ? bytes[2] : 0,
-                    bytesArray.size());
-                callback.enqueuePluginMidi(message);
-                // MIDI keyboard input can arrive many times per second. The
-                // command only needs an acknowledgement and current meters;
-                // serializing the entire device/plugin status for every note
-                // needlessly taxes both the sidecar and the WebView.
                 writeJson(currentMeters(callback));
                 continue;
             }
@@ -1826,7 +1676,7 @@ int serve(
                 if (pluginOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "pluginBusy",
-                        "The Play rack is still changing a VST3. Audio device recovery can be retried shortly."));
+                        "The global rack is still changing a VST3. Audio device recovery can be retried shortly."));
                     continue;
                 }
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
@@ -1859,7 +1709,7 @@ int serve(
                 if (pluginOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "pluginBusy",
-                        "The Play rack is still changing a VST3. Audio driver changes can be retried shortly."));
+                        "The global rack is still changing a VST3. Audio driver changes can be retried shortly."));
                     continue;
                 }
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {

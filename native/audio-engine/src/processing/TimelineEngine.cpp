@@ -1039,6 +1039,81 @@ bool TimelineEngine::enqueueLiveMidi(
     return true;
 }
 
+bool TimelineEngine::enqueueTargetedMidi(
+    const juce::String& trackId,
+    const juce::MidiMessage& message,
+    juce::String& error) noexcept {
+    if (trackId.isEmpty()) {
+        error = "A target track is required for MIDI input.";
+        return false;
+    }
+    if (publishInProgress.load(std::memory_order_acquire)) {
+        error = "The Arrangement Graph is changing; targeted MIDI can be retried shortly.";
+        return false;
+    }
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire)
+        || timeline == nullptr) {
+        error = "The Arrangement Graph is unavailable for targeted MIDI.";
+        return false;
+    }
+    const auto found = std::find_if(
+        timeline->tracks.begin(), timeline->tracks.end(), [&](const auto& track) {
+            return track->id == trackId;
+        });
+    if (found == timeline->tracks.end()) {
+        error = "The target Track is not available in the Arrangement Graph.";
+        return false;
+    }
+    auto& track = **found;
+    if (!track.instrument || track.instrumentRack == nullptr
+        || !track.instrumentRack->isLoaded()) {
+        error = "The target Instrument Track has no loaded instrument.";
+        return false;
+    }
+    track.instrumentRack->enqueueMidi(message);
+    if (track.armed
+        && recordingPhase.load(std::memory_order_acquire) == RecordingPhase::recording) {
+        recordingCapture->writeMidiTrack(
+            track.id,
+            "riffra:play-surface",
+            message,
+            audioClockSample.load(std::memory_order_acquire));
+    }
+    return true;
+}
+
+bool TimelineEngine::panicTargetedMidi(
+    const juce::String& trackId,
+    juce::String& error) noexcept {
+    if (trackId.isEmpty()) {
+        error = "A target track is required for MIDI panic.";
+        return false;
+    }
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire)
+        || timeline == nullptr) {
+        error = "The Arrangement Graph is unavailable for targeted MIDI panic.";
+        return false;
+    }
+    const auto found = std::find_if(
+        timeline->tracks.begin(), timeline->tracks.end(), [&](const auto& track) {
+            return track->id == trackId;
+        });
+    if (found == timeline->tracks.end()) {
+        error = "The target Track is not available in the Arrangement Graph.";
+        return false;
+    }
+    auto& track = **found;
+    if (!track.instrument || track.instrumentRack == nullptr
+        || !track.instrumentRack->isLoaded()) {
+        error = "The target Instrument Track has no loaded instrument.";
+        return false;
+    }
+    track.instrumentRack->allNotesOff();
+    return true;
+}
+
 PluginRack* TimelineEngine::findDevice(
     const juce::String& trackId,
     const juce::String& deviceId) noexcept {
@@ -1554,54 +1629,19 @@ void TimelineEngine::processTracks(
         float* processedChannels[2] = {
             track.processedBuffer.getWritePointer(0), track.processedBuffer.getWritePointer(1)};
         if (track.instrument) {
-            if (track.instrumentRack != nullptr)
-                track.instrumentRack->process(
-                    nullptr, 0, track.mixBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                    &track.midiBuffer);
-            else
-                track.mixBuffer.clear(0, sampleCount);
-            track.effectChain.process(
-                track.mixBuffer.getArrayOfReadPointers(),
-                2,
-                processedChannels,
-                2,
-                sampleCount);
+            processInstrumentTrack(track, sampleCount, &track.midiBuffer);
         } else {
             track.effectChain.process(
                 inputChannels, 2, processedChannels, 2, sampleCount);
         }
-        const auto delay = track.compensationDelaySamples;
-        const auto delaySize = track.delayBuffer.getNumSamples();
-        for (int sample = 0; sample < sampleCount; ++sample) {
-            const auto timelinePosition = rangeStart + sample;
-            const auto gain = juce::Decibels::decibelsToGain(
-                ArrangementGraph::automationValueAt(
-                    track.volumeAutomation, timelinePosition, track.gainDb));
-            const auto pan = juce::jlimit(
-                -1.0f,
-                1.0f,
-                ArrangementGraph::automationValueAt(
-                    track.panAutomation, timelinePosition, track.pan));
-            const auto panAngle =
-                (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-            const auto leftGain = gain * std::cos(panAngle);
-            const auto rightGain = gain * std::sin(panAngle);
-            float left = processedChannels[0][sample];
-            float right = processedChannels[1][sample];
-            if (delay > 0 && delaySize > 0) {
-                const auto write = track.delayWritePosition;
-                track.delayBuffer.setSample(0, static_cast<int>(write), left);
-                track.delayBuffer.setSample(1, static_cast<int>(write), right);
-                const auto read = (write - delay + delaySize) % delaySize;
-                left = track.delayBuffer.getSample(0, static_cast<int>(read));
-                right = track.delayBuffer.getSample(1, static_cast<int>(read));
-                track.delayWritePosition = (write + 1) % delaySize;
-            }
-            if (audible && channelCount > 0 && outputChannels[0] != nullptr)
-                outputChannels[0][destinationStart + sample] += left * leftGain;
-            if (audible && channelCount > 1 && outputChannels[1] != nullptr)
-                outputChannels[1][destinationStart + sample] += right * rightGain;
-        }
+        mixProcessedTrack(
+            track,
+            audible,
+            outputChannels,
+            channelCount,
+            rangeStart,
+            destinationStart,
+            sampleCount);
         if (!track.instrument && (track.monitorInput || track.armed)
             && track.audioInputChannel >= 0) {
             const auto* source = ArrangementGraph::audioInputSource(
@@ -1731,6 +1771,97 @@ void TimelineEngine::processTracks(
     }
 }
 
+void TimelineEngine::processLiveInstrumentTracks(
+    PreparedTimeline& prepared,
+    float* const* outputChannels,
+    const int channelCount,
+    const int sampleCount) noexcept {
+    const auto hasSolo = std::any_of(
+        prepared.tracks.begin(), prepared.tracks.end(),
+        [](const auto& track) { return track->solo; });
+    const auto rangeStart = timelineSample.load(std::memory_order_acquire);
+    for (auto& trackPtr : prepared.tracks) {
+        auto& track = *trackPtr;
+        if (!track.instrument || track.instrumentRack == nullptr)
+            continue;
+        const auto audible = !track.muted && (!hasSolo || track.solo);
+        processInstrumentTrack(track, sampleCount, nullptr);
+        mixProcessedTrack(
+            track,
+            audible,
+            outputChannels,
+            channelCount,
+            rangeStart,
+            0,
+            sampleCount);
+    }
+}
+
+void TimelineEngine::processInstrumentTrack(
+    Track& track,
+    const int sampleCount,
+    const juce::MidiBuffer* const timelineMidi) noexcept {
+    if (track.instrumentRack != nullptr) {
+        track.instrumentRack->process(
+            nullptr,
+            0,
+            track.mixBuffer.getArrayOfWritePointers(),
+            2,
+            sampleCount,
+            timelineMidi);
+    } else {
+        track.mixBuffer.clear(0, sampleCount);
+    }
+    track.effectChain.process(
+        track.mixBuffer.getArrayOfReadPointers(),
+        2,
+        track.processedBuffer.getArrayOfWritePointers(),
+        2,
+        sampleCount);
+}
+
+void TimelineEngine::mixProcessedTrack(
+    Track& track,
+    const bool audible,
+    float* const* outputChannels,
+    const int channelCount,
+    const std::int64_t rangeStart,
+    const int destinationStart,
+    const int sampleCount) noexcept {
+    const auto delay = track.compensationDelaySamples;
+    const auto delaySize = track.delayBuffer.getNumSamples();
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        const auto timelinePosition = rangeStart + sample;
+        const auto gain = juce::Decibels::decibelsToGain(
+            ArrangementGraph::automationValueAt(
+                track.volumeAutomation, timelinePosition, track.gainDb));
+        const auto pan = juce::jlimit(
+            -1.0f,
+            1.0f,
+            ArrangementGraph::automationValueAt(
+                track.panAutomation, timelinePosition, track.pan));
+        const auto panAngle =
+            (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+        const auto leftGain = gain * std::cos(panAngle);
+        const auto rightGain = gain * std::sin(panAngle);
+        float left = track.processedBuffer.getSample(0, sample);
+        float right = track.processedBuffer.getSample(1, sample);
+        if (delay > 0 && delaySize > 0) {
+            const auto write = track.delayWritePosition;
+            track.delayBuffer.setSample(0, static_cast<int>(write), left);
+            track.delayBuffer.setSample(1, static_cast<int>(write), right);
+            const auto read = (write - delay + delaySize) % delaySize;
+            left = track.delayBuffer.getSample(0, static_cast<int>(read));
+            right = track.delayBuffer.getSample(1, static_cast<int>(read));
+            track.delayWritePosition = (write + 1) % delaySize;
+        }
+        if (audible && channelCount > 0 && outputChannels[0] != nullptr)
+            outputChannels[0][destinationStart + sample] += left * leftGain;
+        if (audible && channelCount > 1 && outputChannels[1] != nullptr)
+            outputChannels[1][destinationStart + sample] += right * rightGain;
+    }
+}
+
 void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcept {
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
@@ -1775,10 +1906,16 @@ void TimelineEngine::mix(
     const auto blockPlaybackOffset = juce::jlimit(
         0, sampleCount, playbackBlockOffset.exchange(0, std::memory_order_acq_rel));
     lastMixPlaybackOffset.store(blockPlaybackOffset, std::memory_order_release);
-    if (state.load(std::memory_order_acquire) != State::playing) return;
     AudioReadScope activeRead(*this);
     auto* active = activeRead.get();
     if (active == nullptr)
+        return;
+    const auto currentState = state.load(std::memory_order_acquire);
+    if (currentState == State::stopped) {
+        processLiveInstrumentTracks(*active, outputChannels, channelCount, sampleCount);
+        return;
+    }
+    if (currentState != State::playing)
         return;
     auto position = timelineSample.load(std::memory_order_relaxed);
     lastMixStartSample.store(position, std::memory_order_release);
