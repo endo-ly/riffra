@@ -83,6 +83,66 @@ fn app_context(state: &AppState) -> SessionContext<'_> {
     }
 }
 
+fn validate_target_instrument_track(state: &AppState, track_id: &str) -> Result<(), String> {
+    if state.core.safe_mode() {
+        return Err("Safe Mode does not allow targeted MIDI input.".into());
+    }
+    if track_id.trim().is_empty() {
+        return Err("A target track is required for targeted MIDI.".into());
+    }
+    let session = state
+        .core
+        .session()
+        .lock()
+        .map_err(|error| format!("Session state lock was poisoned: {error}"))?;
+    if session.workspace != Workspace::Arrange {
+        return Err("Targeted MIDI input is available only in Arrange.".into());
+    }
+    let track = session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| format!("The target Track is not registered: {track_id}"))?;
+    if track.kind != TrackKind::Instrument {
+        return Err("Targeted MIDI input requires an Instrument Track.".into());
+    }
+    if track.instrument.is_none() {
+        return Err("The target Instrument Track has no assigned instrument.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_midi_to_track(
+    track_id: String,
+    bytes: Vec<u8>,
+    app: AppHandle,
+) -> Result<(), String> {
+    run_runtime_control(app, move |state| {
+        validate_target_instrument_track(state, &track_id)?;
+        state
+            .core
+            .audio()
+            .send_track_midi(&track_id, &bytes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), String> {
+    run_runtime_control(app, move |state| {
+        validate_target_instrument_track(state, &track_id)?;
+        state
+            .core
+            .audio()
+            .panic_track_midi(&track_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn save_scratch_session(
     session: CreativeSession,

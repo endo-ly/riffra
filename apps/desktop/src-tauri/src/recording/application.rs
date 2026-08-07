@@ -935,7 +935,7 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let _committed = crate::session::application::commit_merged_session(
+    crate::session::application::commit_merged_session(
         context.session_actor,
         context.data_root,
         context.session,
@@ -1681,7 +1681,7 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let _committed = crate::session::application::commit_merged_session(
+    crate::session::application::commit_merged_session(
         context.session_actor,
         context.data_root,
         context.session,

@@ -72,10 +72,6 @@ pub fn commit_session<D: RuntimeDriver>(
 /// boundary. The caller may clone `base` and perform native/file work before
 /// calling this function; `merge` is then responsible for applying only the
 /// operation-owned portion to the current Session so unrelated edits survive.
-pub(crate) struct CommittedSession {
-    pub session: CreativeSession,
-}
-
 pub(crate) fn commit_merged_session(
     actor: &SessionActor,
     data_root: &Path,
@@ -83,7 +79,7 @@ pub(crate) fn commit_merged_session(
     base: &CreativeSession,
     candidate: CreativeSession,
     merge: impl FnOnce(&CreativeSession, &CreativeSession, CreativeSession) -> CreativeSession,
-) -> Result<CommittedSession, String> {
+) -> Result<(), String> {
     let _operation = actor.enter()?;
     let current = session_lock.lock().map_err(lock_error)?.clone();
     let workspace_before_save = current.workspace;
@@ -93,14 +89,14 @@ pub(crate) fn commit_merged_session(
     SessionStore::new(data_root)
         .save(&merged)
         .map_err(|error| format!("Session could not be saved: {error}"))?;
-    let committed = publish_session(
+    publish_session(
         actor,
         data_root,
         session_lock,
         merged,
         workspace_before_save,
     )?;
-    Ok(CommittedSession { session: committed })
+    Ok(())
 }
 
 /// Saves a caller-supplied session (the canonical save intent). The session is

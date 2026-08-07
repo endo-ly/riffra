@@ -322,7 +322,6 @@ pub fn switch_workspace(
 
 fn workspace_processing_mode(workspace: Workspace) -> &'static str {
     match workspace {
-        Workspace::Play => "play",
         Workspace::Arrange => "arrange",
         Workspace::Design => "passive",
     }
@@ -368,7 +367,6 @@ mod tests {
     #[test]
     fn workspace_processing_mode_matches_workspace() {
         let cases = [
-            (Workspace::Play, "play"),
             (Workspace::Arrange, "arrange"),
             (Workspace::Design, "passive"),
         ];

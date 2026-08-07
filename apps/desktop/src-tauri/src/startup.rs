@@ -3,7 +3,6 @@ use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::{
     AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
 };
-use crate::rack::application::{self as rack_application, RackContext};
 use crate::session::Workspace;
 use crate::session::actor::CanonicalProjection;
 use crate::session::application::{self as session_application, SessionContext};
@@ -363,18 +362,6 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
     }
 
     match target.session.workspace {
-        Workspace::Play => {
-            let context = RackContext {
-                audio: state.core.audio(),
-                session_actor: &state.session_actor,
-                data_root: state.core.data_root(),
-                session: state.core.session(),
-                safe_mode: false,
-            };
-            if let Err(error) = rack_application::restore_current_rack(&context) {
-                failures.push(format!("rack restoration failed: {error}"));
-            }
-        }
         Workspace::Arrange => {
             if let Err(error) = session_application::sync_arrangement_runtime(&session_context) {
                 failures.push(format!("arrange runtime restoration failed: {error}"));
@@ -500,7 +487,6 @@ fn safe_to_release_startup_mute(status: &AudioStatus) -> bool {
 
 fn workspace_processing_mode(workspace: Workspace) -> &'static str {
     match workspace {
-        Workspace::Play => "play",
         Workspace::Arrange => "arrange",
         Workspace::Design => "passive",
     }
