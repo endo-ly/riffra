@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   MUSICAL_TYPING_KEYS,
   baseNoteForOctave,
@@ -29,22 +30,31 @@ export function MusicalTypingKeyboard({
 }: MusicalTypingKeyboardProps) {
   const base = baseNoteForOctave(octave);
 
+  const releasedPointersRef = useRef<Set<number>>(new Set());
+  const releaseNote = (pointerId: number, note: number) => {
+    if (!releasedPointersRef.current.has(pointerId)) {
+      releasedPointersRef.current.add(pointerId);
+      if (onNoteUp !== undefined) onNoteUp(note);
+    }
+  };
+
   const keyHandlers = (note: number) => ({
     onPointerDown: (e: React.PointerEvent) => {
       if (onNoteDown === undefined) return;
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
+      releasedPointersRef.current.delete(e.pointerId);
       onNoteDown(note);
     },
     onPointerUp: (e: React.PointerEvent) => {
-      if (onNoteUp !== undefined) onNoteUp(note);
+      releaseNote(e.pointerId, note);
       e.currentTarget.releasePointerCapture?.(e.pointerId);
     },
-    onLostPointerCapture: () => {
-      if (onNoteUp !== undefined) onNoteUp(note);
+    onLostPointerCapture: (e: React.PointerEvent) => {
+      releaseNote(e.pointerId, note);
     },
     onPointerCancel: (e: React.PointerEvent) => {
-      if (onNoteUp !== undefined) onNoteUp(note);
+      releaseNote(e.pointerId, note);
       e.currentTarget.releasePointerCapture?.(e.pointerId);
     },
   });

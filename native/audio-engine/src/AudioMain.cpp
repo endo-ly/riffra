@@ -431,11 +431,17 @@ bool parseMidiBytes(
             return false;
         }
     }
-    message = juce::MidiMessage(
-        bytes[0],
-        bytesArray.size() > 1 ? bytes[1] : 0,
-        bytesArray.size() > 2 ? bytes[2] : 0,
-        bytesArray.size());
+    switch (bytesArray.size()) {
+    case 1:
+        message = juce::MidiMessage(bytes[0]);
+        break;
+    case 2:
+        message = juce::MidiMessage(bytes[0], bytes[1]);
+        break;
+    default:
+        message = juce::MidiMessage(bytes[0], bytes[1], bytes[2]);
+        break;
+    }
     return true;
 }
 

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { DRUM_PADS } from '@/lib/drum-map';
 import styles from './DrumPadGrid.module.css';
 
@@ -8,6 +9,14 @@ interface DrumPadGridProps {
 }
 
 export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProps) {
+  const releasedPointersRef = useRef<Set<number>>(new Set());
+  const releaseNote = (pointerId: number, note: number) => {
+    if (!releasedPointersRef.current.has(pointerId)) {
+      releasedPointersRef.current.add(pointerId);
+      onPadUp(note);
+    }
+  };
+
   return (
     <div className={styles.grid} role="grid">
       {DRUM_PADS.map((pad, index) => {
@@ -23,15 +32,16 @@ export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProp
             onPointerDown={(e) => {
               e.preventDefault();
               e.currentTarget.setPointerCapture(e.pointerId);
+              releasedPointersRef.current.delete(e.pointerId);
               onPadDown(pad.note);
             }}
             onPointerUp={(e) => {
-              onPadUp(pad.note);
+              releaseNote(e.pointerId, pad.note);
               e.currentTarget.releasePointerCapture?.(e.pointerId);
             }}
-            onLostPointerCapture={() => onPadUp(pad.note)}
+            onLostPointerCapture={(e) => releaseNote(e.pointerId, pad.note)}
             onPointerCancel={(e) => {
-              onPadUp(pad.note);
+              releaseNote(e.pointerId, pad.note);
               e.currentTarget.releasePointerCapture?.(e.pointerId);
             }}
           >

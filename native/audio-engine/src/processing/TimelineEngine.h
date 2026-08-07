@@ -55,6 +55,10 @@ public:
     [[nodiscard]] bool panicTargetedMidi(
         const juce::String& trackId,
         juce::String& error) noexcept;
+    /// Sends an all-notes-off / all-sound-off / sustain-off panic to every
+    /// Instrument Track runtime so a host-level emergency mute also silences
+    /// VST instruments instead of only hiding their output.
+    void panicAllInstrumentTracks() noexcept;
     bool setDeviceBypassed(
         const juce::String& trackId,
         const juce::String& deviceId,
@@ -162,6 +166,10 @@ private:
         std::vector<std::unique_ptr<Clip>> clips;
         std::vector<MidiClip> midiClips;
         std::unique_ptr<PluginRack> instrumentRack;
+        // Timeline MIDI is rendered by `instrumentRack`; Play Surface and
+        // external-live MIDI is rendered by `liveInstrumentRack` so it reaches
+        // the output without the inter-track delay compensation line.
+        std::unique_ptr<PluginRack> liveInstrumentRack;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
         juce::String instrumentTopologySignature;
@@ -250,7 +258,16 @@ private:
         Track& track,
         int sampleCount,
         const juce::MidiBuffer* timelineMidi) noexcept;
+    void processLiveInstrumentTrack(Track& track, int sampleCount) noexcept;
     void mixProcessedTrack(
+        Track& track,
+        bool audible,
+        float* const* outputChannels,
+        int channelCount,
+        std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
+    void mixLiveTrack(
         Track& track,
         bool audible,
         float* const* outputChannels,

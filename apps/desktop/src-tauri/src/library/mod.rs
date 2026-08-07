@@ -44,8 +44,7 @@ fn open(data_root: &Path) -> Result<Connection, String> {
 
 /// Final schema for the Library Read Model store.
 ///
-/// Canonical Production Assets (`audio`/`midi`/`sample`/`rackDefinition`/
-/// `generationDefinition`) are owned by the shared `assets` store, whose schema
+/// Canonical Production Assets (`audio`/`midi`/`sample`/`generationDefinition`) are owned by the shared `assets` store, whose schema
 /// is defined once in `asset::ensure_assets_schema`. Library Read
 /// Model entries (project/plugin/recording-capture) live in `library_entries`.
 /// Provenance relations between canonical Assets use `asset_relations`.

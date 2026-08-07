@@ -63,11 +63,20 @@ public:
             std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (instrumentRack == nullptr)
             return false;
-        {
+{
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
                 return false;
-            engine.timeline->tracks.front()->instrumentRack = std::move(instrumentRack);
+            auto& liveTrack = *engine.timeline->tracks.front();
+            liveTrack.liveInstrumentRack = std::move(instrumentRack);
+            // Simulate a Project where another Track's plugin is the latency
+            // leader. The live instrument track would normally be delayed by
+            // this compensation on the timeline path.
+            liveTrack.pluginDelaySamples = 0;
+            liveTrack.compensationDelaySamples = 4;
+            liveTrack.delayBuffer.setSize(
+                2, static_cast<int>(liveTrack.compensationDelaySamples + 33), false, true, false);
+            liveTrack.delayBuffer.clear();
         }
 
         if (!engine.enqueueTargetedMidi(
@@ -81,8 +90,92 @@ public:
         const auto peak = std::max(
             *std::max_element(left.begin(), left.end()),
             *std::max_element(right.begin(), right.end()));
-        return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f;
+        // The live voice must start at the first output sample instead of being
+        // pushed right by the inter-track compensation delay.
+        const auto immediate = std::max(left[0], right[0]);
+        return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f
+            && immediate > 0.0f;
     }
+
+    static bool panicClosesEveryInstrumentRack() {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+
+        auto* timebase = new juce::DynamicObject();
+        timebase->setProperty("ppq", 960);
+        timebase->setProperty("bpm", 120.0);
+        timebase->setProperty("timeSignatureNumerator", 4);
+        timebase->setProperty("timeSignatureDenominator", 4);
+        auto* track = new juce::DynamicObject();
+        track->setProperty("id", "track:panic-instrument");
+        track->setProperty("kind", "instrument");
+        track->setProperty("gainDb", 0.0);
+        track->setProperty("pan", 0.0);
+        track->setProperty("muted", false);
+        track->setProperty("solo", false);
+        track->setProperty("armed", false);
+        track->setProperty("monitoring", "off");
+        auto* rack = new juce::DynamicObject();
+        rack->setProperty("devices", juce::Array<juce::var> {});
+        track->setProperty("rack", juce::var(rack));
+        track->setProperty("audioClips", juce::Array<juce::var> {});
+        track->setProperty("midiClips", juce::Array<juce::var> {});
+        track->setProperty("automation", juce::Array<juce::var> {});
+        juce::Array<juce::var> tracks;
+        tracks.add(juce::var(track));
+        auto* snapshot = new juce::DynamicObject();
+        snapshot->setProperty("revision", 1);
+        snapshot->setProperty("timebase", juce::var(timebase));
+        snapshot->setProperty("tracks", tracks);
+
+        if (!engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 32, error))
+            return false;
+
+        InstrumentTrace timelineTrace;
+        InstrumentTrace liveTrace;
+        auto timelineRack = PluginRackTestPeer::install(
+            std::make_unique<TestInstrumentProcessor>(timelineTrace), 48'000.0, 32, error);
+        auto liveRack = PluginRackTestPeer::install(
+            std::make_unique<TestInstrumentProcessor>(liveTrace), 48'000.0, 32, error);
+        if (timelineRack == nullptr || liveRack == nullptr)
+            return false;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
+                return false;
+            auto& panicTrack = *engine.timeline->tracks.front();
+            panicTrack.instrumentRack = std::move(timelineRack);
+            panicTrack.liveInstrumentRack = std::move(liveRack);
+        }
+
+        engine.panicAllInstrumentTracks();
+
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        std::array<float*, 2> outputs { left.data(), right.data() };
+        bool timelinePanicked = false;
+        bool livePanicked = false;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
+                return false;
+            auto& panicTrack = *engine.timeline->tracks.front();
+            if (panicTrack.instrumentRack != nullptr) {
+                panicTrack.instrumentRack->process(
+                    nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()));
+                timelinePanicked = timelineTrace.midiMessages.size() == 48u;
+            }
+            if (panicTrack.liveInstrumentRack != nullptr) {
+                panicTrack.liveInstrumentRack->process(
+                    nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()));
+                livePanicked = liveTrace.midiMessages.size() == 48u;
+            }
+        }
+        return timelinePanicked && livePanicked;
+    }
+
 
     static juce::var run(const juce::File& directory) {
         auto* result = new juce::DynamicObject();
@@ -119,6 +212,7 @@ public:
         bool productionWriterPassed = false;
         bool productionWriterPartialPassed = false;
         const auto liveInstrumentWhileStopped = liveInstrumentProcessesWhileStopped();
+        const auto panicClosesRacks = panicClosesEveryInstrumentRack();
         int diagPartialSegments = 0;
         int diagPartialRaw = 0;
         int diagPartialProcessed = 0;
@@ -1298,6 +1392,9 @@ public:
         addCheck(
             "Stopped Transport processes live Instrument MIDI",
             liveInstrumentWhileStopped);
+        addCheck(
+            "Timeline panic closes arranged and live Instrument racks",
+            panicClosesRacks);
         result->setProperty("checks", checks);
         result->setProperty("message", error);
         result->setProperty("partialSegments", diagPartialSegments);
@@ -1329,7 +1426,7 @@ public:
                 && loopCaptureSegments && syntheticLoopPassed
                 && partialPassPassed && blockSizePassed && longRecordingPassed
                 && productionWriterPassed && productionWriterPartialPassed
-                && liveInstrumentWhileStopped);
+                && liveInstrumentWhileStopped && panicClosesRacks);
         mono.deleteFile();
         stereo.deleteFile();
         directory.getChildFile("offline-selection.wav").deleteFile();

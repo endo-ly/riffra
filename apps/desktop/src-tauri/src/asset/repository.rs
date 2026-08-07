@@ -88,7 +88,6 @@ fn kind_to_db(kind: AssetKind) -> &'static str {
         AssetKind::Audio => "audio",
         AssetKind::Midi => "midi",
         AssetKind::Sample => "sample",
-        AssetKind::RackDefinition => "rackDefinition",
         AssetKind::GenerationDefinition => "generationDefinition",
     }
 }
@@ -98,7 +97,6 @@ fn kind_from_db(value: &str) -> Option<AssetKind> {
         "audio" => AssetKind::Audio,
         "midi" => AssetKind::Midi,
         "sample" => AssetKind::Sample,
-        "rackDefinition" => AssetKind::RackDefinition,
         "generationDefinition" => AssetKind::GenerationDefinition,
         _ => return None,
     })
