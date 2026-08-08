@@ -1,5 +1,6 @@
 import type { NativeApi } from '@/native/native-api';
-import { useState } from 'react';
+import type { PluginEntry } from '@/lib/domain';
+import { useEffect, useState } from 'react';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
@@ -10,7 +11,6 @@ import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
 import {
   AudioSettingsDialog,
   Icon,
-  WorkspacePlay,
   WorkspaceAnalyze,
   WorkspaceSample,
   MidiDevices,
@@ -30,6 +30,7 @@ import styles from './App.module.css';
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
+  const [arrangeFocusedTrackId, setArrangeFocusedTrackId] = useState<string | null>(null);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const {
     boot,
@@ -48,8 +49,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     inbox,
     selectedLibraryAsset,
     relatedAssets,
-    selectedPluginName,
-    selectedPluginVendor,
     query,
     recordings,
     analysis,
@@ -70,7 +69,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     exportMessage,
     deviceProbe,
     midi,
-    missingPluginPaths,
     missingDependencies,
     backgroundJob,
     cancelActiveJob,
@@ -98,7 +96,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     editSelectedLibraryAsset,
-    loadPluginIntoRack,
     openRecordingAnalysis,
     openLibraryAssetAnalysis,
     recoverAudio,
@@ -107,17 +104,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     restoreRecovery,
     dismissRecovery,
     selectAudioDriver,
-    togglePluginBypass,
-    clearPluginFromRack,
-    openPluginEditor,
-    sendMidi,
-    captureSnapshot,
-    recallSnapshot,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
-    loadSavedRack,
-    rackDefinitions,
     previewSamplePad,
     stopPreview,
     selectReference,
@@ -135,6 +124,30 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     api: nativeApi,
   } = useApp(api);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
+  const focusedTrack =
+    session?.arrangement.tracks.find((track) => track.id === arrangeFocusedTrackId) ?? null;
+
+  useEffect(() => {
+    if (
+      arrangeFocusedTrackId !== null &&
+      !session?.arrangement.tracks.some((track) => track.id === arrangeFocusedTrackId)
+    ) {
+      setArrangeFocusedTrackId(null);
+    }
+  }, [arrangeFocusedTrackId, session?.arrangement.tracks]);
+
+  const addPluginToFocusedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
+    if (!focusedTrack) return;
+    try {
+      const next =
+        target === 'instrument'
+          ? await nativeApi.setTrackInstrument(focusedTrack.id, plugin.path)
+          : await nativeApi.addTrackEffect(focusedTrack.id, plugin.path);
+      setSession(next);
+    } catch (error) {
+      logNativeError('Add plugin to Track')(error);
+    }
+  };
   const refreshAudioDevices = async () => {
     const nextProbe = await nativeApi.probeAudioDevices();
     setDeviceProbe(nextProbe);
@@ -264,18 +277,17 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           searchQuery: query,
           selectedAsset: selectedLibraryAsset,
           relatedAssets,
-          rackDefinitions,
           onSelectAsset: selectLibraryAsset,
           onPreviewAsset: previewSelectedLibraryAsset,
           onEditAsset: editSelectedLibraryAsset,
           onOpenInDesign: openLibraryAssetAnalysis,
-          onLoadRackDefinition: (assetId) => void loadSavedRack(assetId),
           onImportMidi: () => void importMidi(),
         }}
         rack={{
           plugins,
           visiblePlugins,
-          onLoadPlugin: loadPluginIntoRack,
+          focusedTrack,
+          onAddPlugin: (plugin, target) => void addPluginToFocusedTrack(plugin, target),
         }}
         recordings={{
           visibleRecordings,
@@ -286,19 +298,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       />
 
       <section className="workspace">
-        {session.workspace === 'play' && (
-          <WorkspacePlay
-            session={session}
-            audio={audio}
-            missingPluginPaths={missingPluginPaths}
-            onTogglePluginBypass={(bypassed) => void togglePluginBypass(bypassed)}
-            onClearPlugin={() => void clearPluginFromRack()}
-            onOpenPluginEditor={() => void openPluginEditor()}
-            onCaptureSnapshot={captureSnapshot}
-            onRecallSnapshot={(slot) => void recallSnapshot(slot)}
-            onSendMidi={(bytes) => void sendMidi(bytes)}
-          />
-        )}
         {session.workspace === 'arrange' && (
           <WorkspaceArrange
             session={session}
@@ -306,7 +305,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             selection={arrangeSelection}
             setSelection={setArrangeSelection}
             api={nativeApi}
+            audio={audio}
             plugins={plugins}
+            focusedTrackId={arrangeFocusedTrackId}
+            onFocusTrack={setArrangeFocusedTrackId}
+            missingDeviceIds={missingDependencies
+              .filter((item) => item.kind === 'plugin')
+              .map((item) => item.id)}
             onRecord={() => void toggleRecording()}
             recordingActive={audio.recording.active}
           />
@@ -386,8 +391,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         boot={boot}
         focusMode={focusMode}
         setFocusMode={setFocusMode}
-        selectedPluginName={selectedPluginName}
-        selectedPluginVendor={selectedPluginVendor}
         session={session}
         setSession={setSession}
         arrangeSelection={arrangeSelection}

@@ -23,7 +23,7 @@ export function WorkspaceSeparate({
 }) {
   return (
     <div className="workspace-scroll separate-view">
-      <section className="play-header">
+      <section className="workspace-header">
         <div>
           <span className="eyebrow">SEPARATE WORKSPACE</span>
           <h1>Preserve the source, derive channel assets</h1>

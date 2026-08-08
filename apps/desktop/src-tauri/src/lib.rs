@@ -16,10 +16,9 @@
 //!
 //! All Production Workflow lives in the feature modules: Recording lifecycle
 //! and Inbox management in `recording`, background-job orchestration in
-//! `analysis` / `separation` / `render` / `plugins`, rack + RackDefinition
-//! operations in `rack`, session + arrangement + design + missing-dep recovery
-//! in `session`, library read-model queries in `library`, and asset preview in
-//! `asset`.
+//! `analysis` / `separation` / `render` / `plugins`, session + arrangement +
+//! design + missing-dep recovery in `session`, library read-model queries in
+//! `library`, and asset preview in `asset`.
 
 mod analysis;
 mod asset;
@@ -69,7 +68,6 @@ const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
 struct AppState {
     core: AppCore<AudioSupervisor>,
     session_actor: session::actor::SessionActor,
-    rack_operation_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
     /// Keeps a workspace's stop intent and processing-mode update together so
     /// concurrent navigation commands cannot interleave the two writes.
@@ -420,11 +418,7 @@ fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
 //
 // These commands are single delegations to the Audio Runtime with no
 // canonical-state side effects. They stay in `lib.rs` because they are not
-// Production Workflow: the rack + session coordination that used to call them
-// from React has moved to Rust Application Operations (rack::application,
-// session::application), and the remaining React UI only uses them for
-// transport-style runtime control (preview voices, MIDI open/close, device
-// recovery). Their session-persisting counterparts (master gain, driver
+// Production Workflow: session-persisting counterparts (master gain, driver
 // selection, emergency mute) live in `session::commands` so the session stays
 // in lock-step with the runtime.
 
@@ -516,20 +510,6 @@ async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
             .audio()
             .disable_midi_listening()
             .map_err(String::from)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn send_midi_to_plugin(bytes: Vec<u8>, app: AppHandle) -> Result<(), String> {
-    run_blocking(app, move |state| {
-        if state.core.safe_mode() {
-            return Err(
-                "Safe Mode blocks outgoing MIDI; offline MIDI and audio export remain available."
-                    .into(),
-            );
-        }
-        state.core.audio().send_midi(&bytes).map_err(String::from)
     })
     .await
 }
@@ -647,7 +627,6 @@ pub fn run() {
                     safe_mode,
                 ),
                 session_actor: session::actor::SessionActor::default(),
-                rack_operation_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
                 workspace_runtime_gate: Mutex::new(()),
                 runtime,
@@ -677,23 +656,10 @@ pub fn run() {
             recover_audio_device,
             enable_midi_listening,
             disable_midi_listening,
-            send_midi_to_plugin,
+            session::commands::send_midi_to_track,
+            session::commands::panic_midi_track,
             stop_preview,
             stop_preview_for_key,
-            // Rack Application Operations.
-            rack::commands::load_plugin_into_rack,
-            rack::commands::clear_plugin_from_rack,
-            rack::commands::open_plugin_editor,
-            rack::commands::set_rack_plugin_bypassed,
-            rack::commands::set_rack_plugin_parameter,
-            rack::commands::set_rack_macro_value,
-            rack::commands::map_rack_macro,
-            rack::commands::restore_current_rack,
-            rack::commands::capture_snapshot,
-            rack::commands::recall_snapshot,
-            rack::commands::save_rack_definition,
-            rack::commands::list_rack_definitions,
-            rack::commands::load_rack_definition_asset,
             // Session Application Operations.
             session::commands::save_scratch_session,
             session::commands::restore_recovery_generation,

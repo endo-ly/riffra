@@ -23,6 +23,30 @@ pub struct NativeSamplePad {
     pub loop_enabled: bool,
 }
 
+fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
+    if bytes.is_empty() {
+        return Err(NativeAudioError::native_rejected(
+            "MIDI bytes must contain at least one status byte.",
+        ));
+    }
+    if bytes.len() > 3 {
+        return Err(NativeAudioError::native_rejected(
+            "MIDI bytes must contain at most three bytes (status, data1, data2).",
+        ));
+    }
+    if bytes[0] & 0x80 == 0 {
+        return Err(NativeAudioError::native_rejected(
+            "The first MIDI byte must be a status byte.",
+        ));
+    }
+    if bytes.iter().skip(1).any(|byte| *byte & 0x80 != 0) {
+        return Err(NativeAudioError::native_rejected(
+            "MIDI data bytes must be below 128.",
+        ));
+    }
+    Ok(())
+}
+
 impl AudioSupervisor {
     pub fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
         self.send_command(serde_json::json!({"type": "status"}), "")
@@ -222,59 +246,6 @@ impl AudioSupervisor {
         Ok(())
     }
 
-    pub fn load_plugin(
-        &self,
-        path: &Path,
-        parameter_values: &[f32],
-        bypassed: bool,
-        state_data: Option<&str>,
-    ) -> NativeAudioResult<AudioStatus> {
-        if parameter_values.iter().any(|value| !value.is_finite()) {
-            return Err(NativeAudioError::native_rejected(
-                "VST3 parameter values must be finite.",
-            ));
-        }
-        if state_data.is_some_and(|value| value.len() > 4_000_000) {
-            return Err(NativeAudioError::native_rejected(
-                "VST3 state data exceeds the safe 4 MiB limit.",
-            ));
-        }
-        let has_state = state_data.is_some_and(|value| !value.is_empty());
-        // A non-empty opaque state is authoritative. Do not also replay the
-        // parameter array: some plugins expose thousands of parameters and
-        // applying both would duplicate work while allowing the stale array
-        // to overwrite values restored by the plugin state blob.
-        let values = if has_state { &[] } else { parameter_values };
-        self.send_command_with_timeout(
-            serde_json::json!({
-                "type": "loadPlugin",
-                "path": path.to_string_lossy(),
-                "persistedState": {
-                    "parameterValues": values,
-                    "stateData": state_data.unwrap_or_default(),
-                    "bypassed": bypassed,
-                },
-            }),
-            "VST3 loaded into the isolated rack; audio remains under the safety limiter.",
-            Duration::from_secs(30),
-        )
-    }
-
-    pub fn clear_plugin(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "clearPlugin"}),
-            "VST3 removed from the isolated rack; the safety path remains active.",
-        )
-    }
-
-    pub fn open_plugin_editor(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command_with_timeout(
-            serde_json::json!({"type": "openPluginEditor"}),
-            "VST3 editor opened for the active rack plugin.",
-            Duration::from_secs(10),
-        )
-    }
-
     pub fn start_arrange_recording(
         &self,
         directory: &Path,
@@ -297,33 +268,6 @@ impl AudioSupervisor {
             serde_json::json!({"type": "stopArrangeRecording"}),
             "Arrange recording stopped on the Native Audio Clock.",
         )
-    }
-
-    pub fn set_plugin_bypassed(&self, bypassed: bool) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "setPluginBypassed", "bypassed": bypassed}),
-            if bypassed {
-                "VST3 bypassed; the safety copy path remains active."
-            } else {
-                "VST3 processing resumed through the safety limiter."
-            },
-        )
-    }
-
-    pub fn set_plugin_parameter(&self, index: u32, value: f32) -> NativeAudioResult<AudioStatus> {
-        if !value.is_finite() {
-            return Err(NativeAudioError::native_rejected(
-                "Plugin parameter value must be finite.",
-            ));
-        }
-        self.send_command(
-            serde_json::json!({"type": "setPluginParameter", "index": index, "value": value.clamp(0.0, 1.0)}),
-            "VST3 parameter updated through the isolated rack.",
-        )
-    }
-
-    pub fn plugin_parameter_status(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(serde_json::json!({"type": "pluginParameterStatus"}), "")
     }
 
     pub fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus> {
@@ -477,21 +421,34 @@ impl AudioSupervisor {
         Ok(status)
     }
 
-    pub fn send_midi(&self, bytes: &[u8]) -> NativeAudioResult<()> {
-        if bytes.is_empty() {
+    pub fn send_track_midi(&self, track_id: &str, bytes: &[u8]) -> NativeAudioResult<()> {
+        if track_id.trim().is_empty() {
             return Err(NativeAudioError::native_rejected(
-                "MIDI bytes must contain at least one status byte.",
+                "A target track is required for MIDI input.",
             ));
         }
-        if bytes.len() > 3 {
-            return Err(NativeAudioError::native_rejected(
-                "MIDI bytes must contain at most three bytes (status, data1, data2).",
-            ));
-        }
+        validate_midi_bytes(bytes)?;
         let payload_bytes: Vec<u64> = bytes.iter().map(|byte| *byte as u64).collect();
         self.send_command_ack(
-            serde_json::json!({"type": "sendMidi", "bytes": payload_bytes}),
-            "MIDI message enqueued for the loaded plugin.",
+            serde_json::json!({
+                "type": "sendTrackMidi",
+                "trackId": track_id,
+                "bytes": payload_bytes,
+            }),
+            "MIDI message enqueued for the target Instrument Track.",
+            Duration::from_secs(3),
+        )
+    }
+
+    pub fn panic_track_midi(&self, track_id: &str) -> NativeAudioResult<()> {
+        if track_id.trim().is_empty() {
+            return Err(NativeAudioError::native_rejected(
+                "A target track is required for MIDI panic.",
+            ));
+        }
+        self.send_command_ack(
+            serde_json::json!({"type": "panicTrackMidi", "trackId": track_id}),
+            "Target Instrument Track MIDI panic requested.",
             Duration::from_secs(3),
         )
     }

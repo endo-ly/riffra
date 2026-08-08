@@ -103,12 +103,11 @@ pub struct TimelinePunchRange {
     pub end_tick: TimelineTick,
 }
 
-/// The three fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
+/// The two fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
 /// workspaces; they are [`DesignTool`]s reached from [`Workspace::Design`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Workspace {
-    Play,
     Design,
     Arrange,
 }
@@ -1733,7 +1732,7 @@ impl Arrangement {
 }
 
 /// A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
-/// live *playback* state on the Play side, distinct from a saved
+/// live *playback* state for sample performance, distinct from a saved
 /// [`crate::asset::AssetKind::Sample`] asset.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1758,7 +1757,7 @@ pub struct SampleInstrumentState {
     pub pads: Vec<SamplePad>,
 }
 
-/// Play-side live state (instrument and performance configuration).
+/// Live sample performance state (instrument and performance configuration).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayState {
@@ -1864,7 +1863,12 @@ pub struct CreativeSession {
 /// # Errors
 /// Returns a JSON error when the payload cannot be decoded as a valid session.
 pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
-    let value = serde_json::from_slice::<serde_json::Value>(payload)?;
+    let mut value = serde_json::from_slice::<serde_json::Value>(payload)?;
+    if value.get("workspace").and_then(serde_json::Value::as_str) == Some("play")
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("workspace".into(), serde_json::json!("arrange"));
+    }
     let mut session = serde_json::from_value::<CreativeSession>(value.clone())?;
     let Some(arrangement) = value.get("arrangement") else {
         return Ok(session);
@@ -2709,9 +2713,9 @@ mod tests {
     }
 
     #[test]
-    fn workspace_has_exactly_three_variants() {
-        let all = [Workspace::Play, Workspace::Design, Workspace::Arrange];
-        assert_eq!(all.len(), 3);
+    fn workspace_has_exactly_two_variants() {
+        let all = [Workspace::Design, Workspace::Arrange];
+        assert_eq!(all.len(), 2);
         assert!(matches!(
             CreativeSession::new(0).workspace,
             Workspace::Arrange
@@ -2724,10 +2728,23 @@ mod tests {
             serde_json::to_string(&Workspace::Arrange).unwrap(),
             "\"arrange\""
         );
-        assert_eq!(serde_json::to_string(&Workspace::Play).unwrap(), "\"play\"");
         assert_eq!(
             serde_json::to_string(&Workspace::Design).unwrap(),
             "\"design\""
+        );
+    }
+
+    #[test]
+    fn legacy_play_workspace_loads_as_arrange_and_serializes_canonically() {
+        let mut value = serde_json::to_value(CreativeSession::new(0)).unwrap();
+        value["workspace"] = serde_json::json!("play");
+
+        let session = deserialize_session(&serde_json::to_vec(&value).unwrap()).unwrap();
+
+        assert_eq!(session.workspace, Workspace::Arrange);
+        assert_eq!(
+            serde_json::to_value(session).unwrap()["workspace"],
+            serde_json::json!("arrange")
         );
     }
 

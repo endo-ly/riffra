@@ -16,6 +16,7 @@
 namespace riffra {
 
 class TimelineEngineTestPeer;
+class SafetyAudioCallback;
 
 class TimelineEngine final {
 public:
@@ -48,6 +49,17 @@ public:
     [[nodiscard]] bool enqueueLiveMidi(
         const juce::MidiMessage& message,
         const juce::String& deviceId = {}) noexcept;
+    [[nodiscard]] bool enqueueTargetedMidi(
+        const juce::String& trackId,
+        const juce::MidiMessage& message,
+        juce::String& error) noexcept;
+    [[nodiscard]] bool panicTargetedMidi(
+        const juce::String& trackId,
+        juce::String& error) noexcept;
+    /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
+    /// Instrument Track runtime so a host-level emergency mute also silences
+    /// VST instruments instead of only hiding their output.
+    void panicAllInstrumentTracks() noexcept;
     bool setDeviceBypassed(
         const juce::String& trackId,
         const juce::String& deviceId,
@@ -97,6 +109,7 @@ public:
 
 private:
     friend class TimelineEngineTestPeer;
+    friend class SafetyAudioCallback;
 
     class AudioReadScope;
     class AudioPublishScope;
@@ -155,6 +168,10 @@ private:
         std::vector<std::unique_ptr<Clip>> clips;
         std::vector<MidiClip> midiClips;
         std::unique_ptr<PluginRack> instrumentRack;
+        // Timeline MIDI is rendered by `instrumentRack`; Play Surface and
+        // external-live MIDI is rendered by `liveInstrumentRack` so it reaches
+        // the output without the inter-track delay compensation line.
+        std::unique_ptr<PluginRack> liveInstrumentRack;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
         juce::String instrumentTopologySignature;
@@ -234,6 +251,32 @@ private:
         std::int64_t rangeStart,
         int destinationStart,
         int sampleCount) noexcept;
+    void processLiveInstrumentTracks(
+        PreparedTimeline& timeline,
+        float* const* outputChannels,
+        int channelCount,
+        int sampleCount) noexcept;
+    void processInstrumentTrack(
+        Track& track,
+        int sampleCount,
+        const juce::MidiBuffer* timelineMidi) noexcept;
+    void processLiveInstrumentTrack(Track& track, int sampleCount) noexcept;
+    void mixProcessedTrack(
+        Track& track,
+        bool audible,
+        float* const* outputChannels,
+        int channelCount,
+        std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
+    void mixLiveTrack(
+        Track& track,
+        bool audible,
+        float* const* outputChannels,
+        int channelCount,
+        std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
     void scheduleMidi(
         const PreparedTimeline& prepared,
         Track& track,
@@ -241,6 +284,8 @@ private:
         int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    void servicePendingPanic() noexcept;
+    void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateLoopProcessedVariants(
         PreparedTimeline& timeline,
         ArrangementCaptureSink* sink) noexcept;
@@ -256,6 +301,7 @@ private:
     std::atomic<PreparedTimeline*> activeTimeline { nullptr };
     std::atomic<std::uint32_t> activeAudioReaders { 0 };
     std::atomic<bool> publishInProgress { false };
+    std::atomic<bool> panicAllPending { false };
     bool pendingMonitorLiveInput = false;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;

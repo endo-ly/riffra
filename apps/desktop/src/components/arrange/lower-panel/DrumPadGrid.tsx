@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { DRUM_PADS } from '@/lib/drum-map';
 import styles from './DrumPadGrid.module.css';
 
@@ -8,6 +9,14 @@ interface DrumPadGridProps {
 }
 
 export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProps) {
+  const releasedPointersRef = useRef<Set<number>>(new Set());
+  const releaseNote = (pointerId: number, note: number) => {
+    if (!releasedPointersRef.current.has(pointerId)) {
+      releasedPointersRef.current.add(pointerId);
+      onPadUp(note);
+    }
+  };
+
   return (
     <div className={styles.grid} role="grid">
       {DRUM_PADS.map((pad, index) => {
@@ -22,13 +31,19 @@ export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProp
             aria-label={`${pad.name} (MIDI ${pad.note}, key ${pad.key.toUpperCase()})`}
             onPointerDown={(e) => {
               e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              releasedPointersRef.current.delete(e.pointerId);
               onPadDown(pad.note);
             }}
-            onPointerUp={() => onPadUp(pad.note)}
-            onPointerLeave={() => {
-              if (active) onPadUp(pad.note);
+            onPointerUp={(e) => {
+              releaseNote(e.pointerId, pad.note);
+              e.currentTarget.releasePointerCapture?.(e.pointerId);
             }}
-            onPointerCancel={() => onPadUp(pad.note)}
+            onLostPointerCapture={(e) => releaseNote(e.pointerId, pad.note)}
+            onPointerCancel={(e) => {
+              releaseNote(e.pointerId, pad.note);
+              e.currentTarget.releasePointerCapture?.(e.pointerId);
+            }}
           >
             <span className={styles.padIndex}>{index + 1}</span>
             <span className={styles.padName}>{pad.shortName}</span>

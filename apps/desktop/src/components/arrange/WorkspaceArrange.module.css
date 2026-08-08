@@ -3,7 +3,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr) auto;
+  grid-template-rows: 58px minmax(0, 1fr) auto auto;
   overflow: hidden;
   background: #090c10;
   --header-width: 184px;
@@ -547,6 +547,10 @@
   box-shadow: inset 3px 0 0 var(--accent, #f2a33a);
   background: color-mix(in srgb, var(--surface-raised) 88%, var(--accent, #f2a33a));
 }
+.trackRow[data-focused='true'] .trackHeader {
+  box-shadow: inset 3px 0 0 var(--cyan);
+  background: color-mix(in srgb, #172a31 88%, #10161b);
+}
 
 .trackHeader {
   position: sticky;
@@ -638,6 +642,9 @@
   grid-column: 2;
   display: flex;
   gap: 3px;
+}
+.playSurfaceButton {
+  color: var(--cyan) !important;
 }
 
 .trackMenu {

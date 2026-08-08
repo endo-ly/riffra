@@ -46,7 +46,7 @@ Rustが正準化するエンティティをC++が独自に再定義しない。C
 | エンティティ                      | 役割                                                                                                               | TS                               | Rust                                | C++                                                    |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------- | ------------------------------------------------------ |
 | CreativeSession                   | 制作中の状態の正準モデル。ワークスペース、デザイン文脈、ライブ状態、アレンジ、ラック、スナップショット、設定を所有 | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
-| Workspace                         | 3つの固定制作領域（play / design / arrange）                                                                       | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
+| Workspace                         | 2つの固定制作領域（design / arrange）。演奏入力はArrange内のPlay Surfaceが担う                                     | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
 | DesignTool                        | Design workspace内の3つのツール（sample / analyze / separate）                                                     | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
 | DesignContext                     | Design workspaceの現在の対象（active_tool + target_asset_id）                                                      | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
 | PlayState                         | サンプルインストゥルメント（sample_instrument）のパッド状態                                                        | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/session.rs` | —                                                      |
@@ -74,13 +74,12 @@ Track削除は、そのTrackに属するClip参照をArrangementから同時に�
 
 ### 2.3 ラック
 
-| エンティティ   | 役割                                                                  | TS                                         | Rust                             | C++                                               |
-| -------------- | --------------------------------------------------------------------- | ------------------------------------------ | -------------------------------- | ------------------------------------------------- |
-| RackInstance   | セッションで使用中のライブララック全体                                | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                                 |
-| RackDevice     | ラック内の1スロット（input / plugin / utility / output）              | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | `native/audio-engine/src/processing/PluginRack.h` |
-| RackMacro      | 1操作を複数パラメータへ割り当てるマクロ                               | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                                 |
-| RackDefinition | RackInstanceの保存済み形態。AssetKind=RackDefinitionのAssetとして保存 | `apps/desktop/src/lib/domain.ts`（含まず） | `crates/riffra-core/src/rack.rs` | —                                                 |
-| DeviceKind     | ラックスロットの役割（input / plugin / utility / output）             | `apps/desktop/src/lib/domain.ts`           | `crates/riffra-core/src/rack.rs` | —                                                 |
+| エンティティ | 役割                                                      | TS                               | Rust                             | C++                                               |
+| ------------ | --------------------------------------------------------- | -------------------------------- | -------------------------------- | ------------------------------------------------- |
+| RackInstance | セッションで使用中のライブララック全体                    | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/rack.rs` | —                                                 |
+| RackDevice   | ラック内の1スロット（input / plugin / utility / output）  | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/rack.rs` | `native/audio-engine/src/processing/PluginRack.h` |
+| RackMacro    | 1操作を複数パラメータへ割り当てるマクロ                   | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/rack.rs` | —                                                 |
+| DeviceKind   | ラックスロットの役割（input / plugin / utility / output） | `apps/desktop/src/lib/domain.ts` | `crates/riffra-core/src/rack.rs` | —                                                 |
 
 ### 2.4 録音
 
@@ -96,7 +95,7 @@ Track削除は、そのTrackに属するClip参照をArrangementから同時に�
 | ------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------- | --- |
 | Asset               | 再利用可能な素材の正準モデル。ID・種類・コンテンツ場所・由来を所有                       | `apps/desktop/src/lib/domain.ts`（LibraryAsset） | `crates/riffra-core/src/asset.rs` | —   |
 | AssetId             | `asset:<UUIDv7>` 形式のみの識別子。newtype                                               | `apps/desktop/src/lib/domain.ts`（string）       | `crates/riffra-core/src/asset.rs` | —   |
-| AssetKind           | 素材種別（audio / midi / sample / rackDefinition / generationDefinition）                | `apps/desktop/src/lib/domain.ts`                 | `crates/riffra-core/src/asset.rs` | —   |
+| AssetKind           | 素材種別（audio / midi / sample / generationDefinition）                                 | `apps/desktop/src/lib/domain.ts`                 | `crates/riffra-core/src/asset.rs` | —   |
 | Provenance          | 素材の由来関係（source_asset_ids + operation + parameters）                              | —                                                | `crates/riffra-core/src/asset.rs` | —   |
 | ProvenanceOperation | 由来操作（recorded / processed / sampled / separated / rendered / generated / imported） | —                                                | `crates/riffra-core/src/asset.rs` | —   |
 
@@ -251,9 +250,8 @@ Completing → Failed
 
 ### 4.8 ランタイム制約
 
-- ラックは **アクティブなプラグインデバイスを1つまで** サポートする（`RackDefinition::runtime_supported`）。2つ以上のアクティブプラグインを含む保存済みRackDefinitionはロード時に拒否される
-- `disabled_placeholder = true` のプラグインデバイスは「アクティブ」 counts に含まれない
 - 緊急ミュートはランタイムfault中常に `true`
+- 緊急ミュートON（手動・フィードバック検出・デバイスエラー）は、出力Silenceに加えてBuilt-in Synthと全ArrangementのInstrument Track（Timeline／Live両RackとEffect Chain）へAll Notes Offを送り、ミュート解除後に音が残留しない
 - フィードバック検出: 250ms以上の持続的な高ピークで発動する
 
 ---

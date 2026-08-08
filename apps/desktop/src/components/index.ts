@@ -7,9 +7,8 @@ export { TransportBar } from './layout/TransportBar';
 export { MissingDependencies } from './layout/MissingDependencies';
 export { AudioSettingsDialog } from './settings/AudioSettingsDialog';
 
-export { WorkspacePlay } from './play/WorkspacePlay';
-export { MidiDevices } from './play/MidiDevices';
-export { MidiMonitor } from './play/MidiMonitor';
+export { MidiDevices } from './midi/MidiDevices';
+export { MidiMonitor } from './midi/MidiMonitor';
 
 export { WorkspaceSample } from './design/WorkspaceSample';
 export { SamplePadEditor } from './design/SamplePadEditor';

@@ -1,44 +1,55 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DRUM_PADS, DRUM_PAD_DEFAULT_VELOCITY, drumPadByKey } from '@/lib/drum-map';
-import { encodeNoteOff, encodeNoteOn, GM_DRUM_CHANNEL } from '@/lib/musical-typing';
+import {
+  encodeNoteOff,
+  encodeNoteOn,
+  GM_DRUM_CHANNEL,
+  isEditableTypingTarget,
+} from '@/lib/musical-typing';
 
 interface UseDrumPadsOptions {
   /** When false, all listeners detach and any held notes are released. */
   enabled: boolean;
   /** Velocity 0-127 sent with each Note On. */
   velocity?: number;
-  /** Receives encoded MIDI bytes; usually `api.sendMidiToPlugin`. */
-  sendMidi: (bytes: number[]) => void | Promise<void>;
+  /** The Instrument Track that receives encoded MIDI bytes. */
+  targetTrackId: string | null;
+  /** Receives encoded MIDI bytes for the target Instrument Track. */
+  sendMidi: (trackId: string, bytes: number[]) => void | Promise<void>;
 }
 
 export function useDrumPads({
   enabled,
   velocity = DRUM_PAD_DEFAULT_VELOCITY,
+  targetTrackId,
   sendMidi,
 }: UseDrumPadsOptions) {
   const [activeNotes, setActiveNotes] = useState<ReadonlySet<number>>(() => new Set());
   const heldKeysRef = useRef<Set<string>>(new Set());
   const heldPadCountsRef = useRef<Map<number, number>>(new Map());
-  const paramsRef = useRef({ velocity, sendMidi });
-  paramsRef.current = { velocity, sendMidi };
+  const heldPadTargetsRef = useRef<Map<number, string>>(new Map());
+  const previousTargetTrackIdRef = useRef(targetTrackId);
+  const paramsRef = useRef({ velocity, targetTrackId, sendMidi });
+  paramsRef.current = { velocity, targetTrackId, sendMidi };
 
   const releaseAll = useCallback(() => {
-    heldKeysRef.current.forEach((key) => {
-      const pad = drumPadByKey(key);
-      if (pad === undefined) return;
-      void paramsRef.current.sendMidi(encodeNoteOff(pad.note, GM_DRUM_CHANNEL));
+    heldPadTargetsRef.current.forEach((trackId, note) => {
+      void paramsRef.current.sendMidi(trackId, encodeNoteOff(note, GM_DRUM_CHANNEL));
     });
     heldKeysRef.current.clear();
     heldPadCountsRef.current.clear();
+    heldPadTargetsRef.current.clear();
     setActiveNotes(new Set());
   }, []);
 
   const noteOn = useCallback((note: number) => {
-    const { velocity: vel, sendMidi: sm } = paramsRef.current;
+    const { velocity: vel, targetTrackId: trackId, sendMidi: sm } = paramsRef.current;
+    if (!trackId) return;
     const count = (heldPadCountsRef.current.get(note) ?? 0) + 1;
     heldPadCountsRef.current.set(note, count);
     if (count === 1) {
-      void sm(encodeNoteOn(note, vel, GM_DRUM_CHANNEL));
+      heldPadTargetsRef.current.set(note, trackId);
+      void sm(trackId, encodeNoteOn(note, vel, GM_DRUM_CHANNEL));
       setActiveNotes((prev) => {
         const next = new Set(prev);
         next.add(note);
@@ -48,10 +59,14 @@ export function useDrumPads({
   }, []);
 
   const noteOff = useCallback((note: number) => {
-    const count = (heldPadCountsRef.current.get(note) ?? 0) - 1;
+    const currentCount = heldPadCountsRef.current.get(note);
+    if (currentCount == null) return;
+    const count = currentCount - 1;
     if (count <= 0) {
       heldPadCountsRef.current.delete(note);
-      void paramsRef.current.sendMidi(encodeNoteOff(note, GM_DRUM_CHANNEL));
+      const trackId = heldPadTargetsRef.current.get(note);
+      heldPadTargetsRef.current.delete(note);
+      if (trackId) void paramsRef.current.sendMidi(trackId, encodeNoteOff(note, GM_DRUM_CHANNEL));
       setActiveNotes((prev) => {
         const next = new Set(prev);
         next.delete(note);
@@ -63,14 +78,23 @@ export function useDrumPads({
   }, []);
 
   useEffect(() => {
-    if (enabled) return;
-    releaseAll();
+    if (!enabled) {
+      releaseAll();
+      return;
+    }
+    return releaseAll;
   }, [enabled, releaseAll]);
+
+  useEffect(() => {
+    if (previousTargetTrackIdRef.current !== targetTrackId) releaseAll();
+    previousTargetTrackIdRef.current = targetTrackId;
+  }, [releaseAll, targetTrackId]);
 
   useEffect(() => {
     if (!enabled) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTypingTarget(event.target)) return;
       if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
@@ -115,5 +139,5 @@ export function useDrumPads({
     [noteOff],
   );
 
-  return { activeNotes, triggerPadDown, triggerPadUp, padCount: DRUM_PADS.length };
+  return { activeNotes, releaseAll, triggerPadDown, triggerPadUp, padCount: DRUM_PADS.length };
 }

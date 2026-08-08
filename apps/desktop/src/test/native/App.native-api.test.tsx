@@ -41,13 +41,12 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
     expect(fake.calls).toContain('bootstrap');
     await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
-    expect(fake.calls).not.toContain('restoreCurrentRack');
     expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('setEmergencyMute');
     expect(fake.bootstrapState.session.workspace).toBe('arrange');
     expect(
       within(screen.getByRole('navigation', { name: /Workspace/ })).getAllByRole('button'),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
@@ -78,7 +77,7 @@ describe('App driven by FakeNativeApi', () => {
     expect(screen.getByText('RECOVERY CHOICE')).toBeInTheDocument();
 
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
-    expect(within(workspaceNav).getAllByRole('button')).toHaveLength(3);
+    expect(within(workspaceNav).getAllByRole('button')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /Home/ })).not.toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -103,28 +102,9 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.calls).not.toContain('setEmergencyMute');
   });
 
-  it('restores the Play rack when entering Play instead of during startup', async () => {
-    const fake = new FakeNativeApi();
-    fake.setAudioState('muted');
-    renderApp(fake);
-
-    await waitForAppShell();
-    expect(fake.calls).not.toContain('restoreCurrentRack');
-
-    const user = userEvent.setup();
-    await user.click(
-      within(screen.getByRole('navigation', { name: /Workspace/ })).getByRole('button', {
-        name: /Play/,
-      }),
-    );
-    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
-    expect(fake.calls).not.toContain('setEmergencyMute');
-    expect(fake.audio.state).toBe('muted');
-  });
-
-  it('rehydrates the current Play runtime after a sidecar restart', async () => {
+  it('does not restore the rack runtime after a sidecar restart in Design', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'play' } },
+      bootstrapState: { session: { ...defaultSession(), workspace: 'design' } },
     });
     renderApp(fake);
 
@@ -134,7 +114,7 @@ describe('App driven by FakeNativeApi', () => {
     fake.emitRuntimeRestarted(2);
 
     await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    await waitFor(() => expect(fake.calls).toContain('restoreCurrentRack'));
+    expect(fake.calls).not.toContain('syncArrangementRuntime');
   });
 
   it('rehydrates the current Arrange runtime graph after a sidecar restart', async () => {
@@ -154,7 +134,7 @@ describe('App driven by FakeNativeApi', () => {
 
   it('does not continue automatic recovery when Sample Pad restoration rejects', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'play' } },
+      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
     });
     let failRecovery = false;
     fake.restoreSamplePadsStrict = async () => {
@@ -165,15 +145,12 @@ describe('App driven by FakeNativeApi', () => {
     renderApp(fake);
 
     await waitForAppShell();
-    const rackRestoreCount = fake.calls.filter((call) => call === 'restoreCurrentRack').length;
     fake.calls.splice(0);
     failRecovery = true;
 
     fake.emitRuntimeRestarted(2);
 
     await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    expect(fake.calls.filter((call) => call === 'restoreCurrentRack')).toHaveLength(0);
-    expect(rackRestoreCount).toBe(0);
   });
 
   it('retries the latest runtime generation after a restart during recovery', async () => {
@@ -213,7 +190,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
   });
 
-  it('does not let a cancelled Play failure overwrite a newer playing state', async () => {
+  it('does not let a cancelled playback failure overwrite a newer playing state', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
     });
@@ -359,7 +336,7 @@ describe('App driven by FakeNativeApi', () => {
     const user = userEvent.setup();
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
 
-    for (const label of ['Play', 'Arrange', 'Design']) {
+    for (const label of ['Arrange', 'Design']) {
       await user.click(within(workspaceNav).getByRole('button', { name: new RegExp(label) }));
       expect(screen.getByRole('button', { name: /^(MUTE|UNMUTE)$/ })).toBeInTheDocument();
     }
@@ -373,10 +350,10 @@ describe('App driven by FakeNativeApi', () => {
     const user = userEvent.setup();
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
     await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
-    await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
+    await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
 
     await waitFor(() => expect(fake.calls).toContain('switchWorkspace'));
-    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('play'));
+    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('design'));
   });
 
   it('previews master gain during a gesture and persists it once at the end', async () => {
@@ -455,23 +432,12 @@ describe('App driven by FakeNativeApi', () => {
 
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
     const user = userEvent.setup();
-    await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
-
-    // Capture snapshot A — this mutates session state from the Play workspace.
-    await user.click(screen.getByRole('button', { name: '＋' }));
-    await waitFor(() => expect(fake.calls).toContain('captureSnapshot'));
-
+    await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
+    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('design'));
     await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
-    await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
-
-    // The captured snapshot must survive workspace switches and reach persistence.
-    await waitFor(() => {
-      expect(
-        fake.savedSessions.some((session) =>
-          session.snapshots.some((snapshot) => snapshot.id === 'snapshot:A'),
-        ),
-      ).toBe(true);
-    });
+    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('arrange'));
+    expect(fake.bootstrapState.session.arrangement.tracks).toHaveLength(0);
+    expect(fake.bootstrapState.session.rack.devices).toEqual(defaultSession().rack.devices);
   });
 
   it('previews a sample pad through React props, not DOM listeners', async () => {
@@ -499,7 +465,7 @@ describe('App driven by FakeNativeApi', () => {
     });
   });
 
-  it('loads a VST3 into the rack through the injected api and projects it into the Scratch Session', async () => {
+  it('adds a scanned plugin to the focused Instrument Track', async () => {
     const plugins: PluginEntry[] = [
       {
         id: 'plug:example',
@@ -530,53 +496,30 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
     const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
+    await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
 
-    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
+    await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const loaded = saved.rack.devices.find((device) => device.kind === 'plugin');
+      const loaded = saved.arrangement.tracks[0]?.instrument;
       expect(loaded).toBeDefined();
       expect(loaded?.path).toBe(plugins[0].path);
       expect(loaded?.name).toBe(plugins[0].name);
-      expect(loaded?.bypassed).toBe(false);
-      expect(loaded?.gainDb).toBe(0);
-      expect(saved.rack.devices.filter((device) => device.kind === 'plugin')).toHaveLength(1);
-      expect(saved.rack.devices.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
     });
 
-    // Loading a second plugin replaces the first and never stacks in the rack.
     await user.click(screen.getByRole('button', { name: /Other Synth/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Replace Instrument' }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      const rackPlugins = saved.rack.devices.filter((device) => device.kind === 'plugin');
-      expect(rackPlugins).toHaveLength(1);
-      expect(rackPlugins[0].path).toBe(plugins[1].path);
-      expect(rackPlugins[0].name).toBe(plugins[1].name);
-      expect(saved.rack.devices.filter((device) => device.kind !== 'plugin')).toHaveLength(3);
+      expect(saved.arrangement.tracks[0]?.instrument?.path).toBe(plugins[1].path);
     });
   });
 
-  it('keeps the Scratch Session rack unchanged when a plugin load faults', async () => {
-    const fake = new FakeNativeApi({ plugins: [examplePlugin], pluginLoadFaulted: true });
-    renderApp(fake);
-    await waitForAppShell();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
-    );
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-
-    await waitFor(() => expect(fake.audio.state).toBe('faulted'));
-    await waitFor(() => {
-      expect(
-        fake.bootstrapState.session.rack.devices.some((device) => device.kind === 'plugin'),
-      ).toBe(false);
-    });
-  });
-
-  it('toggles plugin bypass through the Play workspace and reflects it in the rack', async () => {
+  it('requires a focused Track before adding a plugin', async () => {
     const fake = new FakeNativeApi({ plugins: [examplePlugin] });
     renderApp(fake);
     await waitForAppShell();
@@ -586,43 +529,55 @@ describe('App driven by FakeNativeApi', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
-
-    const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
-    await user.click(within(workspaceNav).getByRole('button', { name: /Play/ }));
-
-    await user.click(screen.getByRole('button', { name: /Bypass/ }));
-    await waitFor(() => {
-      const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.devices.find((device) => device.kind === 'plugin')?.bypassed).toBe(true);
-    });
-
-    await user.click(screen.getByRole('button', { name: /Enable/ }));
-    await waitFor(() => {
-      const saved = fake.savedSessions[fake.savedSessions.length - 1];
-      expect(saved.rack.devices.find((device) => device.kind === 'plugin')?.bypassed).toBe(false);
-    });
+    expect(screen.getByText('Select a Track before adding a Plugin.')).toBeInTheDocument();
+    expect(fake.calls).not.toContain('setTrackInstrument');
   });
 
-  it('opens the loaded plugin editor from the Play rack', async () => {
+  it('plays the focused Instrument Track from the Arrange lower panel', async () => {
     const fake = new FakeNativeApi({ plugins: [examplePlugin] });
     renderApp(fake);
     await waitForAppShell();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
 
     const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
+    await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await waitFor(() => expect(fake.calls).toContain('loadPluginIntoRack'));
-    await user.click(
-      within(screen.getByRole('navigation', { name: /Workspace/ })).getByRole('button', {
-        name: /Play/,
-      }),
-    );
-    await user.click(screen.getByRole('button', { name: /Open Example Synth editor/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
+    await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
 
-    await waitFor(() => expect(fake.calls).toContain('openPluginEditor'));
+    const savedSessionCount = fake.savedSessions.length;
+    expect(fake.bootstrapState.session.arrangement.tracks[0]?.armed).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Open Play Surface for Instrument 1' }));
+    expect(screen.getByText('Live input only')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Computer Keyboard: Off' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Computer Keyboard: Off' }));
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
+    await waitFor(() => {
+      expect(fake.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(2);
+    });
+    expect(fake.savedSessions).toHaveLength(savedSessionCount);
+
+    const sentBeforeLibraryInput = fake.calls.filter((call) => call === 'sendMidiToTrack').length;
+    const librarySearch = screen.getByLabelText('Library search');
+    fireEvent.keyDown(librarySearch, { key: 'd' });
+    fireEvent.keyUp(librarySearch, { key: 'd' });
+    expect(fake.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(
+      sentBeforeLibraryInput,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Collapse' }));
+    fireEvent.keyDown(window, { key: 's' });
+    fireEvent.keyUp(window, { key: 's' });
+    await waitFor(() => {
+      expect(fake.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(4);
+    });
+    await user.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(screen.queryByRole('button', { name: 'Stop Notes' })).not.toBeInTheDocument();
+    expect(fake.savedSessions).toHaveLength(savedSessionCount);
   });
 
   it('applies an audio driver selection without changing the Scratch Session', async () => {
@@ -643,46 +598,5 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.calls).not.toContain('switchWorkspace');
     expect(fake.bootstrapState.session.workspace).toBe('arrange');
     expect(fake.savedSessions).toHaveLength(savesBeforeSelection);
-  });
-
-  it('restores plugin parameters into the rack through the injected api', async () => {
-    const bootSession = {
-      ...defaultSession(),
-      workspace: 'play' as const,
-      rack: {
-        ...defaultSession().rack,
-        devices: [
-          ...defaultSession().rack.devices,
-          {
-            id: 'plugin:example',
-            name: 'Example Synth',
-            kind: 'plugin' as const,
-            path: examplePlugin.path,
-            bypassed: false,
-            gainDb: 0,
-            parameterValues: [0.3, 0.7],
-            disabledPlaceholder: false,
-          },
-        ],
-      },
-    };
-    const fake = new FakeNativeApi({
-      plugins: [examplePlugin],
-      pluginParameters: [
-        { index: 0, name: 'Cutoff', value: 0, defaultValue: 0, automatable: true },
-        { index: 1, name: 'Resonance', value: 0, defaultValue: 0, automatable: true },
-      ],
-      bootstrapState: { session: bootSession },
-    });
-    renderApp(fake);
-    await waitForAppShell();
-
-    await waitFor(() => {
-      const loaded = fake.bootstrapState.session.rack.devices.find(
-        (device) => device.kind === 'plugin',
-      );
-      expect(loaded).toBeDefined();
-      expect(loaded?.parameterValues).toEqual([0.3, 0.7]);
-    });
   });
 });

@@ -40,9 +40,17 @@ void SafetyAudioCallback::enqueuePluginMidi(const juce::MidiMessage& message) no
 }
 
 
+void SafetyAudioCallback::panicAll() noexcept {
+    allNotesOff();
+    if (timelineEngine != nullptr) {
+        timelineEngine->panicAllInstrumentTracks();
+        timelineEngine->servicePendingPanic();
+    }
+}
+
 void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
     if (shouldMute)
-        allNotesOff();
+        panicAll();
     emergencyMuted.store(shouldMute, std::memory_order_release);
     if (!shouldMute) {
         currentGainLinear = 0.0f;
@@ -504,6 +512,8 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const int numOutputChannels,
     const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    if (timelineEngine != nullptr)
+        timelineEngine->servicePendingPanic();
     int recordingOffset = 0;
     int recordedSamples = numSamples;
     if (timelineEngine != nullptr)
@@ -554,7 +564,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     if (feedbackDetector.consumeSuspected()) {
         emergencyMuted.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);
-        allNotesOff();
+        panicAll();
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
@@ -752,6 +762,7 @@ void SafetyAudioCallback::audioDeviceError(const juce::String& errorMessage) {
     const juce::ScopedLock lock(errorLock);
     lastDeviceError = errorMessage;
     emergencyMuted.store(true, std::memory_order_release);
+    panicAll();
 }
 
 juce::String SafetyAudioCallback::takeLastDeviceError() {

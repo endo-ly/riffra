@@ -84,19 +84,18 @@ const libraryStub = {
   searchQuery: '',
   selectedAsset: null,
   relatedAssets: [] as LibraryAsset[],
-  rackDefinitions: [] as LibraryAsset[],
   onSelectAsset: vi.fn(),
   onPreviewAsset: vi.fn(),
   onEditAsset: vi.fn(),
   onOpenInDesign: vi.fn(),
-  onLoadRackDefinition: vi.fn(),
   onImportMidi: vi.fn(),
 };
 
 const rackStub = {
   plugins: [] as PluginEntry[],
   visiblePlugins: [] as PluginEntry[],
-  onLoadPlugin: vi.fn(),
+  focusedTrack: null,
+  onAddPlugin: vi.fn(),
 };
 
 const recordingsStub = {

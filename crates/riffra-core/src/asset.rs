@@ -77,7 +77,6 @@ pub enum AssetKind {
     Audio,
     Midi,
     Sample,
-    RackDefinition,
     GenerationDefinition,
 }
 

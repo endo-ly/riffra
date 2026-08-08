@@ -561,16 +561,19 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
 
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
     juce::MidiBuffer midi;
+    if (panicPending.exchange(false, std::memory_order_acq_rel)) {
+        for (int channel = 1; channel <= 16; ++channel) {
+            midi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
+            midi.addEvent(juce::MidiMessage::allSoundOff(channel), 0);
+            midi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);
+        }
+    }
     if (timelineMidi != nullptr) {
         for (const auto metadata : *timelineMidi) {
             midi.addEvent(metadata.getMessage(), metadata.samplePosition);
         }
     }
     pendingMidi.appendTo(midi, numSamples);
-    if (panicPending.exchange(false, std::memory_order_acq_rel)) {
-        for (int channel = 1; channel <= 16; ++channel)
-            midi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
-    }
     plugin->processBlock(buffer, midi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
 }

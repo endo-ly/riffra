@@ -1,12 +1,13 @@
 .grid {
+  width: min(100%, 520px);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(4, 1fr);
   gap: 5px;
   margin-top: 8px;
   padding: 10px;
-  background: linear-gradient(180deg, #06080b 0%, #0a0d11 100%);
-  border: 1px solid #1a2028;
+  background: linear-gradient(180deg, #0a1115 0%, #0d151a 100%);
+  border: 1px solid #30414b;
   border-radius: 8px;
   box-shadow:
     inset 0 2px 12px rgba(0, 0, 0, 0.6),
@@ -26,7 +27,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 70%, #0e1217 100%);
-  color: #8a92a0;
+  color: #d4e1e4;
   cursor: pointer;
   user-select: none;
   overflow: hidden;
@@ -42,7 +43,7 @@
 }
 .pad:hover {
   border-color: var(--border-bright);
-  background: linear-gradient(180deg, #1f2630 0%, var(--surface-2) 70%, #12161c 100%);
+  background: linear-gradient(180deg, #283842 0%, var(--surface-2) 70%, #151e24 100%);
 }
 .pad:active {
   transform: translateY(1px);
@@ -66,7 +67,8 @@
 .padKey {
   font-size: 9px;
   font-weight: 700;
-  opacity: 0.4;
+  color: #a6bac1;
+  opacity: 0.8;
   text-transform: uppercase;
 }
 .padNote {
@@ -74,7 +76,7 @@
   bottom: 3px;
   right: 5px;
   font-size: 7px;
-  opacity: 0.25;
+  opacity: 0.45;
   font-variant-numeric: tabular-nums;
 }
 .kick {

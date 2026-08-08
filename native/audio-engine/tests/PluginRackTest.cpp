@@ -214,4 +214,68 @@ TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock)
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 64);
 }
 
+TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel)
+{
+    // Arrange
+    InstrumentTrace trace;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(
+        std::make_unique<TestInstrumentProcessor>(trace),
+        kSampleRate,
+        kBlockSize,
+        error);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> outputLeft {};
+    std::array<float, kBlockSize> outputRight {};
+    const std::array<float*, 2> outputs { outputLeft.data(), outputRight.data() };
+
+    // Act
+    rack->allNotesOff();
+    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+    // Assert
+    ASSERT_EQ(trace.midiMessages.size(), 48u);
+    for (int channel = 1; channel <= 16; ++channel) {
+        const auto offset = static_cast<std::size_t>((channel - 1) * 3);
+        EXPECT_TRUE(trace.midiMessages[offset].isController());
+        EXPECT_EQ(trace.midiMessages[offset].getChannel(), channel);
+        EXPECT_EQ(trace.midiMessages[offset].getControllerNumber(), 123);
+        EXPECT_EQ(trace.midiMessages[offset].getControllerValue(), 0);
+
+        EXPECT_TRUE(trace.midiMessages[offset + 1].isController());
+        EXPECT_EQ(trace.midiMessages[offset + 1].getChannel(), channel);
+        EXPECT_EQ(trace.midiMessages[offset + 1].getControllerNumber(), 120);
+        EXPECT_EQ(trace.midiMessages[offset + 1].getControllerValue(), 0);
+
+        EXPECT_TRUE(trace.midiMessages[offset + 2].isController());
+        EXPECT_EQ(trace.midiMessages[offset + 2].getChannel(), channel);
+        EXPECT_EQ(trace.midiMessages[offset + 2].getControllerNumber(), 64);
+        EXPECT_EQ(trace.midiMessages[offset + 2].getControllerValue(), 0);
+    }
+}
+
+TEST(PluginRackTest, DeliversQueuedNoteAfterResetControllers)
+{
+    InstrumentTrace trace;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(
+        std::make_unique<TestInstrumentProcessor>(trace),
+        kSampleRate,
+        kBlockSize,
+        error);
+    ASSERT_NE(rack, nullptr) << error;
+    std::array<float, kBlockSize> outputLeft {};
+    std::array<float, kBlockSize> outputRight {};
+    const std::array<float*, 2> outputs { outputLeft.data(), outputRight.data() };
+
+    rack->allNotesOff();
+    rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+    ASSERT_EQ(trace.midiMessages.size(), 49u);
+    EXPECT_TRUE(trace.midiMessages.front().isController());
+    EXPECT_TRUE(trace.midiMessages.back().isNoteOn());
+    EXPECT_TRUE(trace.noteHeld);
+}
+
 } // namespace riffra

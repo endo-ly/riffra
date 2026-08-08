@@ -242,77 +242,6 @@ async function audioCommandError(
   };
 }
 
-async function loadPluginIntoRack(
-  path: string,
-  parameterValues: number[],
-  bypassed: boolean,
-  stateData: string | null,
-): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('load_plugin_into_rack', {
-    path,
-    parameterValues,
-    bypassed,
-    stateData,
-  });
-}
-
-async function clearPluginFromRack(): Promise<{
-  session: CreativeSession;
-  audio: AudioStatus;
-}> {
-  return invoke<SessionAudioPair>('clear_plugin_from_rack');
-}
-
-async function openPluginEditor(): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('open_plugin_editor');
-  } catch (error) {
-    return await audioCommandError('Open plugin editor', error);
-  }
-}
-
-async function setRackPluginBypassed(bypassed: boolean): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('set_rack_plugin_bypassed', {
-    bypassed,
-  });
-}
-
-async function setRackPluginParameter(index: number, value: number): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('set_rack_plugin_parameter', {
-    index,
-    value,
-  });
-}
-
-async function setRackMacroValue(macroId: string, value: number): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('set_rack_macro_value', {
-    macroId,
-    value,
-  });
-}
-
-async function mapRackMacro(
-  macroId: string,
-  parameterIndex: number | null,
-): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('map_rack_macro', {
-    macroId,
-    parameterIndex,
-  });
-}
-
-async function restoreCurrentRackStrict(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('restore_current_rack');
-}
-
-async function restoreCurrentRack(): Promise<AudioStatus> {
-  try {
-    return await restoreCurrentRackStrict();
-  } catch (error) {
-    return await audioCommandError('Restore rack', error);
-  }
-}
-
 async function restoreSamplePadsStrict(): Promise<AudioStatus> {
   return await invoke<AudioStatus>('restore_sample_pads');
 }
@@ -323,14 +252,6 @@ async function restoreSamplePads(): Promise<AudioStatus> {
   } catch (error) {
     return await audioCommandError('Restore sample pads', error);
   }
-}
-
-async function recallSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('recall_snapshot', { slot });
-}
-
-async function captureSnapshot(slot: 'A' | 'B'): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('capture_snapshot', { slot });
 }
 
 async function previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus> {
@@ -470,12 +391,21 @@ async function disableMidiListening(): Promise<AudioStatus> {
   }
 }
 
-async function sendMidiToPlugin(bytes: number[]): Promise<AudioStatus | null> {
+async function sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null> {
   try {
-    await invoke<void>('send_midi_to_plugin', { bytes });
+    await invoke<void>('send_midi_to_track', { trackId, bytes });
     return null;
   } catch (error) {
-    return await audioCommandError('Send MIDI to plugin', error);
+    return await audioCommandError('Send MIDI to Track', error);
+  }
+}
+
+async function panicMidiTrack(trackId: string): Promise<AudioStatus | null> {
+  try {
+    await invoke<void>('panic_midi_track', { trackId });
+    return null;
+  } catch (error) {
+    return await audioCommandError('Panic MIDI Track', error);
   }
 }
 
@@ -933,18 +863,6 @@ async function updateTimelinePunchRange(
   });
 }
 
-async function saveRackDefinition(name: string, path: string): Promise<AssetId | null> {
-  return invokeOrFallback<AssetId | null>('save_rack_definition', { name, path }, null);
-}
-
-async function listRackDefinitions(): Promise<LibraryAsset[]> {
-  return invokeOrFallback<LibraryAsset[]>('list_rack_definitions', {}, []);
-}
-
-async function loadRackDefinitionAsset(assetId: AssetId): Promise<SessionAudioPair | null> {
-  return invokeOrFallback<SessionAudioPair | null>('load_rack_definition_asset', { assetId }, null);
-}
-
 async function openAssetInDesign(
   assetId: AssetId,
   tool: DesignTool,
@@ -1009,19 +927,8 @@ function createNativeApi(): NativeApi {
     probeAudioDevices,
     listSeparations,
     renderTimeline,
-    loadPluginIntoRack,
-    clearPluginFromRack,
-    openPluginEditor,
-    setRackPluginBypassed,
-    setRackPluginParameter,
-    setRackMacroValue,
-    mapRackMacro,
-    restoreCurrentRack,
-    restoreCurrentRackStrict,
     restoreSamplePads,
     restoreSamplePadsStrict,
-    captureSnapshot,
-    recallSnapshot,
     previewAsset,
     stopSamplePreview,
     stopSamplePreviewKey,
@@ -1039,7 +946,8 @@ function createNativeApi(): NativeApi {
     setAudioDriver,
     enableMidiListening,
     disableMidiListening,
-    sendMidiToPlugin,
+    sendMidiToTrack,
+    panicMidiTrack,
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
@@ -1107,9 +1015,6 @@ function createNativeApi(): NativeApi {
     switchWorkspace,
     updateSessionSettings,
     applyAiSuggestion,
-    saveRackDefinition,
-    listRackDefinitions,
-    loadRackDefinitionAsset,
     renameRecording,
     deleteRecording,
     archiveRecording,

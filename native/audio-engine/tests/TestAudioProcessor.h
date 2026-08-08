@@ -59,7 +59,9 @@ struct InstrumentTrace final {
     bool prepared = false;
     bool processed = false;
     bool released = false;
+    bool noteHeld = false;
     juce::MidiMessage lastMidiMessage;
+    std::vector<juce::MidiMessage> midiMessages;
     int midiMessageCount = 0;
 };
 
@@ -82,9 +84,19 @@ public:
         trace.processed = trace.prepared;
         for (const auto metadata : midi) {
             trace.lastMidiMessage = metadata.getMessage();
+            trace.midiMessages.push_back(trace.lastMidiMessage);
             ++trace.midiMessageCount;
+            if (trace.lastMidiMessage.isNoteOn())
+                trace.noteHeld = true;
+            else if (trace.lastMidiMessage.isNoteOff())
+                trace.noteHeld = false;
         }
-        buffer.applyGain(0.5f);
+        buffer.clear();
+        if (trace.noteHeld) {
+            for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+                juce::FloatVectorOperations::fill(
+                    buffer.getWritePointer(channel), 0.25f, buffer.getNumSamples());
+        }
     }
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
     bool hasEditor() const override { return false; }

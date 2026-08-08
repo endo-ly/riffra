@@ -11,6 +11,7 @@ import {
 import type {
   AudioClip,
   AutomationParameter,
+  AudioStatus,
   CreativeSession,
   Marker,
   MidiClip,
@@ -23,6 +24,8 @@ import { ArrangeToolbar } from './ArrangeToolbar';
 import { ArrangeTrack } from './ArrangeTrack';
 import { AutomationLaneView } from './AutomationLaneView';
 import { MidiEditorPanel } from './MidiEditorPanel';
+import { ArrangeLowerPanel, type ArrangeLowerPanelView } from './lower-panel/ArrangeLowerPanel';
+import { PlaySurfacePanel } from './lower-panel/PlaySurfacePanel';
 import { PluginPicker } from './PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import {
@@ -51,6 +54,10 @@ interface WorkspaceArrangeProps {
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
   api: NativeApi;
+  audio: AudioStatus;
+  focusedTrackId: string | null;
+  onFocusTrack: (trackId: string | null) => void;
+  missingDeviceIds?: string[];
   plugins?: PluginEntry[];
   onRecord?: () => void;
   recordingActive?: boolean;
@@ -90,7 +97,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
-  const [midiEditorOpen, setMidiEditorOpen] = useState(false);
+  const [lowerPanelView, setLowerPanelView] = useState<ArrangeLowerPanelView>('closed');
+  const [lowerPanelCollapsed, setLowerPanelCollapsed] = useState(false);
+  const [lowerPanelHeight, setLowerPanelHeight] = useState(260);
+  const [playSurfaceSummary, setPlaySurfaceSummary] = useState(
+    'No instrument selected · Keyboard C4 · Computer keyboard off',
+  );
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<{
     trackId: string;
@@ -174,6 +186,28 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
+  const focusedTrackId = props.focusedTrackId;
+  const focusedTrack = arrangement.tracks.find((track) => track.id === focusedTrackId) ?? null;
+  const activeMidiClip = arrangement.midiClips.find((clip) => clip.id === activeMidiClipId) ?? null;
+  const runtimeReady =
+    !playbackOutOfSync &&
+    props.audio.state !== 'starting' &&
+    props.audio.state !== 'faulted' &&
+    props.audio.state !== 'offline';
+
+  useEffect(() => {
+    if (activeMidiClipId !== null && !activeMidiClip) {
+      setActiveMidiClipId(null);
+      if (lowerPanelView === 'midiEditor') setLowerPanelView('closed');
+    }
+  }, [activeMidiClip, activeMidiClipId, lowerPanelView]);
+
+  const openPlaySurface = (trackId: string) => {
+    props.setSelection({ kind: 'track', trackId });
+    props.onFocusTrack(trackId);
+    setLowerPanelView('playSurface');
+    setLowerPanelCollapsed(false);
+  };
 
   const applyZoom = (next: number, clientX?: number) => {
     const bounded = Math.min(4, Math.max(0.35, next));
@@ -524,8 +558,24 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
       : '';
     if (!window.confirm(`Delete ${name}?${detail}\n\nSource Audio Assets will be kept.`)) return;
+    const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
+    if (
+      props.focusedTrackId === trackId &&
+      deletedTrack?.kind === 'instrument' &&
+      deletedTrack.instrument
+    ) {
+      try {
+        const status = await props.api.panicMidiTrack(trackId);
+        if (status) editor.setMessage(status.message);
+      } catch (error) {
+        editor.setMessage(String(error));
+      }
+    }
     const next = await editor.commit(props.api.removeTrack(trackId), `${name} deleted.`);
     if (next) {
+      if (props.focusedTrackId === trackId) {
+        props.onFocusTrack(null);
+      }
       const remaining = new Set(next.arrangement.audioClips.map((clip) => clip.id));
       const clipIds = selectedClipIds.filter((id) => remaining.has(id));
       props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
@@ -1043,7 +1093,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   selected={
                     props.selection.kind === 'track' && props.selection.trackId === track.id
                   }
-                  onSelectTrack={() => props.setSelection({ kind: 'track', trackId: track.id })}
+                  focused={props.focusedTrackId === track.id}
+                  onSelectTrack={() => {
+                    props.setSelection({ kind: 'track', trackId: track.id });
+                    props.onFocusTrack(track.id);
+                  }}
+                  onOpenPlaySurface={
+                    track.kind === 'instrument' ? () => openPlaySurface(track.id) : undefined
+                  }
                   timelineWidth={timelineWidth}
                   timelineTicks={timelineTicks}
                   pixelsPerTick={pixelsPerTick}
@@ -1066,7 +1123,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onFade={editor.beginFade}
                   onOpenMidiEditor={(clip) => {
                     setActiveMidiClipId(clip.id);
-                    setMidiEditorOpen(true);
+                    setLowerPanelView('midiEditor');
+                    setLowerPanelCollapsed(false);
                   }}
                   onAudioClipContextMenu={openAudioClipContextMenu}
                   onMidiClipContextMenu={openMidiClipContextMenu}
@@ -1136,6 +1194,102 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         </div>
       </div>
 
+      <ArrangeLowerPanel
+        view={lowerPanelView}
+        collapsed={lowerPanelCollapsed}
+        height={lowerPanelHeight}
+        activeMidiClip={activeMidiClip}
+        onViewChange={(view) => {
+          setLowerPanelView(view);
+          setLowerPanelCollapsed(false);
+        }}
+        onCollapsedChange={setLowerPanelCollapsed}
+        onHeightChange={setLowerPanelHeight}
+        onClose={() => {
+          setLowerPanelView('closed');
+          setActiveMidiClipId(null);
+        }}
+        playSurfaceSummary={playSurfaceSummary}
+        playSurface={
+          <PlaySurfacePanel
+            track={focusedTrack}
+            audio={props.audio}
+            api={props.api}
+            runtimeReady={runtimeReady}
+            missingDeviceIds={[
+              ...(props.missingDeviceIds ?? []),
+              ...(transport?.missingDeviceIds ?? []),
+            ]}
+            onChooseInstrument={() => {
+              if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
+            }}
+            onSummaryChange={setPlaySurfaceSummary}
+          />
+        }
+        midiEditor={
+          <MidiEditorPanel
+            clip={activeMidiClip}
+            timebase={timebase}
+            onAddNote={(clipId, startTick, pitch) =>
+              void editor.commit(
+                props.api.addMidiNote(
+                  clipId,
+                  Math.max(0, Math.round(startTick)),
+                  pitch,
+                  240,
+                  96,
+                  1,
+                ),
+                'Note added.',
+              )
+            }
+            onUpdateNote={(clipId, note) =>
+              void editor.commit(
+                props.api.updateMidiNote(clipId, note.id, {
+                  note: note.note,
+                  startTick: note.startTick,
+                  durationTicks: note.durationTicks,
+                  velocity: note.velocity,
+                }),
+                'Note updated.',
+              )
+            }
+            onUpdateNotes={(clipId, updates) =>
+              void editor.commit(
+                props.api.updateMidiNotes(
+                  clipId,
+                  updates.map((update) => ({
+                    noteId: update.noteId,
+                    patch: {
+                      note: update.patch.note,
+                      startTick: update.patch.startTick,
+                      durationTicks: update.patch.durationTicks,
+                      velocity: update.patch.velocity,
+                    },
+                  })),
+                ),
+                'MIDI notes updated.',
+              )
+            }
+            onRemoveNote={(clipId, noteId) =>
+              void editor.commit(props.api.removeMidiNote(clipId, noteId), 'Note removed.')
+            }
+            onQuantize={(clipId, noteIds, gridTicks) =>
+              void editor.commit(
+                props.api.quantizeMidiNotes(clipId, noteIds, gridTicks),
+                'MIDI notes quantized.',
+              )
+            }
+            onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
+              void editor.commit(
+                props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks),
+                'MIDI notes duplicated.',
+              )
+            }
+          />
+        }
+      />
+
       <div className={styles.statusToast} role="status">
         <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
         {playbackOutOfSync
@@ -1153,66 +1307,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           y={contextMenu.y}
           items={contextMenu.items}
           onClose={() => setContextMenu(null)}
-        />
-      )}
-
-      {midiEditorOpen && (
-        <MidiEditorPanel
-          clip={arrangement.midiClips.find((clip) => clip.id === activeMidiClipId) ?? null}
-          timebase={timebase}
-          onClose={() => {
-            setMidiEditorOpen(false);
-            setActiveMidiClipId(null);
-          }}
-          onAddNote={(clipId, startTick, pitch) =>
-            void editor.commit(
-              props.api.addMidiNote(clipId, Math.max(0, Math.round(startTick)), pitch, 240, 96, 1),
-              'Note added.',
-            )
-          }
-          onUpdateNote={(clipId, note) =>
-            void editor.commit(
-              props.api.updateMidiNote(clipId, note.id, {
-                note: note.note,
-                startTick: note.startTick,
-                durationTicks: note.durationTicks,
-                velocity: note.velocity,
-              }),
-              'Note updated.',
-            )
-          }
-          onUpdateNotes={(clipId, updates) =>
-            void editor.commit(
-              props.api.updateMidiNotes(
-                clipId,
-                updates.map((update) => ({
-                  noteId: update.noteId,
-                  patch: {
-                    note: update.patch.note,
-                    startTick: update.patch.startTick,
-                    durationTicks: update.patch.durationTicks,
-                    velocity: update.patch.velocity,
-                  },
-                })),
-              ),
-              'MIDI notes updated.',
-            )
-          }
-          onRemoveNote={(clipId, noteId) =>
-            void editor.commit(props.api.removeMidiNote(clipId, noteId), 'Note removed.')
-          }
-          onQuantize={(clipId, noteIds, gridTicks) =>
-            void editor.commit(
-              props.api.quantizeMidiNotes(clipId, noteIds, gridTicks),
-              'MIDI notes quantized.',
-            )
-          }
-          onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
-            void editor.commit(
-              props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks),
-              'MIDI notes duplicated.',
-            )
-          }
         />
       )}
     </section>

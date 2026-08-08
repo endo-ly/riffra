@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
@@ -19,7 +19,7 @@ import type {
 } from '@/lib/domain';
 import { toAssetId } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
-import { audioCommandSucceeded } from '@/lib/audio-safety';
+import { isEditableTypingTarget } from '@/lib/musical-typing';
 import { startingAudioStatus } from '@/lib/audio-defaults';
 import type { AudioMeters } from '@/lib/audio-meters';
 import { publishAudioMeters } from '@/lib/audio-meters';
@@ -51,12 +51,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
-    loadPluginIntoRack: loadPluginIntoRackApi,
-    clearPluginFromRack: clearPluginFromRackApi,
-    openPluginEditor: openPluginEditorApi,
-    setRackPluginBypassed,
-    setRackPluginParameter,
-    restoreCurrentRackStrict,
     restoreSamplePadsStrict,
     createSamplePad: createSamplePadApi,
     updateSamplePad: updateSamplePadApi,
@@ -71,10 +65,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     replaceMissingTrackPlugin,
     addAudioClipToArrangement,
     openAssetInDesign: openAssetInDesignApi,
-    saveRackDefinition,
-    listRackDefinitions,
-    loadRackDefinitionAsset,
-    sendMidiToPlugin,
     onAudioStatus,
     onAudioMeters,
     onTrackPluginStateChanged,
@@ -86,7 +76,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
-  const [missingPluginPaths, setMissingPluginPaths] = useState<string[]>([]);
   const [missingDependencies, setMissingDependencies] = useState<MissingDependency[]>([]);
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [separations, setSeparations] = useState<SeparationResult[]>([]);
@@ -162,7 +151,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     importMidi,
   } = library;
 
-  const sessionHook = useSession(api, { setBoot, setAudio, setMissingPluginPaths });
+  const sessionHook = useSession(api, { setBoot });
   const {
     session,
     setSession: setSessionState,
@@ -178,8 +167,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     historySkip,
     undo,
     redo,
-    captureSnapshot,
-    recallSnapshot,
     renameSession,
     exportSession,
     importSession,
@@ -238,14 +225,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { restorePlayRack, syncArrangeRuntime } = useRuntimeRecovery({
+  const { syncArrangeRuntime } = useRuntimeRecovery({
     api,
     safeMode: boot?.safeMode,
     sessionRef,
     audioRef,
     setAudio,
     setScanMessage,
-    restoreCurrentRackStrict,
     restoreSamplePadsStrict,
     syncArrangementRuntime,
   });
@@ -273,7 +259,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setNavigationSession,
     runSessionOp,
     setAutosaveError,
-    restorePlayRack,
     syncArrangeRuntime,
     nextTransportSequence,
     cancelPendingPlay,
@@ -330,70 +315,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     startRecordingNow,
     toggleRecording,
   } = audioHook;
-
-  const loadPluginIntoRack = useCallback(
-    async (
-      plugin: PluginEntry,
-      parameterValues: number[] = [],
-      bypassed = false,
-      stateData: string | null = null,
-    ) => {
-      const { session: nextSession, audio: nextAudio } = await loadPluginIntoRackApi(
-        plugin.path,
-        parameterValues,
-        bypassed,
-        stateData,
-      );
-      setAudio(nextAudio);
-      setSession(nextSession);
-    },
-    [loadPluginIntoRackApi],
-  );
-
-  const clearPluginFromRack = useCallback(async () => {
-    const { session: nextSession, audio: nextAudio } = await clearPluginFromRackApi();
-    setAudio(nextAudio);
-    setSession(nextSession);
-  }, [clearPluginFromRackApi]);
-
-  const openPluginEditor = useCallback(async () => {
-    setAudio(await openPluginEditorApi());
-  }, [openPluginEditorApi]);
-
-  const sendMidi = useCallback(
-    async (bytes: number[]) => {
-      const nextAudio = await sendMidiToPlugin(bytes);
-      // Successful keyboard notes are a high-rate realtime path. Their
-      // acknowledgement must not rebuild the whole App tree or carry a full
-      // plugin state payload; safety/error states still surface immediately.
-      if (
-        nextAudio != null &&
-        (!audioCommandSucceeded(nextAudio) ||
-          /failed|could not|unavailable|blocked/i.test(nextAudio.message))
-      ) {
-        setAudio(nextAudio);
-      }
-    },
-    [sendMidiToPlugin, setAudio],
-  );
-
-  const togglePluginBypass = useCallback(
-    async (bypassed: boolean) => {
-      const { session: nextSession, audio: nextAudio } = await setRackPluginBypassed(bypassed);
-      setAudio(nextAudio);
-      setSession(nextSession);
-    },
-    [setRackPluginBypassed],
-  );
-
-  const setPluginParameterValue = useCallback(
-    async (index: number, value: number) => {
-      const { session: nextSession, audio: nextAudio } = await setRackPluginParameter(index, value);
-      setAudio(nextAudio);
-      setSession(nextSession);
-    },
-    [setRackPluginParameter],
-  );
 
   const runBackgroundJob = useCallback(
     async <J extends BackgroundJobStatus>(
@@ -485,33 +406,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [analyzeAsset, openAssetInDesign],
   );
-
-  const saveCurrentRack = useCallback(async () => {
-    if (!session) return;
-    const path = window.prompt('Rack definition path', 'rack-definition.json');
-    if (!path?.trim()) return;
-    const name = window.prompt('Rack definition name', 'Rack Definition');
-    if (!name?.trim()) return;
-    await saveRackDefinition(name.trim(), path.trim());
-    setRackDefinitions(await listRackDefinitions());
-  }, [listRackDefinitions, saveRackDefinition, session]);
-
-  const loadSavedRack = useCallback(
-    async (assetId: AssetId) => {
-      const result = await loadRackDefinitionAsset(assetId);
-      if (!result) return;
-      setSession(result.session);
-      setAudio(result.audio);
-    },
-    [loadRackDefinitionAsset, setAudio, setSession],
-  );
-
-  const [rackDefinitions, setRackDefinitions] = useState<LibraryAsset[]>([]);
-  useEffect(() => {
-    void listRackDefinitions()
-      .then(setRackDefinitions)
-      .catch(logNativeError('listRackDefinitions'));
-  }, [listRackDefinitions, saveRackDefinition]);
 
   const selectReference = useCallback(
     async (recording: RecordingAsset) => {
@@ -753,17 +647,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
             () => startScanJob(state.vst3Root),
             (report) => {
               setPlugins(report.plugins);
-              setMissingPluginPaths(
-                state.session.rack.devices
-                  .filter((device) => device.kind === 'plugin' && device.path)
-                  .filter(
-                    (device) =>
-                      !report.plugins.some(
-                        (plugin) => plugin.path === device.path && plugin.scanState === 'validated',
-                      ),
-                  )
-                  .map((device) => device.path as string),
-              );
               setScanMessage(
                 report.issues.length
                   ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
@@ -1006,13 +889,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   }, []);
 
   useEffect(() => {
-    const pluginIsInstrument =
-      audio.plugin != null && audio.plugin.loaded && audio.plugin.inputChannels === 0;
     const keyboardKeys = ['z', 's', 'x', 'd', 'c', 'v', 'g', 'b', 'h', 'n', 'j', 'm'];
     const onKey = (event: KeyboardEvent) => {
-      if (pluginIsInstrument) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if (isEditableTypingTarget(event.target)) return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
       const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
       if (pad) {
@@ -1021,9 +900,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      if (pluginIsInstrument) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if (isEditableTypingTarget(event.target)) return;
       const index = keyboardKeys.indexOf(event.key.toLowerCase());
       const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
       if (pad?.loopEnabled) {
@@ -1037,12 +914,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [previewSamplePad, session?.playState.sampleInstrument.pads, audio.plugin]);
+  }, [previewSamplePad, session?.playState.sampleInstrument.pads, stopSamplePreviewKey]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
+      const typing = isEditableTypingTarget(event.target);
       if (event.ctrlKey && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setCommandOpen((open) => !open);
@@ -1067,7 +943,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         void toggleMute();
         return;
       }
-      if (!typing && event.key >= '1' && event.key <= '4')
+      if (!typing && event.key >= '1' && Number(event.key) <= workspaces.length)
         void switchWorkspace(workspaces[Number(event.key) - 1].id);
       if (event.key === 'Escape') setCommandOpen(false);
     };
@@ -1075,19 +951,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     return () => window.removeEventListener('keydown', onKey);
   }, [redo, switchWorkspace, toggleMute, undo]);
 
-  const persistedPlugin = session?.rack.devices.find((device) => device.kind === 'plugin') ?? null;
-  const selectedPlugin = useMemo(() => {
-    if (persistedPlugin?.path) {
-      return plugins.find((plugin) => plugin.path === persistedPlugin.path) ?? null;
-    }
-    if (audio.plugin?.name) {
-      return plugins.find((plugin) => plugin.name === audio.plugin?.name) ?? null;
-    }
-    return null;
-  }, [audio.plugin?.name, persistedPlugin?.path, plugins]);
-  const selectedPluginName =
-    selectedPlugin?.name ?? persistedPlugin?.name ?? audio.plugin?.name ?? null;
-  const selectedPluginVendor = selectedPlugin?.vendor ?? (selectedPluginName ? 'VST3' : null);
   const visiblePlugins = query
     ? plugins.filter((plugin) =>
         `${plugin.name} ${plugin.vendor ?? ''} ${plugin.path}`.toLowerCase().includes(query),
@@ -1112,8 +975,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setAutosaveError,
     plugins,
     setPlugins,
-    missingPluginPaths,
-    setMissingPluginPaths,
     missingDependencies,
     relinkMissing,
     disableMissingPluginDevice,
@@ -1181,20 +1042,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     previousSession,
     historySkip,
     recordingCommandLock,
-    loadPluginIntoRack,
-    clearPluginFromRack,
-    openPluginEditor,
-    sendMidi,
-    togglePluginBypass,
-    setPluginParameterValue,
     recoverAudio,
     selectAudioDriver,
     enableMidi,
     disableMidi,
     undo,
     redo,
-    captureSnapshot,
-    recallSnapshot,
     openRecordingAnalysis,
     openLibraryAssetAnalysis,
     selectReference,
@@ -1213,9 +1066,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     createSamplePad,
     updateSamplePad,
     removeSamplePad,
-    saveCurrentRack,
-    loadSavedRack,
-    rackDefinitions,
     switchWorkspace,
     renameSession,
     exportSession,
@@ -1228,10 +1078,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     toggleMute,
     startRecordingNow,
     toggleRecording,
-    persistedPlugin,
-    selectedPlugin,
-    selectedPluginName,
-    selectedPluginVendor,
     query,
     visiblePlugins,
     visibleRecordings,

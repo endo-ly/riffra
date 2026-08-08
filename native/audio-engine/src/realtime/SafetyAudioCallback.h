@@ -105,6 +105,12 @@ private:
         int sampleOffset = 0,
         int capturedSamples = -1) noexcept;
 
+    /// Panics every sound source: the built-in synth, the arranged
+    /// instrument racks, and their live companions. Used by the emergency
+    /// mute, feedback detection, and device-error paths so a muted state can
+    /// never leave a VST holding notes internally.
+    void panicAll() noexcept;
+
     /// Sine lookup table size. Power-of-two keeps the index wrap cheap; the
     /// stored table has one extra element duplicating index 0 so linear
     /// interpolation can read `lut[i0 + 1]` without a separate wrap branch.
