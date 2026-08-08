@@ -16,6 +16,7 @@
 namespace riffra {
 
 class TimelineEngineTestPeer;
+class SafetyAudioCallback;
 
 class TimelineEngine final {
 public:
@@ -55,7 +56,7 @@ public:
     [[nodiscard]] bool panicTargetedMidi(
         const juce::String& trackId,
         juce::String& error) noexcept;
-    /// Sends an all-notes-off / all-sound-off / sustain-off panic to every
+    /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.
     void panicAllInstrumentTracks() noexcept;
@@ -108,6 +109,7 @@ public:
 
 private:
     friend class TimelineEngineTestPeer;
+    friend class SafetyAudioCallback;
 
     class AudioReadScope;
     class AudioPublishScope;
@@ -282,6 +284,8 @@ private:
         int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    void servicePendingPanic() noexcept;
+    void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateLoopProcessedVariants(
         PreparedTimeline& timeline,
         ArrangementCaptureSink* sink) noexcept;
@@ -297,6 +301,7 @@ private:
     std::atomic<PreparedTimeline*> activeTimeline { nullptr };
     std::atomic<std::uint32_t> activeAudioReaders { 0 };
     std::atomic<bool> publishInProgress { false };
+    std::atomic<bool> panicAllPending { false };
     bool pendingMonitorLiveInput = false;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;

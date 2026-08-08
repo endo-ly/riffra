@@ -20,42 +20,182 @@
 
 namespace riffra {
 
+namespace {
+
+juce::var makeInstrumentSnapshot(
+    const juce::String& trackId,
+    const juce::String& instrumentDeviceId = {}) {
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    auto* track = new juce::DynamicObject();
+    track->setProperty("id", trackId);
+    track->setProperty("kind", "instrument");
+    track->setProperty("gainDb", 0.0);
+    track->setProperty("pan", 0.0);
+    track->setProperty("muted", false);
+    track->setProperty("solo", false);
+    track->setProperty("armed", false);
+    track->setProperty("monitoring", "off");
+    auto* rack = new juce::DynamicObject();
+    rack->setProperty("devices", juce::Array<juce::var> {});
+    track->setProperty("rack", juce::var(rack));
+    track->setProperty("audioClips", juce::Array<juce::var> {});
+    track->setProperty("midiClips", juce::Array<juce::var> {});
+    track->setProperty("automation", juce::Array<juce::var> {});
+    if (instrumentDeviceId.isNotEmpty()) {
+        auto* instrument = new juce::DynamicObject();
+        instrument->setProperty("id", instrumentDeviceId);
+        instrument->setProperty("kind", "plugin");
+        instrument->setProperty("disabledPlaceholder", true);
+        track->setProperty("instrument", juce::var(instrument));
+    }
+
+    juce::Array<juce::var> tracks;
+    tracks.add(juce::var(track));
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+    return juce::var(snapshot);
+}
+
+} // namespace
+
 class TimelineEngineTestPeer final {
 public:
+    static bool addChainDevice(
+        PluginChain& chain,
+        const juce::String& id,
+        std::unique_ptr<juce::AudioProcessor> processor,
+        const double sampleRate,
+        const int blockSize,
+        juce::String& error) {
+        auto rack = PluginRackTestPeer::install(
+            std::move(processor), sampleRate, blockSize, error);
+        if (rack == nullptr)
+            return false;
+        chain.devices.push_back(PluginChain::Device { id, std::move(rack) });
+        chain.prepare(sampleRate, blockSize);
+        return true;
+    }
+
+    static bool instrumentEffectChainsProcessOnce() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        if (!engine.loadSnapshot(
+                makeInstrumentSnapshot("track:effect-chain"),
+                formats,
+                48'000.0,
+                32,
+                error))
+            return false;
+        std::vector<int> processOrder;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
+                return false;
+            auto& track = *engine.timeline->tracks.front();
+            if (!addChainDevice(
+                    track.effectChain,
+                    "effect:timeline",
+                    std::make_unique<TestChainProcessor>(
+                        1, 1.0f, 0, processOrder),
+                    48'000.0,
+                    32,
+                    error)
+                || !addChainDevice(
+                    track.liveEffectChain,
+                    "effect:live",
+                    std::make_unique<TestChainProcessor>(
+                        2, 1.0f, 0, processOrder),
+                    48'000.0,
+                    32,
+                    error))
+                return false;
+        }
+
+        // Act
+        engine.play();
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        std::array<float*, 2> outputs { left.data(), right.data() };
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+        // Assert
+        return processOrder == std::vector<int> { 1, 2 };
+    }
+
+    static bool editorParameterMirrorsLiveInstrument() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        if (!engine.loadSnapshot(
+                makeInstrumentSnapshot("track:editor-instrument", "instrument:editor"),
+                formats,
+                48'000.0,
+                32,
+                error))
+            return false;
+        auto timelineRack = PluginRackTestPeer::install(
+            std::make_unique<StateTestProcessor>(), 48'000.0, 32, error);
+        auto liveRack = PluginRackTestPeer::install(
+            std::make_unique<StateTestProcessor>(), 48'000.0, 32, error);
+        if (timelineRack == nullptr || liveRack == nullptr)
+            return false;
+        auto* timelineRackPointer = timelineRack.get();
+        auto* liveRackPointer = liveRack.get();
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
+                return false;
+            auto& track = *engine.timeline->tracks.front();
+            track.instrumentRack = std::move(timelineRack);
+            track.liveInstrumentRack = std::move(liveRack);
+        }
+        if (!timelineRackPointer->setParameter(0, 0.75f, error))
+            return false;
+
+        // Act
+        if (!engine.mirrorEditorDeviceParameter(
+                "track:editor-instrument",
+                "instrument:editor",
+                0,
+                0.75f,
+                error))
+            return false;
+        engine.play();
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        std::array<float*, 2> outputs { left.data(), right.data() };
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+        // Assert
+        const auto liveState = liveRackPointer->persistedState(error);
+        const auto liveValues = liveState.getProperty("parameterValues", {});
+        return liveValues.isArray() && liveValues.size() > 0
+            && std::abs(static_cast<float>(liveValues[0]) - 0.75f) <= 0.0001f;
+    }
+
     static bool liveInstrumentProcessesWhileStopped() {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
         TimelineEngine engine;
         juce::String error;
-
-        auto* timebase = new juce::DynamicObject();
-        timebase->setProperty("ppq", 960);
-        timebase->setProperty("bpm", 120.0);
-        timebase->setProperty("timeSignatureNumerator", 4);
-        timebase->setProperty("timeSignatureDenominator", 4);
-        auto* track = new juce::DynamicObject();
-        track->setProperty("id", "track:live-instrument");
-        track->setProperty("kind", "instrument");
-        track->setProperty("gainDb", 0.0);
-        track->setProperty("pan", 0.0);
-        track->setProperty("muted", false);
-        track->setProperty("solo", false);
-        track->setProperty("armed", false);
-        track->setProperty("monitoring", "off");
-        auto* rack = new juce::DynamicObject();
-        rack->setProperty("devices", juce::Array<juce::var> {});
-        track->setProperty("rack", juce::var(rack));
-        track->setProperty("audioClips", juce::Array<juce::var> {});
-        track->setProperty("midiClips", juce::Array<juce::var> {});
-        track->setProperty("automation", juce::Array<juce::var> {});
-        juce::Array<juce::var> tracks;
-        tracks.add(juce::var(track));
-        auto* snapshot = new juce::DynamicObject();
-        snapshot->setProperty("revision", 1);
-        snapshot->setProperty("timebase", juce::var(timebase));
-        snapshot->setProperty("tracks", tracks);
-
-        if (!engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 32, error))
+        if (!engine.loadSnapshot(
+                makeInstrumentSnapshot("track:live-instrument"),
+                formats,
+                48'000.0,
+                32,
+                error))
             return false;
 
         InstrumentTrace trace;
@@ -102,35 +242,12 @@ public:
         formats.registerBasicFormats();
         TimelineEngine engine;
         juce::String error;
-
-        auto* timebase = new juce::DynamicObject();
-        timebase->setProperty("ppq", 960);
-        timebase->setProperty("bpm", 120.0);
-        timebase->setProperty("timeSignatureNumerator", 4);
-        timebase->setProperty("timeSignatureDenominator", 4);
-        auto* track = new juce::DynamicObject();
-        track->setProperty("id", "track:panic-instrument");
-        track->setProperty("kind", "instrument");
-        track->setProperty("gainDb", 0.0);
-        track->setProperty("pan", 0.0);
-        track->setProperty("muted", false);
-        track->setProperty("solo", false);
-        track->setProperty("armed", false);
-        track->setProperty("monitoring", "off");
-        auto* rack = new juce::DynamicObject();
-        rack->setProperty("devices", juce::Array<juce::var> {});
-        track->setProperty("rack", juce::var(rack));
-        track->setProperty("audioClips", juce::Array<juce::var> {});
-        track->setProperty("midiClips", juce::Array<juce::var> {});
-        track->setProperty("automation", juce::Array<juce::var> {});
-        juce::Array<juce::var> tracks;
-        tracks.add(juce::var(track));
-        auto* snapshot = new juce::DynamicObject();
-        snapshot->setProperty("revision", 1);
-        snapshot->setProperty("timebase", juce::var(timebase));
-        snapshot->setProperty("tracks", tracks);
-
-        if (!engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 32, error))
+        if (!engine.loadSnapshot(
+                makeInstrumentSnapshot("track:panic-instrument"),
+                formats,
+                48'000.0,
+                32,
+                error))
             return false;
 
         InstrumentTrace timelineTrace;
@@ -150,30 +267,23 @@ public:
             panicTrack.liveInstrumentRack = std::move(liveRack);
         }
 
-        engine.panicAllInstrumentTracks();
-
+        // Act
         std::array<float, 32> left {};
         std::array<float, 32> right {};
         std::array<float*, 2> outputs { left.data(), right.data() };
-        bool timelinePanicked = false;
-        bool livePanicked = false;
+        engine.publishInProgress.store(true, std::memory_order_release);
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1)
-                return false;
-            auto& panicTrack = *engine.timeline->tracks.front();
-            if (panicTrack.instrumentRack != nullptr) {
-                panicTrack.instrumentRack->process(
-                    nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()));
-                timelinePanicked = timelineTrace.midiMessages.size() == 48u;
-            }
-            if (panicTrack.liveInstrumentRack != nullptr) {
-                panicTrack.liveInstrumentRack->process(
-                    nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()));
-                livePanicked = liveTrace.midiMessages.size() == 48u;
-            }
+            engine.panicAllInstrumentTracks();
+            engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
         }
-        return timelinePanicked && livePanicked;
+        engine.publishInProgress.store(false, std::memory_order_release);
+        engine.play();
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+        // Assert
+        return timelineTrace.midiMessages.size() == 48u
+            && liveTrace.midiMessages.size() == 48u;
     }
 
 
@@ -1448,6 +1558,36 @@ TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender)
             << name.toStdString();
     }
     EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
+}
+
+TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce)
+{
+    // Arrange
+    // Act
+    const auto passed = TimelineEngineTestPeer::instrumentEffectChainsProcessOnce();
+
+    // Assert
+    EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, MirrorsEditorParameterToLiveInstrument)
+{
+    // Arrange
+    // Act
+    const auto passed = TimelineEngineTestPeer::editorParameterMirrorsLiveInstrument();
+
+    // Assert
+    EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, RetainsEmergencyPanicUntilAReadableGraphIsAvailable)
+{
+    // Arrange
+    // Act
+    const auto passed = TimelineEngineTestPeer::panicClosesEveryInstrumentRack();
+
+    // Assert
+    EXPECT_TRUE(passed);
 }
 
 } // namespace riffra

@@ -42,8 +42,10 @@ void SafetyAudioCallback::enqueuePluginMidi(const juce::MidiMessage& message) no
 
 void SafetyAudioCallback::panicAll() noexcept {
     allNotesOff();
-    if (timelineEngine != nullptr)
+    if (timelineEngine != nullptr) {
         timelineEngine->panicAllInstrumentTracks();
+        timelineEngine->servicePendingPanic();
+    }
 }
 
 void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
@@ -510,6 +512,8 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const int numOutputChannels,
     const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    if (timelineEngine != nullptr)
+        timelineEngine->servicePendingPanic();
     int recordingOffset = 0;
     int recordedSamples = numSamples;
     if (timelineEngine != nullptr)

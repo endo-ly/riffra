@@ -381,7 +381,7 @@ bool TimelineEngine::prepareSnapshot(
             if (!track->reuseRuntimeDevices
                 && !track->effectChain.load(devices, outputSampleRate, maximumBlockSize, error))
                 return false;
-            if (!track->reuseRuntimeDevices && !track->instrument &&
+            if (!track->reuseRuntimeDevices &&
                 !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
                 return false;
             if (!track->reuseRuntimeDevices && !track->instrument &&
@@ -1128,18 +1128,13 @@ bool TimelineEngine::panicTargetedMidi(
 }
 
 void TimelineEngine::panicAllInstrumentTracks() noexcept {
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr)
-        return;
-    for (auto& trackPtr : timeline->tracks) {
-        auto& track = *trackPtr;
-        if (track.instrumentRack != nullptr)
-            track.instrumentRack->allNotesOff();
-        if (track.liveInstrumentRack != nullptr)
-            track.liveInstrumentRack->allNotesOff();
-        track.effectChain.allNotesOff();
-        track.liveEffectChain.allNotesOff();
-    }
+    panicAllPending.store(true, std::memory_order_release);
+}
+
+void TimelineEngine::servicePendingPanic() noexcept {
+    AudioReadScope activeRead(*this);
+    if (auto* active = activeRead.get(); active != nullptr)
+        applyPendingPanic(*active);
 }
 
 PluginRack* TimelineEngine::findDevice(
@@ -1217,8 +1212,6 @@ bool TimelineEngine::mirrorEditorDeviceParameter(
         return false;
     }
     auto& track = **found;
-    if (track.instrumentRack != nullptr && track.instrumentDeviceId == deviceId)
-        return true;
     if (track.instrumentRack != nullptr && track.instrumentDeviceId == deviceId) {
         if (track.liveInstrumentRack != nullptr)
             track.liveInstrumentRack->enqueueParameterChange(parameterIndex, value);
@@ -1897,7 +1890,7 @@ void TimelineEngine::processLiveInstrumentTrack(
     } else {
         track.liveInputBuffer.clear(0, sampleCount);
     }
-    track.effectChain.process(
+    track.liveEffectChain.process(
         track.liveInputBuffer.getArrayOfReadPointers(),
         2,
         track.liveProcessedBuffer.getArrayOfWritePointers(),
@@ -1996,6 +1989,20 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
     }
 }
 
+void TimelineEngine::applyPendingPanic(PreparedTimeline& prepared) noexcept {
+    if (!panicAllPending.exchange(false, std::memory_order_acq_rel))
+        return;
+    for (auto& trackPtr : prepared.tracks) {
+        auto& track = *trackPtr;
+        if (track.instrumentRack != nullptr)
+            track.instrumentRack->allNotesOff();
+        if (track.liveInstrumentRack != nullptr)
+            track.liveInstrumentRack->allNotesOff();
+        track.effectChain.allNotesOff();
+        track.liveEffectChain.allNotesOff();
+    }
+}
+
 void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexcept {
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
@@ -2028,6 +2035,7 @@ void TimelineEngine::mix(
     auto* active = activeRead.get();
     if (active == nullptr)
         return;
+    applyPendingPanic(*active);
     const auto currentState = state.load(std::memory_order_acquire);
     if (currentState == State::stopped) {
         processLiveInstrumentTracks(*active, outputChannels, channelCount, sampleCount);

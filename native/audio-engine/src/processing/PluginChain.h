@@ -8,6 +8,7 @@
 namespace riffra {
 
 class PluginChainTestPeer;
+class TimelineEngineTestPeer;
 
 class PluginChain final {
 public:
@@ -46,6 +47,7 @@ public:
 
 private:
     friend class PluginChainTestPeer;
+    friend class TimelineEngineTestPeer;
 
     struct Device final {
         juce::String id;
