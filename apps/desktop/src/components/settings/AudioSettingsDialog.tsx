@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/lib/domain';
+import type {
+  AudioDeviceProbe,
+  AudioDriverConfig,
+  AudioStatus,
+  DeviceChannels,
+} from '@/lib/domain';
 import {
   audioBufferSizeOptions,
   audioSampleRateOptions,
   createAudioSettingsDraft,
   includeEffectiveOption,
   isAudioSettingsDraftValid,
+  mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
 } from '@/lib/audio-settings';
@@ -21,6 +27,11 @@ interface AudioSettingsDialogProps {
 
   onClose: () => void;
   onRefresh: () => Promise<AudioDeviceProbe>;
+  onProbeChannels: (
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ) => Promise<DeviceChannels>;
   onApply: (config: AudioDriverConfig) => Promise<AudioStatus>;
   onRecover: () => Promise<AudioStatus>;
 }
@@ -33,6 +44,7 @@ export function AudioSettingsDialog({
   recordingActive,
   onClose,
   onRefresh,
+  onProbeChannels,
   onApply,
   onRecover,
 }: AudioSettingsDialogProps) {
@@ -82,6 +94,47 @@ export function AudioSettingsDialog({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [applying, onClose, open]);
+
+  // Startup discovery is passive: it never opens a device, so the selected
+  // interface's channel names are only known after a per-device detail probe.
+  // Resolve them lazily for the currently selected interface so the channel
+  // selector and draft validation have real names without probing every
+  // device (especially every ASIO driver) during startup.
+  useEffect(() => {
+    if (!open || safeMode) return;
+    const driver = draft.driver;
+    const inputDevice = draft.inputDevice;
+    if (driver === '' || inputDevice == null) return;
+    const active = availableProbe.drivers.find((candidate) => candidate.name === driver);
+    const selected = active?.inputs.find((device) => device.name === inputDevice);
+    if (selected == null || selected.channels.length > 0) return;
+    if (refreshing || applying || recovering) return;
+    let cancelled = false;
+    setError(null);
+    void onProbeChannels(driver, inputDevice, draft.outputDevice ?? inputDevice)
+      .then((detail) => {
+        if (cancelled) return;
+        setAvailableProbe((current) => mergeDeviceChannels(current, detail));
+      })
+      .catch((reason) => {
+        if (!cancelled)
+          setError(errorMessage(reason, 'Device channel details could not be loaded.'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    safeMode,
+    draft.driver,
+    draft.inputDevice,
+    draft.outputDevice,
+    availableProbe,
+    refreshing,
+    applying,
+    recovering,
+    onProbeChannels,
+  ]);
 
   if (!open) return null;
 
@@ -208,6 +261,14 @@ export function AudioSettingsDialog({
           </div>
 
           {safeMode && <p className={styles.notice}>Safe Mode blocks audio-driver changes.</p>}
+
+          {activeDriver?.accessMode === 'driverManaged' && (
+            <p className={styles.notice}>
+              {activeDriver.name} manages the audio device itself. Depending on the driver and
+              sample-rate settings, other applications using the same device may be paused while the
+              audio engine is running.
+            </p>
+          )}
 
           {!hasDevices ? (
             <p className={styles.empty}>No audio devices are currently available.</p>

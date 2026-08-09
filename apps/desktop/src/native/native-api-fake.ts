@@ -16,6 +16,7 @@ import type {
   MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
+  DeviceChannels,
   JobKind,
   LibraryAsset,
   MissingDependency,
@@ -533,6 +534,24 @@ export class FakeNativeApi implements NativeApi {
       midiOutputs: [],
       refreshedAtMs: 1,
       message: 'Fake device probe complete.',
+    };
+  };
+
+  probeDeviceChannels = async (
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ): Promise<DeviceChannels> => {
+    this.calls.push('probeDeviceChannels');
+    return {
+      driver,
+      inputDevice,
+      inputChannels: [{ index: 0, name: 'Input 1' }],
+      outputDevice,
+      outputChannels: [
+        { index: 0, name: 'Output 1' },
+        { index: 1, name: 'Output 2' },
+      ],
     };
   };
 

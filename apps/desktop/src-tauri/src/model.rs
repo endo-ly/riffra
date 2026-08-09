@@ -227,6 +227,19 @@ pub struct AudioDeviceProbe {
     pub message: String,
 }
 
+/// Channel names resolved lazily for a single selected device from Audio
+/// Settings. Startup discovery stays passive (no device open); this detail is
+/// fetched only when the user configures a specific device, opening it once.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceChannels {
+    pub driver: String,
+    pub input_device: String,
+    pub input_channels: Vec<AudioChannelInfo>,
+    pub output_device: String,
+    pub output_channels: Vec<AudioChannelInfo>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioState {

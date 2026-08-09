@@ -5,6 +5,7 @@ import {
   createAudioSettingsDraft,
   includeEffectiveOption,
   isAudioSettingsDraftValid,
+  mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   reconcileAudioSettings,
   selectDriverForDraft,
@@ -193,6 +194,60 @@ describe('audio setting reconciliation', () => {
     expect(normalized.inputChannel).toBe(0);
     expect(normalized.outputDevice).toBe('Speakers');
     expect(isAudioSettingsDraftValid(normalized, audioProbe())).toBe(true);
+  });
+
+  it('fills channel names from a lazy per-device probe into the passive startup probe', () => {
+    const passive: AudioDeviceProbe = {
+      drivers: [
+        {
+          name: 'ASIO',
+          accessMode: 'driverManaged',
+          devicePairing: 'sameDevice',
+          inputs: [{ name: 'Focusrite USB ASIO', channels: [] }],
+          outputs: [{ name: 'Focusrite USB ASIO', channels: [] }],
+        },
+        {
+          name: 'Windows Audio',
+          accessMode: 'shared',
+          devicePairing: 'independent',
+          inputs: [{ name: 'Mic', channels: [] }],
+          outputs: [{ name: 'Speakers', channels: [] }],
+        },
+      ],
+      midiInputs: [],
+      midiOutputs: [],
+      refreshedAtMs: 1,
+      message: 'Audio device list refreshed.',
+    };
+    const merged = mergeDeviceChannels(passive, {
+      driver: 'ASIO',
+      inputDevice: 'Focusrite USB ASIO',
+      inputChannels: [
+        { index: 0, name: 'Analogue 1' },
+        { index: 1, name: 'Analogue 2' },
+      ],
+      outputDevice: 'Focusrite USB ASIO',
+      outputChannels: [{ index: 0, name: 'Monitor 1' }],
+    });
+
+    expect(merged.drivers[0].inputs[0].channels).toEqual([
+      { index: 0, name: 'Analogue 1' },
+      { index: 1, name: 'Analogue 2' },
+    ]);
+    expect(merged.drivers[0].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
+    expect(
+      isAudioSettingsDraftValid(
+        {
+          driver: 'ASIO',
+          inputDevice: 'Focusrite USB ASIO',
+          inputChannel: 1,
+          outputDevice: 'Focusrite USB ASIO',
+          sampleRate: 48_000,
+          bufferSize: 128,
+        },
+        merged,
+      ),
+    ).toBe(true);
   });
 });
 

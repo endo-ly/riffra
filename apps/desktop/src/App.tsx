@@ -153,6 +153,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     setDeviceProbe(nextProbe);
     return nextProbe;
   };
+  const probeAudioChannels = async (driver: string, inputDevice: string, outputDevice: string) =>
+    api.probeDeviceChannels(driver, inputDevice, outputDevice);
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
@@ -190,6 +192,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         recordingActive={audio.recording.active || recordingCommandPending}
         onClose={() => setAudioSettingsOpen(false)}
         onRefresh={refreshAudioDevices}
+        onProbeChannels={probeAudioChannels}
         onApply={selectAudioDriver}
         onRecover={recoverAudio}
       />

@@ -5,6 +5,7 @@ import type {
   AudioDriverConfig,
   AudioDriverInfo,
   AudioStatus,
+  DeviceChannels,
 } from './domain';
 
 export interface RequestedAudioSettings {
@@ -95,6 +96,37 @@ function findInputDevice(
   name: string | null,
 ): AudioDeviceInfo | null {
   return driver?.inputs.find((device) => device.name === name) ?? null;
+}
+
+/**
+ * Fills the channel lists reported by a lazy per-device detail probe into the
+ * passive startup device probe. Startup discovery never opens a device, so its
+ * channels are empty; Audio Settings resolves them for the selected interface
+ * only when the user configures it.
+ */
+export function mergeDeviceChannels(
+  probe: AudioDeviceProbe,
+  detail: DeviceChannels,
+): AudioDeviceProbe {
+  return {
+    ...probe,
+    drivers: probe.drivers.map((driver) => {
+      if (driver.name !== detail.driver) return driver;
+      return {
+        ...driver,
+        inputs: driver.inputs.map((device) =>
+          device.name === detail.inputDevice
+            ? { ...device, channels: detail.inputChannels }
+            : device,
+        ),
+        outputs: driver.outputs.map((device) =>
+          device.name === detail.outputDevice
+            ? { ...device, channels: detail.outputChannels }
+            : device,
+        ),
+      };
+    }),
+  };
 }
 
 function hasSelectableDevices(driver: AudioDriverInfo): boolean {

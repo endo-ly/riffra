@@ -294,13 +294,7 @@ fn cancel_background_job(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NativeMidiProbe {
-    #[serde(rename = "type")]
-    message_type: String,
-    #[serde(default)]
-    midi_inputs: Vec<model::MidiDeviceInfo>,
-    #[serde(default)]
-    midi_outputs: Vec<model::MidiDeviceInfo>,
+struct NativeAudioProbe {
     #[serde(default)]
     drivers: Vec<NativeAudioDriver>,
 }
@@ -318,6 +312,27 @@ struct NativeAudioDriver {
     outputs: Vec<model::AudioDeviceInfo>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMidiProbe {
+    #[serde(default)]
+    midi_inputs: Vec<model::MidiDeviceInfo>,
+    #[serde(default)]
+    midi_outputs: Vec<model::MidiDeviceInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeDeviceChannels {
+    driver: String,
+    input_device: String,
+    #[serde(default)]
+    input_channels: Vec<model::AudioChannelInfo>,
+    output_device: String,
+    #[serde(default)]
+    output_channels: Vec<model::AudioChannelInfo>,
+}
+
 #[tauri::command]
 async fn probe_midi_devices(
     app: tauri::AppHandle,
@@ -331,7 +346,8 @@ async fn probe_midi_devices(
             message: "Safe Mode skipped MIDI discovery.".into(),
         });
     }
-    let probe = run_native_probe(app).await?;
+    let stdout = run_native_probe(app, &["--probe-midi"]).await?;
+    let probe = parse_stdout::<NativeMidiProbe>(&stdout, "midiProbe")?;
     let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
     Ok(MidiProbe {
         inputs: probe.midi_inputs,
@@ -356,10 +372,11 @@ async fn probe_audio_devices(
             midi_inputs: Vec::new(),
             midi_outputs: Vec::new(),
             refreshed_at_ms: storage::now_ms(),
-            message: "Safe Mode skipped audio and MIDI device discovery.".into(),
+            message: "Safe Mode skipped audio device discovery.".into(),
         });
     }
-    let probe = run_native_probe(app).await?;
+    let stdout = run_native_probe(app, &["--probe"]).await?;
+    let probe = parse_stdout::<NativeAudioProbe>(&stdout, "audioDeviceProbe")?;
     Ok(AudioDeviceProbe {
         drivers: probe
             .drivers
@@ -372,19 +389,61 @@ async fn probe_audio_devices(
                 outputs: driver.outputs,
             })
             .collect(),
-        midi_inputs: probe.midi_inputs,
-        midi_outputs: probe.midi_outputs,
+        midi_inputs: Vec::new(),
+        midi_outputs: Vec::new(),
         refreshed_at_ms: storage::now_ms(),
-        message: "Audio and MIDI device list refreshed.".into(),
+        message: "Audio device list refreshed.".into(),
     })
 }
 
-async fn run_native_probe(app: tauri::AppHandle) -> Result<NativeMidiProbe, String> {
-    let command = app
+#[tauri::command]
+async fn probe_device_channels(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    driver: String,
+    input_device: String,
+    output_device: String,
+) -> Result<model::DeviceChannels, String> {
+    if state.core.safe_mode() {
+        return Ok(model::DeviceChannels {
+            driver,
+            input_device,
+            input_channels: Vec::new(),
+            output_device,
+            output_channels: Vec::new(),
+        });
+    }
+    let stdout = run_native_probe(
+        app,
+        &[
+            "--probe-channels",
+            "--audio-driver",
+            &driver,
+            "--input-device",
+            &input_device,
+            "--output-device",
+            &output_device,
+        ],
+    )
+    .await?;
+    let probe = parse_stdout::<NativeDeviceChannels>(&stdout, "deviceChannels")?;
+    Ok(model::DeviceChannels {
+        driver: probe.driver,
+        input_device: probe.input_device,
+        input_channels: probe.input_channels,
+        output_device: probe.output_device,
+        output_channels: probe.output_channels,
+    })
+}
+
+async fn run_native_probe(app: tauri::AppHandle, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut command = app
         .shell()
         .sidecar("riffra-audio")
-        .map_err(|error| format!("Device probe sidecar could not be prepared: {error}"))?
-        .args(["--probe"]);
+        .map_err(|error| format!("Device probe sidecar could not be prepared: {error}"))?;
+    if !args.is_empty() {
+        command = command.args(args);
+    }
     let output = command.output().await.map_err(|error| {
         format!("Device probe could not start; no device state was changed: {error}")
     })?;
@@ -399,19 +458,24 @@ async fn run_native_probe(app: tauri::AppHandle) -> Result<NativeMidiProbe, Stri
             format!("Device probe failed: {detail}")
         });
     }
-    parse_midi_probe(&output.stdout)
+    Ok(output.stdout)
 }
 
-fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
-    let probe = stdout
+fn parse_stdout<T>(stdout: &[u8], expected_type: &str) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let line = stdout
         .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .find_map(|line| serde_json::from_slice::<NativeMidiProbe>(line).ok())
-        .ok_or_else(|| "MIDI probe returned no readable device list.".to_string())?;
-    if probe.message_type != "audioDeviceProbe" {
-        return Err("MIDI probe returned an unexpected response.".into());
-    }
-    Ok(probe)
+        .find(|line| {
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+                return false;
+            };
+            value.get("type").and_then(serde_json::Value::as_str) == Some(expected_type)
+        })
+        .ok_or_else(|| format!("Device probe returned no readable {expected_type} response."))?;
+    serde_json::from_slice::<T>(line)
+        .map_err(|_| format!("Device probe returned an unexpected {expected_type} response."))
 }
 
 // Low-level Audio Runtime passthroughs.
@@ -649,6 +713,7 @@ pub fn run() {
             cancel_background_job,
             probe_audio_devices,
             probe_midi_devices,
+            probe_device_channels,
             get_audio_status,
             get_runtime_projection_status,
             preview_master_gain_db,
@@ -771,12 +836,14 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_midi_probe, safe_mode_from_args};
+    use super::{parse_stdout, safe_mode_from_args};
+    use crate::model::DeviceChannels;
 
     #[test]
-    fn parses_midi_probe_with_unicode_device_names() {
-        let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}],"midiInputs":[{"id":"midi-in-1","name":"Keyboard"}],"midiOutputs":[{"id":"midi-out-1","name":"Microsoft GS Wavetable Synth"}]}"#,
+    fn parses_audio_probe_with_unicode_device_names() {
+        let probe = parse_stdout::<super::NativeAudioProbe>(
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}]}"#,
+            "audioDeviceProbe",
         )
         .unwrap();
         assert_eq!(probe.drivers[0].name, "ASIO");
@@ -790,15 +857,25 @@ mod tests {
         );
         assert!(probe.drivers[1].inputs.is_empty());
         assert!(probe.drivers[1].outputs.is_empty());
-        assert_eq!(probe.midi_inputs[0].id, "midi-in-1");
-        assert_eq!(probe.midi_inputs[0].name, "Keyboard");
-        assert_eq!(probe.midi_outputs[0].id, "midi-out-1");
+    }
+
+    #[test]
+    fn parses_device_channels_detail() {
+        let detail = parse_stdout::<DeviceChannels>(
+            br#"{"type":"deviceChannels","driver":"ASIO","inputDevice":"Focusrite","inputChannels":[{"index":0,"name":"Analogue 1"}],"outputDevice":"Focusrite","outputChannels":[{"index":0,"name":"Output 1"}]}"#,
+            "deviceChannels",
+        )
+        .unwrap();
+        assert_eq!(detail.driver, "ASIO");
+        assert_eq!(detail.input_channels[0].name, "Analogue 1");
+        assert_eq!(detail.output_channels[0].name, "Output 1");
     }
 
     #[test]
     fn rejects_non_probe_messages() {
-        let error = parse_midi_probe(br#"{"type":"audioStatus"}"#).unwrap_err();
-        assert!(error.contains("unexpected"));
+        let error = parse_stdout::<DeviceChannels>(br#"{"type":"audioStatus"}"#, "deviceChannels")
+            .unwrap_err();
+        assert!(error.contains("readable"));
     }
 
     #[test]

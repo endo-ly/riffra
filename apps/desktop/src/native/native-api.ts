@@ -12,6 +12,7 @@ import type {
   BootstrapState,
   AssetId,
   AssetPreviewOptions,
+  DeviceChannels,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -112,6 +113,11 @@ export interface NativeApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
   probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
+  probeDeviceChannels(
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ): Promise<DeviceChannels>;
 
   listSeparations(): Promise<SeparationResult[]>;
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;

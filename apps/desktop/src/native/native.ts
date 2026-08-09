@@ -10,6 +10,7 @@ import type {
   AssetPreviewOptions,
   BackgroundJobStatus,
   BootstrapState,
+  DeviceChannels,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -207,6 +208,24 @@ async function probeAudioDevices(): Promise<AudioDeviceProbe> {
       midiOutputs: [],
       refreshedAtMs: Date.now(),
       message: 'Audio device probe is unavailable in browser preview.',
+    },
+  );
+}
+
+async function probeDeviceChannels(
+  driver: string,
+  inputDevice: string,
+  outputDevice: string,
+): Promise<DeviceChannels> {
+  return invokeOrFallback<DeviceChannels>(
+    'probe_device_channels',
+    { driver, inputDevice, outputDevice },
+    {
+      driver,
+      inputDevice,
+      inputChannels: [],
+      outputDevice,
+      outputChannels: [],
     },
   );
 }
@@ -925,6 +944,7 @@ function createNativeApi(): NativeApi {
     analyzeAsset,
     probeMidiDevices,
     probeAudioDevices,
+    probeDeviceChannels,
     listSeparations,
     renderTimeline,
     restoreSamplePads,

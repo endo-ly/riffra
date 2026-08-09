@@ -28,6 +28,7 @@ export type {
   CreativeSession,
   DesignContext,
   DesignTool,
+  DeviceChannels,
   DeviceKind,
   DropoutInformation,
   FrameDuration,

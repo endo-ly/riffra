@@ -25,6 +25,7 @@ export type { BootstrapState } from './BootstrapState';
 export type { CreativeSession } from './CreativeSession';
 export type { DesignContext } from './DesignContext';
 export type { DesignTool } from './DesignTool';
+export type { DeviceChannels } from './DeviceChannels';
 export type { DeviceKind } from './DeviceKind';
 export type { DropoutInformation } from './DropoutInformation';
 export type { FrameDuration } from './FrameDuration';

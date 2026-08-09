@@ -76,6 +76,16 @@ function renderDialog(
       recordingActive={false}
       onClose={onClose}
       onRefresh={async () => activeProbe}
+      onProbeChannels={async (_driver, inputDevice, outputDevice) => ({
+        driver: _driver,
+        inputDevice,
+        inputChannels: [
+          { index: 0, name: 'Mic 1' },
+          { index: 1, name: 'Mic 2' },
+        ],
+        outputDevice,
+        outputChannels: [{ index: 0, name: 'Left' }],
+      })}
       onApply={onApply}
       onRecover={async () => fakeAudioStatus()}
     />,
@@ -190,6 +200,13 @@ describe('AudioSettingsDialog', () => {
         recordingActive
         onClose={vi.fn()}
         onRefresh={async () => probe}
+        onProbeChannels={async (_driver, inputDevice, outputDevice) => ({
+          driver: _driver,
+          inputDevice,
+          inputChannels: [{ index: 0, name: 'Mic 1' }],
+          outputDevice,
+          outputChannels: [],
+        })}
         onApply={onApply}
         onRecover={async () => fakeAudioStatus()}
       />,

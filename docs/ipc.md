@@ -55,7 +55,7 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`apps/desktop/src-tauri
 
 ### 2.1 トップレベル（`lib.rs`）
 
-`get_bootstrap_state` / `export_scratch_session` / `get_background_job` / `cancel_background_job` / `probe_audio_devices` / `probe_midi_devices` / `get_audio_status` / `preview_master_gain_db` / `set_emergency_mute` / `recover_audio_device` / `open_midi_input` / `close_midi_input` / `stop_preview` / `stop_preview_for_key`
+`get_bootstrap_state` / `export_scratch_session` / `get_background_job` / `cancel_background_job` / `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` / `get_audio_status` / `preview_master_gain_db` / `set_emergency_mute` / `recover_audio_device` / `open_midi_input` / `close_midi_input` / `stop_preview` / `stop_preview_for_key`
 
 ### 2.2 Session Application Operations（`session/commands.rs`）
 
@@ -170,9 +170,11 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 | `timelineAck`     | Timeline Snapshotの準備完了revision・適用時刻・利用不能Clip                              | Snapshotコマンド応答      |
 | `transportStatus` | Engine ClockとTimeline位置、再生状態、revision、不連続通知                               | 状態変化時・20 Hz定期送信 |
 
-起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_midi_probe` 等で処理される。
+起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_stdout` 等で処理される。
 
-`audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels` には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
+起動時のデバイス取得は非侵襲（passive）で、`--probe` はドライバ名とデバイス名だけを返し、デバイスを開かない。`channels` は空配列で、チャンネル名は Audio Settings で対象デバイスを選択した際に `--probe-channels`（対象デバイスを1回だけ開く）で遅延取得する。オーディオデバイス（特にASIOドライバ）を起動時に開くとハードウェア再構成によって他アプリの再生が中断されるため、起動時プロービングは名前列挙で止める。MIDIの一覧も独立しており、`--probe-midi` はMIDIのみを返しオーディオドライバに一切触れない。
+
+`audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels`（起動時は空・`deviceChannels` 取得後に充填）には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
 
 ```json
 {
@@ -185,19 +187,30 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
       "inputs": [
         {
           "name": "Audio Interface",
-          "channels": [{ "index": 0, "name": "Input 1" }]
+          "channels": []
         }
       ],
       "outputs": [
         {
           "name": "Audio Interface",
-          "channels": [{ "index": 0, "name": "Output 1" }]
+          "channels": []
         }
       ]
     }
-  ],
-  "midiInputs": [],
-  "midiOutputs": []
+  ]
+}
+```
+
+Audio Settingsで対象デバイスを選択したときに `deviceChannels` を取得する。
+
+```json
+{
+  "type": "deviceChannels",
+  "driver": "ASIO",
+  "inputDevice": "Audio Interface",
+  "inputChannels": [{ "index": 0, "name": "Input 1" }],
+  "outputDevice": "Audio Interface",
+  "outputChannels": [{ "index": 0, "name": "Output 1" }]
 }
 ```
 
@@ -264,17 +277,17 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 
 `scope` でエラーの影響範囲を分類する。Rust側の `render_native_error` は `scope == "audioDevice"` のみ `faulted` 状態へ遷移させ、それ以外はコマンド失敗（`message` 更新）扱いにする。
 
-| scope          | 影響                            | C++側の主な発生元                             |
-| -------------- | ------------------------------- | --------------------------------------------- |
-| `audioDevice`  | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗      |
-| `plugin`       | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗           |
-| `pluginBusy`   | コマンド失敗。fault状態にしない | VST3ロード中の同時操作                        |
-| `timelineBusy` | コマンド失敗。fault状態にしない | Arrangement Snapshot準備中の同時操作          |
-| `recording`    | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                |
-| `midi`         | コマンド失敗                    | MIDI入力オープン/クローズ失敗                 |
-| `preview`      | コマンド失敗                    | サンプルプレビュー失敗                        |
-| `protocol`     | コマンド失敗                    | JSONパース失敗・未対応コマンド                |
-| `arguments`    | 起動時失敗                      | CLI引数エラー（`--probe` / `--serve` 起動時） |
+| scope          | 影響                            | C++側の主な発生元                                                                   |
+| -------------- | ------------------------------- | ----------------------------------------------------------------------------------- |
+| `audioDevice`  | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗                                            |
+| `plugin`       | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗                                                 |
+| `pluginBusy`   | コマンド失敗。fault状態にしない | VST3ロード中の同時操作                                                              |
+| `timelineBusy` | コマンド失敗。fault状態にしない | Arrangement Snapshot準備中の同時操作                                                |
+| `recording`    | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                                                      |
+| `midi`         | コマンド失敗                    | MIDI入力オープン/クローズ失敗                                                       |
+| `preview`      | コマンド失敗                    | サンプルプレビュー失敗                                                              |
+| `protocol`     | コマンド失敗                    | JSONパース失敗・未対応コマンド                                                      |
+| `arguments`    | 起動時失敗                      | CLI引数エラー（`--probe` / `--probe-midi` / `--probe-channels` / `--serve` 起動時） |
 
 `dataSafe` は保存済みデータが保全されているかを示す。現在のC++実装は常に `true` を送信し、保存データがsidecarの異常で失われないことを表明する。
 
@@ -306,7 +319,7 @@ Safe Modeでも「失敗を成功として表示しない」契約は維持す�
 
 ### 5.1 外部プロセス許可（`shell:allow-spawn`）
 
-- `riffra-audio`: オーディオsidecar。`sidecar: true`、第1引数は `--(serve|probe)` の正規表現で検証
+- `riffra-audio`: オーディオsidecar。`sidecar: true`、第1引数は `--(serve|probe|probe-midi|probe-channels)` の正規表現で検証
 - `riffra-plugin-scan`: プラグインスキャンsidecar。`sidecar: true`、引数は任意
 
 ### 5.2 shell操作
