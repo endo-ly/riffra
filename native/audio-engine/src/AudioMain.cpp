@@ -546,43 +546,76 @@ juce::var discoverMidiDevices() {
 // Settings for the device the user has selected, once per device, instead of
 // touching every interface during startup. For same-device drivers (ASIO) the
 // one open yields both input and output channel names.
-juce::var probeDeviceChannels(
+std::optional<juce::var> probeDeviceChannels(
     const juce::String& driver,
     const juce::String& inputDevice,
-    const juce::String& outputDevice) {
+    const juce::String& outputDevice,
+    juce::String& error) {
     juce::AudioDeviceManager manager;
     juce::OwnedArray<juce::AudioIODeviceType> types;
     manager.createAudioDeviceTypes(types);
 
+    if (inputDevice.isEmpty() && outputDevice.isEmpty()) {
+        error = "At least one audio device must be selected.";
+        return std::nullopt;
+    }
+
     juce::Array<juce::var> inputChannels;
     juce::Array<juce::var> outputChannels;
+    bool driverFound = false;
     for (auto* type : types) {
         if (type->getTypeName() != driver)
             continue;
+        driverFound = true;
         type->scanForDevices();
         const auto sameDevice = driverRequiresSameDevice(driver);
         if (sameDevice) {
             auto device = std::unique_ptr<juce::AudioIODevice>(
                 type->createDevice(outputDevice, inputDevice));
-            if (device != nullptr) {
-                inputChannels = channelNames(device->getInputChannelNames(), true);
-                outputChannels = channelNames(device->getOutputChannelNames(), false);
+            if (device == nullptr) {
+                error = "The selected audio device could not be opened.";
+                return std::nullopt;
+            }
+            inputChannels = channelNames(device->getInputChannelNames(), true);
+            outputChannels = channelNames(device->getOutputChannelNames(), false);
+            if (inputChannels.isEmpty() || outputChannels.isEmpty()) {
+                error = "The selected audio device returned no channel details.";
+                return std::nullopt;
             }
         } else {
             if (inputDevice.isNotEmpty()) {
                 auto input = std::unique_ptr<juce::AudioIODevice>(
                     type->createDevice(juce::String {}, inputDevice));
-                if (input != nullptr)
-                    inputChannels = channelNames(input->getInputChannelNames(), true);
+                if (input == nullptr) {
+                    error = "The selected input device could not be opened.";
+                    return std::nullopt;
+                }
+                inputChannels = channelNames(input->getInputChannelNames(), true);
+                if (inputChannels.isEmpty()) {
+                    error = "The selected input device returned no channel details.";
+                    return std::nullopt;
+                }
             }
             if (outputDevice.isNotEmpty()) {
                 auto output = std::unique_ptr<juce::AudioIODevice>(
                     type->createDevice(outputDevice, juce::String {}));
-                if (output != nullptr)
-                    outputChannels = channelNames(output->getOutputChannelNames(), false);
+                if (output == nullptr) {
+                    error = "The selected output device could not be opened.";
+                    return std::nullopt;
+                }
+                outputChannels = channelNames(output->getOutputChannelNames(), false);
+                if (outputChannels.isEmpty()) {
+                    error = "The selected output device returned no channel details.";
+                    return std::nullopt;
+                }
             }
         }
         break;
+    }
+
+    if (!driverFound) {
+        error = "The selected audio driver could not be found.";
+        return std::nullopt;
     }
 
     auto* result = new juce::DynamicObject();
@@ -2034,7 +2067,13 @@ int runMain(const juce::StringArray& arguments) {
             writeJson(makeError("arguments", "--probe-channels requires --audio-driver."));
             return 1;
         }
-        writeJson(probeDeviceChannels(driver, inputDevice, outputDevice));
+        juce::String probeError;
+        const auto channels = probeDeviceChannels(driver, inputDevice, outputDevice, probeError);
+        if (!channels.has_value()) {
+            writeJson(makeError("deviceChannels", probeError));
+            return 1;
+        }
+        writeJson(*channels);
         return 0;
     }
     if (command == "--serve") {

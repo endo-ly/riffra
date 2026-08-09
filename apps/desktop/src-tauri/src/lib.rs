@@ -58,12 +58,17 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Mutex, OnceLock},
+    time::Duration,
 };
 use storage::SessionStore;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandEvent;
 
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
+const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
@@ -175,8 +180,6 @@ fn queue_startup_maintenance(
                 Ok(initialization) => {
                     if let Some(error) = initialization.runtime_error.as_deref() {
                         let _ = diagnostics::record(&data_root, "startup-runtime", error);
-                    } else {
-                        let _ = app_handle.emit("runtime-started", ());
                     }
                     Some(initialization.status)
                 }
@@ -186,6 +189,7 @@ fn queue_startup_maintenance(
                 }
             }
         };
+        let _ = app_handle.emit("runtime-startup-finished", ());
         state.core.audio().emit_status(&app_handle);
 
         if state.core.safe_mode() {
@@ -272,6 +276,7 @@ async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
             session: state.core.session().lock().map_err(lock_error)?.clone(),
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),
+            runtime_startup_finished: state.core.audio().startup_finished(),
             recovered_from_generation,
             safe_mode: state.core.safe_mode(),
             native_available: true,
@@ -401,8 +406,6 @@ async fn probe_audio_devices(
     if state.core.safe_mode() {
         return Ok(AudioDeviceProbe {
             drivers: Vec::new(),
-            midi_inputs: Vec::new(),
-            midi_outputs: Vec::new(),
             refreshed_at_ms: storage::now_ms(),
             message: "Safe Mode skipped audio device discovery.".into(),
         });
@@ -421,8 +424,6 @@ async fn probe_audio_devices(
                 outputs: driver.outputs,
             })
             .collect(),
-        midi_inputs: Vec::new(),
-        midi_outputs: Vec::new(),
         refreshed_at_ms: storage::now_ms(),
         message: "Audio device list refreshed.".into(),
     })
@@ -437,13 +438,7 @@ async fn probe_device_channels(
     output_device: String,
 ) -> Result<model::DeviceChannels, String> {
     if state.core.safe_mode() {
-        return Ok(model::DeviceChannels {
-            driver,
-            input_device,
-            input_channels: Vec::new(),
-            output_device,
-            output_channels: Vec::new(),
-        });
+        return Err("Safe Mode skipped audio channel discovery.".into());
     }
     let stdout = run_native_probe(
         app,
@@ -469,6 +464,23 @@ async fn probe_device_channels(
 }
 
 async fn run_native_probe(app: tauri::AppHandle, args: &[&str]) -> Result<Vec<u8>, String> {
+    let _permit = match tokio::time::timeout(
+        NATIVE_PROBE_TIMEOUT,
+        NATIVE_PROBE_GATE
+            .get_or_init(|| tokio::sync::Semaphore::new(1))
+            .acquire(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => return Err("Device probe coordinator is shutting down.".to_owned()),
+        Err(_) => {
+            return Err(format!(
+                "Device probe timed out while waiting for another probe after {} seconds; no device state was changed.",
+                NATIVE_PROBE_TIMEOUT.as_secs()
+            ));
+        }
+    };
     let mut command = app
         .shell()
         .sidecar("riffra-audio")
@@ -476,21 +488,77 @@ async fn run_native_probe(app: tauri::AppHandle, args: &[&str]) -> Result<Vec<u8
     if !args.is_empty() {
         command = command.args(args);
     }
-    let output = command.output().await.map_err(|error| {
+
+    let (mut events, child) = command.spawn().map_err(|error| {
         format!("Device probe could not start; no device state was changed: {error}")
     })?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let collected = tokio::time::timeout(NATIVE_PROBE_TIMEOUT, async {
+        let mut code = None;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        while let Some(event) = events.recv().await {
+            match event {
+                CommandEvent::Terminated(payload) => code = payload.code,
+                CommandEvent::Stdout(line) => {
+                    stdout.extend(line);
+                    stdout.push(b'\n');
+                }
+                CommandEvent::Stderr(line) => {
+                    stderr.extend(line);
+                    stderr.push(b'\n');
+                }
+                CommandEvent::Error(error) => stderr.extend(error.as_bytes()),
+                _ => {}
+            }
+        }
+        (code, stdout, stderr)
+    })
+    .await;
+
+    let (code, stdout, stderr) = match collected {
+        Ok(output) => {
+            drop(child);
+            output
+        }
+        Err(_) => {
+            let kill_error = child
+                .kill()
+                .err()
+                .map(|error| format!(" Kill failed: {error}"));
+            return Err(format!(
+                "Device probe timed out after {} seconds; no device state was changed.{}",
+                NATIVE_PROBE_TIMEOUT.as_secs(),
+                kill_error.unwrap_or_default()
+            ));
+        }
+    };
+
+    let Some(code) = code else {
+        return Err(
+            "Device probe ended without an exit status; no device state was changed.".into(),
+        );
+    };
+    if code != 0 {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
+        let detail = if detail.is_empty() {
+            stdout
+                .split(|byte| *byte == b'\n')
+                .find_map(|line| {
+                    let value = serde_json::from_slice::<serde_json::Value>(line).ok()?;
+                    (value.get("type").and_then(serde_json::Value::as_str) == Some("error"))
+                        .then(|| value.get("message")?.as_str().map(str::to_owned))?
+                })
+                .unwrap_or_default()
+        } else {
+            detail
+        };
         return Err(if detail.is_empty() {
-            format!(
-                "Device probe exited with code {:?}; no device state was changed.",
-                output.status.code()
-            )
+            format!("Device probe exited with code {code}; no device state was changed.")
         } else {
             format!("Device probe failed: {detail}")
         });
     }
-    Ok(output.stdout)
+    Ok(stdout)
 }
 
 fn parse_stdout<T>(stdout: &[u8], expected_type: &str) -> Result<T, String>
@@ -572,10 +640,9 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
             .map_err(String::from)?;
         if !state.core.audio().startup_completed() {
             state.core.audio().mark_startup_pending();
-            let initialization = startup::initialize_audio_runtime(state, || {})?;
-            if initialization.runtime_error.is_none() {
-                let _ = operation_app.emit("runtime-started", ());
-            }
+            let initialization = startup::initialize_audio_runtime(state, || {});
+            let _ = operation_app.emit("runtime-startup-finished", ());
+            let initialization = initialization?;
             return Ok(initialization.status);
         }
         Ok(recovered)

@@ -157,7 +157,7 @@ export class FakeNativeApi implements NativeApi {
   private renderCounter = 0;
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
-  private runtimeStartedListeners = new Set<() => void>();
+  private runtimeStartupFinishedListeners = new Set<() => void>();
   private runtimeRestartListeners = new Set<(generation: number) => void>();
   private transportStatusListeners = new Set<(status: TransportStatus) => void>();
 
@@ -202,15 +202,18 @@ export class FakeNativeApi implements NativeApi {
     return this.bootstrapState;
   };
 
-  onRuntimeStarted = (callback: () => void): (() => void) => {
-    this.calls.push('onRuntimeStarted');
-    this.runtimeStartedListeners.add(callback);
-    return () => this.runtimeStartedListeners.delete(callback);
+  onRuntimeStartupFinished = (callback: () => void): (() => void) => {
+    this.calls.push('onRuntimeStartupFinished');
+    this.runtimeStartupFinishedListeners.add(callback);
+    return () => this.runtimeStartupFinishedListeners.delete(callback);
   };
 
-  emitRuntimeStarted = (): void => {
-    this.bootstrapState = { ...this.bootstrapState, runtimeStarted: true };
-    this.runtimeStartedListeners.forEach((callback) => callback());
+  emitRuntimeStartupFinished = (): void => {
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      runtimeStartupFinished: true,
+    };
+    this.runtimeStartupFinishedListeners.forEach((callback) => callback());
   };
 
   saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
@@ -542,8 +545,6 @@ export class FakeNativeApi implements NativeApi {
           ],
         },
       ],
-      midiInputs: [],
-      midiOutputs: [],
       refreshedAtMs: 1,
       message: 'Fake device probe complete.',
     };
@@ -2742,6 +2743,7 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
     session,
     pluginCatalog: [],
     runtimeStarted: true,
+    runtimeStartupFinished: true,
     recoveredFromGeneration: false,
     safeMode: false,
     nativeAvailable: true,

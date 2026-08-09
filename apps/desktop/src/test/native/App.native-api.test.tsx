@@ -59,7 +59,11 @@ describe('App driven by FakeNativeApi', () => {
     const fake = new FakeNativeApi({
       audio: fakeAudioStatus(),
       plugins: [examplePlugin],
-      bootstrapState: { pluginCatalog: [examplePlugin], runtimeStarted: false },
+      bootstrapState: {
+        pluginCatalog: [examplePlugin],
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
     });
 
     // Act
@@ -73,9 +77,28 @@ describe('App driven by FakeNativeApi', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 200));
     expect(fake.calls).not.toContain('startScanJob');
 
-    fake.emitRuntimeStarted();
+    fake.emitRuntimeStartupFinished();
 
     await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+  });
+
+  it('starts the catalog scan after an unsuccessful runtime restoration attempt', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: {
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
+    });
+    renderApp(fake);
+
+    await waitForAppShell();
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(fake.calls).not.toContain('startScanJob');
+
+    fake.emitRuntimeStartupFinished();
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+    expect(fake.bootstrapState.runtimeStarted).toBe(false);
   });
 
   it('keeps shell notices and project actions available without a home surface', async () => {

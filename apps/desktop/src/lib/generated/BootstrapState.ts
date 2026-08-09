@@ -3,4 +3,4 @@ import type { CreativeSession } from "./CreativeSession";
 import type { PluginEntry } from "./PluginEntry";
 import type { RecoveryCandidate } from "./RecoveryCandidate";
 
-export type BootstrapState = { session: CreativeSession, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, recoveredFromGeneration: boolean, safeMode: boolean, nativeAvailable: boolean, recoveryCandidates: Array<RecoveryCandidate>, dataRoot: string, vst3Root: string, };
+export type BootstrapState = { session: CreativeSession, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, recoveredFromGeneration: boolean, safeMode: boolean, nativeAvailable: boolean, recoveryCandidates: Array<RecoveryCandidate>, dataRoot: string, vst3Root: string, };

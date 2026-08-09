@@ -66,6 +66,7 @@ pub struct BootstrapState {
     pub session: crate::session::CreativeSession,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,
+    pub runtime_startup_finished: bool,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
     pub native_available: bool,
@@ -223,8 +224,6 @@ pub enum AudioAccessMode {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDeviceProbe {
     pub drivers: Vec<AudioDriverInfo>,
-    pub midi_inputs: Vec<MidiDeviceInfo>,
-    pub midi_outputs: Vec<MidiDeviceInfo>,
     pub refreshed_at_ms: u64,
     pub message: String,
 }

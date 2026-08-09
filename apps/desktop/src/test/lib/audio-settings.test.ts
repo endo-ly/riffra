@@ -5,6 +5,7 @@ import {
   createAudioSettingsDraft,
   includeEffectiveOption,
   isAudioSettingsDraftValid,
+  mergeAudioStatusChannels,
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   reconcileAudioSettings,
@@ -214,8 +215,6 @@ describe('audio setting reconciliation', () => {
           outputs: [{ name: 'Speakers', channels: [] }],
         },
       ],
-      midiInputs: [],
-      midiOutputs: [],
       refreshedAtMs: 1,
       message: 'Audio device list refreshed.',
     };
@@ -249,6 +248,32 @@ describe('audio setting reconciliation', () => {
       ),
     ).toBe(true);
   });
+
+  it('reuses channel names from the active Audio Runtime', () => {
+    const passive = audioProbe();
+    const passiveWithEmptyChannels: AudioDeviceProbe = {
+      ...passive,
+      drivers: passive.drivers.map((driver) => ({
+        ...driver,
+        inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
+        outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
+      })),
+    };
+
+    const merged = mergeAudioStatusChannels(
+      passiveWithEmptyChannels,
+      audioStatus({
+        driver: 'ASIO',
+        inputDevice: 'Focusrite USB ASIO',
+        inputChannels: [{ index: 1, name: 'Analogue 2' }],
+        outputDevice: 'Focusrite USB ASIO',
+        outputChannels: [{ index: 0, name: 'Monitor 1' }],
+      }),
+    );
+
+    expect(merged.drivers[1].inputs[0].channels).toEqual([{ index: 1, name: 'Analogue 2' }]);
+    expect(merged.drivers[1].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
+  });
 });
 
 function audioProbe(): AudioDeviceProbe {
@@ -277,8 +302,6 @@ function audioProbe(): AudioDeviceProbe {
         outputs: [{ name: 'Focusrite USB ASIO', channels: [{ index: 0, name: 'Output 1' }] }],
       },
     ],
-    midiInputs: [],
-    midiOutputs: [],
     refreshedAtMs: 1,
     message: 'Audio device list refreshed.',
   };

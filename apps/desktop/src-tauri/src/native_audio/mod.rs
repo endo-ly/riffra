@@ -92,6 +92,13 @@ impl AudioSupervisor {
         self.startup_state() == StartupState::Completed
     }
 
+    pub(crate) fn startup_finished(&self) -> bool {
+        let Ok(_transition) = self.startup_transition_gate.lock() else {
+            return false;
+        };
+        self.startup_state() != StartupState::Pending
+    }
+
     pub(crate) fn startup_state(&self) -> StartupState {
         StartupState::from_raw(self.startup_state.load(Ordering::Acquire))
     }

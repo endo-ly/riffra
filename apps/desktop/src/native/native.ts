@@ -57,6 +57,7 @@ async function bootstrap(): Promise<BootstrapState> {
       session: defaultSession(),
       pluginCatalog: [],
       runtimeStarted: false,
+      runtimeStartupFinished: false,
       recoveredFromGeneration: false,
       safeMode: false,
       nativeAvailable: false,
@@ -67,13 +68,30 @@ async function bootstrap(): Promise<BootstrapState> {
   );
 }
 
-function onRuntimeStarted(callback: () => void): () => void {
+function onRuntimeStartupFinished(callback: () => void): () => void {
   if (!isNativeRuntime()) return () => undefined;
   let unlisten: (() => void) | null = null;
   let cancelled = false;
-  void listen('runtime-started', () => callback()).then((fn) => {
-    if (cancelled) fn();
-    else unlisten = fn;
+  let notified = false;
+  const notify = () => {
+    if (cancelled || notified) return;
+    notified = true;
+    callback();
+  };
+  void listen('runtime-startup-finished', notify).then((fn) => {
+    if (cancelled) {
+      fn();
+      return;
+    }
+    unlisten = fn;
+    // The startup event is one-shot. Read the durable state after the
+    // subscription is installed so an event emitted during registration is
+    // still observable through the state snapshot.
+    void bootstrap()
+      .then((state) => {
+        if (state.runtimeStartupFinished) notify();
+      })
+      .catch(() => undefined);
   });
   return () => {
     cancelled = true;
@@ -220,8 +238,6 @@ async function probeAudioDevices(): Promise<AudioDeviceProbe> {
     {},
     {
       drivers: [],
-      midiInputs: [],
-      midiOutputs: [],
       refreshedAtMs: Date.now(),
       message: 'Audio device probe is unavailable in browser preview.',
     },
@@ -941,7 +957,7 @@ async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promis
 function createNativeApi(): NativeApi {
   return {
     bootstrap,
-    onRuntimeStarted,
+    onRuntimeStartupFinished,
     saveSession,
     restoreRecoveryGeneration,
     exportSession,

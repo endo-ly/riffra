@@ -73,7 +73,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     persistTrackPluginState,
     persistTrackPluginParameter,
     syncArrangementRuntime,
-    onRuntimeStarted,
+    onRuntimeStartupFinished,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
@@ -99,8 +99,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   });
   const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
     drivers: [],
-    midiInputs: [],
-    midiOutputs: [],
     refreshedAtMs: 0,
     message: 'Audio device list has not been refreshed.',
   });
@@ -114,7 +112,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
-  const [runtimeStarted, setRuntimeStarted] = useState(false);
+  const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
   const activeJobId = useRef<string | null>(null);
   const startupScanStarted = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
@@ -588,9 +586,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     if (
       startupScanStarted.current ||
       activeJobId.current ||
+      backgroundJob != null ||
       !boot?.nativeAvailable ||
       boot.safeMode ||
-      !runtimeStarted
+      !runtimeStartupFinished
     ) {
       return;
     }
@@ -600,7 +599,14 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       applyScanReport,
       (message) => setScanMessage(`VST3 scan failed: ${message}`),
     );
-  }, [applyScanReport, boot, runBackgroundJob, runtimeStarted, startScanJob]);
+  }, [
+    applyScanReport,
+    backgroundJob,
+    boot,
+    runBackgroundJob,
+    runtimeStartupFinished,
+    startScanJob,
+  ]);
 
   const ignoreMissing = useCallback((item: MissingDependency) => {
     setMissingDependencies((current) =>
@@ -652,6 +658,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   useEffect(() => {
     let disposed = false;
     let deferredStartupTimer: ReturnType<typeof setTimeout> | null = null;
+    const unlistenRuntimeStartupFinished = onRuntimeStartupFinished(() =>
+      setRuntimeStartupFinished(true),
+    );
     const bootstrapOperation = bootstrapPromise.current ?? (bootstrapPromise.current = bootstrap());
     void bootstrapOperation
       .then((state) => {
@@ -659,7 +668,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         setBoot(state);
         setSession(state.session);
         setPlugins(state.pluginCatalog);
-        setRuntimeStarted(state.runtimeStarted);
+        setRuntimeStartupFinished((current) => current || state.runtimeStartupFinished);
         void getMissingDependencies()
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
@@ -710,7 +719,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         setAudio(next);
       }, 100);
     });
-    const unlistenRuntimeStarted = onRuntimeStarted(() => setRuntimeStarted(true));
     const unlistenMeters = onAudioMeters((meters: AudioMeters) => {
       publishAudioMeters(meters);
     });
@@ -904,7 +912,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       unlistenClose?.();
       if (!closeRequested) void flushPluginChanges();
       unlistenAudio();
-      unlistenRuntimeStarted();
+      unlistenRuntimeStartupFinished();
       unlistenMeters();
       unlistenTrackPluginParameter();
       unlistenTrackPluginState();

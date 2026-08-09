@@ -129,6 +129,48 @@ export function mergeDeviceChannels(
   };
 }
 
+/**
+ * Reuses channel details already reported by the active Audio Runtime.
+ * Passive device discovery deliberately leaves channel lists empty, but the
+ * device currently opened by Riffra has already supplied these names through
+ * AudioStatus and does not need another detail probe.
+ */
+export function mergeAudioStatusChannels(
+  probe: AudioDeviceProbe,
+  audio: AudioStatus,
+): AudioDeviceProbe {
+  if (audio.driver == null) return probe;
+
+  const hasInputChannels = audio.inputDevice != null && audio.inputChannels.length > 0;
+  const hasOutputChannels = audio.outputDevice != null && audio.outputChannels.length > 0;
+  if (!hasInputChannels && !hasOutputChannels) return probe;
+
+  let changed = false;
+  const drivers = probe.drivers.map((driver) => {
+    if (driver.name !== audio.driver) return driver;
+    return {
+      ...driver,
+      inputs: hasInputChannels
+        ? driver.inputs.map((device) => {
+            if (device.name !== audio.inputDevice || device.channels === audio.inputChannels)
+              return device;
+            changed = true;
+            return { ...device, channels: audio.inputChannels };
+          })
+        : driver.inputs,
+      outputs: hasOutputChannels
+        ? driver.outputs.map((device) => {
+            if (device.name !== audio.outputDevice || device.channels === audio.outputChannels)
+              return device;
+            changed = true;
+            return { ...device, channels: audio.outputChannels };
+          })
+        : driver.outputs,
+    };
+  });
+  return changed ? { ...probe, drivers } : probe;
+}
+
 function hasSelectableDevices(driver: AudioDriverInfo): boolean {
   if (driver.devicePairing === 'sameDevice') {
     return driver.inputs.some((input) =>

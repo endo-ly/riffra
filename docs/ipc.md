@@ -158,7 +158,7 @@ Arrangement Snapshotの準備とVST3ライフサイクル要求は、C++のstdin
 
 Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
 
-デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。Audio RuntimeはSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。復元に成功したRust側は`runtime-started`イベントをUIへ通知する。VST3カタログは保存済みの検証結果をBootstrapで返し、この通知後に新規・更新候補をバックグラウンドで検証する。カタログ検証の成否は出力解除条件に含めない。
+デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。Audio RuntimeはSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。初回復元処理が成功または失敗で終了した時点で、Rust側は`runtime-startup-finished`イベントをUIへ通知し、`BootstrapState.runtimeStartupFinished`にも終了状態を反映する。VST3カタログは保存済みの検証結果をBootstrapで返し、初回復元処理の終了後に新規・更新候補をバックグラウンドで検証する。カタログ検証の成否は出力解除条件に含めない。
 
 ### 4.2 メッセージ種別（C++ → Rust）
 
@@ -174,7 +174,7 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 
 起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_stdout` 等で処理される。
 
-起動時のデバイス取得は非侵襲（passive）で、`--probe` はドライバ名とデバイス名だけを返し、デバイスを開かない。`channels` は空配列で、チャンネル名は Audio Settings で対象デバイスを選択した際に `--probe-channels`（対象デバイスを1回だけ開く）で遅延取得する。オーディオデバイス（特にASIOドライバ）を起動時に開くとハードウェア再構成によって他アプリの再生が中断されるため、起動時プロービングは名前列挙で止める。MIDIの一覧も独立しており、`--probe-midi` はMIDIのみを返しオーディオドライバに一切触れない。
+起動時のデバイス取得は非侵襲（passive）で、`--probe` はドライバ名とデバイス名だけを返し、デバイスを開かない。`channels` は空配列で、現在Riffraが使用中のデバイスは`AudioStatus`が返したチャンネル情報を設定画面で再利用する。それ以外の対象デバイスは Audio Settings で選択した際に `--probe-channels` で遅延取得し、同じドライバ・入出力デバイスの組み合わせを自動的に再probeしない。probe sidecarは同時に1つだけ実行され、一定時間で終了しない場合は停止する。オーディオデバイス（特にASIOドライバ）を起動時に開くとハードウェア再構成によって他アプリの再生が中断されるため、起動時プロービングは名前列挙で止める。MIDIの一覧も独立しており、`--probe-midi` はMIDIのみを返しオーディオドライバに一切触れない。
 
 `audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels`（起動時は空・`deviceChannels` 取得後に充填）には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
 
