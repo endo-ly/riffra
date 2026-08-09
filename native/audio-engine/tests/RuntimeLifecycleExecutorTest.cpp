@@ -44,6 +44,24 @@ TEST(RuntimeLifecycleExecutorTest, ExecutesSubmittedTasksInOrder) {
     EXPECT_EQ(values, (std::vector<int> { 1, 2, 3 }));
 }
 
+TEST(RuntimeLifecycleExecutorTest, DispatchesTasksThroughConfiguredDispatcher) {
+    std::atomic<int> dispatches { 0 };
+    std::atomic<int> executions { 0 };
+    RuntimeLifecycleExecutor executor(
+        [&](RuntimeLifecycleExecutor::Task task) {
+            dispatches.fetch_add(1, std::memory_order_acq_rel);
+            task();
+        });
+
+    ASSERT_TRUE(executor.submit(
+        [&] { executions.fetch_add(1, std::memory_order_acq_rel); },
+        std::chrono::seconds(5)));
+
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_EQ(dispatches.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(executions.load(std::memory_order_acquire), 1);
+}
+
 TEST(RuntimeLifecycleExecutorTest, NeverRunsTwoLifecycleTasksConcurrently) {
     RuntimeLifecycleExecutor executor;
     std::atomic<int> active { 0 };

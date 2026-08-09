@@ -27,6 +27,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 #if JUCE_WINDOWS
 #ifndef NOMINMAX
@@ -994,7 +995,11 @@ int serve(
     // command reader so transport and workspace commands remain serviceable.
     std::atomic<bool> pluginOperationRunning { false };
     std::atomic<bool> timelineOperationRunning { false };
-    RuntimeLifecycleExecutor runtimeLifecycle;
+    RuntimeLifecycleExecutor runtimeLifecycle(
+        [](RuntimeLifecycleExecutor::Task task) {
+            if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
+                std::_Exit(0);
+        });
     runtimeLifecycle.setTimeoutHandler([] {
         // Do not write to stdout here. The parent may be the stalled party or
         // its pipe may already be back-pressured; the watchdog's only bounded
