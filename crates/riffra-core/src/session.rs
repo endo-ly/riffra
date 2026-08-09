@@ -1869,15 +1869,20 @@ pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json
     {
         object.insert("workspace".into(), serde_json::json!("arrange"));
     }
-    let mut session = serde_json::from_value::<CreativeSession>(value.clone())?;
-    let Some(arrangement) = value.get("arrangement") else {
-        return Ok(session);
-    };
-    let legacy_takes = arrangement
-        .get("takes")
+    let legacy_takes = value
+        .get("arrangement")
+        .and_then(|arrangement| arrangement.get("takes"))
         .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+        .filter(|takes| {
+            takes.iter().any(|take| {
+                take.get("passId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .is_empty()
+            })
+        })
+        .cloned();
+    let mut session = serde_json::from_value::<CreativeSession>(value)?;
     if !session
         .arrangement
         .takes
@@ -1889,6 +1894,7 @@ pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json
         }
         return Ok(session);
     }
+    let legacy_takes = legacy_takes.unwrap_or_default();
 
     let mut pass_keys = Vec::<(String, u64, u64)>::new();
     for take in &session.arrangement.takes {

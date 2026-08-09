@@ -229,6 +229,30 @@ fn queue_startup_maintenance(
     });
 }
 
+fn bootstrap_recovery_candidates(
+    data_root: &std::path::Path,
+    recovered_from_generation: bool,
+) -> Result<Vec<RecoveryCandidate>, String> {
+    if !recovered_from_generation {
+        return Ok(Vec::new());
+    }
+    SessionStore::new(data_root)
+        .recovery_candidates()
+        .map_err(|error| format!("Recovery candidates could not be read: {error}"))
+        .map(|candidates| {
+            candidates
+                .into_iter()
+                .map(|candidate| RecoveryCandidate {
+                    file_name: candidate.file_name,
+                    updated_at_ms: candidate.updated_at_ms,
+                    session_id: candidate.session_id,
+                    project_name: candidate.project_name,
+                    note: candidate.note,
+                })
+                .collect()
+        })
+}
+
 #[tauri::command]
 async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
     run_blocking(app, |state| {
@@ -243,25 +267,18 @@ async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
                 Vec::new()
             }
         };
+        let recovered_from_generation = state.core.recovered_from_generation();
         Ok(BootstrapState {
             session: state.core.session().lock().map_err(lock_error)?.clone(),
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),
-            recovered_from_generation: state.core.recovered_from_generation(),
+            recovered_from_generation,
             safe_mode: state.core.safe_mode(),
             native_available: true,
-            recovery_candidates: SessionStore::new(state.core.data_root())
-                .recovery_candidates()
-                .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
-                .into_iter()
-                .map(|candidate| RecoveryCandidate {
-                    file_name: candidate.file_name,
-                    updated_at_ms: candidate.updated_at_ms,
-                    session_id: candidate.session_id,
-                    project_name: candidate.project_name,
-                    note: candidate.note,
-                })
-                .collect(),
+            recovery_candidates: bootstrap_recovery_candidates(
+                state.core.data_root(),
+                recovered_from_generation,
+            )?,
             data_root: state.core.data_root().to_string_lossy().into_owned(),
             vst3_root: DEFAULT_VST3_ROOT.into(),
         })
@@ -670,9 +687,6 @@ pub fn run() {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
             std::fs::create_dir_all(&data_root)?;
-            let loaded = SessionStore::new(&data_root).load_or_create()?;
-            let session = loaded.session;
-            let recovered_from_generation = loaded.recovered_from_generation;
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -681,6 +695,15 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle(), preferences.clone())
             };
+            let loaded = match SessionStore::new(&data_root).load_or_create() {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    audio.force_shutdown();
+                    return Err(error.into());
+                }
+            };
+            let session = loaded.session;
+            let recovered_from_generation = loaded.recovered_from_generation;
             let runtime_audio = audio.clone();
             let runtime_app = app.handle().clone();
             let runtime_recovery: crate::runtime::projection_coordinator::RuntimeRecovery =
@@ -854,8 +877,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_stdout, safe_mode_from_args};
+    use super::{bootstrap_recovery_candidates, parse_stdout, safe_mode_from_args};
     use crate::model::DeviceChannels;
+    use crate::session::CreativeSession;
+    use crate::storage::SessionStore;
 
     #[test]
     fn parses_audio_probe_with_unicode_device_names() {
@@ -901,6 +926,29 @@ mod tests {
         assert!(safe_mode_from_args(["riffra.exe", "--safe-mode"]));
         assert!(safe_mode_from_args(["--SAFE-MODE"]));
         assert!(!safe_mode_from_args(["riffra.exe", "--serve"]));
+    }
+
+    #[test]
+    fn bootstrap_lists_recovery_candidates_only_after_recovery() {
+        // Arrange
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("riffra-bootstrap-recovery-{nonce}"));
+        let store = SessionStore::new(&root);
+        store.ensure_layout().unwrap();
+        let payload = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
+        std::fs::write(root.join("scratch/generations/1-1.json"), payload).unwrap();
+
+        // Act
+        let normal = bootstrap_recovery_candidates(&root, false).unwrap();
+        let recovered = bootstrap_recovery_candidates(&root, true).unwrap();
+
+        // Assert
+        assert!(normal.is_empty());
+        assert_eq!(recovered.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
