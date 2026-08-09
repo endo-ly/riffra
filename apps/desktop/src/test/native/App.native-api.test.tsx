@@ -54,6 +54,30 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.audio.state).toBe('muted');
   });
 
+  it('uses the cached catalog and waits for Session audio graph restoration before scanning', async () => {
+    // Arrange
+    const fake = new FakeNativeApi({
+      audio: fakeAudioStatus(),
+      plugins: [examplePlugin],
+      bootstrapState: { pluginCatalog: [examplePlugin], runtimeStarted: false },
+    });
+
+    // Act
+    renderApp(fake);
+
+    // Assert
+    await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(fake.calls).not.toContain('startScanJob');
+
+    fake.emitRuntimeStarted();
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+  });
+
   it('keeps shell notices and project actions available without a home surface', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: {

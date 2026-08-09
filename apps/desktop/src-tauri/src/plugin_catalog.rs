@@ -1,4 +1,4 @@
-use crate::plugins::{PluginScanState, ScanReport};
+use crate::plugins::{PluginEntry, PluginScanState, ScanReport};
 use serde::Deserialize;
 use std::{
     fs::{self, File},
@@ -42,6 +42,25 @@ pub fn save(data_root: &Path, report: &ScanReport) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Loads the previously stored catalog entries without touching the VST3
+/// filesystem or constructing a plugin instance.
+///
+/// # Errors
+///
+/// Returns an error when the catalog cannot be read or decoded. A missing
+/// catalog is represented by an empty entry list.
+pub(crate) fn load(data_root: &Path) -> io::Result<Vec<PluginEntry>> {
+    let catalog_path = data_root.join("plugins/catalog.json");
+    let payload = match fs::read(catalog_path) {
+        Ok(payload) => payload,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let catalog = serde_json::from_slice::<ScanReport>(&payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(catalog.plugins)
 }
 
 /// Reuses validation results for plugins whose discovered path and filesystem
@@ -149,6 +168,39 @@ mod tests {
         let payload = fs::read_to_string(root.join("plugins/catalog.json")).unwrap();
         assert!(payload.contains("Updated"));
         assert!(!payload.contains(".catalog-"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loads_the_persisted_entries_without_discovery() {
+        // Arrange
+        let root = test_root();
+        let report = ScanReport {
+            root: "C:\\VST3".into(),
+            started_at_ms: 1,
+            finished_at_ms: 2,
+            plugins: vec![PluginEntry {
+                id: "vst3-test".into(),
+                name: "Test".into(),
+                vendor: None,
+                version: None,
+                format: PluginFormat::Vst3,
+                path: "C:\\VST3\\Test.vst3".into(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }],
+            issues: vec![],
+        };
+        save(&root, &report).unwrap();
+
+        // Act
+        let plugins = load(&root).unwrap();
+
+        // Assert
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id, report.plugins[0].id);
+        assert_eq!(plugins[0].scan_state, PluginScanState::Validated);
         let _ = fs::remove_dir_all(root);
     }
 

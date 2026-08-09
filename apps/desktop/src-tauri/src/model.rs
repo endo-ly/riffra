@@ -64,6 +64,8 @@ pub struct RecoveryCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub session: crate::session::CreativeSession,
+    pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
+    pub runtime_started: bool,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
     pub native_available: bool,

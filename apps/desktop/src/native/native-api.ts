@@ -68,6 +68,8 @@ export interface TrackPluginParameterChange {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
+  /** Subscribes to successful restoration of the active Session audio graph. */
+  onRuntimeStarted(callback: () => void): () => void;
   saveSession(session: CreativeSession): Promise<CreativeSession>;
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;

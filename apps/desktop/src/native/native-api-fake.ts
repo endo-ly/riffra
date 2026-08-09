@@ -157,6 +157,7 @@ export class FakeNativeApi implements NativeApi {
   private renderCounter = 0;
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
+  private runtimeStartedListeners = new Set<() => void>();
   private runtimeRestartListeners = new Set<(generation: number) => void>();
   private transportStatusListeners = new Set<(status: TransportStatus) => void>();
 
@@ -199,6 +200,17 @@ export class FakeNativeApi implements NativeApi {
   bootstrap = async (): Promise<BootstrapState> => {
     this.calls.push('bootstrap');
     return this.bootstrapState;
+  };
+
+  onRuntimeStarted = (callback: () => void): (() => void) => {
+    this.calls.push('onRuntimeStarted');
+    this.runtimeStartedListeners.add(callback);
+    return () => this.runtimeStartedListeners.delete(callback);
+  };
+
+  emitRuntimeStarted = (): void => {
+    this.bootstrapState = { ...this.bootstrapState, runtimeStarted: true };
+    this.runtimeStartedListeners.forEach((callback) => callback());
   };
 
   saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
@@ -2728,6 +2740,8 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
   const session = overrides?.session ?? defaultSession();
   return {
     session,
+    pluginCatalog: [],
+    runtimeStarted: true,
     recoveredFromGeneration: false,
     safeMode: false,
     nativeAvailable: true,

@@ -55,6 +55,8 @@ async function bootstrap(): Promise<BootstrapState> {
     {},
     {
       session: defaultSession(),
+      pluginCatalog: [],
+      runtimeStarted: false,
       recoveredFromGeneration: false,
       safeMode: false,
       nativeAvailable: false,
@@ -63,6 +65,20 @@ async function bootstrap(): Promise<BootstrapState> {
       vst3Root: defaultVst3Root,
     },
   );
+}
+
+function onRuntimeStarted(callback: () => void): () => void {
+  if (!isNativeRuntime()) return () => undefined;
+  let unlisten: (() => void) | null = null;
+  let cancelled = false;
+  void listen('runtime-started', () => callback()).then((fn) => {
+    if (cancelled) fn();
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
 }
 
 async function saveSession(session: CreativeSession): Promise<CreativeSession> {
@@ -925,6 +941,7 @@ async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promis
 function createNativeApi(): NativeApi {
   return {
     bootstrap,
+    onRuntimeStarted,
     saveSession,
     restoreRecoveryGeneration,
     exportSession,

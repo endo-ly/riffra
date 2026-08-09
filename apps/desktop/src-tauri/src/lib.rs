@@ -60,7 +60,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use storage::SessionStore;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
@@ -175,6 +175,8 @@ fn queue_startup_maintenance(
                 Ok(initialization) => {
                     if let Some(error) = initialization.runtime_error.as_deref() {
                         let _ = diagnostics::record(&data_root, "startup-runtime", error);
+                    } else {
+                        let _ = app_handle.emit("runtime-started", ());
                     }
                     Some(initialization.status)
                 }
@@ -230,8 +232,21 @@ fn queue_startup_maintenance(
 #[tauri::command]
 async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
     run_blocking(app, |state| {
+        let plugin_catalog = match plugin_catalog::load(state.core.data_root()) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                let _ = diagnostics::record(
+                    state.core.data_root(),
+                    "plugin-catalog",
+                    &error.to_string(),
+                );
+                Vec::new()
+            }
+        };
         Ok(BootstrapState {
             session: state.core.session().lock().map_err(lock_error)?.clone(),
+            plugin_catalog,
+            runtime_started: state.core.audio().startup_completed(),
             recovered_from_generation: state.core.recovered_from_generation(),
             safe_mode: state.core.safe_mode(),
             native_available: true,
@@ -540,8 +555,11 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
             .map_err(String::from)?;
         if !state.core.audio().startup_completed() {
             state.core.audio().mark_startup_pending();
-            return startup::initialize_audio_runtime(state, || {})
-                .map(|initialization| initialization.status);
+            let initialization = startup::initialize_audio_runtime(state, || {})?;
+            if initialization.runtime_error.is_none() {
+                let _ = operation_app.emit("runtime-started", ());
+            }
+            return Ok(initialization.status);
         }
         Ok(recovered)
     })

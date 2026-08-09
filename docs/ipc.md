@@ -158,6 +158,8 @@ Arrangement Snapshotの準備とVST3ライフサイクル要求は、C++のstdin
 
 Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
 
+デスクトップ起動時は、保存Sessionの読込み・検証を先に完了する。Audio RuntimeはEmergency Muteを維持したままSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。復元に成功したRust側は`runtime-started`イベントをUIへ通知する。VST3カタログは保存済みの検証結果をBootstrapで返し、この通知後に新規・更新候補をバックグラウンドで検証する。カタログ検証の成否は出力解除条件に含めない。
+
 ### 4.2 メッセージ種別（C++ → Rust）
 
 通常稼働時は次の5種類を使用する。フィールド詳細はcodeを真実源とする。
