@@ -664,6 +664,40 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
 }
 
 #[tauri::command]
+async fn retry_startup_runtime(app: AppHandle) -> Result<AudioStatus, String> {
+    let operation_app = app.clone();
+    run_blocking(app, move |state| {
+        if state.core.safe_mode() {
+            return Err(
+                "Safe Mode keeps external audio devices isolated; restart normally to restore the Session runtime."
+                    .into(),
+            );
+        }
+        if state.core.audio().startup_completed() {
+            return state
+                .core
+                .audio()
+                .refresh_status()
+                .map_err(String::from);
+        }
+
+        state.core.audio().mark_startup_pending();
+        let initialization = startup::initialize_audio_runtime(state, || {});
+        let succeeded = initialization
+            .as_ref()
+            .map(|result| result.runtime_error.is_none())
+            .unwrap_or(false);
+        let _ = operation_app.emit(
+            "runtime-startup-finished",
+            RuntimeStartupFinishedEvent { succeeded },
+        );
+        let initialization = initialization?;
+        Ok(initialization.status)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn enable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
     run_blocking(app, |state| {
         if state.core.safe_mode() {
@@ -840,6 +874,7 @@ pub fn run() {
             preview_master_gain_db,
             set_emergency_mute,
             recover_audio_device,
+            retry_startup_runtime,
             enable_midi_listening,
             disable_midi_listening,
             session::commands::send_midi_to_track,

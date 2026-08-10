@@ -165,6 +165,8 @@ export interface NativeApi {
    */
   setMasterGainDb(gainDb: number): Promise<SessionAudioPair>;
   recoverAudioDevice(): Promise<AudioStatus>;
+  /** Rebuilds the saved Session runtime without reopening the audio device. */
+  retryStartupRuntime(): Promise<AudioStatus>;
   /** Sets and persists the application-wide audio-device preference. */
   setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus>;
   /**

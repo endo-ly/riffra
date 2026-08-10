@@ -73,6 +73,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     persistTrackPluginState,
     persistTrackPluginParameter,
     syncArrangementRuntime,
+    retryStartupRuntime: retryStartupRuntimeApi,
     onRuntimeStartupFinished,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
@@ -585,11 +586,11 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     syncArrangeRuntime,
   ]);
 
-  const retryStartupRuntime = useCallback(async () => {
+  const retryStartupRuntimeAfterScan = useCallback(async () => {
     if (startupRuntimeRecoveryAttempted.current || runtimeStarted) return;
     startupRuntimeRecoveryAttempted.current = true;
     try {
-      await recoverAudio();
+      setAudio(await retryStartupRuntimeApi());
     } catch (error) {
       setScanMessage(
         `Startup runtime restore failed after the catalog scan: ${
@@ -597,7 +598,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         }`,
       );
     }
-  }, [recoverAudio, runtimeStarted]);
+  }, [retryStartupRuntimeApi, runtimeStarted, setAudio]);
 
   useEffect(() => {
     if (
@@ -617,13 +618,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         applyScanReport,
         (message) => setScanMessage(`VST3 scan failed: ${message}`),
       );
-      if (completed) await retryStartupRuntime();
+      if (completed) await retryStartupRuntimeAfterScan();
     })();
   }, [
     applyScanReport,
     backgroundJob,
     boot,
-    retryStartupRuntime,
+    retryStartupRuntimeAfterScan,
     runBackgroundJob,
     runtimeStartupFinished,
     startScanJob,

@@ -905,6 +905,18 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
+  retryStartupRuntime = async (): Promise<AudioStatus> => {
+    this.calls.push('retryStartupRuntime');
+    this.audio = {
+      ...this.audio,
+      state: 'muted',
+      invalidSamples: 0,
+      message: 'Session runtime restored without reopening the audio device.',
+    };
+    if (!this.bootstrapState.runtimeStarted) this.emitRuntimeStartupFinished(true);
+    return this.audio;
+  };
+
   setAudioDriver = async (config: AudioDriverConfig): Promise<AudioStatus> => {
     this.calls.push('setAudioDriver');
     const {

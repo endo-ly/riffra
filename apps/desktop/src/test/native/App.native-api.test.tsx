@@ -99,8 +99,12 @@ describe('App driven by FakeNativeApi', () => {
     fake.emitRuntimeStartupFinished();
 
     await waitFor(() => expect(fake.calls).toContain('startScanJob'));
-    await waitFor(() => expect(fake.calls).toContain('recoverAudioDevice'));
-    expect(fake.calls.filter((call) => call === 'recoverAudioDevice')).toHaveLength(1);
+    await waitFor(() => expect(fake.calls).toContain('retryStartupRuntime'));
+    expect(fake.calls.filter((call) => call === 'retryStartupRuntime')).toHaveLength(1);
+    expect(fake.calls).not.toContain('recoverAudioDevice');
+    expect(fake.calls.indexOf('startScanJob')).toBeLessThan(
+      fake.calls.indexOf('retryStartupRuntime'),
+    );
     expect(fake.bootstrapState.runtimeStarted).toBe(true);
   });
 
@@ -130,6 +134,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('startScanJob'));
     await new Promise((resolve) => window.setTimeout(resolve, 100));
     expect(fake.calls).not.toContain('recoverAudioDevice');
+    expect(fake.calls).not.toContain('retryStartupRuntime');
   });
 
   it('keeps shell notices and project actions available without a home surface', async () => {

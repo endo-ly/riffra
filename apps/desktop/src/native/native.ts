@@ -405,6 +405,10 @@ async function recoverAudioDevice(): Promise<AudioStatus> {
   }
 }
 
+async function retryStartupRuntime(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('retry_startup_runtime');
+}
+
 async function setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus> {
   return await invoke<AudioStatus>('set_audio_driver', { config });
 }
@@ -979,6 +983,7 @@ function createNativeApi(): NativeApi {
     setMasterGainDb,
     previewMasterGainDb,
     recoverAudioDevice,
+    retryStartupRuntime,
     setAudioDriver,
     enableMidiListening,
     disableMidiListening,
