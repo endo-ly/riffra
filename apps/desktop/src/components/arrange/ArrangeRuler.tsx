@@ -1,5 +1,11 @@
 import type { Marker, ProjectTimebase, TimelineLoopRange, TimelinePunchRange } from '@/lib/domain';
-import { formatClock, ticksPerBar, ticksPerBeat, TRACK_HEADER_WIDTH } from '@/lib/arrange-timeline';
+import {
+  formatClock,
+  ticksPerBar,
+  ticksPerBeat,
+  timelineGridDensity,
+  TRACK_HEADER_WIDTH,
+} from '@/lib/arrange-timeline';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeRulerProps {
@@ -37,7 +43,14 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
     { length: Math.ceil(props.timelineTicks / barTicks) },
     (_, index) => index,
   );
-  const showBeats = beatTicks * props.pixelsPerTick >= 20;
+  const density = timelineGridDensity(props.timebase, props.pixelsPerTick);
+  const beatTicksInBar = barTicks / props.timebase.timeSignatureNumerator;
+  const subdivisions = density.subdivisionTicks
+    ? Array.from(
+        { length: Math.floor(props.timelineTicks / density.subdivisionTicks) },
+        (_, index) => (index + 1) * density.subdivisionTicks!,
+      ).filter((tick) => tick % barTicks !== 0 && tick % beatTicksInBar !== 0)
+    : [];
   return (
     <>
       <div className={styles.rulerCorner} style={{ top: props.scrollTop }}>
@@ -174,10 +187,25 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
           const tick = bar * barTicks;
           return (
             <div className={styles.barMark} key={bar} style={{ left: tick * props.pixelsPerTick }}>
-              <strong>{props.mode === 'bars' ? bar + 1 : formatClock(tick, props.timebase)}</strong>
-              {showBeats &&
+              <strong>
+                {bar % density.labelEveryBars === 0
+                  ? props.mode === 'bars'
+                    ? bar + 1
+                    : formatClock(tick, props.timebase)
+                  : null}
+              </strong>
+              {density.showBeats &&
                 Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
                   <i key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
+                ))}
+              {subdivisions
+                .filter((subdivision) => subdivision >= tick && subdivision < tick + barTicks)
+                .map((subdivision) => (
+                  <i
+                    key={subdivision}
+                    className={styles.subdivisionMark}
+                    style={{ left: (subdivision - tick) * props.pixelsPerTick }}
+                  />
                 ))}
             </div>
           );

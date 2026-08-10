@@ -14,6 +14,8 @@ import { useClipInteractions } from './useClipInteractions';
 export type ArrangeSelection =
   { kind: 'none' } | { kind: 'track'; trackId: string } | { kind: 'clips'; clipIds: string[] };
 
+type ArrangeMessageKind = 'info' | 'success' | 'error';
+
 interface UseArrangeEditorOptions {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
@@ -52,11 +54,12 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const [message, setMessage] = useState(
+  const [message, setMessageState] = useState(
     arrangement.audioClips.length
       ? 'Click a waveform Clip to select it · Drag to move · Drag an edge to trim.'
       : 'Arrange ready.',
   );
+  const [messageKind, setMessageKind] = useState<ArrangeMessageKind>('info');
   const [runtimeOutOfSync, setRuntimeOutOfSync] = useState(false);
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
@@ -65,6 +68,10 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     width: number;
     height: number;
   } | null>(null);
+  const setMessage = useCallback((next: string) => {
+    setMessageState(next);
+    setMessageKind('info');
+  }, []);
   const clipboardRef = useRef<{ audioIds: string[]; midiIds: string[] }>({
     audioIds: [],
     midiIds: [],
@@ -81,11 +88,13 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
           setSession(next);
           setRuntimeOutOfSync(false);
         }
-        setMessage(next ? success : 'The edit was not applied.');
+        setMessageState(next ? success : 'The edit was not applied.');
+        setMessageKind(next ? 'success' : 'error');
         return next;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        setMessage(detail);
+        setMessageState(detail);
+        setMessageKind('error');
         if (detail.includes('Playback runtime is out of sync')) setRuntimeOutOfSync(true);
         return null;
       }
@@ -96,10 +105,12 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     try {
       await api.syncArrangementRuntime();
       setRuntimeOutOfSync(false);
-      setMessage('Playback runtime synchronized.');
+      setMessageState('Playback runtime synchronized.');
+      setMessageKind('success');
     } catch (error) {
       setRuntimeOutOfSync(true);
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessageState(error instanceof Error ? error.message : String(error));
+      setMessageKind('error');
     }
   }, [api]);
 
@@ -205,7 +216,13 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       if (clip || midiClip)
         setMessage(`${(clip ?? midiClip)!.name} selected · Ctrl+click adds · Delete removes.`);
     },
-    [arrangement.audioClips, arrangement.midiClips, selectedClipIds, setSelectedClipIds],
+    [
+      arrangement.audioClips,
+      arrangement.midiClips,
+      selectedClipIds,
+      setMessage,
+      setSelectedClipIds,
+    ],
   );
 
   const beginMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -354,6 +371,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     commit,
     displayTick,
     selectedClipIds,
+    setMessage,
     setSelectedClipIds,
     snapTick,
     timebase,
@@ -361,6 +379,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
 
   return {
     message,
+    messageKind,
     runtimeOutOfSync,
     retryRuntimeSync,
     snapGuide,

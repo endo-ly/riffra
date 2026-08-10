@@ -93,13 +93,15 @@ export function ArrangeLowerPanel({
         <div className={styles.actions}>
           <button
             type="button"
+            aria-label={collapsed ? 'Expand' : 'Collapse'}
+            title={collapsed ? 'Expand lower panel' : 'Collapse lower panel'}
             aria-expanded={!collapsed}
             onClick={() => onCollapsedChange(!collapsed)}
           >
-            {collapsed ? 'Expand' : 'Collapse'}
+            {collapsed ? '▴' : '▾'}
           </button>
-          <button type="button" onClick={onClose}>
-            Close
+          <button type="button" aria-label="Close" title="Close lower panel" onClick={onClose}>
+            ↙
           </button>
         </div>
       </header>

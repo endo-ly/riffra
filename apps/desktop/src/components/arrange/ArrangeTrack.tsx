@@ -13,6 +13,7 @@ import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
   ticksPerBar,
+  timelineGridDensity,
   trackLaneHeight,
   type ArrangeAudioTimelineItem,
   type ArrangeMidiTimelineItem,
@@ -142,11 +143,25 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const laneCount = props.timeline.laneCount;
   const laneHeight = trackLaneHeight(props.trackSize);
   const barTicks = ticksPerBar(props.timebase);
+  const gridDensity = timelineGridDensity(props.timebase, props.pixelsPerTick);
   const bars = Array.from(
     { length: Math.ceil(props.timelineTicks / barTicks) },
     (_, index) => index,
   );
+  const subdivisions = gridDensity.subdivisionTicks
+    ? Array.from(
+        { length: Math.floor(props.timelineTicks / gridDensity.subdivisionTicks) },
+        (_, index) => (index + 1) * gridDensity.subdivisionTicks!,
+      ).filter(
+        (tick) =>
+          tick % barTicks !== 0 && tick % (barTicks / props.timebase.timeSignatureNumerator) !== 0,
+      )
+    : [];
   const showMix = props.trackSize !== 'compact';
+  const trackMeta =
+    props.track.kind === 'instrument'
+      ? `INSTRUMENT${props.track.instrument?.name ? ` · ${props.track.instrument.name}` : ''}`
+      : 'AUDIO';
 
   const onResizePointerDown = (event: React.PointerEvent) => {
     event.preventDefault();
@@ -257,11 +272,10 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               </span>
             )}
           </div>
-          <small>
-            {props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO'} ·{' '}
-            {props.timeline.items.length} CLIP
-            {props.timeline.items.length === 1 ? '' : 'S'}
-          </small>
+          <div className={styles.trackMeta}>
+            <span>{trackMeta}</span>
+            {props.focused && <b className={styles.focusBadge}>LIVE</b>}
+          </div>
         </div>
         <div className={styles.trackSwitches}>
           {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
@@ -279,6 +293,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           )}
           <button
             className={(pendingTrackValues.muted ?? props.track.muted) ? styles.muteActive : ''}
+            data-state={(pendingTrackValues.muted ?? props.track.muted) ? 'active' : 'idle'}
             aria-pressed={pendingTrackValues.muted ?? props.track.muted}
             aria-label={`Mute ${props.track.name}`}
             title="Mute"
@@ -294,6 +309,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </button>
           <button
             className={(pendingTrackValues.solo ?? props.track.solo) ? styles.soloActive : ''}
+            data-state={(pendingTrackValues.solo ?? props.track.solo) ? 'active' : 'idle'}
             aria-pressed={pendingTrackValues.solo ?? props.track.solo}
             aria-label={`Solo ${props.track.name}`}
             title="Solo"
@@ -309,6 +325,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </button>
           <button
             className={`${styles.armButton} ${(pendingTrackValues.armed ?? props.track.armed) ? styles.armActive : ''}`}
+            data-state={(pendingTrackValues.armed ?? props.track.armed) ? 'active' : 'idle'}
             aria-pressed={Boolean(pendingTrackValues.armed ?? props.track.armed)}
             aria-label={`${(pendingTrackValues.armed ?? props.track.armed) ? 'Disarm' : 'Arm'} ${props.track.name} for recording`}
             title={
@@ -329,6 +346,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           {props.track.kind === 'audio' && (
             <button
               className={`${styles.monitoringButton} ${monitoringClass}`}
+              data-state={activeMonitoring}
               aria-label={`Cycle input monitoring for ${props.track.name}`}
               title={`Input monitoring: ${activeMonitoring.toUpperCase()} (click to cycle)`}
               onClick={() => {
@@ -385,21 +403,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             </button>
           </div>
         </details>
-        {props.trackSize === 'large' && (
-          <div className={styles.trackPlugins}>
-            {props.track.kind === 'instrument' ? (
-              <span>INSTRUMENT · {props.track.instrument?.name ?? 'None'}</span>
-            ) : (
-              <>
-                <span>FX · {props.track.rack.devices.length}</span>
-                {props.track.rack.devices.slice(0, 3).map((device) => (
-                  <span key={device.id}>{device.name}</span>
-                ))}
-                {props.track.rack.devices.length > 3 && <span>...</span>}
-              </>
-            )}
-          </div>
-        )}
         {showMix && (
           <>
             <label className={styles.trackControl}>
@@ -476,7 +479,35 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         }}
       >
         {bars.map((bar) => (
-          <i key={bar} style={{ left: bar * barTicks * props.pixelsPerTick }} />
+          <i
+            key={`bar-${bar}`}
+            className={styles.barGridLine}
+            style={{ left: bar * barTicks * props.pixelsPerTick }}
+          />
+        ))}
+        {gridDensity.showBeats &&
+          Array.from(
+            {
+              length: Math.floor(
+                props.timelineTicks / (barTicks / props.timebase.timeSignatureNumerator),
+              ),
+            },
+            (_, index) => (index + 1) * (barTicks / props.timebase.timeSignatureNumerator),
+          )
+            .filter((tick) => tick % barTicks !== 0)
+            .map((tick) => (
+              <i
+                key={`beat-${tick}`}
+                className={styles.beatGridLine}
+                style={{ left: tick * props.pixelsPerTick }}
+              />
+            ))}
+        {subdivisions.map((tick) => (
+          <i
+            key={`subdivision-${tick}`}
+            className={styles.subdivisionGridLine}
+            style={{ left: tick * props.pixelsPerTick }}
+          />
         ))}
         {audioItems.map(({ clip, key }) => (
           <AudioClipView

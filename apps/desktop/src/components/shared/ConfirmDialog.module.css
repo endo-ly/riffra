@@ -1,0 +1,63 @@
+.overlay {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 6, 8, 0.62);
+}
+
+.dialog {
+  width: min(380px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  color: #dbe8ec;
+  background: #151f26;
+  border: 1px solid #40525d;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.dialog h2 {
+  margin: 0;
+  color: #edf7f8;
+  font-size: var(--font-emphasis);
+}
+
+.dialog p {
+  margin: 0;
+  color: #a8bac1;
+  font-size: var(--font-control);
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.actions button {
+  min-height: var(--control-normal);
+  padding: 0 11px;
+  color: #b8c8ce;
+  font-size: var(--font-small);
+  background: #111a20;
+  border: 1px solid #354852;
+  border-radius: 4px;
+}
+
+.actions .confirm {
+  color: #071216;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.actions .danger {
+  color: #ffe8e5;
+  background: #7b2f2c;
+  border-color: #bd5a53;
+}

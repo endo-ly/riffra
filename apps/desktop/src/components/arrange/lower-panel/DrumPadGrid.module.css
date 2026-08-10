@@ -14,7 +14,7 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   aspect-ratio: 4 / 3;
   max-height: 300px;
-  max-width: 400px;
+  max-width: 520px;
 }
 .pad {
   position: relative;
@@ -52,7 +52,7 @@
   position: absolute;
   top: 4px;
   left: 6px;
-  font-size: 8px;
+  font-size: var(--font-micro);
   opacity: 0.35;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.05em;

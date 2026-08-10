@@ -4,7 +4,7 @@
   height: var(--panel-height);
   max-height: min(900px, 55vh);
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: 38px minmax(0, 1fr);
   overflow: hidden;
   color: #dbe8ec;
   background: #0d151a;
@@ -13,8 +13,8 @@
 }
 
 .panel.collapsed {
-  min-height: 44px;
-  grid-template-rows: 44px;
+  min-height: 38px;
+  grid-template-rows: 38px;
 }
 
 .resizeHandle {
@@ -65,8 +65,8 @@
 
 .tabs button,
 .actions button {
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 28px;
+  padding: 0 8px;
   color: #9dafb7;
   font-size: 10px;
   font-weight: 550;
@@ -110,6 +110,10 @@
 }
 
 .actions button {
+  width: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   color: #a9bac1;
   background: #111a20;
   border-color: #3a4d57;

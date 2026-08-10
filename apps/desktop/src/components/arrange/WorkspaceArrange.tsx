@@ -29,6 +29,7 @@ import { ArrangeLowerPanel, type ArrangeLowerPanelView } from './lower-panel/Arr
 import { PlaySurfacePanel } from './lower-panel/PlaySurfacePanel';
 import { PluginPicker } from './PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
+import { ConfirmDialog } from '../shared/ConfirmDialog';
 import {
   BASE_PIXELS_PER_QUARTER,
   buildTrackTimeline,
@@ -83,6 +84,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     x: number;
     y: number;
     items: ContextMenuItem[];
+  } | null>(null);
+  const [markerRename, setMarkerRename] = useState<{ markerId: string; name: string } | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    onConfirm: () => void;
   } | null>(null);
   const [timeSelection, setTimeSelection] = useState<{ startTick: number; endTick: number } | null>(
     null,
@@ -154,6 +163,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     onSplitToolUsed: () => setTool('select'),
   });
   const { setMessage } = editor;
+  const commitMidiEdit = (operation: Promise<CreativeSession | null>) => {
+    setMessage('');
+    return editor.commit(operation, '');
+  };
   // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
   // delivers the file contents rather than the OS path, so the bytes are
   // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
@@ -195,6 +208,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.audio.state !== 'starting' &&
     props.audio.state !== 'faulted' &&
     props.audio.state !== 'offline';
+  const statusMessage = playbackOutOfSync
+    ? 'Playback runtime is out of sync'
+    : unavailableClipCount || missingDeviceCount
+      ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
+      : editor.messageKind === 'success'
+        ? ''
+        : editor.message;
+  const showStatus = Boolean(statusMessage);
 
   useEffect(() => {
     if (activeMidiClipId !== null && !activeMidiClip) {
@@ -513,16 +534,32 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   const renameMarker = (marker: Marker) => {
-    const next = window.prompt('Marker name', marker.name)?.trim();
-    if (next && next !== marker.name)
-      void editor.commit(props.api.updateMarker(marker.id, { name: next }), 'Marker renamed.');
+    setMarkerRename({ markerId: marker.id, name: marker.name });
   };
 
   const removeMarker = (marker: Marker) => {
-    if (!window.confirm(`Delete marker "${marker.name}"?`)) return;
-    void editor.commit(props.api.removeMarker(marker.id), 'Marker removed.').then(() => {
-      if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
+    setConfirmRequest({
+      title: 'Delete marker',
+      message: `Delete marker "${marker.name}"?`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void editor.commit(props.api.removeMarker(marker.id), 'Marker removed.').then(() => {
+          if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
+        });
+      },
     });
+  };
+
+  const saveMarkerRename = () => {
+    if (!markerRename) return;
+    const marker = arrangement.markers.find((item) => item.id === markerRename.markerId);
+    const next = markerRename.name.trim();
+    setMarkerRename(null);
+    if (marker && next && next !== marker.name) {
+      void editor.commit(props.api.updateMarker(marker.id, { name: next }), 'Marker renamed.');
+    }
   };
 
   const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
@@ -554,11 +591,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     });
   };
 
-  const deleteTrack = async (trackId: string, name: string, clipCount: number) => {
-    const detail = clipCount
-      ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
-      : '';
-    if (!window.confirm(`Delete ${name}?${detail}\n\nSource Audio Assets will be kept.`)) return;
+  const performDeleteTrack = async (trackId: string, name: string) => {
     const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
     if (
       props.focusedTrackId === trackId &&
@@ -581,6 +614,22 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       const clipIds = selectedClipIds.filter((id) => remaining.has(id));
       props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
     }
+  };
+
+  const deleteTrack = (trackId: string, name: string, clipCount: number) => {
+    const detail = clipCount
+      ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
+      : '';
+    setConfirmRequest({
+      title: `Delete ${name}`,
+      message: `${detail}\n\nSource Audio Assets will be kept.`,
+      confirmLabel: 'Delete Track',
+      danger: true,
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void performDeleteTrack(trackId, name);
+      },
+    });
   };
 
   const openAudioClipContextMenu = (event: React.MouseEvent, clip: AudioClip) => {
@@ -792,24 +841,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       y: event.clientY,
       items: [
         {
-          label: 'Import Audio Asset here',
-          onClick: () =>
-            editor.setMessage('Drag an Audio Asset from the Library and drop it on this Track.'),
-        },
-        {
-          label: 'Import MIDI Asset here',
-          onClick: () =>
-            editor.setMessage('Drag a MIDI Asset from the Library and drop it on this Track.'),
-        },
-        {
-          label: 'Create MIDI Clip',
-          onClick: () =>
-            editor.setMessage(
-              'Create a MIDI Clip by recording from a MIDI keyboard or dragging a MIDI Asset from the Library.',
-            ),
-        },
-        { separator: true },
-        {
           label: 'Add Audio Track',
           onClick: () =>
             void editor.commit(
@@ -905,6 +936,50 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             }
           }}
           onClose={() => setPluginPicker(null)}
+        />
+      )}
+
+      {markerRename && (
+        <form
+          className={styles.markerDialog}
+          aria-label="Rename marker"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveMarkerRename();
+          }}
+        >
+          <strong>Rename Marker</strong>
+          <label>
+            <span>Name</span>
+            <input
+              autoFocus
+              value={markerRename.name}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setMarkerRename((current) => (current ? { ...current, name: value } : current));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setMarkerRename(null);
+              }}
+            />
+          </label>
+          <div>
+            <button type="button" onClick={() => setMarkerRename(null)}>
+              Cancel
+            </button>
+            <button type="submit">Save</button>
+          </div>
+        </form>
+      )}
+
+      {confirmRequest && (
+        <ConfirmDialog
+          title={confirmRequest.title}
+          message={confirmRequest.message}
+          confirmLabel={confirmRequest.confirmLabel}
+          danger={confirmRequest.danger}
+          onConfirm={confirmRequest.onConfirm}
+          onCancel={() => setConfirmRequest(null)}
         />
       )}
 
@@ -1236,18 +1311,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               )
             }
             onUpdateNote={(clipId, note) =>
-              void editor.commit(
+              commitMidiEdit(
                 props.api.updateMidiNote(clipId, note.id, {
                   note: note.note,
                   startTick: note.startTick,
                   durationTicks: note.durationTicks,
                   velocity: note.velocity,
                 }),
-                'Note updated.',
               )
             }
             onUpdateNotes={(clipId, updates) =>
-              void editor.commit(
+              commitMidiEdit(
                 props.api.updateMidiNotes(
                   clipId,
                   updates.map((update) => ({
@@ -1260,7 +1334,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     },
                   })),
                 ),
-                'MIDI notes updated.',
               )
             }
             onRemoveNote={(clipId, noteId) =>
@@ -1282,16 +1355,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
       />
 
-      <div className={styles.statusToast} role="status">
-        <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
-        {playbackOutOfSync
-          ? 'Playback runtime is out of sync'
-          : unavailableClipCount || missingDeviceCount
-            ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
-            : editor.message}
-        {playbackOutOfSync && <button onClick={() => void editor.retryRuntimeSync()}>Retry</button>}
-        <small>REV {arrangement.revision}</small>
-      </div>
+      {showStatus && (
+        <div className={styles.statusToast} role="status">
+          <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
+          {statusMessage}
+          {playbackOutOfSync && (
+            <button onClick={() => void editor.retryRuntimeSync()}>Retry</button>
+          )}
+        </div>
+      )}
 
       {contextMenu && (
         <ContextMenu
