@@ -48,11 +48,11 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
   );
   const density = timelineGridDensity(props.timebase, props.pixelsPerTick);
   const beatTicksInBar = barTicks / props.timebase.timeSignatureNumerator;
-  const subdivisions = density.subdivisionTicks
+  const subdivisionOffsets = density.subdivisionTicks
     ? Array.from(
-        { length: Math.floor(props.timelineTicks / density.subdivisionTicks) },
+        { length: Math.floor((barTicks - 1) / density.subdivisionTicks) },
         (_, index) => (index + 1) * density.subdivisionTicks!,
-      ).filter((tick) => tick % barTicks !== 0 && tick % beatTicksInBar !== 0)
+      ).filter((offset) => offset % beatTicksInBar !== 0)
     : [];
   return (
     <>
@@ -214,15 +214,15 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
                 Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
                   <i key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
                 ))}
-              {subdivisions
-                .filter((subdivision) => subdivision >= tick && subdivision < tick + barTicks)
-                .map((subdivision) => (
+              {subdivisionOffsets.map((offset) =>
+                tick + offset < props.timelineTicks ? (
                   <i
-                    key={subdivision}
+                    key={offset}
                     className={styles.subdivisionMark}
-                    style={{ left: (subdivision - tick) * props.pixelsPerTick }}
+                    style={{ left: offset * props.pixelsPerTick }}
                   />
-                ))}
+                ) : null,
+              )}
             </div>
           );
         })}

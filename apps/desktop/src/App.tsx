@@ -49,6 +49,12 @@ function resolvePanelWidth(side: ArrangePanelSide, width: number) {
   return Math.min(limits.max, Math.max(limits.min, width));
 }
 
+function adjustPanelWidth(side: ArrangePanelSide, width: number, delta: number) {
+  const limits = PANEL_WIDTH_LIMITS[side];
+  if (width === 0 && delta > 0) return limits.min;
+  return resolvePanelWidth(side, width + delta);
+}
+
 function PanelResizeHandle(props: {
   side: ArrangePanelSide;
   width: number;
@@ -88,6 +94,7 @@ function PanelResizeHandle(props: {
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [arrangeFocusedTrackId, setArrangeFocusedTrackId] = useState<string | null>(null);
+  const [arrangeCanonicalOperationsPending, setArrangeCanonicalOperationsPending] = useState(0);
   const [arrangeLibraryWidth, setArrangeLibraryWidth] = useState(
     PANEL_WIDTH_LIMITS.library.default,
   );
@@ -192,8 +199,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     api: nativeApi,
   } = useApp(api);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
-  const focusedTrack =
-    session?.arrangement.tracks.find((track) => track.id === arrangeFocusedTrackId) ?? null;
+  const selectedTrack =
+    session && arrangeSelection.kind === 'track'
+      ? (session.arrangement.tracks.find((track) => track.id === arrangeSelection.trackId) ?? null)
+      : null;
 
   const isArrange = session?.workspace === 'arrange';
 
@@ -202,7 +211,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     const onPointerMove = (event: PointerEvent) => {
       const delta = event.clientX - panelResize.startX;
       const adjustedDelta = panelResize.side === 'library' ? delta : -delta;
-      const nextWidth = resolvePanelWidth(panelResize.side, panelResize.startWidth + adjustedDelta);
+      const nextWidth = adjustPanelWidth(panelResize.side, panelResize.startWidth, adjustedDelta);
       if (panelResize.side === 'library') setArrangeLibraryWidth(nextWidth);
       else setArrangeInspectorWidth(nextWidth);
     };
@@ -228,9 +237,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   };
 
   const resizePanelBy = (side: ArrangePanelSide, delta: number) => {
-    if (side === 'library')
-      setArrangeLibraryWidth((width) => resolvePanelWidth(side, width + delta));
-    else setArrangeInspectorWidth((width) => resolvePanelWidth(side, width + delta));
+    if (side === 'library') setArrangeLibraryWidth((width) => adjustPanelWidth(side, width, delta));
+    else setArrangeInspectorWidth((width) => adjustPanelWidth(side, width, delta));
   };
 
   useEffect(() => {
@@ -242,16 +250,19 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     }
   }, [arrangeFocusedTrackId, session?.arrangement.tracks]);
 
-  const addPluginToFocusedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
-    if (!focusedTrack) return;
+  const addPluginToSelectedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
+    if (!selectedTrack) return;
+    setArrangeCanonicalOperationsPending((count) => count + 1);
     try {
       const next =
         target === 'instrument'
-          ? await nativeApi.setTrackInstrument(focusedTrack.id, plugin.path)
-          : await nativeApi.addTrackEffect(focusedTrack.id, plugin.path);
+          ? await nativeApi.setTrackInstrument(selectedTrack.id, plugin.path)
+          : await nativeApi.addTrackEffect(selectedTrack.id, plugin.path);
       setSession(next);
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
+    } finally {
+      setArrangeCanonicalOperationsPending((count) => Math.max(0, count - 1));
     }
   };
   const refreshAudioDevices = async () => {
@@ -278,7 +289,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   } as CSSProperties;
   return (
     <main
-      className={`app-shell ${isArrange ? 'arrange-shell' : ''} ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''} ${panelResize ? 'is-panel-resizing' : ''}`}
+      className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''} ${panelResize ? 'is-panel-resizing' : ''}`}
       style={shellStyle}
     >
       <GlobalBar
@@ -403,8 +414,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           rack={{
             plugins,
             visiblePlugins,
-            focusedTrack,
-            onAddPlugin: (plugin, target) => void addPluginToFocusedTrack(plugin, target),
+            selectedTrack,
+            onAddPlugin: (plugin, target) => void addPluginToSelectedTrack(plugin, target),
           }}
           recordings={{
             visibleRecordings,
@@ -436,6 +447,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             plugins={plugins}
             focusedTrackId={arrangeFocusedTrackId}
             onFocusTrack={setArrangeFocusedTrackId}
+            canonicalOperationPending={arrangeCanonicalOperationsPending > 0}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}

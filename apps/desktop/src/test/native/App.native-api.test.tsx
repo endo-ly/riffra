@@ -667,6 +667,53 @@ describe('App driven by FakeNativeApi', () => {
     expect(fake.savedSessions).toHaveLength(savedSessionCount);
   });
 
+  it('adds an effect to a selected Audio Track from the Library', async () => {
+    // Arrange
+    const fake = new FakeNativeApi({ plugins: [examplePlugin] });
+    renderApp(fake);
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
+    const user = userEvent.setup();
+
+    // Act
+    await user.click(screen.getByRole('button', { name: /Add Audio Track/ }));
+    await waitFor(() => expect(screen.getByText('Audio 1')).toBeInTheDocument());
+    await user.click(screen.getByText('Audio 1'));
+    await user.click(screen.getByRole('button', { name: /Example Synth/ }));
+
+    // Assert
+    await waitFor(() => expect(fake.calls).toContain('addTrackEffect'));
+    expect(fake.bootstrapState.session.arrangement.tracks[0]?.rack.devices).toHaveLength(1);
+  });
+
+  it('reopens collapsed side panels with their keyboard expansion direction', async () => {
+    // Arrange
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+    const libraryHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse library panel',
+    });
+    const inspectorHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse inspector panel',
+    });
+
+    // Act
+    fireEvent.pointerDown(libraryHandle, { button: 0, clientX: 220, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.keyDown(libraryHandle, { key: 'ArrowRight' });
+
+    fireEvent.pointerDown(inspectorHandle, { button: 0, clientX: 280, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 600, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    fireEvent.keyDown(inspectorHandle, { key: 'ArrowLeft' });
+
+    // Assert
+    expect(libraryHandle).toHaveAttribute('aria-valuenow', '176');
+    expect(inspectorHandle).toHaveAttribute('aria-valuenow', '220');
+  });
+
   it('applies an audio driver selection without changing the Scratch Session', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);

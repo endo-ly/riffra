@@ -292,9 +292,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           ? { ...current, previewNotes, awaitingCanonical: true }
           : current,
       );
-      void Promise.resolve(operation).then((result) => {
-        if (result == null) clearDragging();
-      }, clearDragging);
+      void Promise.resolve(operation).then(clearDragging, clearDragging);
     };
     cancel = () => {
       cleanup();

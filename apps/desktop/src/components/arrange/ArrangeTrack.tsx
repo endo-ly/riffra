@@ -12,8 +12,6 @@ import type { NativeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
-  ticksPerBar,
-  timelineGridDensity,
   trackLaneHeight,
   type ArrangeAudioTimelineItem,
   type ArrangeMidiTimelineItem,
@@ -33,7 +31,6 @@ interface ArrangeTrackProps {
   focused: boolean;
   unavailableClipIds: string[];
   timelineWidth: number;
-  timelineTicks: number;
   pixelsPerTick: number;
   trackSize: TrackSize;
   api: NativeApi;
@@ -106,15 +103,13 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           : field === 'armed'
             ? { armed: value as boolean }
             : { monitoring: value as MonitoringState };
-    void props.onCommit(props.api.updateTrack(props.track.id, patch)).then((result) => {
-      if (result == null) {
-        setPendingTrackValues((current) => {
-          if (current[field] !== value) return current;
-          const next = { ...current };
-          delete next[field];
-          return next;
-        });
-      }
+    void props.onCommit(props.api.updateTrack(props.track.id, patch)).then(() => {
+      setPendingTrackValues((current) => {
+        if (current[field] !== value) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
     });
   };
 
@@ -138,21 +133,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   );
   const laneCount = props.timeline.laneCount;
   const laneHeight = trackLaneHeight(props.trackSize);
-  const barTicks = ticksPerBar(props.timebase);
-  const gridDensity = timelineGridDensity(props.timebase, props.pixelsPerTick);
-  const bars = Array.from(
-    { length: Math.ceil(props.timelineTicks / barTicks) },
-    (_, index) => index,
-  );
-  const subdivisions = gridDensity.subdivisionTicks
-    ? Array.from(
-        { length: Math.floor(props.timelineTicks / gridDensity.subdivisionTicks) },
-        (_, index) => (index + 1) * gridDensity.subdivisionTicks!,
-      ).filter(
-        (tick) =>
-          tick % barTicks !== 0 && tick % (barTicks / props.timebase.timeSignatureNumerator) !== 0,
-      )
-    : [];
   const showMix = props.trackSize !== 'compact';
   const trackMeta = props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO';
 
@@ -450,37 +430,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           props.onContextMenu?.(event, props.track.id, tick);
         }}
       >
-        {bars.map((bar) => (
-          <i
-            key={`bar-${bar}`}
-            className={styles.barGridLine}
-            style={{ left: bar * barTicks * props.pixelsPerTick }}
-          />
-        ))}
-        {gridDensity.showBeats &&
-          Array.from(
-            {
-              length: Math.floor(
-                props.timelineTicks / (barTicks / props.timebase.timeSignatureNumerator),
-              ),
-            },
-            (_, index) => (index + 1) * (barTicks / props.timebase.timeSignatureNumerator),
-          )
-            .filter((tick) => tick % barTicks !== 0)
-            .map((tick) => (
-              <i
-                key={`beat-${tick}`}
-                className={styles.beatGridLine}
-                style={{ left: tick * props.pixelsPerTick }}
-              />
-            ))}
-        {subdivisions.map((tick) => (
-          <i
-            key={`subdivision-${tick}`}
-            className={styles.subdivisionGridLine}
-            style={{ left: tick * props.pixelsPerTick }}
-          />
-        ))}
         {audioItems.map(({ clip, key }) => (
           <AudioClipView
             key={key}

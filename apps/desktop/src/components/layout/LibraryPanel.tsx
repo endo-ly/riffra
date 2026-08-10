@@ -28,7 +28,7 @@ interface LibraryPanelProps {
   rack: {
     plugins: PluginEntry[];
     visiblePlugins: PluginEntry[];
-    focusedTrack: Track | null;
+    selectedTrack: Track | null;
     onAddPlugin: (plugin: PluginEntry, target: 'instrument' | 'effect') => void;
   };
   recordings: {
@@ -175,37 +175,38 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                     type="button"
                     className={styles.pluginAdd}
                     aria-label={
-                      rack.focusedTrack
+                      rack.selectedTrack
                         ? `${
-                            rack.focusedTrack.kind === 'instrument' && rack.focusedTrack.instrument
+                            rack.selectedTrack.kind === 'instrument' &&
+                            rack.selectedTrack.instrument
                               ? 'Replace instrument with'
                               : 'Add'
                           } ${plugin.name} as ${
-                            rack.focusedTrack.kind === 'instrument' ? 'instrument' : 'effect'
-                          } on ${rack.focusedTrack.name}`
+                            rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
+                          } on ${rack.selectedTrack.name}`
                         : `Select a Track before adding ${plugin.name}`
                     }
                     onClick={() => {
-                      if (!rack.focusedTrack) {
+                      if (!rack.selectedTrack) {
                         setMessage('Select a Track before adding a Plugin.');
                         return;
                       }
                       setMessage(null);
                       rack.onAddPlugin(
                         plugin,
-                        rack.focusedTrack.kind === 'instrument' ? 'instrument' : 'effect',
+                        rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
                       );
                     }}
                     disabled={plugin.scanState !== 'validated'}
                     title={
                       plugin.scanState === 'validated'
-                        ? rack.focusedTrack
+                        ? rack.selectedTrack
                           ? `${
-                              rack.focusedTrack.kind === 'instrument' &&
-                              rack.focusedTrack.instrument
+                              rack.selectedTrack.kind === 'instrument' &&
+                              rack.selectedTrack.instrument
                                 ? 'Replace instrument with'
                                 : 'Add'
-                            } ${plugin.name} on ${rack.focusedTrack.name}`
+                            } ${plugin.name} on ${rack.selectedTrack.name}`
                           : `Select a Track before adding ${plugin.name}`
                         : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
                     }

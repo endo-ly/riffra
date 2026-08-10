@@ -55,6 +55,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   const { timebase } = arrangement;
   const [message, setMessageState] = useState('');
   const [runtimeOutOfSync, setRuntimeOutOfSync] = useState(false);
+  const [pendingCanonicalOperations, setPendingCanonicalOperations] = useState(0);
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -72,6 +73,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   const commit = useCallback(
     async (operation: Promise<CreativeSession | null>) => {
       setMessageState('');
+      setPendingCanonicalOperations((count) => count + 1);
       try {
         const next = await operation;
         if (next) {
@@ -89,6 +91,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         setMessageState(detail);
         if (detail.includes('Playback runtime is out of sync')) setRuntimeOutOfSync(true);
         return null;
+      } finally {
+        setPendingCanonicalOperations((count) => Math.max(0, count - 1));
       }
     },
     [setSession],
@@ -250,6 +254,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      if (isEditableTarget(event.target)) return;
       if (event.ctrlKey && key === 'a') {
         event.preventDefault();
         setSelectedClipIds([
@@ -323,7 +328,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         for (const clip of audioTargets) void clipInteractions.splitClip(clip, displayTick);
         for (const clip of midiTargets) void clipInteractions.splitMidiClip(clip, displayTick);
       } else if (selectedClipIds.length && event.key === 'Delete') {
-        if (isEditableTarget(event.target)) return;
         event.preventDefault();
         void commit(
           api.removeTimelineClips(
@@ -357,6 +361,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   return {
     message,
     runtimeOutOfSync,
+    canonicalOperationPending: pendingCanonicalOperations > 0,
     retryRuntimeSync,
     snapGuide,
     marquee,

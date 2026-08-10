@@ -147,6 +147,15 @@
   background: #0c1014;
 }
 
+.timelineGrid {
+  position: absolute;
+  z-index: 0;
+  top: 34px;
+  bottom: 0;
+  left: var(--header-width);
+  pointer-events: none;
+}
+
 .rulerCorner {
   position: absolute;
   /* Keep the fixed corner above both the scrolling ruler and track headers. */
@@ -562,6 +571,7 @@
 .trackRow {
   --track-height: 70px;
   position: relative;
+  z-index: 1;
   height: var(--track-height);
   display: grid;
   grid-template-columns: var(--header-width) auto;
@@ -844,32 +854,9 @@
   position: relative;
   height: var(--track-height);
   overflow: hidden;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 23px,
-      rgba(255, 255, 255, 0.015) 24px
-    ),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent);
 }
 
-.lane > i {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: #222c34;
-}
-.lane > .barGridLine {
-  background: rgba(211, 232, 235, 0.2);
-}
-.lane > .beatGridLine {
-  background: rgba(211, 232, 235, 0.09);
-}
-.lane > .subdivisionGridLine {
-  background: rgba(211, 232, 235, 0.045);
-}
 .laneDragOver {
   background:
     repeating-linear-gradient(
@@ -883,6 +870,8 @@
 }
 
 .automationRow {
+  position: relative;
+  z-index: 1;
   height: 85px;
   display: grid;
   grid-template-columns: var(--header-width) auto;

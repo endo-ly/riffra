@@ -9,6 +9,7 @@ import {
   defaultSession,
   toAssetId,
   type CreativeSession,
+  type Track,
   type TransportStatus,
 } from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
@@ -201,7 +202,7 @@ describe('WorkspaceArrange', () => {
     expect(api.calls).toContain('duplicateMidiNotes');
   });
 
-  it('keeps a MIDI note at its preview position until the canonical update arrives', async () => {
+  it('clears a MIDI preview when the canonical response uses an effective value', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
     session.arrangement.tracks.push({
@@ -234,9 +235,28 @@ describe('WorkspaceArrange', () => {
     const originalUpdateMidiNote = api.updateMidiNote.bind(api);
     let releaseUpdate!: () => void;
     api.updateMidiNote = (...args) => {
-      void originalUpdateMidiNote(...args);
+      const canonical = originalUpdateMidiNote(...args);
       return new Promise<CreativeSession>((resolve) => {
-        releaseUpdate = () => resolve(session);
+        releaseUpdate = () => {
+          void canonical.then((next) =>
+            resolve({
+              ...next,
+              arrangement: {
+                ...next.arrangement,
+                midiClips: next.arrangement.midiClips.map((clip) =>
+                  clip.id === 'clip:midi-move'
+                    ? {
+                        ...clip,
+                        notes: clip.notes.map((note) =>
+                          note.id === 'note:move' ? { ...note, startTick: 120 } : note,
+                        ),
+                      }
+                    : clip,
+                ),
+              },
+            }),
+          );
+        };
       });
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
@@ -260,7 +280,7 @@ describe('WorkspaceArrange', () => {
     expect(container.querySelector('[class*="statusToast_"]')).not.toBeInTheDocument();
 
     releaseUpdate();
-    await waitFor(() => expect(Number.parseFloat(note.style.left)).toBeCloseTo(43.2));
+    await waitFor(() => expect(Number.parseFloat(note.style.left)).toBeCloseTo(21.6));
   });
 
   it('previews a selected MIDI note group until the canonical update arrives', async () => {
@@ -308,11 +328,14 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
+    const originalUpdateMidiNotes = api.updateMidiNotes.bind(api);
     let releaseUpdate!: () => void;
-    api.updateMidiNotes = () => {
-      api.calls.push('updateMidiNotes');
+    api.updateMidiNotes = (...args) => {
+      const canonical = originalUpdateMidiNotes(...args);
       return new Promise<CreativeSession>((resolve) => {
-        releaseUpdate = () => resolve(session);
+        releaseUpdate = () => {
+          void canonical.then(resolve);
+        };
       });
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
@@ -398,6 +421,46 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(api.calls).toContain('removeTrack'));
     expect(screen.queryByText(/Source Audio Assets will be kept/)).not.toBeInTheDocument();
     expect(screen.queryByText('Audio 1')).not.toBeInTheDocument();
+  });
+
+  it('reports MIDI and Audio clips when confirming Track deletion', () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument-delete',
+      name: 'Instrument Delete',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-delete',
+      name: 'MIDI Delete',
+      trackId: 'track:instrument-delete',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    // Act
+    fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    // Assert
+    expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
+    expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
   });
 
   it('uses the latest pending value when Track controls are clicked rapidly', async () => {
@@ -519,6 +582,25 @@ describe('WorkspaceArrange', () => {
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 
+  it('reports a persistent transport revision mismatch after its grace period', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.revision = 1;
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+    await waitFor(() => expect(api.calls).toContain('onTransportStatus'));
+
+    // Act
+    api.emitTransportStatus({ revision: 0 });
+
+    // Assert
+    await waitFor(
+      () => expect(screen.getByText('Playback runtime is out of sync')).toBeInTheDocument(),
+      { timeout: 2_000 },
+    );
+  });
+
   it('places overlapping Audio and MIDI clips on separate lanes', () => {
     const session = defaultSession();
     session.workspace = 'arrange';
@@ -574,6 +656,38 @@ describe('WorkspaceArrange', () => {
     expect(audioClip).toBeInTheDocument();
     expect(midiClip).toBeInTheDocument();
     expect(audioClip?.style.top).not.toBe(midiClip?.style.top);
+  });
+
+  it('renders one shared grid for a long timeline regardless of Track count', () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange.endTick = session.arrangement.timebase.ppq * 4 * 100;
+    const tracks: Track[] = Array.from({ length: 50 }, (_, index) => ({
+      id: `track:grid-${index}`,
+      name: `Grid ${index}`,
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    }));
+    session.arrangement.tracks.push(...tracks);
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+
+    // Act
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Assert
+    expect(container.querySelectorAll('[data-arrange-track]')).toHaveLength(50);
+    expect(container.querySelectorAll('[data-timeline-grid]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-arrange-track] > [class*="lane_"] > i')).toHaveLength(
+      0,
+    );
   });
 
   it('rejects placing a clip on a Track with the wrong source kind', async () => {
