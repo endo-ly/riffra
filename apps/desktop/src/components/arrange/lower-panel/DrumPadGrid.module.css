@@ -75,7 +75,7 @@
   position: absolute;
   bottom: 3px;
   right: 5px;
-  font-size: 7px;
+  font-size: var(--font-micro);
   opacity: 0.45;
   font-variant-numeric: tabular-nums;
 }

@@ -3,6 +3,7 @@ import type { CreativeSession, RecordingTakeRecord } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { useInspectorOperation } from './useInspectorOperation';
+import styles from './TakeInspector.module.css';
 
 interface TakeInspectorProps {
   session: CreativeSession;
@@ -95,8 +96,8 @@ export function TakeInspector(props: TakeInspectorProps) {
   };
 
   return (
-    <section aria-label="Recording takes">
-      <header>
+    <section className={styles.section} aria-label="Recording takes">
+      <header className={styles.sectionHeader}>
         <strong>TAKES</strong>
       </header>
       {context.takes.map((take, index) => {
@@ -104,39 +105,52 @@ export function TakeInspector(props: TakeInspectorProps) {
           (slot) => slot.trackId === take.trackId && slot.activeTakeId === take.id,
         );
         return (
-          <div key={take.id}>
-            <p>
-              Take {index + 1} {active ? '· ACTIVE' : ''}
-            </p>
-            <button onClick={() => preview(take)}>Preview</button>
-            {!active && (
+          <div className={styles.takeRow} key={take.id}>
+            <div className={styles.takeHeader}>
+              <strong>Take {index + 1}</strong>
+              {active && <span>ACTIVE</span>}
+            </div>
+            <div className={styles.actions}>
+              <button type="button" onClick={() => preview(take)}>
+                Preview
+              </button>
+              {!active && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    commit(
+                      props.api.activateTake(context.recordingSession.id, take.id),
+                      'Active Take updated.',
+                    )
+                  }
+                >
+                  Use
+                </button>
+              )}
               <button
+                type="button"
                 onClick={() =>
-                  commit(
-                    props.api.activateTake(context.recordingSession.id, take.id),
-                    'Active Take updated.',
-                  )
+                  commit(props.api.placeTakeAsSeparateClip(take.id), 'Take copy placed.')
                 }
               >
-                Use
+                Place copy
               </button>
-            )}
-            <button
-              onClick={() =>
-                commit(props.api.placeTakeAsSeparateClip(take.id), 'Take copy placed.')
-              }
-            >
-              Place copy
-            </button>
+            </div>
             {take.rawAudio && take.processedAudio && (
-              <div role="group" aria-label={`Compare Take ${index + 1}`}>
+              <div
+                className={styles.comparison}
+                role="group"
+                aria-label={`Compare Take ${index + 1}`}
+              >
                 <button
+                  type="button"
                   aria-pressed={previewingTake === take.id && comparisonVariant === 'raw'}
                   onClick={() => preview(take, 'raw')}
                 >
                   A · RAW
                 </button>
                 <button
+                  type="button"
                   aria-pressed={previewingTake === take.id && comparisonVariant === 'processed'}
                   onClick={() => preview(take, 'processed')}
                 >
@@ -147,7 +161,11 @@ export function TakeInspector(props: TakeInspectorProps) {
           </div>
         );
       })}
-      {operationMessage && <p role="status">{operationMessage}</p>}
+      {operationMessage && (
+        <p className={styles.message} role="status">
+          {operationMessage}
+        </p>
+      )}
     </section>
   );
 }

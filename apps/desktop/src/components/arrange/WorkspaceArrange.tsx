@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type CSSProperties,
   type MutableRefObject,
 } from 'react';
 import type {
@@ -849,7 +850,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   return (
-    <section className={styles.workspace} aria-label="Arrange timeline">
+    <section
+      className={styles.workspace}
+      aria-label="Arrange timeline"
+      style={{ '--header-width': `${TRACK_HEADER_WIDTH}px` } as CSSProperties}
+    >
       <ArrangeToolbar
         tool={tool}
         snap={snap}
@@ -857,27 +862,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         trackSize={trackSize}
         rulerMode={rulerMode}
         follow={follow}
-        position={formatMusicalPosition(displayTick, timebase)}
-        clock={formatClock(displayTick, timebase)}
-        bpm={timebase.bpm}
-        signature={`${timebase.timeSignatureNumerator}/${timebase.timeSignatureDenominator}`}
         onTool={setTool}
         onSnap={setSnap}
         onZoom={applyZoom}
         onTrackSize={setGlobalTrackSize}
         onRulerMode={setRulerMode}
         onFollow={setFollow}
-        onTimebase={(bpm, numerator, denominator) =>
-          void editor.commit(
-            props.api.updateArrangementTimebase({
-              ...timebase,
-              bpm,
-              timeSignatureNumerator: numerator,
-              timeSignatureDenominator: denominator,
-            }),
-            'Project timebase updated.',
-          )
-        }
         onAddTrack={(kind) =>
           void editor.commit(
             props.api.addTrack(
@@ -939,6 +929,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             timelineWidth={timelineWidth}
             pixelsPerTick={pixelsPerTick}
             mode={rulerMode}
+            position={formatMusicalPosition(displayTick, timebase)}
+            clock={formatClock(displayTick, timebase)}
             scrollTop={scrollTop}
             loopRange={loopPreview ?? arrangement.loopRange}
             punchRange={punchPreview ?? arrangement.punchRange}

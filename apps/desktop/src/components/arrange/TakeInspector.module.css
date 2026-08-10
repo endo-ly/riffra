@@ -1,0 +1,74 @@
+.section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.sectionHeader strong {
+  color: #bac4cd;
+  font-size: var(--font-micro);
+  letter-spacing: 0.08em;
+}
+
+.takeRow {
+  display: grid;
+  gap: 7px;
+  padding: 9px 0;
+  border-top: 1px solid #27313a;
+}
+
+.takeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.takeHeader strong {
+  color: #d6e0e6;
+  font-size: var(--font-small);
+}
+
+.takeHeader span {
+  color: var(--teal);
+  font-size: var(--font-micro);
+  letter-spacing: 0.06em;
+}
+
+.actions,
+.comparison {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.actions button,
+.comparison button {
+  min-height: var(--control-dense);
+  padding: 0 8px;
+  color: #aeb9c3;
+  font-size: var(--font-micro);
+  background: #141a20;
+  border: 1px solid #2a333d;
+  border-radius: 4px;
+}
+
+.comparison button[aria-pressed='true'] {
+  color: #071216;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.message {
+  margin: 0;
+  color: #9cdbe2;
+  font-size: var(--font-micro);
+  line-height: 1.45;
+}

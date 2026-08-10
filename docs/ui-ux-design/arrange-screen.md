@@ -299,7 +299,8 @@ Arrange は Riffra 共通の Application Shell 内に配置する。
 | Inspector    | 選択対象を精密編集する                |
 | Transport    | 再生・録音・時間情報を操作する        |
 
-- Library と Inspector は個別に折りたためる
+- Library と Inspector は個別に折りたためる。表示中は境界をDragして幅を調整できる
+- 境界を画面端までDragするとパネルが折りたたまれ、同じ境界をDragして再展開できる
 - Lower Panel は必要なときだけ開き、Play SurfaceとMIDI Editorを同時表示しない
 - Timeline を常に最大の作業領域として扱う
 
@@ -316,11 +317,13 @@ Snap  1/16 ▼
 
 [Automation]
 
-120 BPM
-4/4
-
 [Follow]
+[Bars | Time] [Zoom] [Track Height] [+ Track]
 ```
+
+再生位置とClockはRuler左上のCornerへ表示する。BPMと拍子はTransportで編集する。
+
+LibraryとInspectorの表示幅・折りたたみは、各Panel境界のDragだけで操作する。
 
 常時大量の機能ボタンを並べない。
 
@@ -569,8 +572,6 @@ UI アニメーション上の Playhead と、実際の Audio Engine 時間を�
 ```text
 |<   ▶   ■   ●
 
-3.2.1
-
 120 BPM
 4/4
 
@@ -578,6 +579,8 @@ Loop
 Metronome
 Count-in
 ```
+
+現在のPositionとClockはRuler左上のCornerに表示し、BPMと拍子はTransportの入力から編集する。
 
 操作項目：
 

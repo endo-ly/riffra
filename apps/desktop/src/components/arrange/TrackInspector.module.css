@@ -1,0 +1,145 @@
+.inspector {
+  min-width: 0;
+}
+
+.section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 22px;
+}
+
+.sectionHeader strong {
+  color: #bac4cd;
+  font-size: var(--font-micro);
+  letter-spacing: 0.08em;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: var(--font-micro);
+}
+
+.control {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-normal);
+  padding: 0 7px;
+  color: #cfd8df;
+  font-size: var(--font-small);
+  background: #0a0e12;
+  border: 1px solid #28323b;
+  border-radius: 4px;
+}
+
+.instrumentRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  background: #0d1216;
+  border: 1px solid #28323b;
+  border-radius: 5px;
+}
+
+.instrumentRow > div {
+  min-width: 0;
+}
+
+.instrumentRow strong,
+.instrumentRow small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instrumentRow strong {
+  color: #d6e0e6;
+  font-size: var(--font-small);
+}
+
+.instrumentRow small {
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: var(--font-micro);
+}
+
+.instrumentRow button,
+.actions button {
+  min-height: var(--control-dense);
+  padding: 0 8px;
+  color: #a9e6ea;
+  font-size: var(--font-micro);
+  background: rgba(85, 217, 232, 0.08);
+  border: 1px solid rgba(85, 217, 232, 0.25);
+  border-radius: 4px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.actions button {
+  color: #aeb9c3;
+  background: #141a20;
+  border-color: #2a333d;
+}
+
+.warning {
+  color: #e89a8f;
+  font-size: var(--font-micro);
+  letter-spacing: 0.06em;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  padding: 2px;
+  background: #0a0e12;
+  border: 1px solid #28323b;
+  border-radius: 5px;
+}
+
+.segmented button {
+  min-height: var(--control-dense);
+  color: var(--muted);
+  font-size: var(--font-micro);
+  background: transparent;
+  border-radius: 3px;
+}
+
+.segmented button:hover,
+.segmented button.active {
+  color: #dfffff;
+  background: rgba(69, 214, 179, 0.16);
+}
+
+.range {
+  width: 100%;
+  height: 4px;
+  accent-color: var(--cyan);
+}
+
+.message {
+  margin: 0;
+  padding: 9px 12px;
+  color: #9cdbe2;
+  font-size: var(--font-micro);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

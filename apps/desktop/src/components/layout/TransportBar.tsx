@@ -6,6 +6,8 @@ import { useAudioMeters } from '@/lib/audio-meters';
 import { Icon, Meter } from '../shared/ui';
 import styles from './TransportBar.module.css';
 
+const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
+
 interface TransportBarProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
@@ -42,6 +44,10 @@ export function TransportBar(props: TransportBarProps) {
   } = props;
   const meters = useAudioMeters();
   const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
+  const [tempoDraft, setTempoDraft] = useState(String(session.arrangement.timebase.bpm));
+  const [signatureDraft, setSignatureDraft] = useState(
+    `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
+  );
   const masterEditing = useRef(false);
   const previewTimer = useRef<number | null>(null);
   const previewChain = useRef<Promise<void>>(Promise.resolve());
@@ -51,6 +57,17 @@ export function TransportBar(props: TransportBarProps) {
     lastCommittedMasterDb.current = session.settings.masterDb;
     if (!masterEditing.current) setMasterDraftDb(session.settings.masterDb);
   }, [session.settings.masterDb]);
+
+  useEffect(() => {
+    setTempoDraft(String(session.arrangement.timebase.bpm));
+    setSignatureDraft(
+      `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
+    );
+  }, [
+    session.arrangement.timebase.bpm,
+    session.arrangement.timebase.timeSignatureDenominator,
+    session.arrangement.timebase.timeSignatureNumerator,
+  ]);
 
   useEffect(
     () => () => {
@@ -85,6 +102,46 @@ export function TransportBar(props: TransportBarProps) {
       lastCommittedMasterDb.current = session.settings.masterDb;
       setMasterDraftDb(session.settings.masterDb);
     }
+  };
+
+  const commitTimebase = (nextSignature = signatureDraft) => {
+    if (session.workspace !== 'arrange') return;
+    const bpm = Number(tempoDraft);
+    const [numerator, denominator] = nextSignature.split('/').map(Number);
+    if (
+      !Number.isFinite(bpm) ||
+      bpm < 20 ||
+      bpm > 400 ||
+      !Number.isInteger(numerator) ||
+      numerator <= 0 ||
+      !Number.isInteger(denominator) ||
+      denominator <= 0
+    ) {
+      setTempoDraft(String(session.arrangement.timebase.bpm));
+      setSignatureDraft(
+        `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
+      );
+      return;
+    }
+    const current = session.arrangement.timebase;
+    if (
+      bpm === current.bpm &&
+      numerator === current.timeSignatureNumerator &&
+      denominator === current.timeSignatureDenominator
+    )
+      return;
+    void api
+      .updateArrangementTimebase({
+        ...current,
+        bpm,
+        timeSignatureNumerator: numerator,
+        timeSignatureDenominator: denominator,
+      })
+      .then(setSession)
+      .catch(() => {
+        setTempoDraft(String(current.bpm));
+        setSignatureDraft(`${current.timeSignatureNumerator}/${current.timeSignatureDenominator}`);
+      });
   };
 
   const statusDotState = audio.recording.active ? 'recording' : audio.state;
@@ -166,7 +223,7 @@ export function TransportBar(props: TransportBarProps) {
           <Icon name="metronome" />
         </button>
         <button
-          className={session.settings.countInBeats > 0 ? 'active' : ''}
+          className={clsx(styles.countInButton, session.settings.countInBeats > 0 && 'active')}
           aria-label={`Count-in: ${describeCountIn(session)}`}
           title={`Count-in: ${describeCountIn(session)}`}
           onClick={() =>
@@ -178,6 +235,43 @@ export function TransportBar(props: TransportBarProps) {
           {describeCountIn(session)}
         </button>
       </div>
+      {session.workspace === 'arrange' && (
+        <div className={styles.timebase} aria-label="Project timebase">
+          <label>
+            <span>BPM</span>
+            <input
+              aria-label="Project BPM"
+              type="number"
+              min="20"
+              max="400"
+              step="0.1"
+              value={tempoDraft}
+              onChange={(event) => setTempoDraft(event.currentTarget.value)}
+              onBlur={() => commitTimebase()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+          </label>
+          <label>
+            <span>METER</span>
+            <select
+              aria-label="Project time signature"
+              value={signatureDraft}
+              onChange={(event) => {
+                setSignatureDraft(event.currentTarget.value);
+                commitTimebase(event.currentTarget.value);
+              }}
+            >
+              {TIME_SIGNATURES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
       <div className={styles.transportMeter}>
         <span>IN</span>
         <Meter value={meters.inputPeak * 100} danger={meters.inputPeak >= 0.98} />

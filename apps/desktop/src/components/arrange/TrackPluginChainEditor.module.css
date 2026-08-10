@@ -1,0 +1,101 @@
+.section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.sectionHeader strong {
+  color: #bac4cd;
+  font-size: var(--font-micro);
+  letter-spacing: 0.08em;
+}
+
+.empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-micro);
+}
+
+.device {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  background: #0d1216;
+  border: 1px solid #28323b;
+  border-radius: 5px;
+}
+
+.deviceHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  min-width: 0;
+}
+
+.deviceHeading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #d6e0e6;
+  font-size: var(--font-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deviceHeading span {
+  flex: 0 0 auto;
+  color: var(--teal);
+  font-size: var(--font-micro);
+  letter-spacing: 0.06em;
+}
+
+.missingState {
+  display: grid;
+  gap: 6px;
+  color: #e89a8f;
+  font-size: var(--font-micro);
+}
+
+.actions,
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.controls button,
+.actions button,
+.addButton {
+  min-height: var(--control-dense);
+  padding: 0 8px;
+  color: #aeb9c3;
+  font-size: var(--font-micro);
+  background: #141a20;
+  border: 1px solid #2a333d;
+  border-radius: 4px;
+}
+
+.controls button:hover,
+.actions button:hover,
+.addButton:hover {
+  color: #e6f1f3;
+  border-color: #3d4c59;
+}
+
+.controls .remove {
+  margin-left: auto;
+  color: #e89191;
+}
+
+.addButton {
+  color: #a9e6ea;
+  background: rgba(85, 217, 232, 0.08);
+  border-color: rgba(85, 217, 232, 0.25);
+}
