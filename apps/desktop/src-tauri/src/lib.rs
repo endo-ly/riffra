@@ -54,10 +54,11 @@ use riffra_core::AppCore;
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
 use session::CreativeSession;
+use session::application as session_application;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use storage::SessionStore;
@@ -77,7 +78,7 @@ struct AppState {
     /// Keeps a workspace's stop intent and processing-mode update together so
     /// concurrent navigation commands cannot interleave the two writes.
     workspace_runtime_gate: Mutex<()>,
-    runtime: runtime::RuntimeReconciler<AudioSupervisor>,
+    runtime: Arc<runtime::RuntimeReconciler<AudioSupervisor>>,
     render_worker: RenderWorker,
     audio_preferences: Mutex<audio_preferences::AudioPreferences>,
     jobs: jobs::JobRegistry,
@@ -818,33 +819,85 @@ pub fn run() {
             };
             let session = loaded.session;
             let recovered_from_generation = loaded.recovered_from_generation;
-            let runtime_audio = audio.clone();
-            let runtime_app = app.handle().clone();
-            let runtime_recovery: crate::runtime::projection_coordinator::RuntimeRecovery =
-                std::sync::Arc::new(move |expected_generation, timeout| {
+            let core = AppCore::new(
+                data_root.clone(),
+                session.clone(),
+                audio.clone(),
+                recovered_from_generation,
+                safe_mode,
+            );
+            let runtime_recovery:
+                Option<crate::runtime::projection_coordinator::RuntimeRecovery> = if safe_mode {
+                None
+            } else {
+                let runtime_audio = audio.clone();
+                let runtime_app = app.handle().clone();
+                Some(Arc::new(move |expected_generation, timeout| {
                     runtime_audio.restart_sidecar_for_runtime(
                         &runtime_app,
                         expected_generation,
                         timeout,
                     )
-                .map_err(crate::runtime::error::RuntimeError::from)
-                });
-            let runtime = runtime::RuntimeReconciler::new(
-                std::sync::Arc::new(audio.clone()),
-                Some(runtime_recovery),
-            )?;
+                    .map_err(crate::runtime::error::RuntimeError::from)
+                }) as crate::runtime::projection_coordinator::RuntimeRecovery)
+            };
+            let runtime = Arc::new(runtime::RuntimeReconciler::new(
+                Arc::new(audio.clone()),
+                runtime_recovery,
+            )?);
+            let runtime_for_restart = Arc::downgrade(&runtime);
+            let recovery_session = core.shared_session();
+            let recovery_data_root = data_root.clone();
+            audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
+                let pads = recovery_session
+                    .lock()
+                    .map_err(|error| {
+                        format!("Canonical Session could not be read during Runtime recovery: {error}")
+                    })
+                    .and_then(|session| {
+                        session_application::resolve_native_pads(
+                            &recovery_data_root,
+                            &session.play_state.sample_instrument.pads,
+                        )
+                    });
+                match pads {
+                    Ok(pads) => match runtime_audio.configure_sample_pads(&pads) {
+                        Ok(status) if session_application::audio_command_succeeded(&status) => {}
+                        Ok(status) => tracing::warn!(
+                            generation,
+                            message = %status.message,
+                            "Sample Pad restoration after Runtime restart was rejected"
+                        ),
+                        Err(error) => tracing::warn!(
+                            generation,
+                            error = %error,
+                            "Sample Pad restoration after Runtime restart failed"
+                        ),
+                    },
+                    Err(error) => tracing::warn!(
+                        generation,
+                        error = %error,
+                        "Sample Pad state could not be prepared after Runtime restart"
+                    ),
+                }
+                if let Some(runtime) = runtime_for_restart.upgrade() {
+                    if !runtime.requeue_after_runtime_restart(generation)
+                        && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
+                    {
+                        tracing::warn!(
+                            generation,
+                            error = %error,
+                            "Runtime restart had no graph to restore and mute release failed"
+                        );
+                    }
+                }
+            }))?;
             let effective_preferences = preferences.clone();
             audio.set_restart_preferences(effective_preferences.clone())?;
             let startup_data_root = data_root.clone();
             let startup_session = session.clone();
             app.manage(AppState {
-                core: AppCore::new(
-                    data_root,
-                    session,
-                    audio,
-                    recovered_from_generation,
-                    safe_mode,
-                ),
+                core,
                 session_actor: session::actor::SessionActor::default(),
                 recording_operation_gate: Mutex::new(()),
                 workspace_runtime_gate: Mutex::new(()),

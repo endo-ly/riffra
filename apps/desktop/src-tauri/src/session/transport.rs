@@ -188,6 +188,13 @@ pub fn sync_arrangement_runtime(
     context: &SessionContext<'_>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let projection = context.session_actor.capture_projection(context.session)?;
+    apply_arrangement_projection(context, projection)
+}
+
+fn apply_arrangement_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    projection: crate::session::actor::CanonicalProjection,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
     context
         .runtime
         .apply_and_wait(
@@ -195,6 +202,31 @@ pub fn sync_arrangement_runtime(
             crate::runtime::model::ProjectionKey {
                 sequence: projection.sequence,
                 session_revision: projection.session.arrangement.revision,
+            },
+            ARRANGEMENT_RUNTIME_TIMEOUT,
+        )
+        .map_err(String::from)
+}
+
+/// Prepares a proposed Arrangement graph before its Session becomes
+/// canonical. The expected sequence prevents a candidate built from a stale
+/// Session from becoming the active Runtime projection.
+pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    candidate: &CreativeSession,
+    expected_sequence: u64,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    let current = context.session_actor.capture_projection(context.session)?;
+    if current.sequence != expected_sequence {
+        return Err("Canonical Session changed while the VST candidate was being built.".into());
+    }
+    context
+        .runtime
+        .apply_and_wait(
+            runtime_timeline_snapshot(context.data_root, candidate),
+            crate::runtime::model::ProjectionKey {
+                sequence: expected_sequence.saturating_add(1),
+                session_revision: candidate.arrangement.revision,
             },
             ARRANGEMENT_RUNTIME_TIMEOUT,
         )

@@ -1,13 +1,13 @@
 use crate::session::CreativeSession;
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 /// Platform-independent state shared by Riffra application hosts.
 pub struct AppCore<A> {
     data_root: PathBuf,
-    session: Mutex<CreativeSession>,
+    session: Arc<Mutex<CreativeSession>>,
     audio: A,
     recovered_from_generation: bool,
     safe_mode: bool,
@@ -24,7 +24,7 @@ impl<A> AppCore<A> {
     ) -> Self {
         Self {
             data_root,
-            session: Mutex::new(session),
+            session: Arc::new(Mutex::new(session)),
             audio,
             recovered_from_generation,
             safe_mode,
@@ -38,7 +38,13 @@ impl<A> AppCore<A> {
 
     /// Returns the lock protecting the canonical production session.
     pub fn session(&self) -> &Mutex<CreativeSession> {
-        &self.session
+        self.session.as_ref()
+    }
+
+    /// Returns the shared canonical session handle for recovery workers that
+    /// outlive a single application command.
+    pub fn shared_session(&self) -> Arc<Mutex<CreativeSession>> {
+        Arc::clone(&self.session)
     }
 
     /// Returns the host-provided live audio service.

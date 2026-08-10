@@ -11,10 +11,10 @@
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
 //!
-//! - Arrangement operations commit the canonical Session first, then submit a
-//!   resolved runtime Timeline Snapshot to the latest-wins Runtime Reconciler.
-//!   Runtime failure never rolls back a successful save; the Reconciler keeps
-//!   the last active graph while it reports the failed target.
+//! - Arrangement operations that change plugin topology prepare the proposed
+//!   runtime graph before persisting the canonical Session. A failed candidate
+//!   is rejected, and a persistence failure restores the previous graph. Other
+//!   Arrangement operations commit first and submit a nonblocking projection.
 //!
 //! - Pure-session operations ([`commit_session`],
 //!   [`save_session`], [`import_session`], [`restore_generation`], and
@@ -51,9 +51,9 @@ pub(crate) use crate::session::commit::{
 };
 pub(crate) use crate::session::context::{SessionContext, lock_error};
 pub(crate) use crate::session::transport::{
-    audio_command_succeeded, go_to_start_timeline, play_timeline, resolve_native_pads,
-    restore_sample_pads, runtime_snapshot_for_recording, seek_timeline, stop_timeline,
-    switch_workspace, sync_arrangement, sync_arrangement_runtime,
+    audio_command_succeeded, go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
+    resolve_native_pads, restore_sample_pads, runtime_snapshot_for_recording, seek_timeline,
+    stop_timeline, switch_workspace, sync_arrangement, sync_arrangement_runtime,
 };
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
@@ -913,6 +913,55 @@ fn commit_structural_arrangement(
     Ok(committed)
 }
 
+fn repair_previous_arrangement(context: &SessionContext<'_>, original_error: String) -> String {
+    if !context.runtime.reset_for_repair() {
+        return format!(
+            "Arrangement Runtime rejected the VST candidate and could not be reset for the canonical Session: {original_error}"
+        );
+    }
+    match sync_arrangement_runtime(context) {
+        Ok(_) => format!(
+            "Arrangement Runtime rejected the VST candidate; the canonical Session was unchanged: {original_error}"
+        ),
+        Err(restore_error) => format!(
+            "Arrangement Runtime rejected the VST candidate and the previous graph could not be restored ({restore_error}): {original_error}"
+        ),
+    }
+}
+
+/// Validates a plugin-bearing candidate against the real Arrangement Runtime
+/// before persisting it. A failed candidate never becomes part of the
+/// canonical Session, and a persistence failure repairs the previous graph.
+fn commit_plugin_arrangement(
+    context: &SessionContext<'_>,
+    candidate: CreativeSession,
+    base_sequence: u64,
+) -> Result<CreativeSession, String> {
+    let candidate = candidate.validate_and_normalize()?;
+    if let Err(error) = prepare_arrangement_candidate(context, &candidate, base_sequence) {
+        return Err(repair_previous_arrangement(context, error));
+    }
+    let commit_result = {
+        let _session_operation = context.session_actor.enter()?;
+        let current = context
+            .session_actor
+            .capture_projection_while_held(context.session)?;
+        if current.sequence != base_sequence {
+            Err("Canonical Session changed while the VST candidate was being prepared.".into())
+        } else {
+            commit_session(context, candidate)
+        }
+    };
+    let committed = match commit_result {
+        Ok(committed) => committed,
+        Err(error) => {
+            return Err(repair_previous_arrangement(context, error));
+        }
+    };
+    let _ = sync_arrangement(context)?;
+    Ok(committed)
+}
+
 fn track_device_mut<'a>(track: &'a mut Track, device_id: &str) -> Option<&'a mut RackDevice> {
     if track
         .instrument
@@ -1008,7 +1057,8 @@ pub fn set_track_instrument(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let revision = session.arrangement.revision;
     let track = session
         .arrangement
@@ -1027,7 +1077,7 @@ pub fn set_track_instrument(
     track.instrument = Some(plugin_device(&validated_path.to_string_lossy(), id)?);
     track.instrument.as_mut().unwrap().name = name;
     session.arrangement.revision = revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 pub fn clear_track_instrument(
@@ -1062,7 +1112,8 @@ pub fn add_track_effect(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let revision = session.arrangement.revision;
     let track = session
         .arrangement
@@ -1075,7 +1126,7 @@ pub fn add_track_effect(
     device.name = name;
     track.rack.devices.push(device);
     session.arrangement.revision = revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 pub fn remove_track_effect(
@@ -2196,7 +2247,8 @@ pub fn replace_missing_track_plugin(
     if !path.exists() {
         return Err("Replacement VST3 path does not exist.".into());
     }
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let device = session
         .arrangement
         .tracks
@@ -2205,7 +2257,7 @@ pub fn replace_missing_track_plugin(
         .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
     *device = plugin_device(&path.to_string_lossy(), device_id.to_owned())?;
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 #[cfg(test)]

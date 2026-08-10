@@ -293,6 +293,8 @@ bool TimelineEngine::prepareSnapshot(
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             monitoring, track->armed, track->instrument);
+        track->liveEffectRuntimeRequired = track->instrument || track->monitorInput || track->armed;
+        track->recordingEffectRuntimeRequired = !track->instrument && track->armed;
         if (track->monitorInput)
             monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
@@ -370,7 +372,11 @@ bool TimelineEngine::prepareSnapshot(
                     && (*existing)->effectTopologySignature
                         == track->effectTopologySignature
                     && (*existing)->instrumentTopologySignature
-                        == track->instrumentTopologySignature) {
+                        == track->instrumentTopologySignature
+                    && (*existing)->liveEffectRuntimeRequired
+                        == track->liveEffectRuntimeRequired
+                    && (*existing)->recordingEffectRuntimeRequired
+                        == track->recordingEffectRuntimeRequired) {
                     sameRuntimeTopology = true;
                     existingEffectState = (*existing)->effectState;
                     existingInstrumentState = (*existing)->instrumentState;
@@ -388,14 +394,28 @@ bool TimelineEngine::prepareSnapshot(
         }
         if (rack.isObject()) {
             if (!track->reuseRuntimeDevices
-                && !track->effectChain.load(devices, outputSampleRate, maximumBlockSize, error))
+                && !track->effectChain.load(
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/timeline-effect"))
                 return false;
-            if (!track->reuseRuntimeDevices &&
-                !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
+            if (!track->reuseRuntimeDevices && track->liveEffectRuntimeRequired
+                && !track->liveEffectChain.load(
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/live-effect"))
                 return false;
-            if (!track->reuseRuntimeDevices && !track->instrument &&
+            if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
                 !track->recordingCapture.effectChain.load(
-                    devices, outputSampleRate, maximumBlockSize, error))
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/recording-effect"))
                 return false;
         }
         if (instrument.isObject()
@@ -405,20 +425,24 @@ bool TimelineEngine::prepareSnapshot(
             const auto path = instrument.getProperty("path", {}).toString();
             const auto loadInstrumentRack =
                 [&](std::unique_ptr<PluginRack>& rack,
-                    const juce::String& scope) {
+                    const juce::String& runtimeRole) {
                     rack = std::make_unique<PluginRack>();
                     if (const auto loadError =
                             rack->load(path, outputSampleRate, maximumBlockSize)) {
-                        error = scope + " could not be loaded: " + loadError->message;
+                        error = track->id + " device " + track->instrumentDeviceId
+                            + " failed at " + runtimeRole + "/" + loadError->scope + ": "
+                            + loadError->message;
                         return false;
                     }
-                    if (!rack->applyPersistedState(instrument, error))
+                    if (!rack->applyPersistedState(instrument, error)) {
+                        error = track->id + " device " + track->instrumentDeviceId
+                            + " failed at " + runtimeRole + "/stateApply: " + error;
                         return false;
+                    }
                     return true;
                 };
-            if (!loadInstrumentRack(track->instrumentRack, "Track Instrument")
-                || !loadInstrumentRack(
-                    track->liveInstrumentRack, "Track Live Instrument"))
+            if (!loadInstrumentRack(track->instrumentRack, "timeline-instrument")
+                || !loadInstrumentRack(track->liveInstrumentRack, "live-instrument"))
                 return false;
         }
         if (!track->reuseRuntimeDevices) {
@@ -1192,12 +1216,13 @@ bool TimelineEngine::mirrorEditorDeviceState(
             return false;
         return true;
     }
-    auto* live = track.liveEffectChain.findDevice(deviceId);
-    if (live == nullptr) {
-        error = "Live Track Device was not found.";
+    auto* playback = track.effectChain.findDevice(deviceId);
+    if (playback == nullptr) {
+        error = "Track Device was not found.";
         return false;
     }
-    if (!live->applyPersistedState(persistedState, error))
+    auto* live = track.liveEffectChain.findDevice(deviceId);
+    if (live != nullptr && !live->applyPersistedState(persistedState, error))
         return false;
     auto* recording = track.recordingCapture.effectChain.findDevice(deviceId);
     if (recording != nullptr && !recording->applyPersistedState(persistedState, error))
@@ -1230,12 +1255,13 @@ bool TimelineEngine::mirrorEditorDeviceParameter(
         sequence.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
-    auto* live = track.liveEffectChain.findDevice(deviceId);
-    if (live == nullptr) {
-        error = "Live Track Device was not found.";
+    auto* playback = track.effectChain.findDevice(deviceId);
+    if (playback == nullptr) {
+        error = "Track Device was not found.";
         return false;
     }
-    live->enqueueParameterChange(parameterIndex, value);
+    if (auto* live = track.liveEffectChain.findDevice(deviceId))
+        live->enqueueParameterChange(parameterIndex, value);
     if (auto* recording = track.recordingCapture.effectChain.findDevice(deviceId))
         recording->enqueueParameterChange(parameterIndex, value);
     sequence.fetch_add(1, std::memory_order_relaxed);

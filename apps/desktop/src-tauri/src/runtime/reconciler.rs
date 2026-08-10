@@ -44,6 +44,18 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.status()
     }
 
+    /// Clears a failed candidate projection before the canonical graph is
+    /// submitted again.
+    pub(crate) fn reset_for_repair(&self) -> bool {
+        self.projection.reset_for_repair()
+    }
+
+    /// Requeues the last active projection when a sidecar restart occurred
+    /// without an in-flight projection operation.
+    pub(crate) fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
+        self.projection.requeue_after_runtime_restart(generation)
+    }
+
     pub fn apply_and_wait(
         &self,
         snapshot: Value,

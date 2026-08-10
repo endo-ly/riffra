@@ -5,6 +5,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Restores non-arrangement state and notifies the Runtime after a new
+/// sidecar generation has restored its control state.
+pub(crate) type RuntimeRestartHandler = Arc<dyn Fn(&AudioSupervisor, u64) + Send + Sync + 'static>;
+
+/// Identifies the owner of an active emergency mute.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MuteCause {
+    Startup,
+    User,
+    Feedback,
+    DeviceFault,
+    RuntimeRestart,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeControlState {
     pub(crate) processing_mode: String,
@@ -12,7 +26,7 @@ pub(crate) struct RuntimeControlState {
     pub(crate) master_gain_db: f64,
     pub(crate) midi_listening: bool,
     pub(crate) emergency_muted: bool,
-    pub(crate) manual_emergency_mute: bool,
+    pub(crate) mute_cause: Option<MuteCause>,
 }
 
 impl Default for RuntimeControlState {
@@ -23,7 +37,7 @@ impl Default for RuntimeControlState {
             master_gain_db: -18.0,
             midi_listening: false,
             emergency_muted: true,
-            manual_emergency_mute: false,
+            mute_cause: Some(MuteCause::Startup),
         }
     }
 }
@@ -36,6 +50,7 @@ pub(crate) struct RecoveryState {
     pub(crate) restart_preferences: Arc<Mutex<AudioPreferences>>,
     pub(crate) restart_gate: Arc<Mutex<()>>,
     pub(crate) restart_outcomes: Arc<Mutex<HashMap<u64, NativeAudioResult<()>>>>,
+    pub(crate) runtime_restart_handler: Arc<Mutex<Option<RuntimeRestartHandler>>>,
 }
 
 impl RecoveryState {
@@ -46,11 +61,34 @@ impl RecoveryState {
             restart_preferences: Arc::new(Mutex::new(preferences)),
             restart_gate: Arc::new(Mutex::new(())),
             restart_outcomes: Arc::new(Mutex::new(HashMap::new())),
+            runtime_restart_handler: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl AudioSupervisor {
+    /// Installs the Rust-owned Runtime restoration callback used after a
+    /// completed sidecar replacement.
+    pub(crate) fn set_runtime_restart_handler(
+        &self,
+        handler: RuntimeRestartHandler,
+    ) -> NativeAudioResult<()> {
+        *self.recovery.runtime_restart_handler.lock().map_err(|_| {
+            NativeAudioError::LockPoisoned {
+                resource: "Runtime restart handler",
+            }
+        })? = Some(handler);
+        Ok(())
+    }
+
+    pub(super) fn runtime_restart_handler(&self) -> Option<RuntimeRestartHandler> {
+        self.recovery
+            .runtime_restart_handler
+            .lock()
+            .ok()
+            .and_then(|handler| handler.clone())
+    }
+
     pub(super) fn completed_restart_outcome(
         &self,
         previous_generation: u64,
@@ -112,16 +150,23 @@ impl AudioSupervisor {
             }),
             super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
-        // A recovered process must remain muted until the user explicitly
-        // confirms that audio should fade back in. The other control values
-        // are restored exactly, but safety mute is deliberately not
-        // auto-cleared.
+        // A replacement process starts muted. Keep a user mute request as the
+        // cause; otherwise record the restart so the Runtime can release it
+        // after the recovered graph is active.
         {
             let _mute_gate = self.recovery.emergency_mute_gate.lock().map_err(|_| {
                 NativeAudioError::LockPoisoned {
                     resource: "Emergency mute gate",
                 }
             })?;
+            let current_mute_cause = self
+                .recovery
+                .runtime_controls
+                .lock()
+                .map_err(|_| NativeAudioError::LockPoisoned {
+                    resource: "Runtime control",
+                })?
+                .mute_cause;
             self.wait_for_command(
                 serde_json::json!({"type": "setEmergencyMute", "muted": true}),
                 super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
@@ -129,9 +174,67 @@ impl AudioSupervisor {
             if let Ok(mut current) = self.recovery.runtime_controls.lock() {
                 current.processing_mode_sent = Some(current.processing_mode.clone());
                 current.emergency_muted = true;
+                current.mute_cause = if current_mute_cause == Some(MuteCause::User) {
+                    Some(MuteCause::User)
+                } else {
+                    Some(MuteCause::RuntimeRestart)
+                };
             }
         }
         Ok(())
+    }
+
+    /// Releases a restart-owned mute only after the recovered audio status is
+    /// safe and the Runtime graph has been accepted.
+    pub(crate) fn release_runtime_mute_if_allowed(&self) -> NativeAudioResult<()> {
+        self.with_emergency_mute_gate(|audio| {
+            let (should_release, safe_to_release, feedback_suspected) = {
+                let controls = audio.recovery.runtime_controls.lock().map_err(|_| {
+                    NativeAudioError::LockPoisoned {
+                        resource: "Runtime control",
+                    }
+                })?;
+                let status = audio
+                    .status
+                    .lock()
+                    .map_err(|_| NativeAudioError::LockPoisoned {
+                        resource: "Audio status",
+                    })?;
+                let safe = !matches!(
+                    status.state,
+                    crate::model::AudioState::Faulted | crate::model::AudioState::Offline
+                ) && !status.feedback_suspected;
+                (
+                    controls.mute_cause == Some(MuteCause::RuntimeRestart),
+                    safe,
+                    status.feedback_suspected,
+                )
+            };
+            if !safe_to_release {
+                if should_release && let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
+                    controls.mute_cause = Some(if feedback_suspected {
+                        MuteCause::Feedback
+                    } else {
+                        MuteCause::DeviceFault
+                    });
+                }
+                return Ok(());
+            }
+            if !should_release {
+                return Ok(());
+            }
+            let status = audio.send_emergency_mute_command(false)?;
+            if !super::commands::audio_status_is_safe(&status)
+                && let Ok(mut controls) = audio.recovery.runtime_controls.lock()
+            {
+                controls.emergency_muted = true;
+                controls.mute_cause = Some(super::commands::mute_cause_for_status(&status));
+            } else if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
+                controls.emergency_muted = false;
+                controls.mute_cause = None;
+            }
+            Ok(())
+        })
     }
 
     pub fn set_restart_preferences(&self, preferences: AudioPreferences) -> NativeAudioResult<()> {

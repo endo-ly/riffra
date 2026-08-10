@@ -46,7 +46,7 @@ using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
 
-constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(30);
+constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(45);
 
 enum class OutputKind { control, state, telemetry };
 
@@ -1041,7 +1041,7 @@ int serve(
         // its pipe may already be back-pressured; the watchdog's only bounded
         // operation is to terminate the isolated process so the Rust
         // supervisor can restart it in emergency-mute state.
-        std::_Exit(0);
+        std::_Exit(124);
     });
 
     std::thread commandThread([&] {

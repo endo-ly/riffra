@@ -124,6 +124,11 @@ riffra-audio-testsへまとめる。通常テストは実VST3、実機器、外�
 riffra-audioとriffra-renderのJSON Lines通信はRust結合テストで確認し、
 テストのためだけにpublic APIやCLIコマンドを追加しない。
 
+実行経路の確認では、CTestがリポジトリ内の極小VST3 effect/instrumentをビルドし、
+Plugin ScannerとTimeline Runtimeの両方へ渡す。TimelineのテストはInstrument、
+Timeline Effect、Live Effect、Recording Effectの複数Runtime Roleを実際のVST3
+discovery、instance creation、bus layout、prepareToPlay、state restore経由で生成する。
+
 内部関数を直接呼ぶためだけに公開範囲を広げない。入力、結果、不変条件を公開された責務の単位で確認する。
 
 ## 5. 部品テスト
@@ -157,7 +162,9 @@ Native APIは本番と同じ契約を実装する差替えへ置き換え、次�
 - Sample PadまたはWorkspace固有Runtimeの復元失敗だけでは、正常な音声デバイスを緊急ミュートに固定せず、passiveを維持する
 - VSTまたはArrange Runtimeの復元中もSession Actor、Rack、Workspaceの長時間ロックを保持しない
 - Library同期は安全初期化の返却後に独立キューへ投入し、機能Runtime復元やデータベース遅延が緊急ミュート解除を遅らせない
-- 起動完了後の音声Runtime再起動では、ReactもWorkspace遷移も緊急ミュートを解除しない
+- 起動完了後の音声Runtime再起動では、Rustが直前のMute原因を確認し、ユーザーMute・Feedback・デバイスfaultを保持する。安全なGraph復元に成功した場合だけ、Reactを介さずRustが以前のUnmute状態へ戻す
+- VSTを含むInstrumentまたはEffectの追加・置換は、候補Graphが失敗したときcanonical Sessionを変更せず、成功した候補だけを保存する
+- Plugin Scannerのload validationがArrangement Runtimeと同じPluginRackのfactory、layout、precision、prepare経路を通る
 
 差替え実装は、本番に存在しない成功経路を作らない。存在しない識別子、無効なパス、失敗した保存を成功として返さない。
 

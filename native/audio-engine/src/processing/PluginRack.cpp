@@ -44,6 +44,67 @@ private:
     std::atomic<bool>& flag;
 };
 
+struct PluginDescriptionCacheEntry final {
+    juce::String path;
+    juce::Time lastModificationTime;
+    int64_t fileSize = 0;
+    juce::PluginDescription description;
+};
+
+class PluginDescriptionCache final {
+public:
+    std::optional<juce::PluginDescription> findOrDescribe(
+        const juce::File& file,
+        const juce::String& path) {
+        FaultInjection::before(FaultStage::discovery);
+        const auto lastModificationTime = file.getLastModificationTime();
+        const auto fileSize = file.getSize();
+        {
+            const juce::ScopedLock guard(lock);
+            const auto found = std::find_if(
+                entries.begin(), entries.end(), [&](const auto& entry) {
+                    return entry.path == path
+                        && entry.lastModificationTime == lastModificationTime
+                        && entry.fileSize == fileSize;
+                });
+            if (found != entries.end())
+                return found->description;
+        }
+
+        juce::VST3PluginFormat format;
+        juce::OwnedArray<juce::PluginDescription> descriptions;
+        format.findAllTypesForFile(descriptions, path);
+        if (descriptions.isEmpty())
+            return std::nullopt;
+
+        PluginDescriptionCacheEntry entry {
+            path,
+            lastModificationTime,
+            fileSize,
+            *descriptions[0],
+        };
+        {
+            const juce::ScopedLock guard(lock);
+            entries.erase(
+                std::remove_if(entries.begin(), entries.end(), [&](const auto& current) {
+                    return current.path == path;
+                }),
+                entries.end());
+            entries.push_back(entry);
+        }
+        return entry.description;
+    }
+
+private:
+    juce::CriticalSection lock;
+    std::vector<PluginDescriptionCacheEntry> entries;
+};
+
+PluginDescriptionCache& pluginDescriptionCache() {
+    static PluginDescriptionCache cache;
+    return cache;
+}
+
 juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& processor,
                                                       const juce::AudioChannelSet& input,
                                                       const juce::AudioChannelSet& output) {
@@ -70,11 +131,8 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     }
     if (formatManager.getNumFormats() == 0) juce::addDefaultFormatsToManager(formatManager);
 
-    juce::VST3PluginFormat format;
-    juce::OwnedArray<juce::PluginDescription> descriptions;
-    FaultInjection::before(FaultStage::discovery);
-    format.findAllTypesForFile(descriptions, path);
-    if (descriptions.isEmpty()) {
+    const auto description = pluginDescriptionCache().findOrDescribe(file, path);
+    if (!description.has_value()) {
         return PluginLoadError{
             "pluginDescription",
             "No VST3 component could be described: " + path,
@@ -85,7 +143,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     std::unique_ptr<juce::AudioPluginInstance> candidate;
     try {
         FaultInjection::before(FaultStage::create);
-        candidate = formatManager.createPluginInstance(*descriptions[0], sampleRate, blockSize,
+        candidate = formatManager.createPluginInstance(*description, sampleRate, blockSize,
                                                        instanceError);
     } catch (const std::exception& exception) {
         return PluginLoadError{
@@ -134,7 +192,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     {
         const juce::ScopedLock statusGuard(statusLock);
         pluginPath = path;
-        pluginName = descriptions[0]->name;
+        pluginName = description->name;
     }
     preparedSampleRate.store(sampleRate, std::memory_order_release);
     preparedBlockSize.store(blockSize, std::memory_order_release);

@@ -689,13 +689,6 @@ export class FakeNativeApi implements NativeApi {
     return track;
   }
 
-  restoreSamplePadsStrict = async (): Promise<AudioStatus> => {
-    this.calls.push('restoreSamplePads');
-    return this.audio;
-  };
-
-  restoreSamplePads = async (): Promise<AudioStatus> => this.restoreSamplePadsStrict();
-
   previewAsset = async (assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
     this.calls.push('previewAsset');
     this.assertAsset(assetId);
@@ -912,9 +905,9 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('retryStartupRuntime');
     this.audio = {
       ...this.audio,
-      state: 'muted',
+      state: 'ready',
       invalidSamples: 0,
-      message: 'Session runtime restored without reopening the audio device.',
+      message: 'Session runtime restored without reopening the audio device; output is ready.',
     };
     if (!this.bootstrapState.runtimeStarted) this.emitRuntimeStartupFinished(true);
     return this.audio;

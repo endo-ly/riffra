@@ -132,12 +132,6 @@ export interface NativeApi {
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
 
   /**
-   * Rebuilds the persisted Sample Pad mapping after a fresh runtime process.
-   */
-  restoreSamplePads(): Promise<AudioStatus>;
-  /** Strict variant for automatic recovery; native failures reject. */
-  restoreSamplePadsStrict(): Promise<AudioStatus>;
-  /**
    * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
    * content-location resolution, file-existence checks, and the Audio Runtime
    * call, so React never resolves an AssetId to a path for preview. Pass an

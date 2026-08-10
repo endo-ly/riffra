@@ -64,6 +64,8 @@ struct ProjectionState {
     desired_key: Option<ProjectionKey>,
     running_operation_id: Option<u64>,
     active_projection: Option<ActiveProjection>,
+    last_active_key: Option<ProjectionKey>,
+    last_active_snapshot: Option<Value>,
     stop_requested: bool,
     status: RuntimeProjectionStatus,
 }
@@ -88,6 +90,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 desired_key: None,
                 running_operation_id: None,
                 active_projection: None,
+                last_active_key: None,
+                last_active_snapshot: None,
                 stop_requested: false,
                 status: RuntimeProjectionStatus {
                     runtime_generation: generation,
@@ -335,6 +339,64 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     pub(crate) fn notify(&self) {
         self.state.1.notify_all();
     }
+
+    /// Clears the coordinator's ordering state after a candidate graph was
+    /// prepared but its canonical Session commit failed. The caller must
+    /// submit the current canonical projection immediately afterwards.
+    pub(crate) fn reset_for_repair(&self) -> bool {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().expect("runtime projection lock poisoned");
+        if state.running_operation_id.is_some() || state.latest_target.is_some() {
+            return false;
+        }
+        let generation = self.driver.runtime_generation();
+        observe_generation(&mut state, generation);
+        state.desired_key = None;
+        state.active_projection = None;
+        state.status.state = RuntimeProjectionState::Idle;
+        state.status.running_operation_id = None;
+        state.status.target_projection_sequence = None;
+        state.status.target_session_revision = None;
+        state.status.prepared_session_revision = None;
+        state.status.active_projection_sequence = None;
+        state.status.active_session_revision = None;
+        state.status.runtime_generation = generation;
+        state.status.last_error = None;
+        wake.notify_all();
+        true
+    }
+
+    /// Requeues the last successfully activated graph after the native
+    /// process has been replaced outside an in-flight projection operation.
+    /// The caller owns restoration of any non-arrangement runtime state before
+    /// invoking this method.
+    pub(crate) fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
+        if self.driver.runtime_generation() != generation {
+            return false;
+        }
+        let target = {
+            let (lock, _) = &*self.state;
+            let mut state = lock.lock().expect("runtime projection lock poisoned");
+            observe_generation(&mut state, generation);
+            if state.stop_requested
+                || state.running_operation_id.is_some()
+                || state.latest_target.is_some()
+            {
+                return state.running_operation_id.is_some() || state.latest_target.is_some();
+            }
+            match (state.last_active_key, state.last_active_snapshot.clone()) {
+                (Some(key), Some(snapshot)) => Some((snapshot, key)),
+                _ => None,
+            }
+        };
+        let Some((snapshot, key)) = target else {
+            return false;
+        };
+        !matches!(
+            self.enqueue(snapshot, key, None),
+            SubmissionResult::Superseded { .. }
+        )
+    }
 }
 
 impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
@@ -401,6 +463,7 @@ fn worker_loop<D: ProjectionDriver>(
             }
         };
 
+        let operation_started_at = Instant::now();
         let generation = driver.runtime_generation();
         let mut result = match remaining_timeout(target.deadline, TIMELINE_PREPARE_TIMEOUT) {
             Ok(timeout) => driver.prepare_timeline_snapshot(target.snapshot.clone(), timeout),
@@ -553,8 +616,20 @@ fn worker_loop<D: ProjectionDriver>(
                 actual: current_generation,
             })
         };
+        if let Err(error) = &result {
+            tracing::warn!(
+                operation_id = target.operation_id,
+                generation,
+                current_generation,
+                projection_sequence = target.key.sequence,
+                session_revision = target.key.session_revision,
+                elapsed_ms = operation_started_at.elapsed().as_millis() as u64,
+                error = %error,
+                "Arrangement Runtime graph operation failed"
+            );
+        }
         let completed_at_ms = now_ms();
-        let should_autoplay = {
+        let (should_autoplay, should_keep_audio_passive) = {
             let lock = &state.0;
             let mut state = lock.lock().expect("runtime projection lock poisoned");
             state.running_operation_id = None;
@@ -572,6 +647,8 @@ fn worker_loop<D: ProjectionDriver>(
                             runtime_generation: current_generation,
                             key: target.key,
                         });
+                        state.last_active_key = Some(target.key);
+                        state.last_active_snapshot = Some(target.snapshot.clone());
                     }
                     if state.status.operation_id == target.operation_id {
                         state.status.active_projection_sequence =
@@ -588,12 +665,13 @@ fn worker_loop<D: ProjectionDriver>(
                         } else {
                             RuntimeProjectionState::Active
                         };
-                        state.latest_target.is_none()
+                        (state.latest_target.is_none(), false)
                     } else {
-                        false
+                        (false, false)
                     }
                 }
                 Err(error) => {
+                    let should_keep_audio_passive = state.active_projection.is_none();
                     if state.status.operation_id == target.operation_id {
                         state.status.state = RuntimeProjectionState::Failed;
                         state.status.runtime_generation = current_generation;
@@ -602,10 +680,28 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_session_revision = None;
                         state.status.last_error = Some(error.to_string());
                     }
-                    false
+                    (false, should_keep_audio_passive)
                 }
             }
         };
+
+        let passive_is_safe = if should_keep_audio_passive {
+            match driver.set_processing_mode_passive() {
+                Ok(()) => true,
+                Err(passive_error) => {
+                    tracing::warn!(
+                        error = ?passive_error,
+                        "Failed to keep Audio Runtime in passive mode after graph failure"
+                    );
+                    false
+                }
+            }
+        } else {
+            true
+        };
+        if passive_is_safe && let Err(error) = driver.release_runtime_mute_if_allowed() {
+            tracing::warn!(error = ?error, "Runtime graph recovery stayed muted");
+        }
 
         if should_autoplay {
             let activation_error = on_activated(target.key).err();
@@ -759,5 +855,28 @@ mod tests {
         let loaded = driver.loaded.lock().unwrap().clone();
         assert_eq!(loaded.last().copied(), Some(3));
         assert!(!loaded.contains(&2));
+    }
+
+    #[test]
+    fn requeues_the_last_active_snapshot_after_an_external_runtime_restart() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
+        let coordinator =
+            ProjectionCoordinator::new(Arc::clone(&driver), None, activation).unwrap();
+        coordinator.submit_nonblocking(snapshot(11), key(11, 11));
+        wait_until(|| coordinator.status().active_session_revision == Some(11));
+        driver.generation.store(2, Ordering::Release);
+
+        // Act
+        let requeued = coordinator.requeue_after_runtime_restart(2);
+
+        // Assert
+        assert!(requeued);
+        wait_until(|| {
+            coordinator.status().runtime_generation == 2
+                && coordinator.status().active_session_revision == Some(11)
+        });
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11, 11]);
     }
 }

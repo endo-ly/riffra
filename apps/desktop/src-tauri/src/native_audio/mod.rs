@@ -21,6 +21,7 @@ mod sidecar_process;
 use command_bus::CommandBus;
 pub use commands::NativeSamplePad;
 pub(crate) use error::{NativeAudioError, NativeAudioResult};
+pub(crate) use recovery::MuteCause;
 use recovery::RecoveryState;
 use sidecar_process::SidecarProcess;
 

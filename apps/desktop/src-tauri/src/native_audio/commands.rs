@@ -1,5 +1,6 @@
 use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
+use super::recovery::MuteCause;
 use crate::model::AudioStatus;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use crate::session::AudioTakeVariant;
@@ -49,6 +50,16 @@ fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
 }
 
 impl AudioSupervisor {
+    pub(crate) fn current_mute_cause(&self) -> NativeAudioResult<Option<MuteCause>> {
+        self.recovery
+            .runtime_controls
+            .lock()
+            .map(|controls| controls.mute_cause)
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Runtime control",
+            })
+    }
+
     pub fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
         self.send_command(serde_json::json!({"type": "status"}), "")
     }
@@ -548,7 +559,7 @@ impl AudioSupervisor {
                 }
             })?;
             controls.emergency_muted = muted;
-            controls.manual_emergency_mute = muted;
+            controls.mute_cause = muted.then_some(MuteCause::User);
             Ok(status)
         })
     }
@@ -569,15 +580,16 @@ impl AudioSupervisor {
                     "Native audio sidecar terminated before startup mute release.",
                 ));
             }
-            let manual_mute = audio
+            let user_mute = audio
                 .recovery
                 .runtime_controls
                 .lock()
                 .map_err(|_| NativeAudioError::LockPoisoned {
                     resource: "Runtime control",
                 })?
-                .manual_emergency_mute;
-            if manual_mute {
+                .mute_cause
+                == Some(MuteCause::User);
+            if user_mute {
                 return Ok(None);
             }
 
@@ -593,19 +605,25 @@ impl AudioSupervisor {
                     "Native audio sidecar terminated during startup mute release.",
                 ));
             }
-            audio
-                .recovery
-                .runtime_controls
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                })?
-                .emergency_muted = false;
+            if !audio_status_is_safe(&status) {
+                let mut controls = audio.recovery.runtime_controls.lock().map_err(|_| {
+                    NativeAudioError::LockPoisoned {
+                        resource: "Runtime control",
+                    }
+                })?;
+                controls.emergency_muted = true;
+                controls.mute_cause = Some(mute_cause_for_status(&status));
+                return Ok(None);
+            }
+            if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
+                controls.emergency_muted = false;
+                controls.mute_cause = None;
+            }
             Ok(Some(status))
         })
     }
 
-    fn with_emergency_mute_gate<T>(
+    pub(super) fn with_emergency_mute_gate<T>(
         &self,
         operation: impl FnOnce(&Self) -> NativeAudioResult<T>,
     ) -> NativeAudioResult<T> {
@@ -617,7 +635,10 @@ impl AudioSupervisor {
         operation(self)
     }
 
-    fn send_emergency_mute_command(&self, muted: bool) -> NativeAudioResult<AudioStatus> {
+    pub(super) fn send_emergency_mute_command(
+        &self,
+        muted: bool,
+    ) -> NativeAudioResult<AudioStatus> {
         let status = self.send_command(
             serde_json::json!({"type": "setEmergencyMute", "muted": muted}),
             if muted {
@@ -630,6 +651,21 @@ impl AudioSupervisor {
     }
 }
 
+pub(super) fn audio_status_is_safe(status: &AudioStatus) -> bool {
+    !matches!(
+        status.state,
+        crate::model::AudioState::Faulted | crate::model::AudioState::Offline
+    ) && !status.feedback_suspected
+}
+
+pub(super) fn mute_cause_for_status(status: &AudioStatus) -> MuteCause {
+    if status.feedback_suspected {
+        MuteCause::Feedback
+    } else {
+        MuteCause::DeviceFault
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,12 +673,12 @@ mod tests {
     use std::thread;
 
     #[test]
-    fn emergency_mute_gate_preserves_manual_intent_across_ordered_operations() {
+    fn emergency_mute_gate_preserves_user_intent_across_ordered_operations() {
         let supervisor = AudioSupervisor::offline("test");
         let first_entered = Arc::new(Barrier::new(2));
         let second_attempted = Arc::new(Barrier::new(2));
         let release_first = Arc::new(Barrier::new(2));
-        let observed_manual_mute = Arc::new(Mutex::new(false));
+        let observed_user_mute = Arc::new(Mutex::new(false));
 
         let first_supervisor = supervisor.clone();
         let first_entered_for_thread = Arc::clone(&first_entered);
@@ -650,12 +686,8 @@ mod tests {
         let first = thread::spawn(move || {
             first_supervisor
                 .with_emergency_mute_gate(|audio| {
-                    audio
-                        .recovery
-                        .runtime_controls
-                        .lock()
-                        .unwrap()
-                        .manual_emergency_mute = true;
+                    audio.recovery.runtime_controls.lock().unwrap().mute_cause =
+                        Some(MuteCause::User);
                     first_entered_for_thread.wait();
                     release_first_for_thread.wait();
                     Ok(())
@@ -667,17 +699,14 @@ mod tests {
 
         let second_supervisor = supervisor.clone();
         let second_attempted_for_thread = Arc::clone(&second_attempted);
-        let observed_manual_mute_for_thread = Arc::clone(&observed_manual_mute);
+        let observed_user_mute_for_thread = Arc::clone(&observed_user_mute);
         let second = thread::spawn(move || {
             second_attempted_for_thread.wait();
             second_supervisor
                 .with_emergency_mute_gate(|audio| {
-                    *observed_manual_mute_for_thread.lock().unwrap() = audio
-                        .recovery
-                        .runtime_controls
-                        .lock()
-                        .unwrap()
-                        .manual_emergency_mute;
+                    *observed_user_mute_for_thread.lock().unwrap() =
+                        audio.recovery.runtime_controls.lock().unwrap().mute_cause
+                            == Some(MuteCause::User);
                     Ok(())
                 })
                 .unwrap();
@@ -688,6 +717,6 @@ mod tests {
         first.join().unwrap();
         second.join().unwrap();
 
-        assert!(*observed_manual_mute.lock().unwrap());
+        assert!(*observed_user_mute.lock().unwrap());
     }
 }

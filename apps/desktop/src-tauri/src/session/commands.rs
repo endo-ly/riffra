@@ -35,6 +35,19 @@ where
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
 }
 
+async fn run_blocking_without_session_actor<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Session blocking operation failed: {error}"))?
+}
+
 /// Runtime controls must not queue behind canonical Session persistence or a
 /// slow VST/native operation. They only read the current snapshot when needed
 /// and never mutate the durable Session.
@@ -633,7 +646,7 @@ pub async fn set_track_instrument(
     plugin_path: String,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
-    run_blocking(app, move |state| {
+    run_blocking_without_session_actor(app, move |state| {
         application::set_track_instrument(&app_context(state), &track_id, &plugin_path)
     })
     .await
@@ -656,7 +669,7 @@ pub async fn add_track_effect(
     plugin_path: String,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
-    run_blocking(app, move |state| {
+    run_blocking_without_session_actor(app, move |state| {
         application::add_track_effect(&app_context(state), &track_id, &plugin_path)
     })
     .await
@@ -1042,7 +1055,7 @@ pub async fn replace_missing_track_plugin(
     new_path: String,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
-    run_blocking(app, move |state| {
+    run_blocking_without_session_actor(app, move |state| {
         application::replace_missing_track_plugin(&app_context(state), &device_id, &new_path)
     })
     .await

@@ -179,6 +179,8 @@ private:
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
+        bool liveEffectRuntimeRequired = false;
+        bool recordingEffectRuntimeRequired = false;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.

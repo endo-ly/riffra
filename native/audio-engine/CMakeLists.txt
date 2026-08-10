@@ -80,6 +80,10 @@ target_sources(riffra-audio PRIVATE
 
 target_sources(riffra-plugin-scan PRIVATE
   src/PluginScannerMain.cpp
+  src/processing/PluginRack.cpp
+  src/processing/PluginRack.h
+  src/realtime/FaultInjection.cpp
+  src/realtime/FaultInjection.h
 )
 
 target_sources(riffra-render PRIVATE
@@ -178,6 +182,11 @@ target_include_directories(riffra-render-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
+target_include_directories(riffra-plugin-scan PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
+)
+
 target_include_directories(riffra-audio-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
@@ -218,6 +227,75 @@ riffra_generate_core_juce_header(riffra-render-core riffra-render)
 riffra_generate_core_juce_header(riffra-audio-core riffra-audio)
 
 if(BUILD_TESTING)
+  juce_add_plugin(riffra-test-effect
+    COMPANY_NAME Riffra
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    FORMATS VST3
+    PLUGIN_MANUFACTURER_CODE Rifr
+    PLUGIN_CODE Tste
+    PRODUCT_NAME "Riffra Test Effect"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+  target_sources(riffra-test-effect PRIVATE
+    tests/TestVstPlugin.cpp)
+  target_compile_definitions(riffra-test-effect PRIVATE
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0)
+  target_link_libraries(riffra-test-effect PRIVATE
+    juce::juce_audio_utils
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags)
+
+  juce_add_plugin(riffra-test-instrument
+    COMPANY_NAME Riffra
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    FORMATS VST3
+    PLUGIN_MANUFACTURER_CODE Rifr
+    PLUGIN_CODE Tsti
+    PRODUCT_NAME "Riffra Test Instrument"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+  target_sources(riffra-test-instrument PRIVATE
+    tests/TestVstPlugin.cpp)
+  target_compile_definitions(riffra-test-instrument PRIVATE
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0)
+  target_link_libraries(riffra-test-instrument PRIVATE
+    juce::juce_audio_utils
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags)
+
+  add_executable(riffra-real-vst-runtime-test
+    tests/RealVstRuntimeTest.cpp)
+  target_link_libraries(riffra-real-vst-runtime-test PRIVATE
+    riffra-render-core)
+  add_dependencies(riffra-real-vst-runtime-test
+    riffra-test-effect_VST3
+    riffra-test-instrument_VST3)
+  if(MSVC)
+    target_compile_options(riffra-real-vst-runtime-test PRIVATE ${RIFFRA_MSVC_WARNINGS})
+  endif()
+
+  add_test(
+    NAME PluginScannerTest.RiffraTestEffect
+    COMMAND riffra-plugin-scan --validate-load "$<TARGET_FILE:riffra-test-effect_VST3>")
+  add_test(
+    NAME PluginScannerTest.RiffraTestInstrument
+    COMMAND riffra-plugin-scan --validate-load "$<TARGET_FILE:riffra-test-instrument_VST3>")
+  add_test(
+    NAME RealVstRuntimeTest.LoadsMultipleRuntimeRoles
+    COMMAND riffra-real-vst-runtime-test
+      "$<TARGET_FILE:riffra-test-effect_VST3>"
+      "$<TARGET_FILE:riffra-test-instrument_VST3>")
+
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git

@@ -170,7 +170,7 @@ describe('App driven by FakeNativeApi', () => {
     expect(screen.getByText('Audio Settings')).toBeInTheDocument();
   });
 
-  it('keeps the runtime muted after a sidecar restart following startup', async () => {
+  it('does not re-submit runtime restoration after a sidecar restart', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
 
@@ -180,12 +180,13 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    expect(fake.audio.state).toBe('muted');
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
+    expect(fake.calls).not.toContain('syncArrangementRuntime');
     expect(fake.calls).not.toContain('setEmergencyMute');
   });
 
-  it('does not restore the rack runtime after a sidecar restart in Design', async () => {
+  it('leaves sidecar runtime recovery to Rust in Design', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: { ...defaultSession(), workspace: 'design' } },
     });
@@ -196,11 +197,12 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('syncArrangementRuntime');
   });
 
-  it('rehydrates the current Arrange runtime graph after a sidecar restart', async () => {
+  it('does not duplicate Rust runtime recovery in Arrange', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
     });
@@ -211,66 +213,9 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
-  });
-
-  it('does not continue automatic recovery when Sample Pad restoration rejects', async () => {
-    const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
-    });
-    let failRecovery = false;
-    fake.restoreSamplePadsStrict = async () => {
-      fake.calls.push('restoreSamplePads');
-      if (failRecovery) throw new Error('Sample Pad restore failed.');
-      return fake.audio;
-    };
-    renderApp(fake);
-
-    await waitForAppShell();
-    fake.calls.splice(0);
-    failRecovery = true;
-
-    fake.emitRuntimeRestarted(2);
-
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-  });
-
-  it('retries the latest runtime generation after a restart during recovery', async () => {
-    const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
-    });
-    let holdNextRecovery = false;
-    let releaseFirstRecovery: () => void = () => undefined;
-    let firstRecoveryGate: Promise<void> | null = null;
-    const defaultRestoreSamplePads = fake.restoreSamplePadsStrict;
-    fake.restoreSamplePadsStrict = async () => {
-      if (holdNextRecovery) {
-        holdNextRecovery = false;
-        fake.calls.push('restoreSamplePads');
-        await firstRecoveryGate;
-        return fake.audio;
-      }
-      return defaultRestoreSamplePads();
-    };
-    renderApp(fake);
-
-    await waitForAppShell();
-    fake.calls.splice(0);
-    firstRecoveryGate = new Promise<void>((resolve) => {
-      releaseFirstRecovery = resolve;
-    });
-    holdNextRecovery = true;
-
-    fake.emitRuntimeRestarted(2);
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    fake.emitRuntimeRestarted(3);
-    releaseFirstRecovery();
-
-    await waitFor(() =>
-      expect(fake.calls.filter((call) => call === 'restoreSamplePads')).toHaveLength(2),
-    );
-    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
+    expect(fake.calls).not.toContain('syncArrangementRuntime');
   });
 
   it('does not let a cancelled playback failure overwrite a newer playing state', async () => {
