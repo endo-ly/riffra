@@ -164,13 +164,13 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 
 通常稼働時は次の5種類を使用する。フィールド詳細はcodeを真実源とする。
 
-| type              | 役割                                                                                     | 送信契機                  |
-| ----------------- | ---------------------------------------------------------------------------------------- | ------------------------- |
-| `audioStatus`     | 実行時オーディオ状態（state・deviceInfo・recording・plugin概要・meters・midi）           | 状態変化時・コマンド応答  |
-| `audioMeters`     | メーター値のみ（inputPeak・outputPeak・invalidSamples・feedbackSuspected）。高頻度・軽量 | 定期的                    |
-| `error`           | エラー通知（scope・message・dataSafe）                                                   | エラー発生時              |
-| `timelineAck`     | Timeline Snapshotの準備完了revision・適用時刻・利用不能Clip                              | Snapshotコマンド応答      |
-| `transportStatus` | Engine ClockとTimeline位置、再生状態、revision、不連続通知                               | 状態変化時・20 Hz定期送信 |
+| type              | 役割                                                                                                               | 送信契機                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| `audioStatus`     | 実行時オーディオ状態（state・deviceInfo・recording・plugin概要・meters・midi）                                     | 状態変化時・コマンド応答  |
+| `audioMeters`     | メーター値と出力保護状態（inputPeak・outputPeak・invalidSamples・emergencyMuted・feedbackSuspected）。高頻度・軽量 | 定期的                    |
+| `error`           | エラー通知（scope・message・dataSafe）                                                                             | エラー発生時              |
+| `timelineAck`     | Timeline Snapshotの準備完了revision・適用時刻・利用不能Clip                                                        | Snapshotコマンド応答      |
+| `transportStatus` | Engine ClockとTimeline位置、再生状態、revision、不連続通知                                                         | 状態変化時・20 Hz定期送信 |
 
 起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_stdout` 等で処理される。
 

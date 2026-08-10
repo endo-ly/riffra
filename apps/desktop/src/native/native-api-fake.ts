@@ -144,6 +144,7 @@ export interface FakeNativeApiOptions {
  */
 export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
+  readonly emergencyMuteRequests: boolean[] = [];
   readonly savedSessions: CreativeSession[] = [];
   audio: AudioStatus;
   runtimeProjection: RuntimeProjectionStatus;
@@ -729,6 +730,7 @@ export class FakeNativeApi implements NativeApi {
 
   setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
     this.calls.push('setEmergencyMute');
+    this.emergencyMuteRequests.push(muted);
     if (muted) {
       this.audio = {
         ...this.audio,
@@ -745,6 +747,7 @@ export class FakeNativeApi implements NativeApi {
       this.audio = {
         ...this.audio,
         state: 'ready',
+        feedbackSuspected: false,
         message: 'Emergency mute released; output is live.',
       };
     }

@@ -1,6 +1,7 @@
 use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
 use crate::model::AudioStatus;
+use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use crate::session::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -68,7 +69,7 @@ impl AudioSupervisor {
                 "snapshot": snapshot,
             }),
             "",
-            timeout.min(Duration::from_secs(15)),
+            timeout.min(TIMELINE_PREPARE_TIMEOUT),
         )
     }
 

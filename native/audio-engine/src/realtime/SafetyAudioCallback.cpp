@@ -54,6 +54,7 @@ void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
     emergencyMuted.store(shouldMute, std::memory_order_release);
     if (!shouldMute) {
         currentGainLinear = 0.0f;
+        feedbackDetector.reset();
         feedbackSuspected.store(false, std::memory_order_release);
     }
 }
@@ -526,6 +527,11 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const auto numPhysicalInputs = numInputChannels;
     const auto mode = processingMode.load(std::memory_order_acquire);
     const auto monitorInput = mode == ProcessingMode::play;
+    const auto monitoringActive = monitorInput
+        || (mode == ProcessingMode::arrange
+            && timelineEngine != nullptr
+            && timelineEngine->monitoringEnabled()
+            && timelineEngine->monitoringInputChannel(selectedChannel));
     const std::array<const float*, 1> logicalInputs { monitorInput ? selectedInput : nullptr };
     const auto numLogicalInputs = monitorInput && selectedInput != nullptr ? 1 : 0;
     float rawInputPeak = 0.0f;
@@ -560,7 +566,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         return;
     }
 
-    feedbackDetector.observe(rawInputPeak, numSamples);
+    feedbackDetector.observe(rawInputPeak, numSamples, monitoringActive);
     if (feedbackDetector.consumeSuspected()) {
         emergencyMuted.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);

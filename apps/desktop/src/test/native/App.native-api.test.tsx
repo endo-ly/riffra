@@ -469,6 +469,21 @@ describe('App driven by FakeNativeApi', () => {
     );
   });
 
+  it('releases mute when feedback arrives before the native state frame', async () => {
+    const fake = new FakeNativeApi({
+      audio: fakeAudioStatus({ state: 'ready', feedbackSuspected: true }),
+    });
+    renderApp(fake);
+
+    const user = userEvent.setup();
+    const unmute = await screen.findByRole('button', { name: /^UNMUTE$/ });
+    await user.click(unmute);
+
+    await waitFor(() => expect(fake.emergencyMuteRequests).toEqual([false]));
+    expect(fake.audio.state).toBe('ready');
+    expect(fake.audio.feedbackSuspected).toBe(false);
+  });
+
   it('keeps output safe when the device is faulted and recovers into emergency mute', async () => {
     const fake = new FakeNativeApi({
       audio: fakeAudioStatus({ state: 'faulted', message: 'Device disconnected.' }),

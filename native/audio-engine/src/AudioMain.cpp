@@ -46,6 +46,8 @@ using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
 
+constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(30);
+
 enum class OutputKind { control, state, telemetry };
 
 class OutputWriter final {
@@ -739,6 +741,7 @@ juce::var currentMeters(const SafetyAudioCallback& callback) {
     meters->setProperty(
         "invalidSamples",
         static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    meters->setProperty("emergencyMuted", callback.isEmergencyMuted());
     meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
     meters->setProperty(
         "droppedTelemetryFrames",
@@ -1143,7 +1146,7 @@ int serve(
                             writeJson(juce::var(ack), requestId);
                         }
                     },
-                    std::chrono::seconds(30));
+                    kTimelineVstLifecycleTimeout);
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
@@ -1178,7 +1181,7 @@ int serve(
                         return;
                     }
                     writeJson(timelineEngine.status(), requestId);
-                }, std::chrono::seconds(30));
+                }, kTimelineVstLifecycleTimeout);
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
                     writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));

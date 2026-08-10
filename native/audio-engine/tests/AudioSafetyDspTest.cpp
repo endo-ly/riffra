@@ -82,7 +82,7 @@ TEST(AudioSafetyDspTest, FeedbackDetectorDetectsSustainedNearPeakInput)
     const auto sustainedBlocks = static_cast<int>(
         std::ceil(kSampleRate * 300.0 / 1000.0 / kBlockSize));
     for (int block = 0; block < sustainedBlocks; ++block)
-        detector.observe(0.99f, kBlockSize);
+        detector.observe(0.99f, kBlockSize, true);
 
     EXPECT_TRUE(detector.isSuspected());
 }
@@ -95,8 +95,21 @@ TEST(AudioSafetyDspTest, FeedbackDetectorIgnoresBriefPeak)
     const auto briefBlocks = static_cast<int>(
         std::ceil(kSampleRate * 50.0 / 1000.0 / kBlockSize));
     for (int block = 0; block < briefBlocks; ++block)
-        detector.observe(0.99f, kBlockSize);
-    detector.observe(0.1f, kBlockSize);
+        detector.observe(0.99f, kBlockSize, true);
+    detector.observe(0.1f, kBlockSize, true);
+
+    EXPECT_FALSE(detector.isSuspected());
+}
+
+TEST(AudioSafetyDspTest, FeedbackDetectorIgnoresPeakInputWhenMonitoringIsOff)
+{
+    FeedbackDetector detector;
+    detector.prepare(kSampleRate);
+
+    const auto sustainedBlocks = static_cast<int>(
+        std::ceil(kSampleRate * 300.0 / 1000.0 / kBlockSize));
+    for (int block = 0; block < sustainedBlocks; ++block)
+        detector.observe(0.99f, kBlockSize, false);
 
     EXPECT_FALSE(detector.isSuspected());
 }

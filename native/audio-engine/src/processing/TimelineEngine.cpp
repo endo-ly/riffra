@@ -147,6 +147,7 @@ bool TimelineEngine::loadSnapshot(
     const bool commitImmediately) {
     std::unique_ptr<PreparedTimeline> prepared;
     bool monitorLiveInputState = false;
+    std::uint32_t monitoringInputChannelsState = 0;
     bool armedInstrumentTrackState = false;
     if (!prepareSnapshot(
             snapshot,
@@ -155,6 +156,7 @@ bool TimelineEngine::loadSnapshot(
             maximumBlockSize,
             prepared,
             monitorLiveInputState,
+            monitoringInputChannelsState,
             armedInstrumentTrackState,
             error))
         return false;
@@ -163,6 +165,7 @@ bool TimelineEngine::loadSnapshot(
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         pendingTimeline = std::move(prepared);
         pendingMonitorLiveInput = monitorLiveInputState;
+        pendingMonitoringInputChannels = monitoringInputChannelsState;
         pendingArmedInstrumentTrack = armedInstrumentTrackState;
     }
     if (!commitImmediately)
@@ -177,10 +180,12 @@ bool TimelineEngine::prepareSnapshot(
     const int maximumBlockSize,
     std::unique_ptr<PreparedTimeline>& prepared,
     bool& monitorLiveInputState,
+    std::uint32_t& monitoringInputChannelsState,
     bool& armedInstrumentTrackState,
     juce::String& error) {
     prepared.reset();
     monitorLiveInputState = false;
+    monitoringInputChannelsState = 0;
     armedInstrumentTrackState = false;
     if (!snapshot.isObject() || outputSampleRate <= 0.0 || maximumBlockSize <= 0) {
         error = "Timeline snapshot requires an active audio device.";
@@ -294,6 +299,10 @@ bool TimelineEngine::prepareSnapshot(
         if (audioInput.isObject())
             track->audioInputChannel =
                 static_cast<int>(audioInput.getProperty("channelIndex", -1));
+        if (track->monitorInput && track->audioInputChannel >= 0
+            && track->audioInputChannel < 32)
+            monitoringInputChannelsState |=
+                std::uint32_t { 1 } << static_cast<unsigned>(track->audioInputChannel);
 
         const auto automation = trackValue.getProperty(
             "automation", juce::var(juce::Array<juce::var> {}));
@@ -672,6 +681,9 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         timeline = std::move(candidate);
         activeTimeline.store(timeline.get(), std::memory_order_release);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
+        monitoringInputChannels.store(
+            pendingMonitoringInputChannels,
+            std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
         if (retiredTimeline == nullptr)
             timelineSample.store(0, std::memory_order_release);
@@ -1380,6 +1392,13 @@ bool TimelineEngine::setDeviceParameter(
 
 bool TimelineEngine::monitoringEnabled() const noexcept {
     return monitorLiveInput.load(std::memory_order_acquire);
+}
+
+bool TimelineEngine::monitoringInputChannel(const int channel) const noexcept {
+    if (channel < 0 || channel >= 32)
+        return false;
+    const auto channels = monitoringInputChannels.load(std::memory_order_acquire);
+    return (channels & (std::uint32_t { 1 } << static_cast<unsigned>(channel))) != 0;
 }
 
 bool TimelineEngine::recordingWindow(

@@ -11,7 +11,7 @@ import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { workspaces } from '@/constants';
-import { isOutputMuted } from '@/lib/audio-safety';
+import { isEmergencyMuteActive } from '@/lib/audio-safety';
 import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
 import {
   AudioSettingsDialog,
@@ -282,7 +282,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     );
 
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
-  const isMuted = isOutputMuted(audio) || feedbackSuspected;
+  const isMuted = isEmergencyMuteActive(audio);
   const shellStyle = {
     '--library-width': `${isArrange ? arrangeLibraryWidth : PANEL_WIDTH_LIMITS.library.default}px`,
     '--inspector-width': `${isArrange ? arrangeInspectorWidth : PANEL_WIDTH_LIMITS.inspector.default}px`,

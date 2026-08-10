@@ -46,6 +46,7 @@ struct NativeStatus {
     input_peak: Option<f64>,
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
+    emergency_muted: Option<bool>,
     feedback_suspected: Option<bool>,
     message: Option<String>,
 }
@@ -56,6 +57,7 @@ struct NativeMeters {
     input_peak: Option<f64>,
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
+    emergency_muted: Option<bool>,
     feedback_suspected: Option<bool>,
 }
 
@@ -141,6 +143,13 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         "starting" => AudioState::Starting,
         "faulted" => AudioState::Faulted,
         _ => AudioState::Offline,
+    };
+    let state = match native.emergency_muted {
+        Some(true) if !matches!(state, AudioState::Faulted | AudioState::Offline) => {
+            AudioState::Muted
+        }
+        Some(false) if state == AudioState::Muted => AudioState::Ready,
+        _ => state,
     };
     let fallback_message = match state {
         AudioState::Ready => "Native audio is ready through the safety chain.".into(),
@@ -304,6 +313,29 @@ fn render_native_error(scope: &str, message: &str) -> (bool, String) {
     }
 }
 
+fn apply_emergency_mute_state(current: &mut AudioStatus, emergency_muted: bool) -> bool {
+    if matches!(current.state, AudioState::Faulted | AudioState::Offline) {
+        return false;
+    }
+    let next_state = if emergency_muted {
+        AudioState::Muted
+    } else if current.state == AudioState::Muted {
+        AudioState::Ready
+    } else {
+        return false;
+    };
+    if current.state == next_state {
+        return false;
+    }
+    current.state = next_state;
+    current.message = if emergency_muted {
+        "Native audio is connected and emergency-muted.".into()
+    } else {
+        "Native audio is ready through the safety chain.".into()
+    };
+    true
+}
+
 /// Parses one JSON line from the sidecar into a typed reply. Returns `None` for
 /// non-JSON or unrecognized message types so the caller can ignore them.
 fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
@@ -361,7 +393,11 @@ pub(super) fn handle_native_stdout(
             })
         }
         ParsedNativeLine::Meters { request_id, meters } => {
+            let mut status_changed = false;
             if let Ok(mut current) = status.lock() {
+                if let Some(emergency_muted) = meters.emergency_muted {
+                    status_changed = apply_emergency_mute_state(&mut current, emergency_muted);
+                }
                 current.input_peak = meters.input_peak.unwrap_or_default().clamp(0.0, 1.0);
                 current.output_peak = meters.output_peak.unwrap_or_default().clamp(0.0, 1.0);
                 current.invalid_samples = meters.invalid_samples.unwrap_or_default();
@@ -370,7 +406,11 @@ pub(super) fn handle_native_stdout(
             Some(NativeReply {
                 request_id,
                 result: Ok(()),
-                event: NativeEvent::AudioMeters,
+                event: if status_changed {
+                    NativeEvent::AudioStatus
+                } else {
+                    NativeEvent::AudioMeters
+                },
             })
         }
         ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
@@ -608,21 +648,56 @@ mod tests {
     }
 
     #[test]
-    fn meter_reply_updates_only_meter_fields() {
+    fn feedback_meter_reply_promotes_audio_state_to_muted() {
         let status = test_status();
         let reply = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"feedbackSuspected":true}"#,
+            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"emergencyMuted":true,"feedbackSuspected":true}"#,
         )
         .expect("meter reply");
         let current = status.lock().unwrap();
         assert_eq!(reply.request_id, Some(12));
-        assert!(matches!(reply.event, NativeEvent::AudioMeters));
+        assert!(matches!(reply.event, NativeEvent::AudioStatus));
+        assert!(matches!(current.state, AudioState::Muted));
         assert_eq!(current.driver.as_deref(), Some("Test"));
         assert_eq!(current.input_peak, 0.7);
         assert_eq!(current.output_peak, 0.4);
         assert_eq!(current.invalid_samples, 3);
         assert!(current.feedback_suspected);
+    }
+
+    #[test]
+    fn releasing_emergency_mute_from_a_meter_restores_ready_state_and_cause() {
+        let status = test_status();
+        handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","emergencyMuted":true,"feedbackSuspected":true}"#,
+        )
+        .expect("mute meter reply");
+
+        let reply = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","emergencyMuted":false,"feedbackSuspected":false}"#,
+        )
+        .expect("release meter reply");
+        let current = status.lock().unwrap();
+
+        assert!(matches!(reply.event, NativeEvent::AudioStatus));
+        assert!(matches!(current.state, AudioState::Ready));
+        assert!(!current.feedback_suspected);
+    }
+
+    #[test]
+    fn native_status_emergency_mute_flag_is_authoritative_for_audio_state() {
+        let native: NativeStatus = serde_json::from_value(serde_json::json!({
+            "state": "ready",
+            "emergencyMuted": true,
+        }))
+        .expect("native status");
+
+        let status = native_status_to_audio_status(native);
+
+        assert!(matches!(status.state, AudioState::Muted));
     }
 
     #[test]

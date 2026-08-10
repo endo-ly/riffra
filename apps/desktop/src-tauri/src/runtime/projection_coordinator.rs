@@ -1,4 +1,5 @@
 use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
+use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::model::ProjectionKey;
 use crate::runtime::ports::ProjectionDriver;
@@ -401,7 +402,7 @@ fn worker_loop<D: ProjectionDriver>(
         };
 
         let generation = driver.runtime_generation();
-        let mut result = match remaining_timeout(target.deadline, Duration::from_secs(15)) {
+        let mut result = match remaining_timeout(target.deadline, TIMELINE_PREPARE_TIMEOUT) {
             Ok(timeout) => driver.prepare_timeline_snapshot(target.snapshot.clone(), timeout),
             Err(error) => Err(error),
         };

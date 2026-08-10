@@ -7,7 +7,7 @@ Current executable modes:
 - `riffra-audio.exe --probe` enumerates ASIO/WASAPI device types without opening an audio stream.
 - `riffra-audio.exe --serve` opens the default device in emergency-mute state and accepts one JSON command per stdin line.
 
-The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed. Instrument and effect plugins live on individual Tracks; they are configured through the Arrangement Timeline Snapshot and targeted Track Device commands rather than a global rack.
+The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed on a software-monitored input. Instrument and effect plugins live on individual Tracks; they are configured through the Arrangement Timeline Snapshot and targeted Track Device commands rather than a global rack.
 
 ## Protocol examples
 
@@ -31,7 +31,7 @@ The safety chain is deliberately small and auditable: immediate emergency mute, 
 
 Responses are JSON Lines and always include an error scope and `dataSafe` when a request fails.
 
-Status replies include `feedbackSuspected` when the detector has engaged emergency mute due to acoustic feedback. The flag clears on device recovery (`audioDeviceAboutToStart`).
+Status replies include `feedbackSuspected` when the detector has engaged emergency mute due to acoustic feedback. The flag clears when emergency mute is released or the audio device is restarted.
 
 When an input is open, `startRecording` also captures note-on/note-off events to
 `midi.json` beside the Raw and Processed WAV files. The sidecar caps the event
