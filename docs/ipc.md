@@ -158,7 +158,7 @@ Arrangement Snapshotの準備とVST3ライフサイクル要求は、C++のstdin
 
 Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
 
-デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。Audio RuntimeはSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。初回復元処理が成功または失敗で終了した時点で、Rust側は`runtime-startup-finished`イベントをUIへ通知し、`BootstrapState.runtimeStartupFinished`にも終了状態を反映する。VST3カタログは保存済みの検証結果をBootstrapで返し、初回復元処理の終了後に新規・更新候補をバックグラウンドで検証する。カタログ検証の成否は出力解除条件に含めない。
+デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。Audio RuntimeはSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。復元処理が終了するたびに、Rust側は`runtime-startup-finished`イベント（`{ succeeded: boolean }`）をUIへ通知し、`BootstrapState.runtimeStartupFinished`と`BootstrapState.runtimeStarted`にも結果を反映する。UIはイベント購読を確立してからBootstrapを1回だけ取得し、`runtimeStartupFinished`を待ってVST3カタログをバックグラウンドで検証する。初回復元が失敗していた場合、カタログ検証が成功した後に`recover_audio_device`を一度だけ呼び出してSession Runtimeの復元を再試行する。カタログ検証の成否は出力解除条件に含めない。
 
 ### 4.2 メッセージ種別（C++ → Rust）
 

@@ -55,6 +55,11 @@ export interface TrackPluginParameterChange {
   value: number;
 }
 
+/** Result delivered when the native Session runtime restoration attempt ends. */
+export interface RuntimeStartupFinishedEvent {
+  succeeded: boolean;
+}
+
 /**
  * NativeApi is the seam between the React layer and every side-effectful
  * operation: Tauri commands, the audio sidecar protocol, the filesystem, and
@@ -68,8 +73,10 @@ export interface TrackPluginParameterChange {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
-  /** Subscribes to completion of the first Session audio-graph restoration attempt. */
-  onRuntimeStartupFinished(callback: () => void): () => void;
+  /** Subscribes to completion of a Session audio-graph restoration attempt. */
+  onRuntimeStartupFinished(
+    callback: (event: RuntimeStartupFinishedEvent) => void,
+  ): Promise<() => void>;
   saveSession(session: CreativeSession): Promise<CreativeSession>;
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;

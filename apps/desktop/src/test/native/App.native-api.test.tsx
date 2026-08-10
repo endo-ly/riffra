@@ -40,6 +40,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitForAppShell();
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
     expect(fake.calls).toContain('bootstrap');
+    expect(fake.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
     await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
     expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('setEmergencyMute');
@@ -82,7 +83,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('startScanJob'));
   });
 
-  it('starts the catalog scan after an unsuccessful runtime restoration attempt', async () => {
+  it('retries runtime restoration once after the catalog scan repairs startup state', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: {
         runtimeStarted: false,
@@ -98,7 +99,37 @@ describe('App driven by FakeNativeApi', () => {
     fake.emitRuntimeStartupFinished();
 
     await waitFor(() => expect(fake.calls).toContain('startScanJob'));
-    expect(fake.bootstrapState.runtimeStarted).toBe(false);
+    await waitFor(() => expect(fake.calls).toContain('recoverAudioDevice'));
+    expect(fake.calls.filter((call) => call === 'recoverAudioDevice')).toHaveLength(1);
+    expect(fake.bootstrapState.runtimeStarted).toBe(true);
+  });
+
+  it('does not retry runtime restoration when the catalog scan fails', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: {
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
+    });
+    fake.startScanJob = async () => {
+      fake.calls.push('startScanJob');
+      return {
+        kind: 'scan',
+        id: 'fake-scan-failure',
+        state: 'failed',
+        progress: 1,
+        message: 'Fake scan failed.',
+        result: null,
+      };
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    fake.emitRuntimeStartupFinished(false);
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    expect(fake.calls).not.toContain('recoverAudioDevice');
   });
 
   it('keeps shell notices and project actions available without a home surface', async () => {

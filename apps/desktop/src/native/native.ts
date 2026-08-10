@@ -44,7 +44,12 @@ import type {
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
 import { invoke, invokeLatest, invokeOrFallback, isNativeRuntime } from './invoke';
-import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type {
+  NativeApi,
+  RuntimeStartupFinishedEvent,
+  TrackPluginParameterChange,
+  TrackPluginStateChange,
+} from './native-api';
 import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -68,35 +73,13 @@ async function bootstrap(): Promise<BootstrapState> {
   );
 }
 
-function onRuntimeStartupFinished(callback: () => void): () => void {
+async function onRuntimeStartupFinished(
+  callback: (event: RuntimeStartupFinishedEvent) => void,
+): Promise<() => void> {
   if (!isNativeRuntime()) return () => undefined;
-  let unlisten: (() => void) | null = null;
-  let cancelled = false;
-  let notified = false;
-  const notify = () => {
-    if (cancelled || notified) return;
-    notified = true;
-    callback();
-  };
-  void listen('runtime-startup-finished', notify).then((fn) => {
-    if (cancelled) {
-      fn();
-      return;
-    }
-    unlisten = fn;
-    // The startup event is one-shot. Read the durable state after the
-    // subscription is installed so an event emitted during registration is
-    // still observable through the state snapshot.
-    void bootstrap()
-      .then((state) => {
-        if (state.runtimeStartupFinished) notify();
-      })
-      .catch(() => undefined);
+  return listen<RuntimeStartupFinishedEvent>('runtime-startup-finished', ({ payload }) => {
+    callback(payload);
   });
-  return () => {
-    cancelled = true;
-    unlisten?.();
-  };
 }
 
 async function saveSession(session: CreativeSession): Promise<CreativeSession> {

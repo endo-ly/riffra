@@ -46,7 +46,12 @@ import type {
   TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
-import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type {
+  NativeApi,
+  RuntimeStartupFinishedEvent,
+  TrackPluginParameterChange,
+  TrackPluginStateChange,
+} from './native-api';
 import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -157,7 +162,7 @@ export class FakeNativeApi implements NativeApi {
   private renderCounter = 0;
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
-  private runtimeStartupFinishedListeners = new Set<() => void>();
+  private runtimeStartupFinishedListeners = new Set<(event: RuntimeStartupFinishedEvent) => void>();
   private runtimeRestartListeners = new Set<(generation: number) => void>();
   private transportStatusListeners = new Set<(status: TransportStatus) => void>();
 
@@ -202,18 +207,22 @@ export class FakeNativeApi implements NativeApi {
     return this.bootstrapState;
   };
 
-  onRuntimeStartupFinished = (callback: () => void): (() => void) => {
+  onRuntimeStartupFinished = async (
+    callback: (event: RuntimeStartupFinishedEvent) => void,
+  ): Promise<() => void> => {
     this.calls.push('onRuntimeStartupFinished');
     this.runtimeStartupFinishedListeners.add(callback);
     return () => this.runtimeStartupFinishedListeners.delete(callback);
   };
 
-  emitRuntimeStartupFinished = (): void => {
+  emitRuntimeStartupFinished = (succeeded = this.bootstrapState.runtimeStarted): void => {
     this.bootstrapState = {
       ...this.bootstrapState,
       runtimeStartupFinished: true,
+      runtimeStarted: succeeded,
     };
-    this.runtimeStartupFinishedListeners.forEach((callback) => callback());
+    const event = { succeeded };
+    this.runtimeStartupFinishedListeners.forEach((callback) => callback(event));
   };
 
   saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
@@ -885,12 +894,14 @@ export class FakeNativeApi implements NativeApi {
 
   recoverAudioDevice = async (): Promise<AudioStatus> => {
     this.calls.push('recoverAudioDevice');
+    const startupRecovery = !this.bootstrapState.runtimeStarted;
     this.audio = {
       ...this.audio,
       state: 'muted',
       invalidSamples: 0,
       message: 'Device recovered; output re-enters emergency mute for safety.',
     };
+    if (startupRecovery) this.emitRuntimeStartupFinished(true);
     return this.audio;
   };
 

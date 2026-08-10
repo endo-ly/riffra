@@ -112,9 +112,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
+  const [runtimeStarted, setRuntimeStarted] = useState(false);
   const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
   const activeJobId = useRef<string | null>(null);
   const startupScanStarted = useRef(false);
+  const startupRuntimeRecoveryAttempted = useRef(false);
+  const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const audioRef = useRef(audio);
@@ -582,6 +585,20 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     syncArrangeRuntime,
   ]);
 
+  const retryStartupRuntime = useCallback(async () => {
+    if (startupRuntimeRecoveryAttempted.current || runtimeStarted) return;
+    startupRuntimeRecoveryAttempted.current = true;
+    try {
+      await recoverAudio();
+    } catch (error) {
+      setScanMessage(
+        `Startup runtime restore failed after the catalog scan: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [recoverAudio, runtimeStarted]);
+
   useEffect(() => {
     if (
       startupScanStarted.current ||
@@ -594,15 +611,19 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       return;
     }
     startupScanStarted.current = true;
-    void runBackgroundJob(
-      () => startScanJob(boot.vst3Root),
-      applyScanReport,
-      (message) => setScanMessage(`VST3 scan failed: ${message}`),
-    );
+    void (async () => {
+      const completed = await runBackgroundJob(
+        () => startScanJob(boot.vst3Root),
+        applyScanReport,
+        (message) => setScanMessage(`VST3 scan failed: ${message}`),
+      );
+      if (completed) await retryStartupRuntime();
+    })();
   }, [
     applyScanReport,
     backgroundJob,
     boot,
+    retryStartupRuntime,
     runBackgroundJob,
     runtimeStartupFinished,
     startScanJob,
@@ -658,17 +679,33 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   useEffect(() => {
     let disposed = false;
     let deferredStartupTimer: ReturnType<typeof setTimeout> | null = null;
-    const unlistenRuntimeStartupFinished = onRuntimeStartupFinished(() =>
-      setRuntimeStartupFinished(true),
-    );
-    const bootstrapOperation = bootstrapPromise.current ?? (bootstrapPromise.current = bootstrap());
+    let unlistenRuntimeStartupFinished: (() => void) | null = null;
+    const runtimeStartupListener = onRuntimeStartupFinished((event) => {
+      if (disposed) return;
+      runtimeStartupEventReceived.current = true;
+      setRuntimeStartupFinished(true);
+      setRuntimeStarted(event.succeeded);
+    }).catch((error) => {
+      logNativeError('onRuntimeStartupFinished')(error);
+      return () => undefined;
+    });
+    void runtimeStartupListener.then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenRuntimeStartupFinished = unlisten;
+    });
+    const bootstrapOperation =
+      bootstrapPromise.current ??
+      (bootstrapPromise.current = runtimeStartupListener.then(() => bootstrap()));
     void bootstrapOperation
       .then((state) => {
         if (disposed) return;
         setBoot(state);
         setSession(state.session);
         setPlugins(state.pluginCatalog);
-        setRuntimeStartupFinished((current) => current || state.runtimeStartupFinished);
+        if (!runtimeStartupEventReceived.current) {
+          setRuntimeStarted(state.runtimeStarted);
+          setRuntimeStartupFinished(state.runtimeStartupFinished);
+        }
         void getMissingDependencies()
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
@@ -912,7 +949,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       unlistenClose?.();
       if (!closeRequested) void flushPluginChanges();
       unlistenAudio();
-      unlistenRuntimeStartupFinished();
+      unlistenRuntimeStartupFinished?.();
       unlistenMeters();
       unlistenTrackPluginParameter();
       unlistenTrackPluginState();

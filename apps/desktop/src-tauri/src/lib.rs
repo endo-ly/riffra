@@ -47,7 +47,7 @@ mod types;
 
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
-    RuntimeProjectionStatus,
+    RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::AudioSupervisor;
 use riffra_core::AppCore;
@@ -171,25 +171,31 @@ fn queue_startup_maintenance(
 ) {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
-        let status = if state.core.safe_mode() {
-            None
+        let (status, runtime_started) = if state.core.safe_mode() {
+            (None, state.core.audio().startup_completed())
         } else {
             match startup::initialize_audio_runtime(&state, || {
                 queue_session_index(&data_root, &session);
             }) {
                 Ok(initialization) => {
+                    let runtime_started = initialization.runtime_error.is_none();
                     if let Some(error) = initialization.runtime_error.as_deref() {
                         let _ = diagnostics::record(&data_root, "startup-runtime", error);
                     }
-                    Some(initialization.status)
+                    (Some(initialization.status), runtime_started)
                 }
                 Err(error) => {
                     let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                    None
+                    (None, false)
                 }
             }
         };
-        let _ = app_handle.emit("runtime-startup-finished", ());
+        let _ = app_handle.emit(
+            "runtime-startup-finished",
+            RuntimeStartupFinishedEvent {
+                succeeded: runtime_started,
+            },
+        );
         state.core.audio().emit_status(&app_handle);
 
         if state.core.safe_mode() {
@@ -641,7 +647,14 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if !state.core.audio().startup_completed() {
             state.core.audio().mark_startup_pending();
             let initialization = startup::initialize_audio_runtime(state, || {});
-            let _ = operation_app.emit("runtime-startup-finished", ());
+            let succeeded = initialization
+                .as_ref()
+                .map(|result| result.runtime_error.is_none())
+                .unwrap_or(false);
+            let _ = operation_app.emit(
+                "runtime-startup-finished",
+                RuntimeStartupFinishedEvent { succeeded },
+            );
             let initialization = initialization?;
             return Ok(initialization.status);
         }

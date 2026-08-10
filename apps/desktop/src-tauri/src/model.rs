@@ -75,6 +75,13 @@ pub struct BootstrapState {
     pub vst3_root: String,
 }
 
+/// Reports the result of a Session audio-graph restoration attempt to the UI.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeStartupFinishedEvent {
+    pub succeeded: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStatus {
