@@ -16,7 +16,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
   const selected = props.session.arrangement.midiClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
-  const clip = selected.at(-1) ?? null;
+  const clip = selected.length === 1 ? selected[0] : null;
   const [name, setName] = useState(clip?.name ?? '');
   const [startTick, setStartTick] = useState(String(clip?.startTick ?? 0));
   const [durationTicks, setDurationTicks] = useState(String(clip?.durationTicks ?? 1));
@@ -33,27 +33,17 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
   };
 
   if (!clip) {
-    return (
-      <div className={styles.empty}>
-        <span className={styles.emptyGlyph}>♪</span>
-        <strong>No MIDI Clip selected</strong>
-        <p>Select a MIDI Clip to edit its timing, loop and mute state.</p>
-      </div>
-    );
+    return null;
   }
 
   const patch = (fields: Parameters<NativeApi['updateMidiClip']>[1]) =>
     void commit(props.api.updateMidiClip(clip.id, fields));
-  const duplicate = () => void commit(props.api.duplicateMidiClip(clip.id));
-
   return (
     <div className={styles.inspector}>
       <section className={styles.identity}>
         <span className={styles.art}>♪</span>
         <div>
-          <span className="eyebrow">
-            {selected.length > 1 ? `${selected.length} MIDI CLIPS` : 'MIDI CLIP'}
-          </span>
+          <span className="eyebrow">MIDI CLIP</span>
           <input
             aria-label="MIDI clip name"
             value={name}
@@ -63,9 +53,6 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
               if (next && next !== clip.name) patch({ name: next });
             }}
           />
-          <small>
-            {clip.notes.length} notes · {clip.events.length} controller events
-          </small>
         </div>
       </section>
       <section className={styles.section}>
@@ -117,21 +104,16 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
         </button>
       </div>
       <div className={styles.actions}>
-        <button onClick={duplicate}>
-          Duplicate{selected.length > 1 ? ` (${selected.length})` : ''}
-        </button>
+        <button onClick={() => void commit(props.api.duplicateMidiClip(clip.id))}>Duplicate</button>
         <button
           className={styles.danger}
           onClick={() =>
-            void commit(
-              props.api.removeTimelineClips(
-                [],
-                selected.map((item) => item.id),
-              ),
-            ).then(() => props.setSelectedClipIds([]))
+            void commit(props.api.removeTimelineClips([], [clip.id])).then(() =>
+              props.setSelectedClipIds([]),
+            )
           }
         >
-          Delete{selected.length > 1 ? ` (${selected.length})` : ''}
+          Delete
         </button>
       </div>
     </div>

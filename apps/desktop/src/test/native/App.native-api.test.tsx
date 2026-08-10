@@ -579,11 +579,10 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
     const user = userEvent.setup();
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await user.click(screen.getByRole('button', { name: /Add Instrument Track/ }));
     await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
     await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
 
     await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
     await waitFor(() => {
@@ -595,7 +594,6 @@ describe('App driven by FakeNativeApi', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /Other Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Replace Instrument' }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
       expect(saved.arrangement.tracks[0]?.instrument?.path).toBe(plugins[1].path);
@@ -623,16 +621,16 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
 
     const user = userEvent.setup();
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await user.click(screen.getByRole('button', { name: /Add Instrument Track/ }));
     await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
     await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
     await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
 
     const savedSessionCount = fake.savedSessions.length;
     expect(fake.bootstrapState.session.arrangement.tracks[0]?.armed).toBe(false);
-    await user.click(screen.getByRole('button', { name: 'Open Play Surface for Instrument 1' }));
+    await user.click(screen.getByLabelText('Instrument 1 track menu'));
+    await user.click(screen.getByRole('button', { name: 'Open Play Surface' }));
     expect(screen.getByText('Live input only')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Computer Keyboard: Off' })).toBeInTheDocument();
 
@@ -652,13 +650,19 @@ describe('App driven by FakeNativeApi', () => {
       sentBeforeLibraryInput,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Collapse' }));
+    const lowerPanelResize = screen.getByRole('button', { name: 'Resize lower panel' });
+    fireEvent.pointerDown(lowerPanelResize, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: 520, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
     fireEvent.keyDown(window, { key: 's' });
     fireEvent.keyUp(window, { key: 's' });
     await waitFor(() => {
       expect(fake.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(4);
     });
-    await user.click(screen.getByRole('button', { name: 'Expand' }));
+    const collapsedResize = screen.getByRole('button', { name: 'Resize lower panel' });
+    fireEvent.pointerDown(collapsedResize, { clientY: 520, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientY: 300, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
     expect(screen.queryByRole('button', { name: 'Stop Notes' })).not.toBeInTheDocument();
     expect(fake.savedSessions).toHaveLength(savedSessionCount);
   });

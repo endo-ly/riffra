@@ -36,12 +36,6 @@
   font-size: var(--font-small);
 }
 
-.takeHeader span {
-  color: var(--teal);
-  font-size: var(--font-micro);
-  letter-spacing: 0.06em;
-}
-
 .actions,
 .comparison {
   display: flex;

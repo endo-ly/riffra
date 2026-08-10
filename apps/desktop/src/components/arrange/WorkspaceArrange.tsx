@@ -45,6 +45,7 @@ import {
   type TrackSize,
 } from '@/lib/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/lib/arrange-drag';
+import { isEditableTarget } from '@/lib/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { useArrangeTransport } from '@/hooks/arrange/useArrangeTransport';
 import { useWaveformAnalyses } from '@/hooks/arrange/useWaveformAnalyses';
@@ -72,7 +73,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [tool, setTool] = useState<ArrangeTool>('select');
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [zoom, setZoom] = useState(1);
-  const [trackSize, setTrackSize] = useState<TrackSize>('normal');
+  const trackSize: TrackSize = 'normal';
   const [trackSizes, setTrackSizes] = useState<Record<string, TrackSize>>({});
   const [automationParameters, setAutomationParameters] = useState<
     Partial<Record<string, AutomationParameter>>
@@ -80,6 +81,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const [follow, setFollow] = useState(true);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
+  const [selectedRange, setSelectedRange] = useState<'loop' | 'punch' | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -110,9 +112,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [lowerPanelView, setLowerPanelView] = useState<ArrangeLowerPanelView>('closed');
   const [lowerPanelCollapsed, setLowerPanelCollapsed] = useState(false);
   const [lowerPanelHeight, setLowerPanelHeight] = useState(260);
-  const [playSurfaceSummary, setPlaySurfaceSummary] = useState(
-    'No instrument selected · Keyboard C4 · Computer keyboard off',
-  );
+  const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<{
     trackId: string;
@@ -163,10 +163,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     onSplitToolUsed: () => setTool('select'),
   });
   const { setMessage } = editor;
-  const commitMidiEdit = (operation: Promise<CreativeSession | null>) => {
-    setMessage('');
-    return editor.commit(operation, '');
-  };
+  const commitMidiEdit = (operation: Promise<CreativeSession | null>) => editor.commit(operation);
   // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
   // delivers the file contents rather than the OS path, so the bytes are
   // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
@@ -194,8 +191,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     },
     [api, setMessage, setSession],
   );
-  const playbackOutOfSync =
-    editor.runtimeOutOfSync || Boolean(transport && transport.revision !== arrangement.revision);
+  const playbackOutOfSync = editor.runtimeOutOfSync;
   const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
   const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -212,10 +208,32 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     ? 'Playback runtime is out of sync'
     : unavailableClipCount || missingDeviceCount
       ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
-      : editor.messageKind === 'success'
-        ? ''
-        : editor.message;
+      : editor.message;
   const showStatus = Boolean(statusMessage);
+
+  const clearRange = useCallback(
+    (range: 'loop' | 'punch') => {
+      const operation =
+        range === 'loop'
+          ? api.updateTimelineLoopRange(
+              false,
+              arrangement.loopRange.startTick,
+              arrangement.loopRange.endTick,
+            )
+          : api.updateTimelinePunchRange(
+              false,
+              arrangement.punchRange?.startTick ?? 0,
+              arrangement.punchRange?.endTick ?? 0,
+            );
+      void operation.then(setSession);
+    },
+    [api, arrangement.loopRange, arrangement.punchRange, setSession],
+  );
+
+  const selectRange = (range: 'loop' | 'punch') => {
+    setSelectedRange(range);
+    setSelectedMarkerId(null);
+  };
 
   useEffect(() => {
     if (activeMidiClipId !== null && !activeMidiClip) {
@@ -304,29 +322,35 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     };
   }, [transport?.state]);
 
-  // Keyboard: Delete removes the selected Marker (when no Clips are selected);
-  // Escape clears the Time Selection and Marker selection (deselect, not delete).
+  // Keyboard: Delete removes the selected Marker or Loop/Punch range when no Clips are selected.
+  // Escape clears the ruler selection.
   useEffect(() => {
-    const isEditable = (target: EventTarget | null) => {
-      const el = target as HTMLElement | null;
-      return (
-        !!el &&
-        (el.tagName === 'INPUT' ||
-          el.tagName === 'TEXTAREA' ||
-          el.tagName === 'SELECT' ||
-          el.isContentEditable)
-      );
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === 'Escape') {
-        if (isEditable(event.target)) return;
+        if (isEditableTarget(event.target)) return;
         setTimeSelection(null);
         setSelectedMarkerId(null);
+        setSelectedRange(null);
+        return;
+      }
+      if (event.key === 'Delete' && selectedRange && selectedClipIds.length === 0) {
+        if (isEditableTarget(event.target)) return;
+        const rangeIsActive =
+          selectedRange === 'loop'
+            ? arrangement.loopRange.enabled
+            : Boolean(arrangement.punchRange);
+        if (!rangeIsActive) {
+          setSelectedRange(null);
+          return;
+        }
+        event.preventDefault();
+        clearRange(selectedRange);
+        setSelectedRange(null);
         return;
       }
       if (event.key === 'Delete' && selectedMarkerId && selectedClipIds.length === 0) {
-        if (isEditable(event.target)) return;
+        if (isEditableTarget(event.target)) return;
         const marker = arrangement.markers.find((item) => item.id === selectedMarkerId);
         if (!marker) return;
         event.preventDefault();
@@ -338,7 +362,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedMarkerId, selectedClipIds.length, arrangement.markers, api, setSession]);
+  }, [
+    selectedMarkerId,
+    selectedRange,
+    selectedClipIds.length,
+    arrangement.markers,
+    arrangement.loopRange.enabled,
+    arrangement.punchRange,
+    api,
+    clearRange,
+    setSession,
+  ]);
 
   // Close the time selection chip when clicking outside the ruler or the chip itself.
   useEffect(() => {
@@ -356,10 +390,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
     if (
       (event.target as HTMLElement).closest(
-        '[data-marker-id], [data-range-handle], [data-range-close]',
+        '[data-marker-id], [data-range-band], [data-range-handle]',
       )
     )
       return;
+    setSelectedRange(null);
     const bounds = event.currentTarget.getBoundingClientRect();
     const originTick = editor.snapTick((event.clientX - bounds.left) / pixelsPerTick, event.altKey);
     const originX = event.clientX;
@@ -429,7 +464,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               boundary === 'start' ? next : range.startTick,
               boundary === 'end' ? next : range.endTick,
             ),
-            'Loop range updated.',
           )
           .finally(() => setLoopPreview(null));
       } else {
@@ -473,7 +507,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               boundary === 'start' ? next : range.startTick,
               boundary === 'end' ? next : range.endTick,
             ),
-            'Punch range updated.',
           )
           .finally(() => setPunchPreview(null));
       } else {
@@ -499,33 +532,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       .then(props.setSession);
   };
 
-  const clearLoop = () => {
-    void props.api
-      .updateTimelineLoopRange(
-        false,
-        arrangement.loopRange.startTick,
-        arrangement.loopRange.endTick,
-      )
-      .then(props.setSession);
-  };
-
-  const clearPunch = () => {
-    void props.api
-      .updateTimelinePunchRange(
-        false,
-        arrangement.punchRange?.startTick ?? 0,
-        arrangement.punchRange?.endTick ?? 0,
-      )
-      .then(props.setSession);
-  };
-
   const addMarkerAt = (tick: number) => {
     const existing = new Set(arrangement.markers.map((marker) => marker.id));
     void editor
-      .commit(
-        api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`),
-        'Marker added. Press Delete to remove.',
-      )
+      .commit(api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`))
       .then((next) => {
         if (!next) return;
         const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
@@ -538,18 +548,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   const removeMarker = (marker: Marker) => {
-    setConfirmRequest({
-      title: 'Delete marker',
-      message: `Delete marker "${marker.name}"?`,
-      confirmLabel: 'Delete',
-      danger: true,
-      onConfirm: () => {
-        setConfirmRequest(null);
-        void editor.commit(props.api.removeMarker(marker.id), 'Marker removed.').then(() => {
-          if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
-        });
-      },
-    });
+    void props.api
+      .removeMarker(marker.id)
+      .then((next) => {
+        props.setSession(next);
+        if (selectedMarkerId === marker.id) setSelectedMarkerId(null);
+      })
+      .catch((error) => setMessage(String(error)));
   };
 
   const saveMarkerRename = () => {
@@ -558,7 +563,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const next = markerRename.name.trim();
     setMarkerRename(null);
     if (marker && next && next !== marker.name) {
-      void editor.commit(props.api.updateMarker(marker.id, { name: next }), 'Marker renamed.');
+      void editor.commit(props.api.updateMarker(marker.id, { name: next }));
     }
   };
 
@@ -572,8 +577,38 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         { label: 'Set Loop to Selection', onClick: setLoopToSelection, disabled: !timeSelection },
         { label: 'Set Punch Range', onClick: setPunchToSelection, disabled: !timeSelection },
         { separator: true },
-        { label: 'Clear Loop', onClick: clearLoop, disabled: !arrangement.loopRange.enabled },
-        { label: 'Clear Punch', onClick: clearPunch, disabled: !arrangement.punchRange },
+        {
+          label: 'Clear Loop',
+          onClick: () => clearRange('loop'),
+          disabled: !arrangement.loopRange.enabled,
+        },
+        {
+          label: 'Clear Punch',
+          onClick: () => clearRange('punch'),
+          disabled: !arrangement.punchRange,
+        },
+      ],
+    });
+  };
+
+  const openRangeContextMenu = (
+    event: React.MouseEvent<HTMLDivElement>,
+    range: 'loop' | 'punch',
+  ) => {
+    event.preventDefault();
+    selectRange(range);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: 'Delete',
+          danger: true,
+          onClick: () => {
+            clearRange(range);
+            setSelectedRange(null);
+          },
+        },
       ],
     });
   };
@@ -581,6 +616,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const openMarkerContextMenu = (event: React.MouseEvent, marker: Marker) => {
     event.preventDefault();
     setSelectedMarkerId(marker.id);
+    setSelectedRange(null);
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
@@ -591,7 +627,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     });
   };
 
-  const performDeleteTrack = async (trackId: string, name: string) => {
+  const performDeleteTrack = async (trackId: string) => {
     const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
     if (
       props.focusedTrackId === trackId &&
@@ -605,7 +641,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         editor.setMessage(String(error));
       }
     }
-    const next = await editor.commit(props.api.removeTrack(trackId), `${name} deleted.`);
+    const next = await editor.commit(props.api.removeTrack(trackId));
     if (next) {
       if (props.focusedTrackId === trackId) {
         props.onFocusTrack(null);
@@ -627,7 +663,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       danger: true,
       onConfirm: () => {
         setConfirmRequest(null);
-        void performDeleteTrack(trackId, name);
+        void performDeleteTrack(trackId);
       },
     });
   };
@@ -650,27 +686,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           label: 'Duplicate',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(api.duplicateAudioClip(clip.id), `${clip.name} duplicated.`);
+            void editor.commit(api.duplicateAudioClip(clip.id));
           },
         },
         {
           label: clip.muted ? 'Unmute' : 'Mute',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(
-              api.updateAudioClip(clip.id, { muted: !clip.muted }),
-              `${clip.name} ${clip.muted ? 'unmuted' : 'muted'}.`,
-            );
+            void editor.commit(api.updateAudioClip(clip.id, { muted: !clip.muted }));
           },
         },
         {
           label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(
-              api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
-              `${clip.name} loop ${clip.loopEnabled ? 'disabled' : 'enabled'}.`,
-            );
+            void editor.commit(api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }));
           },
         },
         {
@@ -709,7 +739,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           danger: true,
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(api.removeTimelineClips([clip.id], []), `${clip.name} deleted.`);
+            void editor.commit(api.removeTimelineClips([clip.id], []));
           },
         },
       ],
@@ -735,27 +765,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           label: 'Duplicate',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(api.duplicateMidiClip(clip.id), `${clip.name} duplicated.`);
+            void editor.commit(api.duplicateMidiClip(clip.id));
           },
         },
         {
           label: clip.muted ? 'Unmute' : 'Mute',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(
-              api.updateMidiClip(clip.id, { muted: !clip.muted }),
-              `${clip.name} ${clip.muted ? 'unmuted' : 'muted'}.`,
-            );
+            void editor.commit(api.updateMidiClip(clip.id, { muted: !clip.muted }));
           },
         },
         {
           label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(
-              api.updateMidiClip(clip.id, { loopEnabled: !clip.loopEnabled }),
-              `${clip.name} loop ${clip.loopEnabled ? 'disabled' : 'enabled'}.`,
-            );
+            void editor.commit(api.updateMidiClip(clip.id, { loopEnabled: !clip.loopEnabled }));
           },
         },
         {
@@ -768,7 +792,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 clip.notes.map((note) => note.id),
                 gridTicks,
               ),
-              `${clip.name} quantized.`,
             );
           },
         },
@@ -804,7 +827,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           danger: true,
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(api.removeTimelineClips([], [clip.id]), `${clip.name} deleted.`);
+            void editor.commit(api.removeTimelineClips([], [clip.id]));
           },
         },
       ],
@@ -821,10 +844,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
   const setTrackSizeForTrack = (trackId: string, size: TrackSize) => {
     setTrackSizes((value) => ({ ...value, [trackId]: size }));
-  };
-  const setGlobalTrackSize = (size: TrackSize) => {
-    setTrackSize(size);
-    setTrackSizes({});
   };
   const toggleAutomation = (trackId: string) =>
     setAutomationParameters((current) => ({
@@ -845,7 +864,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           onClick: () =>
             void editor.commit(
               props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`, 'audio'),
-              'Audio Track added.',
             ),
         },
         {
@@ -853,7 +871,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           onClick: () =>
             void editor.commit(
               props.api.addTrack(`Instrument ${arrangement.tracks.length + 1}`, 'instrument'),
-              'Instrument Track added.',
             ),
         },
         { separator: true },
@@ -890,24 +907,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         tool={tool}
         snap={snap}
         zoom={zoom}
-        trackSize={trackSize}
         rulerMode={rulerMode}
         follow={follow}
         onTool={setTool}
         onSnap={setSnap}
         onZoom={applyZoom}
-        onTrackSize={setGlobalTrackSize}
         onRulerMode={setRulerMode}
         onFollow={setFollow}
-        onAddTrack={(kind) =>
-          void editor.commit(
-            props.api.addTrack(
-              `${kind === 'audio' ? 'Audio' : 'Instrument'} ${arrangement.tracks.length + 1}`,
-              kind,
-            ),
-            `${kind === 'audio' ? 'Audio' : 'Instrument'} Track added.`,
-          )
-        }
         automationAvailable={selectedTrackId !== null}
         automationOpen={selectedTrackId !== null && Boolean(automationParameters[selectedTrackId])}
         onToggleAutomation={() => {
@@ -924,15 +930,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             const { trackId, kind } = pluginPicker;
             setPluginPicker(null);
             if (kind === 'effect') {
-              void editor.commit(
-                props.api.addTrackEffect(trackId, plugin.path),
-                `Effect ${plugin.name} added.`,
-              );
+              void editor.commit(props.api.addTrackEffect(trackId, plugin.path));
             } else {
-              void editor.commit(
-                props.api.setTrackInstrument(trackId, plugin.path),
-                'Instrument updated.',
-              );
+              void editor.commit(props.api.setTrackInstrument(trackId, plugin.path));
             }
           }}
           onClose={() => setPluginPicker(null)}
@@ -1011,24 +1011,25 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             punchRange={punchPreview ?? arrangement.punchRange}
             markers={arrangement.markers}
             selectedMarkerId={selectedMarkerId}
+            selectedRange={selectedRange}
             timeSelection={timeSelection}
             onPointerDown={seekFromRuler}
             onLoopHandle={dragLoopHandle}
             onPunchHandle={dragPunchHandle}
-            onClearLoop={clearLoop}
-            onClearPunch={clearPunch}
+            onSelectRange={selectRange}
             onRulerContextMenu={openRulerContextMenu}
+            onRangeContextMenu={openRangeContextMenu}
             onMarkerContextMenu={openMarkerContextMenu}
             onAddMarker={addMarkerAt}
             onMoveMarker={(marker, tick) =>
-              void editor.commit(
-                props.api.updateMarker(marker.id, { tick: editor.snapTick(tick) }),
-                `${marker.name} moved.`,
-              )
+              void editor.commit(props.api.updateMarker(marker.id, { tick: editor.snapTick(tick) }))
             }
             onRenameMarker={renameMarker}
             onRemoveMarker={removeMarker}
-            onSelectMarker={setSelectedMarkerId}
+            onSelectMarker={(markerId) => {
+              setSelectedMarkerId(markerId);
+              setSelectedRange(null);
+            }}
           />
           {transport && transport.recordingPhase !== 'idle' && (
             <div
@@ -1069,14 +1070,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               </span>
               <button onClick={setLoopToSelection}>Set Loop</button>
               <button onClick={setPunchToSelection}>Set Punch</button>
-              <button
-                className={styles.selectionChipClose}
-                aria-label="Clear time selection"
-                title="Clear time selection (Esc)"
-                onClick={() => setTimeSelection(null)}
-              >
-                ×
-              </button>
             </div>
           )}
           {editor.snapGuide != null && (
@@ -1112,21 +1105,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             >
               <span className={styles.emptyIcon}>≋</span>
               <strong>Start arranging</strong>
-              <p>Drag audio or MIDI here, or start from an empty track.</p>
               <div className={styles.emptyActions}>
-                <button
-                  onClick={() =>
-                    void editor.commit(props.api.addTrack('Audio 1', 'audio'), 'Audio Track added.')
-                  }
-                >
+                <button onClick={() => void editor.commit(props.api.addTrack('Audio 1', 'audio'))}>
                   ＋ Add Audio Track
                 </button>
                 <button
                   onClick={() =>
-                    void editor.commit(
-                      props.api.addTrack('Instrument 1', 'instrument'),
-                      'Instrument Track added.',
-                    )
+                    void editor.commit(props.api.addTrack('Instrument 1', 'instrument'))
                   }
                 >
                   ＋ Add Instrument Track
@@ -1162,8 +1147,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   }
                   focused={props.focusedTrackId === track.id}
                   onSelectTrack={() => {
+                    setSelectedRange(null);
                     props.setSelection({ kind: 'track', trackId: track.id });
-                    props.onFocusTrack(track.id);
+                    props.onFocusTrack(track.kind === 'instrument' ? track.id : null);
                   }}
                   onOpenPlaySurface={
                     track.kind === 'instrument' ? () => openPlaySurface(track.id) : undefined
@@ -1185,7 +1171,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onMove={editor.beginMove}
                   onMoveMidi={editor.beginMidiMove}
                   onTrimMidi={editor.beginMidiTrim}
-                  onSelect={editor.selectClip}
+                  onSelect={(clipId) => {
+                    setSelectedRange(null);
+                    editor.selectClip(clipId);
+                  }}
                   onTrim={editor.beginTrim}
                   onFade={editor.beginFade}
                   onOpenMidiEditor={(clip) => {
@@ -1195,18 +1184,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   }}
                   onAudioClipContextMenu={openAudioClipContextMenu}
                   onMidiClipContextMenu={openMidiClipContextMenu}
-                  onRename={(name) =>
-                    void editor.commit(
-                      props.api.updateTrack(track.id, { name }),
-                      `Track renamed to ${name}.`,
-                    )
-                  }
-                  onDuplicate={() =>
-                    void editor.commit(
-                      props.api.duplicateTrack(track.id),
-                      `${track.name} duplicated.`,
-                    )
-                  }
+                  onRename={(name) => void editor.commit(props.api.updateTrack(track.id, { name }))}
+                  onDuplicate={() => void editor.commit(props.api.duplicateTrack(track.id))}
                   onDelete={() =>
                     void deleteTrack(
                       track.id,
@@ -1215,10 +1194,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     )
                   }
                   onReorder={(sourceTrackId) =>
-                    void editor.commit(
-                      props.api.reorderTrack(sourceTrackId, trackIndex),
-                      'Track order updated.',
-                    )
+                    void editor.commit(props.api.reorderTrack(sourceTrackId, trackIndex))
                   }
                   onResize={() => cycleTrackSize(track.id)}
                   onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
@@ -1250,7 +1226,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                           automationParameters[track.id]!,
                           points,
                         ),
-                        `${track.name} automation updated.`,
                       )
                     }
                   />
@@ -1272,10 +1247,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }}
         onCollapsedChange={setLowerPanelCollapsed}
         onHeightChange={setLowerPanelHeight}
-        onClose={() => {
-          setLowerPanelView('closed');
-          setActiveMidiClipId(null);
-        }}
         playSurfaceSummary={playSurfaceSummary}
         playSurface={
           <PlaySurfacePanel
@@ -1307,7 +1278,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   96,
                   1,
                 ),
-                'Note added.',
               )
             }
             onUpdateNote={(clipId, note) =>
@@ -1337,19 +1307,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               )
             }
             onRemoveNote={(clipId, noteId) =>
-              void editor.commit(props.api.removeMidiNote(clipId, noteId), 'Note removed.')
+              void editor.commit(props.api.removeMidiNote(clipId, noteId))
             }
             onQuantize={(clipId, noteIds, gridTicks) =>
-              void editor.commit(
-                props.api.quantizeMidiNotes(clipId, noteIds, gridTicks),
-                'MIDI notes quantized.',
-              )
+              void editor.commit(props.api.quantizeMidiNotes(clipId, noteIds, gridTicks))
             }
             onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
-              void editor.commit(
-                props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks),
-                'MIDI notes duplicated.',
-              )
+              void editor.commit(props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks))
             }
           />
         }

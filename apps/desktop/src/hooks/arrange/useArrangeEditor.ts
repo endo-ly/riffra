@@ -9,12 +9,11 @@ import {
   type SnapGrid,
 } from '@/lib/arrange-timeline';
 import { readAssetDrag } from '@/lib/arrange-drag';
+import { isEditableTarget } from '@/lib/interaction';
 import { useClipInteractions } from './useClipInteractions';
 
 export type ArrangeSelection =
   { kind: 'none' } | { kind: 'track'; trackId: string } | { kind: 'clips'; clipIds: string[] };
-
-type ArrangeMessageKind = 'info' | 'success' | 'error';
 
 interface UseArrangeEditorOptions {
   session: CreativeSession;
@@ -54,12 +53,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const [message, setMessageState] = useState(
-    arrangement.audioClips.length
-      ? 'Click a waveform Clip to select it · Drag to move · Drag an edge to trim.'
-      : 'Arrange ready.',
-  );
-  const [messageKind, setMessageKind] = useState<ArrangeMessageKind>('info');
+  const [message, setMessageState] = useState('');
   const [runtimeOutOfSync, setRuntimeOutOfSync] = useState(false);
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
@@ -70,14 +64,14 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   } | null>(null);
   const setMessage = useCallback((next: string) => {
     setMessageState(next);
-    setMessageKind('info');
   }, []);
   const clipboardRef = useRef<{ audioIds: string[]; midiIds: string[] }>({
     audioIds: [],
     midiIds: [],
   });
   const commit = useCallback(
-    async (operation: Promise<CreativeSession | null>, success: string) => {
+    async (operation: Promise<CreativeSession | null>) => {
+      setMessageState('');
       try {
         const next = await operation;
         if (next) {
@@ -88,13 +82,11 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
           setSession(next);
           setRuntimeOutOfSync(false);
         }
-        setMessageState(next ? success : 'The edit was not applied.');
-        setMessageKind(next ? 'success' : 'error');
+        setMessageState(next ? '' : 'The edit was not applied.');
         return next;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         setMessageState(detail);
-        setMessageKind('error');
         if (detail.includes('Playback runtime is out of sync')) setRuntimeOutOfSync(true);
         return null;
       }
@@ -105,12 +97,10 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     try {
       await api.syncArrangementRuntime();
       setRuntimeOutOfSync(false);
-      setMessageState('Playback runtime synchronized.');
-      setMessageKind('success');
+      setMessageState('');
     } catch (error) {
       setRuntimeOutOfSync(true);
       setMessageState(error instanceof Error ? error.message : String(error));
-      setMessageKind('error');
     }
   }, [api]);
 
@@ -183,7 +173,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       asset.kind === 'audio'
         ? api.addAudioClipToArrangement(asset.assetId, asset.name, tick, trackId)
         : api.addMidiClipToArrangement(asset.assetId, asset.name, tick, trackId),
-      `${asset.name} added. Click it to select it; press Delete to remove it.`,
     );
   };
 
@@ -211,18 +200,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
             : [...selectedClipIds, clipId]
           : [clipId],
       );
-      const clip = arrangement.audioClips.find((item) => item.id === clipId);
-      const midiClip = arrangement.midiClips.find((item) => item.id === clipId);
-      if (clip || midiClip)
-        setMessage(`${(clip ?? midiClip)!.name} selected · Ctrl+click adds · Delete removes.`);
     },
-    [
-      arrangement.audioClips,
-      arrangement.midiClips,
-      selectedClipIds,
-      setMessage,
-      setSelectedClipIds,
-    ],
+    [selectedClipIds, setSelectedClipIds],
   );
 
   const beginMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -306,7 +285,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
             clipboardRef.current.midiIds,
             snapTick(displayTick),
           ),
-          'Clip selection pasted.',
         ).then((next) => {
           if (next) {
             setSelectedClipIds(
@@ -333,7 +311,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
               .map((clip) => clip.id),
             target,
           ),
-          'Clip selection duplicated.',
         );
       } else if (selectedClipIds.length && event.ctrlKey && key === 'e') {
         event.preventDefault();
@@ -346,6 +323,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         for (const clip of audioTargets) void clipInteractions.splitClip(clip, displayTick);
         for (const clip of midiTargets) void clipInteractions.splitMidiClip(clip, displayTick);
       } else if (selectedClipIds.length && event.key === 'Delete') {
+        if (isEditableTarget(event.target)) return;
         event.preventDefault();
         void commit(
           api.removeTimelineClips(
@@ -356,7 +334,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
               .filter((clip) => selectedClipIds.includes(clip.id))
               .map((clip) => clip.id),
           ),
-          'Clip selection removed.',
         ).then(() => setSelectedClipIds([]));
       }
     };
@@ -379,7 +356,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
 
   return {
     message,
-    messageKind,
     runtimeOutOfSync,
     retryRuntimeSync,
     snapGuide,

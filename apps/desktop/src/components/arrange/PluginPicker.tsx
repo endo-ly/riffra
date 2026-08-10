@@ -12,6 +12,7 @@ interface PluginPickerProps {
 }
 
 export function PluginPicker(props: PluginPickerProps) {
+  const { onClose } = props;
   const [scannedPlugins, setScannedPlugins] = useState<PluginEntry[]>([]);
   const [loading, setLoading] = useState(!props.plugins);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +46,14 @@ export function PluginPicker(props: PluginPickerProps) {
     };
   }, [props.api, props.plugins]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   const plugins = props.plugins ?? scannedPlugins;
 
   const filtered = useMemo(() => {
@@ -68,16 +77,12 @@ export function PluginPicker(props: PluginPickerProps) {
         className={styles.pluginPicker}
         role="dialog"
         aria-label={props.title ?? 'Plugin Picker'}
+        aria-modal="true"
       >
         <header>
           <strong>{props.title ?? 'Choose Plugin'}</strong>
-          <button
-            className={styles.pluginPickerClose}
-            aria-label="Close"
-            onClick={props.onClose}
-            type="button"
-          >
-            ×
+          <button type="button" className={styles.pluginPickerCancel} onClick={onClose}>
+            Cancel
           </button>
         </header>
         <input

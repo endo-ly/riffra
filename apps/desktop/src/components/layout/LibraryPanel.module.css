@@ -148,10 +148,16 @@
 .inboxMessage.error {
   color: #ef7b78;
 }
+.pluginArea {
+  min-width: 0;
+}
+.pluginEntry {
+  min-width: 0;
+}
 .pluginRow {
   width: 100%;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px;
@@ -159,35 +165,7 @@
   background: transparent;
   border-radius: 5px;
 }
-.pluginRow:hover {
-  background: var(--surface-2);
-}
-.pluginTargetMenu {
-  display: grid;
-  gap: 5px;
-  margin: 5px 0 10px;
-  padding: 8px;
-  background: rgba(85, 217, 232, 0.05);
-  border: 1px solid rgba(85, 217, 232, 0.2);
-  border-radius: 5px;
-}
-.pluginTargetMenu strong {
-  color: #cbd3dc;
-  font-size: 9px;
-}
-.pluginTargetMenu button {
-  padding: 4px 6px;
-  color: #9cdbe2;
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-}
-.pluginTargetMenu button:hover {
-  background: var(--surface-2);
-  border-color: var(--border);
-}
-.pluginRow > span {
+.pluginRow > span:first-child {
   width: 28px;
   height: 28px;
   display: grid;
@@ -218,6 +196,29 @@
   margin-top: 2px;
   color: #626c77;
   font-size: 8px;
+}
+.pluginAdd {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #69818b;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pluginAdd:hover,
+.pluginAdd:focus-visible {
+  color: var(--cyan);
+  background: rgba(85, 217, 232, 0.08);
+}
+.pluginAdd:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .recordingRow {
   width: 100%;

@@ -8,26 +8,19 @@ interface TrackPluginChainEditorProps {
   track: Track;
   api: NativeApi;
   plugins: PluginEntry[];
-  commit: (operation: Promise<CreativeSession>, message: string) => void;
+  commit: (operation: Promise<CreativeSession>) => void;
   missingDeviceIds: string[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
-  runOperation: <T>(
-    operation: Promise<T>,
-    successMessage: string,
-    apply?: (value: T) => void,
-  ) => void;
+  runOperation: <T>(operation: Promise<T>, apply?: (value: T) => void) => void;
 }
 
 export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [replaceTarget, setReplaceTarget] = useState<string | null>(null);
   const addEffect = (plugin: PluginEntry) => {
-    props.commit(
-      props.api.addTrackEffect(props.track.id, plugin.path),
-      `Effect ${plugin.name} added.`,
-    );
+    props.commit(props.api.addTrackEffect(props.track.id, plugin.path));
   };
 
   return (
@@ -39,10 +32,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
           title={replaceTarget ? 'Replace Plugin' : 'Add Effect'}
           onSelect={(plugin) => {
             if (replaceTarget) {
-              props.runOperation(
-                props.onReplaceMissingPlugin(replaceTarget, plugin.path),
-                'Missing Plugin replaced.',
-              );
+              props.runOperation(props.onReplaceMissingPlugin(replaceTarget, plugin.path));
               setReplaceTarget(null);
             } else {
               setPickerOpen(false);
@@ -64,7 +54,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
           <div className={styles.device} key={device.id}>
             <div className={styles.deviceHeading}>
               <strong>{device.name}</strong>
-              <span>{device.bypassed ? 'BYPASSED' : 'ACTIVE'}</span>
+              {device.bypassed && <span>BYPASSED</span>}
             </div>
             {(device.disabledPlaceholder || props.missingDeviceIds.includes(device.id)) && (
               <div className={styles.missingState}>
@@ -74,9 +64,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                 <div className={styles.actions}>
                   <button
                     type="button"
-                    onClick={() =>
-                      props.runOperation(props.onRescanMissingPlugins(), 'Plugin scan completed.')
-                    }
+                    onClick={() => props.runOperation(props.onRescanMissingPlugins())}
                   >
                     Re-scan
                   </button>
@@ -86,12 +74,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                   {!device.disabledPlaceholder && (
                     <button
                       type="button"
-                      onClick={() =>
-                        props.runOperation(
-                          props.onDisableMissingPlugin(device.id),
-                          'Missing Plugin disabled.',
-                        )
-                      }
+                      onClick={() => props.runOperation(props.onDisableMissingPlugin(device.id))}
                     >
                       Disable
                     </button>
@@ -107,7 +90,6 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                 onClick={() =>
                   props.commit(
                     props.api.setTrackDeviceBypassed(props.track.id, device.id, !device.bypassed),
-                    `${device.name} ${device.bypassed ? 'enabled' : 'bypassed'}.`,
                   )
                 }
               >
@@ -117,10 +99,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                 type="button"
                 disabled={device.disabledPlaceholder || props.missingDeviceIds.includes(device.id)}
                 onClick={() =>
-                  props.runOperation(
-                    props.api.openTrackPluginEditor(props.track.id, device.id),
-                    'Plugin Editor opened.',
-                  )
+                  props.runOperation(props.api.openTrackPluginEditor(props.track.id, device.id))
                 }
               >
                 Edit
@@ -132,10 +111,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                 onClick={() => {
                   const ids = props.track.rack.devices.map((item) => item.id);
                   [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
-                  props.commit(
-                    props.api.reorderTrackEffects(props.track.id, ids),
-                    'Effects reordered.',
-                  );
+                  props.commit(props.api.reorderTrackEffects(props.track.id, ids));
                 }}
               >
                 ↑
@@ -147,10 +123,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                 onClick={() => {
                   const ids = props.track.rack.devices.map((item) => item.id);
                   [ids[index], ids[index + 1]] = [ids[index + 1], ids[index]];
-                  props.commit(
-                    props.api.reorderTrackEffects(props.track.id, ids),
-                    'Effects reordered.',
-                  );
+                  props.commit(props.api.reorderTrackEffects(props.track.id, ids));
                 }}
               >
                 ↓
@@ -158,12 +131,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
               <button
                 type="button"
                 className={styles.remove}
-                onClick={() =>
-                  props.commit(
-                    props.api.removeTrackEffect(props.track.id, device.id),
-                    `${device.name} removed.`,
-                  )
-                }
+                onClick={() => props.commit(props.api.removeTrackEffect(props.track.id, device.id))}
               >
                 Remove
               </button>

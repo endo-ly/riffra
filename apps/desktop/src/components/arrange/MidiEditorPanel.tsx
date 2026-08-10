@@ -3,6 +3,7 @@ import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/lib
 import { snapGridTicks, ticksPerBar, ticksPerBeat } from '@/lib/arrange-timeline';
 import type { SnapGrid } from '@/lib/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/lib/musical-typing';
+import { isEditableTarget } from '@/lib/interaction';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import styles from './MidiEditorPanel.module.css';
 
@@ -22,6 +23,7 @@ interface MidiEditorPanelProps {
 
 const PITCH_HIGH = 128;
 const PITCH_LOW = 0;
+const EMPTY_NOTES: MidiNote[] = [];
 type MidiEditResult = void | PromiseLike<CreativeSession | null>;
 
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
@@ -30,10 +32,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const [dragging, setDragging] = useState<{
     gestureId: number;
     noteId: string;
-    preview: MidiNote;
+    previewNotes: Record<string, MidiNote>;
     awaitingCanonical: boolean;
   } | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
+  const [velocityDraft, setVelocityDraft] = useState(96);
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -61,7 +64,16 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
 
-  const notes = props.clip?.notes ?? [];
+  const notes = props.clip?.notes ?? EMPTY_NOTES;
+  const selectedNotes = useMemo(
+    () => notes.filter((note) => selectedNoteIds.includes(note.id)),
+    [notes, selectedNoteIds],
+  );
+  const selectedVelocity = selectedNotes.length
+    ? Math.round(
+        selectedNotes.reduce((total, note) => total + note.velocity, 0) / selectedNotes.length,
+      )
+    : 96;
   const pitchRows = useMemo(
     () => Array.from({ length: PITCH_HIGH - PITCH_LOW }, (_, index) => PITCH_LOW + index).reverse(),
     [],
@@ -70,6 +82,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Delete' || !clip || selectedNoteIds.length === 0) return;
+      if (isEditableTarget(event.target)) return;
       event.preventDefault();
       for (const noteId of selectedNoteIds) onRemoveNote?.(clip.id, noteId);
       setSelectedNoteIds([]);
@@ -77,6 +90,10 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [clip, onRemoveNote, selectedNoteIds]);
+
+  useEffect(() => {
+    setVelocityDraft(selectedVelocity);
+  }, [selectedVelocity]);
 
   useEffect(() => {
     setSelectedNoteIds([]);
@@ -103,24 +120,28 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
 
   useEffect(() => {
     if (!dragging?.awaitingCanonical || !clip) return;
-    const canonicalNote = clip.notes.find((note) => note.id === dragging.noteId);
-    if (!canonicalNote) {
+    const previews = Object.values(dragging.previewNotes);
+    const canonicalNotes = new Map(clip.notes.map((note) => [note.id, note]));
+    if (previews.some((preview) => !canonicalNotes.has(preview.id))) {
       setDragging((current) => (current?.gestureId === dragging.gestureId ? null : current));
       return;
     }
-    const preview = dragging.preview;
-    if (
-      canonicalNote.note === preview.note &&
-      canonicalNote.startTick === preview.startTick &&
-      canonicalNote.durationTicks === preview.durationTicks &&
-      canonicalNote.velocity === preview.velocity
-    ) {
+    const canonicalMatches = previews.every((preview) => {
+      const canonical = canonicalNotes.get(preview.id)!;
+      return (
+        canonical.note === preview.note &&
+        canonical.startTick === preview.startTick &&
+        canonical.durationTicks === preview.durationTicks &&
+        canonical.velocity === preview.velocity
+      );
+    });
+    if (canonicalMatches) {
       setDragging((current) => (current?.gestureId === dragging.gestureId ? null : current));
     }
   }, [clip, dragging]);
 
   if (!props.clip) {
-    return <div className={styles.empty}>Select a MIDI Clip and double-click to open it.</div>;
+    return <div className={styles.empty} />;
   }
 
   const contextNote = noteContextMenu
@@ -152,13 +173,23 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     event.stopPropagation();
     const originX = event.clientX;
     const originY = event.clientY;
+    const movingNoteIds =
+      mode === 'move' && selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1
+        ? selectedNoteIds
+        : [note.id];
+    const originNotes = props.clip!.notes.filter((candidate) =>
+      movingNoteIds.includes(candidate.id),
+    );
     let preview = note;
+    let previewNotes = Object.fromEntries(
+      originNotes.map((candidate) => [candidate.id, candidate]),
+    ) as Record<string, MidiNote>;
     const gestureId = dragGestureRef.current + 1;
     dragGestureRef.current = gestureId;
     setDragging({
       gestureId,
       noteId: note.id,
-      preview: note,
+      previewNotes,
       awaitingCanonical: false,
     });
     const handle = event.currentTarget;
@@ -188,11 +219,27 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       );
       return { ...note, durationTicks: nextDur };
     };
+    const buildPreviewNotes = (nextNote: MidiNote) => {
+      if (mode !== 'move' || originNotes.length < 2) return { [nextNote.id]: nextNote };
+      const tickDelta = nextNote.startTick - note.startTick;
+      const pitchDelta = nextNote.note - note.note;
+      return Object.fromEntries(
+        originNotes.map((candidate) => [
+          candidate.id,
+          {
+            ...candidate,
+            startTick: Math.max(0, candidate.startTick + tickDelta),
+            note: Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, candidate.note + pitchDelta)),
+          },
+        ]),
+      ) as Record<string, MidiNote>;
+    };
     const move = (pointer: PointerEvent) => {
       preview = updatePreview(pointer.clientX, pointer.clientY);
+      previewNotes = buildPreviewNotes(preview);
       setDragging((current) =>
         current?.gestureId === gestureId
-          ? { ...current, preview, awaitingCanonical: false }
+          ? { ...current, previewNotes, awaitingCanonical: false }
           : current,
       );
     };
@@ -209,26 +256,28 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     finish = (pointer) => {
       cleanup();
       preview = updatePreview(pointer.clientX, pointer.clientY);
+      previewNotes = buildPreviewNotes(preview);
       let operation: MidiEditResult | undefined;
-      if (
-        preview.startTick !== note.startTick ||
-        preview.note !== note.note ||
-        preview.durationTicks !== note.durationTicks
-      ) {
-        if (mode === 'move' && selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1) {
-          const tickDelta = preview.startTick - note.startTick;
-          const pitchDelta = preview.note - note.note;
+      const changed = originNotes.some((candidate) => {
+        const next = previewNotes[candidate.id];
+        return (
+          next &&
+          (next.startTick !== candidate.startTick ||
+            next.note !== candidate.note ||
+            next.durationTicks !== candidate.durationTicks)
+        );
+      });
+      if (changed) {
+        if (mode === 'move' && originNotes.length > 1) {
           operation = props.onUpdateNotes?.(
             props.clip!.id,
-            props
-              .clip!.notes.filter((candidate) => selectedNoteIds.includes(candidate.id))
-              .map((candidate) => ({
-                noteId: candidate.id,
-                patch: {
-                  startTick: Math.max(0, candidate.startTick + tickDelta),
-                  note: Math.max(0, Math.min(127, candidate.note + pitchDelta)),
-                },
-              })),
+            originNotes.map((candidate) => ({
+              noteId: candidate.id,
+              patch: {
+                startTick: previewNotes[candidate.id].startTick,
+                note: previewNotes[candidate.id].note,
+              },
+            })),
           );
         } else {
           operation = props.onUpdateNote?.(props.clip!.id, preview);
@@ -240,7 +289,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       }
       setDragging((current) =>
         current?.gestureId === gestureId
-          ? { ...current, preview, awaitingCanonical: true }
+          ? { ...current, previewNotes, awaitingCanonical: true }
           : current,
       );
       void Promise.resolve(operation).then((result) => {
@@ -261,10 +310,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       <header className={styles.header}>
         <div className={styles.clipInfo}>
           <strong>{props.clip.name}</strong>
-          <small>
-            {props.clip.notes.length} notes · {Math.ceil(props.clip.durationTicks / barTicks)} bars
-            {selectedNoteIds.length > 0 && ` · ${selectedNoteIds.length} selected`}
-          </small>
+          <small>{Math.ceil(props.clip.durationTicks / barTicks)} bars</small>
         </div>
         <div className={styles.editorTools}>
           <label className={styles.control}>
@@ -320,8 +366,20 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               type="range"
               min="1"
               max="127"
-              defaultValue="96"
+              value={velocityDraft}
               disabled={!selectedNoteIds.length}
+              onChange={(event) => setVelocityDraft(Number(event.currentTarget.value))}
+              onKeyUp={(event) => {
+                if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') {
+                  void props.onUpdateNotes?.(
+                    props.clip!.id,
+                    selectedNoteIds.map((noteId) => ({
+                      noteId,
+                      patch: { velocity: Number(event.currentTarget.value) },
+                    })),
+                  );
+                }
+              }}
               onPointerUp={(event) => {
                 void props.onUpdateNotes?.(
                   props.clip!.id,
@@ -454,18 +512,20 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             {notes
               .filter((note) => note.note >= PITCH_LOW && note.note < PITCH_HIGH)
               .map((note) => {
-                const visibleNote = dragging?.noteId === note.id ? dragging.preview : note;
+                const visibleNote = dragging?.previewNotes[note.id] ?? note;
+                const isPreviewed = Boolean(dragging?.previewNotes[note.id]);
+                const noteWidth = visibleNote.durationTicks * pixelsPerTick;
                 return (
                   <span
                     key={note.id}
                     data-note-id={note.id}
-                    className={`${styles.note} ${dragging?.noteId === note.id ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
+                    className={`${styles.note} ${isPreviewed ? styles.dragging : ''} ${noteWidth < 12 ? styles.narrow : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
                     style={{
                       left: visibleNote.startTick * pixelsPerTick,
                       top: (PITCH_HIGH - visibleNote.note - 1) * rowHeight,
-                      width: Math.max(4, visibleNote.durationTicks * pixelsPerTick),
+                      width: Math.max(4, noteWidth),
                       height: rowHeight - 1,
-                      opacity: Math.max(0.45, 0.4 + (note.velocity / 127) * 0.6),
+                      opacity: Math.max(0.45, 0.4 + (visibleNote.velocity / 127) * 0.6),
                     }}
                     onPointerDown={(event) => handlePointerDown(event, note, 'move')}
                     onClick={(event) => {

@@ -277,9 +277,13 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: 7px;
+  width: min(5px, 50%);
   cursor: ew-resize;
   background: rgba(255, 255, 255, 0.24);
+}
+
+.note.narrow {
+  cursor: grab;
 }
 
 .empty {

@@ -184,7 +184,13 @@ describe('WorkspaceArrange', () => {
     expect(screen.getByLabelText('MIDI piano keyboard')).toBeInTheDocument();
     expect(editor.querySelectorAll('[data-note-id]')).toHaveLength(2);
 
-    fireEvent.contextMenu(editor.querySelector('[data-note-id="note:high"]')!, {
+    const highNote = editor.querySelector('[data-note-id="note:high"]')!;
+    fireEvent.click(highNote);
+    expect(screen.getByLabelText('Selected MIDI note velocity')).toHaveValue('127');
+    fireEvent.keyDown(screen.getByLabelText('Selected MIDI note velocity'), { key: 'Delete' });
+    expect(api.calls).not.toContain('removeMidiNote');
+
+    fireEvent.contextMenu(highNote, {
       clientX: 120,
       clientY: 80,
     });
@@ -234,6 +240,7 @@ describe('WorkspaceArrange', () => {
       });
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
+    api.emitTransportStatus({ revision: session.arrangement.revision });
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-move"]')!);
     const editor = await screen.findByLabelText('MIDI Editor');
@@ -254,6 +261,86 @@ describe('WorkspaceArrange', () => {
 
     releaseUpdate();
     await waitFor(() => expect(Number.parseFloat(note.style.left)).toBeCloseTo(43.2));
+  });
+
+  it('previews a selected MIDI note group until the canonical update arrives', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-group',
+      name: 'MIDI Group',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:group-a',
+          note: 60,
+          startTick: 0,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+        {
+          id: 'note:group-b',
+          note: 64,
+          startTick: 480,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    let releaseUpdate!: () => void;
+    api.updateMidiNotes = () => {
+      api.calls.push('updateMidiNotes');
+      return new Promise<CreativeSession>((resolve) => {
+        releaseUpdate = () => resolve(session);
+      });
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-group"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('div[class*="laneViewport"] div[class*="lane_"]')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 1_536, width: 400, height: 1_536 }),
+    });
+    const first = editor.querySelector('[data-note-id="note:group-a"]')! as HTMLElement;
+    const second = editor.querySelector('[data-note-id="note:group-b"]')! as HTMLElement;
+    fireEvent.click(first);
+    fireEvent.click(second, { ctrlKey: true });
+
+    fireEvent.pointerDown(first, { clientX: 100, clientY: 804, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 148, clientY: 792, pointerId: 1 });
+    expect(Number.parseFloat(first.style.left)).toBeCloseTo(43.2);
+    expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6);
+    expect(second.style.top).toBe('744px');
+
+    fireEvent.pointerUp(window, { clientX: 148, clientY: 792, pointerId: 1 });
+    expect(api.calls).toContain('updateMidiNotes');
+    expect(Number.parseFloat(first.style.left)).toBeCloseTo(43.2);
+    expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6);
+
+    releaseUpdate();
+    await waitFor(() => expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6));
   });
 
   it('renders MIDI keyboard white keys beneath narrower black keys', async () => {
@@ -303,7 +390,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
@@ -317,7 +404,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     const mute = await screen.findByRole('button', { name: 'Mute Audio 1' });
     const solo = screen.getByRole('button', { name: 'Solo Audio 1' });
 
@@ -327,6 +414,11 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(solo);
     fireEvent.click(solo);
 
+    expect(
+      screen.getByRole('button', { name: 'Cycle input monitoring for Audio 1' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Audio 1 gain' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Audio 1 pan' })).toBeInTheDocument();
     await waitFor(() => expect(mute).toHaveAttribute('aria-pressed', 'true'));
     expect(solo).toHaveAttribute('aria-pressed', 'false');
     expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(5);
@@ -336,7 +428,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByText('Audio 1'));
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
     const lane = screen.getByLabelText('Audio 1 volume automation');
@@ -646,28 +738,25 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(clearLoop);
 
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByRole('button', { name: 'Clear loop' })).not.toBeInTheDocument();
   });
 
-  it('disables the loop from the band close button', async () => {
+  it('clears an active loop from the ruler band', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
 
-    const closeButton = await screen.findByRole('button', { name: 'Disable loop' });
-    fireEvent.click(closeButton);
+    const loopRange = screen.getByText('LOOP').parentElement!;
+    fireEvent.pointerDown(loopRange, { clientX: 100 });
+    expect(loopRange).toHaveAttribute('data-range-selected', 'true');
+    fireEvent.keyDown(window, { key: 'Delete' });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
-    );
   });
 
-  it('clears the punch range from the band close button without a time selection', async () => {
+  it('clears an active punch range from the ruler band without a time selection', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
@@ -675,13 +764,37 @@ describe('WorkspaceArrange', () => {
     render(<Harness api={api} initialSession={session} />);
 
     expect(screen.queryByText(/Selection/)).not.toBeInTheDocument();
-    const closeButton = await screen.findByRole('button', { name: 'Clear punch range' });
-    fireEvent.click(closeButton);
+    const punchRange = screen.getByText('PUNCH').parentElement!;
+    fireEvent.pointerDown(punchRange, { clientX: 100 });
+    expect(punchRange).toHaveAttribute('data-range-selected', 'true');
+    fireEvent.keyDown(window, { key: 'Delete' });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Clear punch range' })).not.toBeInTheDocument(),
-    );
+  });
+
+  it('deletes a loop or punch range from the range context menu', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.contextMenu(screen.getByText('LOOP').parentElement!, {
+      clientX: 100,
+      clientY: 8,
+      button: 2,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+
+    fireEvent.contextMenu(screen.getByText('PUNCH').parentElement!, {
+      clientX: 100,
+      clientY: 18,
+      button: 2,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
   });
 
   it('renders draggable handles on the loop range band', () => {
@@ -702,6 +815,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
 
+    expect(screen.getByText('PUNCH')).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Punch start' })).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Punch end' })).toBeInTheDocument();
   });
@@ -753,7 +867,7 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerUp(window, { clientX: 100 });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
-    const punchRange = screen.getByRole('button', { name: 'Clear punch range' }).parentElement!;
+    const punchRange = screen.getByRole('slider', { name: 'Punch end' }).parentElement!;
     await waitFor(() => expect(punchRange).toHaveStyle({ width: '288px' }));
   });
 
@@ -770,6 +884,21 @@ describe('WorkspaceArrange', () => {
 
     await waitFor(() => expect(api.calls).toContain('removeMarker'));
     await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
+  });
+
+  it('deletes a marker from its context menu without a success popup', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.markers.push({ id: 'marker:chorus', name: 'Chorus', tick: 0 });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const marker = await screen.findByText('Chorus');
+    fireEvent.contextMenu(marker.closest('[data-marker-id]')!, { clientX: 40, clientY: 12 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+
+    await waitFor(() => expect(api.calls).toContain('removeMarker'));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('renames a marker in the Arrange dialog', async () => {
@@ -813,7 +942,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
 
     expect(screen.getByText('Delete')).toBeInTheDocument();

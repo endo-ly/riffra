@@ -7,6 +7,7 @@ import type {
 } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ArrangeClipInspector } from '../arrange/ArrangeClipInspector';
+import { MultiClipInspector } from '../arrange/MultiClipInspector';
 import { MidiClipInspector } from '../arrange/MidiClipInspector';
 import { TrackInspector } from '../arrange/TrackInspector';
 import { TakeInspector } from '../arrange/TakeInspector';
@@ -40,12 +41,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
   );
   const selectedClipIds =
     props.arrangeSelection.kind === 'clips' ? props.arrangeSelection.clipIds : [];
-  const selectedAudioClipCount = props.session.arrangement.audioClips.filter((clip) =>
-    selectedClipIds.includes(clip.id),
-  ).length;
-  const selectedMidiClipCount = props.session.arrangement.midiClips.filter((clip) =>
-    selectedClipIds.includes(clip.id),
-  ).length;
+  const selectedAudioClipIds = props.session.arrangement.audioClips
+    .filter((clip) => selectedClipIds.includes(clip.id))
+    .map((clip) => clip.id);
+  const selectedMidiClipIds = props.session.arrangement.midiClips
+    .filter((clip) => selectedClipIds.includes(clip.id))
+    .map((clip) => clip.id);
+  const selectedAudioClipCount = selectedAudioClipIds.length;
+  const selectedMidiClipCount = selectedMidiClipIds.length;
+  const setSelectedClipIds = (clipIds: string[]) =>
+    props.setArrangeSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
   const title = getInspectorTitle(
     props.session.workspace,
     Boolean(selectedTrack),
@@ -82,33 +87,30 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 api={props.api}
               />
             </>
-          ) : selectedMidiClipCount > 0 && selectedAudioClipCount === 0 ? (
+          ) : selectedAudioClipCount + selectedMidiClipCount > 1 ? (
+            <MultiClipInspector
+              session={props.session}
+              setSession={props.setSession}
+              selectedAudioClipIds={selectedAudioClipIds}
+              selectedMidiClipIds={selectedMidiClipIds}
+              setSelectedClipIds={setSelectedClipIds}
+              api={props.api}
+            />
+          ) : selectedMidiClipCount === 1 ? (
             <MidiClipInspector
               session={props.session}
               setSession={props.setSession}
-              selectedClipIds={
-                props.arrangeSelection.kind === 'clips' ? props.arrangeSelection.clipIds : []
-              }
-              setSelectedClipIds={(clipIds) =>
-                props.setArrangeSelection(
-                  clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' },
-                )
-              }
+              selectedClipIds={selectedMidiClipIds}
+              setSelectedClipIds={setSelectedClipIds}
               api={props.api}
             />
-          ) : (
+          ) : selectedAudioClipCount === 1 ? (
             <>
               <ArrangeClipInspector
                 session={props.session}
                 setSession={props.setSession}
-                selectedClipIds={
-                  props.arrangeSelection.kind === 'clips' ? props.arrangeSelection.clipIds : []
-                }
-                setSelectedClipIds={(clipIds) =>
-                  props.setArrangeSelection(
-                    clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' },
-                  )
-                }
+                selectedClipIds={selectedAudioClipIds}
+                setSelectedClipIds={setSelectedClipIds}
                 api={props.api}
                 onSetLoopToClip={(clip) => {
                   const timebase = props.session.arrangement.timebase;
@@ -134,7 +136,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 api={props.api}
               />
             </>
-          )
+          ) : null
         ) : (
           <>
             <div className={styles.designIdentity}>

@@ -30,13 +30,13 @@ export function TrackInspector(props: TrackInspectorProps) {
   useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
   useEffect(() => setPan(props.track.pan), [props.track.id, props.track.pan]);
   const commit = useCallback(
-    (operation: Promise<CreativeSession>, message: string) => {
-      runOperation(operation, message, props.setSession);
+    (operation: Promise<CreativeSession>) => {
+      runOperation(operation, props.setSession);
     },
     [props.setSession, runOperation],
   );
   const setInstrument = (plugin: PluginEntry) => {
-    commit(props.api.setTrackInstrument(props.track.id, plugin.path), 'Instrument updated.');
+    commit(props.api.setTrackInstrument(props.track.id, plugin.path));
   };
   const instrumentUnavailable =
     props.track.instrument?.disabledPlaceholder ||
@@ -59,7 +59,7 @@ export function TrackInspector(props: TrackInspectorProps) {
             onBlur={() => {
               const next = name.trim();
               if (next && next !== props.track.name) {
-                commit(props.api.updateTrack(props.track.id, { name: next }), 'Track renamed.');
+                commit(props.api.updateTrack(props.track.id, { name: next }));
               } else {
                 setName(props.track.name);
               }
@@ -82,7 +82,6 @@ export function TrackInspector(props: TrackInspectorProps) {
                   props.track.id,
                   event.currentTarget.value === '' ? null : Number(event.currentTarget.value),
                 ),
-                'Audio input updated.',
               )
             }
           >
@@ -118,7 +117,6 @@ export function TrackInspector(props: TrackInspectorProps) {
                     ...props.track.midiInput,
                     deviceId: event.currentTarget.value || undefined,
                   }),
-                  'MIDI input updated.',
                 )
               }
             >
@@ -141,7 +139,6 @@ export function TrackInspector(props: TrackInspectorProps) {
                       ? Number(event.currentTarget.value)
                       : undefined,
                   }),
-                  'MIDI channel updated.',
                 )
               }
             >
@@ -164,10 +161,7 @@ export function TrackInspector(props: TrackInspectorProps) {
                 title={replaceTarget ? 'Replace Plugin' : 'Choose Instrument'}
                 onSelect={(plugin) => {
                   if (replaceTarget) {
-                    runOperation(
-                      props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path),
-                      'Missing Plugin replaced.',
-                    );
+                    runOperation(props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path));
                     setReplaceTarget(null);
                   } else {
                     setInstrument(plugin);
@@ -202,21 +196,14 @@ export function TrackInspector(props: TrackInspectorProps) {
             )}
             {props.track.instrument && instrumentUnavailable && (
               <div className={styles.actions}>
-                <button
-                  onClick={() =>
-                    runOperation(props.onRescanMissingPlugins(), 'Plugin scan completed.')
-                  }
-                >
+                <button onClick={() => runOperation(props.onRescanMissingPlugins())}>
                   Re-scan
                 </button>
                 <button onClick={() => replaceMissing(props.track.instrument!.id)}>Replace</button>
                 {!props.track.instrument.disabledPlaceholder && (
                   <button
                     onClick={() =>
-                      runOperation(
-                        props.onDisableMissingPlugin(props.track.instrument!.id),
-                        'Missing Instrument disabled.',
-                      )
+                      runOperation(props.onDisableMissingPlugin(props.track.instrument!.id))
                     }
                   >
                     Disable
@@ -230,17 +217,12 @@ export function TrackInspector(props: TrackInspectorProps) {
                   onClick={() =>
                     runOperation(
                       props.api.openTrackPluginEditor(props.track.id, props.track.instrument!.id),
-                      'Plugin Editor opened.',
                     )
                   }
                 >
                   Edit
                 </button>
-                <button
-                  onClick={() =>
-                    commit(props.api.clearTrackInstrument(props.track.id), 'Instrument removed.')
-                  }
-                >
+                <button onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}>
                   Clear
                 </button>
               </div>
@@ -260,12 +242,7 @@ export function TrackInspector(props: TrackInspectorProps) {
                 key={monitoring}
                 className={props.track.monitoring === monitoring ? styles.active : ''}
                 aria-pressed={props.track.monitoring === monitoring}
-                onClick={() =>
-                  commit(
-                    props.api.updateTrack(props.track.id, { monitoring }),
-                    'Monitoring updated.',
-                  )
-                }
+                onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
               >
                 {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
               </button>
@@ -305,11 +282,11 @@ export function TrackInspector(props: TrackInspectorProps) {
             onChange={(event) => setGainDb(Number(event.currentTarget.value))}
             onPointerUp={() => {
               if (gainDb !== props.track.gainDb)
-                commit(props.api.updateTrack(props.track.id, { gainDb }), 'Volume updated.');
+                commit(props.api.updateTrack(props.track.id, { gainDb }));
             }}
             onKeyUp={() => {
               if (gainDb !== props.track.gainDb)
-                commit(props.api.updateTrack(props.track.id, { gainDb }), 'Volume updated.');
+                commit(props.api.updateTrack(props.track.id, { gainDb }));
             }}
           />
         </label>
@@ -324,12 +301,10 @@ export function TrackInspector(props: TrackInspectorProps) {
             value={pan}
             onChange={(event) => setPan(Number(event.currentTarget.value))}
             onPointerUp={() => {
-              if (pan !== props.track.pan)
-                commit(props.api.updateTrack(props.track.id, { pan }), 'Pan updated.');
+              if (pan !== props.track.pan) commit(props.api.updateTrack(props.track.id, { pan }));
             }}
             onKeyUp={() => {
-              if (pan !== props.track.pan)
-                commit(props.api.updateTrack(props.track.id, { pan }), 'Pan updated.');
+              if (pan !== props.track.pan) commit(props.api.updateTrack(props.track.id, { pan }));
             }}
           />
         </label>

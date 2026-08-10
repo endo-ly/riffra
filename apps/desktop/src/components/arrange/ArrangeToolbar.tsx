@@ -1,21 +1,17 @@
-import type { ArrangeTool, SnapGrid, TrackSize } from '@/lib/arrange-timeline';
-import type { TrackKind } from '@/lib/domain';
+import type { ArrangeTool, SnapGrid } from '@/lib/arrange-timeline';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeToolbarProps {
   tool: ArrangeTool;
   snap: SnapGrid;
   zoom: number;
-  trackSize: TrackSize;
   rulerMode: 'bars' | 'time';
   follow: boolean;
   onTool: (tool: ArrangeTool) => void;
   onSnap: (snap: SnapGrid) => void;
   onZoom: (zoom: number) => void;
-  onTrackSize: (size: TrackSize) => void;
   onRulerMode: (mode: 'bars' | 'time') => void;
   onFollow: (follow: boolean) => void;
-  onAddTrack: (kind: TrackKind) => void;
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
@@ -103,31 +99,6 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           />
           <span>＋</span>
         </label>
-        <select
-          aria-label="Track height"
-          value={props.trackSize}
-          onChange={(event) => props.onTrackSize(event.target.value as TrackSize)}
-        >
-          <option value="compact">Compact</option>
-          <option value="normal">Normal</option>
-          <option value="large">Large</option>
-        </select>
-        <select
-          aria-label="Add track"
-          className={styles.addTrackButton}
-          value=""
-          onChange={(event) => {
-            const kind = event.target.value as TrackKind;
-            if (kind) props.onAddTrack(kind);
-            event.target.value = '';
-          }}
-        >
-          <option value="" disabled>
-            ＋ Track
-          </option>
-          <option value="audio">Audio Track</option>
-          <option value="instrument">Instrument Track</option>
-        </select>
       </div>
     </header>
   );

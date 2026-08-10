@@ -107,20 +107,6 @@
   accent-color: var(--cyan);
 }
 
-.addTrackButton {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 9px;
-  color: #bde9eb !important;
-  background: rgba(85, 217, 232, 0.08) !important;
-  border-color: rgba(85, 217, 232, 0.28) !important;
-}
-
-.addTrackButton svg {
-  width: 12px;
-}
-
 .toggleButton {
   display: flex;
   align-items: center;
@@ -355,20 +341,53 @@
   pointer-events: none;
 }
 
-.loopRange .loopLabel {
+.rangeLabel {
   position: absolute;
   top: 7px;
-  left: 18px;
-  color: #c39b56;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: var(--font-micro);
   letter-spacing: 0.1em;
+  white-space: nowrap;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.08s ease;
 }
 
-.loopRange:hover .loopLabel {
+.loopRange .rangeLabel {
+  color: #c39b56;
+}
+
+.punchRange .rangeLabel {
+  color: #e8a4a4;
+}
+
+.loopRange:hover .rangeLabel,
+.punchRange:hover .rangeLabel,
+.rangeSelected .rangeLabel {
   opacity: 1;
+}
+
+.rangeSelected .rangeLabel {
+  font-weight: 700;
+}
+
+.loopRange.rangeSelected {
+  background: rgba(231, 181, 93, 0.88);
+}
+
+.punchRange.rangeSelected {
+  background: rgba(243, 140, 140, 0.88);
+}
+
+.loopRange.rangeSelected::before,
+.loopRange.rangeSelected::after {
+  background: rgba(231, 181, 93, 0.72);
+}
+
+.punchRange.rangeSelected::before,
+.punchRange.rangeSelected::after {
+  background: rgba(243, 140, 140, 0.72);
 }
 
 .loopHandle,
@@ -433,46 +452,6 @@
 .loopHandleEnd,
 .punchHandleEnd {
   right: -5px;
-}
-
-.rangeClose {
-  position: absolute;
-  z-index: 5;
-  display: grid;
-  place-content: center;
-  padding: 0;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-  border: 0;
-  border-radius: 2px;
-  opacity: 0;
-  cursor: pointer;
-}
-.loopClose {
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 14px;
-  height: 14px;
-  color: #1a1206;
-  background: #e7b55d;
-}
-.punchClose {
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 12px;
-  height: 12px;
-  color: #2a0d0d;
-  background: #f38c8c;
-}
-.loopRange:hover .loopClose,
-.punchRange:hover .punchClose {
-  opacity: 1;
-}
-.rangeClose:hover {
-  filter: brightness(1.14);
 }
 
 .marker {
@@ -710,10 +689,6 @@
   display: flex;
   gap: 3px;
 }
-.playSurfaceButton {
-  color: var(--cyan) !important;
-}
-
 .trackMenu {
   position: relative;
   grid-column: 3;
@@ -1302,13 +1277,6 @@
   color: #d0d9df;
   font-size: 14px;
 }
-.empty p {
-  max-width: 310px;
-  margin: 0;
-  color: #65717c;
-  font-size: 9px;
-  line-height: 1.6;
-}
 .emptyDragOver {
   color: #b8e9ec;
   background: radial-gradient(circle at 50% 42%, rgba(85, 217, 232, 0.22), transparent 38%);
@@ -1403,22 +1371,6 @@
 .selectionChip button:hover {
   background: rgba(85, 217, 232, 0.2);
 }
-.selectionChipClose {
-  width: 16px;
-  height: 16px;
-  padding: 0 !important;
-  display: grid;
-  place-content: center;
-  color: #8a96a0 !important;
-  background: transparent !important;
-  border: 0 !important;
-  font-size: 10px;
-  line-height: 1;
-}
-.selectionChipClose:hover {
-  color: #eaf1f5 !important;
-}
-
 .pluginPickerOverlay {
   position: fixed;
   z-index: 100;
@@ -1453,6 +1405,21 @@
   color: #d8e4ea;
   font-size: 10px;
   letter-spacing: 0.06em;
+}
+
+.pluginPickerCancel {
+  padding: 2px 5px;
+  color: #87949e;
+  font-size: var(--font-micro);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pluginPickerCancel:hover {
+  color: #d9e5eb;
+  background: #202a32;
+  border-color: #35424b;
 }
 
 .pluginPicker input {
@@ -1511,24 +1478,6 @@
 
 .pluginPickerError {
   color: #e68a8a;
-}
-
-.pluginPickerClose {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-content: center;
-  color: #8a96a0;
-  font-size: 12px;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.pluginPickerClose:hover {
-  color: #e8f1f5;
-  background: #202b33;
 }
 
 @media (max-width: 1180px) {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AudioClip, CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
-import { clipDurationTicks, formatMusicalPosition } from '@/lib/arrange-timeline';
+import { formatMusicalPosition } from '@/lib/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
 
@@ -40,7 +40,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   const selected = props.session.arrangement.audioClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
-  const clip = selected.at(-1) ?? null;
+  const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
   const {
     operationMessage: message,
@@ -62,7 +62,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
     label: string,
     afterSuccess?: () => void,
   ) => {
-    runOperation(operation, `${label} applied.`, (next) => {
+    runOperation(operation, (next) => {
       if (next) {
         props.setSession(next);
         afterSuccess?.();
@@ -73,13 +73,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   };
 
   if (!clip || !drafts) {
-    return (
-      <div className={styles.empty}>
-        <span className={styles.emptyGlyph}>⌁</span>
-        <strong>No clip selected</strong>
-        <p>Select an Audio Clip to edit its timing, source range and fades.</p>
-      </div>
-    );
+    return null;
   }
 
   const seconds = clip.timelineDuration.frames / clip.timelineDuration.sampleRate;
@@ -89,29 +83,12 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   const patch = (fields: Record<string, unknown>, label: string) =>
     void commit(props.api.updateAudioClip(clip.id, fields), label);
 
-  const duplicateSelection = () => {
-    // Keep Duplicate consistent with Delete and Ctrl+D: operate on the full
-    // selection rather than just the last-focused clip.
-    const clips = selected;
-    const target = Math.max(
-      ...clips.map(
-        (item) => item.startTick + clipDurationTicks(item, props.session.arrangement.timebase),
-      ),
-    );
-    commit(
-      props.api.pasteTimelineClips(props.selectedClipIds, [], target),
-      `${selected.length} clip${selected.length === 1 ? '' : 's'} duplicated.`,
-    );
-  };
-
   return (
     <div className={styles.inspector}>
       <section className={styles.identity}>
         <span className={styles.art}>▥</span>
         <div>
-          <span className="eyebrow">
-            {selected.length > 1 ? `${selected.length} AUDIO CLIPS` : 'AUDIO CLIP'}
-          </span>
+          <span className="eyebrow">AUDIO CLIP</span>
           <input
             aria-label="Clip name"
             value={drafts.name}
@@ -121,7 +98,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
               if (name && name !== clip.name) patch({ name }, 'Rename');
             }}
           />
-          <small>{clip.assetId}</small>
         </div>
       </section>
 
@@ -289,17 +265,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       </div>
 
       <div className={styles.actions}>
-        {selected.length === 2 && (
-          <button
-            className={styles.primary}
-            onClick={() =>
-              commit(props.api.crossfadeAudioClips(selected[0].id, selected[1].id), 'Crossfade')
-            }
-          >
-            Create crossfade
-          </button>
-        )}
-        {props.onSetLoopToClip && selected.length === 1 && (
+        {props.onSetLoopToClip && (
           <button
             onClick={() => {
               const operation = props.onSetLoopToClip?.(clip);
@@ -309,18 +275,18 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             Set Loop to Clip
           </button>
         )}
-        <button onClick={duplicateSelection}>
-          Duplicate{selected.length > 1 ? ` (${selected.length})` : ''}
+        <button onClick={() => commit(props.api.duplicateAudioClip(clip.id), 'Duplicate')}>
+          Duplicate
         </button>
         <button
           className={styles.danger}
           onClick={() =>
-            commit(props.api.removeTimelineClips(props.selectedClipIds, []), 'Delete', () =>
+            commit(props.api.removeTimelineClips([clip.id], []), 'Delete', () =>
               props.setSelectedClipIds([]),
             )
           }
         >
-          Delete{selected.length > 1 ? ` (${selected.length})` : ''}
+          Delete
         </button>
       </div>
 

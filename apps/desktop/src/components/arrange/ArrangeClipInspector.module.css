@@ -1,37 +1,6 @@
 .inspector {
   min-height: 0;
 }
-.empty {
-  display: grid;
-  justify-items: center;
-  gap: 7px;
-  padding: 48px 24px;
-  color: var(--muted);
-  text-align: center;
-}
-.emptyGlyph {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-content: center;
-  color: var(--cyan);
-  font-size: 20px;
-  background: rgba(85, 217, 232, 0.07);
-  border: 1px solid rgba(85, 217, 232, 0.18);
-  border-radius: 9px;
-}
-.empty strong {
-  margin-top: 5px;
-  color: #bdc6cf;
-  font-size: 10px;
-}
-.empty p {
-  max-width: 185px;
-  margin: 0;
-  color: var(--faint);
-  font-size: var(--font-micro);
-  line-height: 1.6;
-}
 .identity {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);

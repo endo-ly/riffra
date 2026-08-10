@@ -14,16 +14,13 @@ describe('ArrangeToolbar', () => {
         tool="select"
         snap="bar"
         zoom={1}
-        trackSize="normal"
         rulerMode="bars"
         follow={false}
         onTool={vi.fn()}
         onSnap={vi.fn()}
         onZoom={vi.fn()}
-        onTrackSize={vi.fn()}
         onRulerMode={vi.fn()}
         onFollow={vi.fn()}
-        onAddTrack={vi.fn()}
         automationAvailable
         automationOpen={false}
         onToggleAutomation={vi.fn()}
@@ -33,5 +30,7 @@ describe('ArrangeToolbar', () => {
     expect(screen.queryByRole('button', { name: /Library|Inspector/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Project BPM')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Time signature')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Track height')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Add track')).not.toBeInTheDocument();
   });
 });

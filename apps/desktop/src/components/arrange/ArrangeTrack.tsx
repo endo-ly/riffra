@@ -37,10 +37,7 @@ interface ArrangeTrackProps {
   pixelsPerTick: number;
   trackSize: TrackSize;
   api: NativeApi;
-  onCommit: (
-    operation: Promise<CreativeSession | null>,
-    success: string,
-  ) => Promise<CreativeSession | null>;
+  onCommit: (operation: Promise<CreativeSession | null>) => Promise<CreativeSession | null>;
   onDrop: (event: React.DragEvent, trackId: string, trackKind: Track['kind']) => void;
   onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;
@@ -99,7 +96,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const commitTrackValue = (
     field: 'muted' | 'solo' | 'armed' | 'monitoring',
     value: boolean | MonitoringState,
-    success: string,
   ) => {
     setPendingTrackValues((current) => ({ ...current, [field]: value }));
     const patch =
@@ -110,7 +106,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           : field === 'armed'
             ? { armed: value as boolean }
             : { monitoring: value as MonitoringState };
-    void props.onCommit(props.api.updateTrack(props.track.id, patch), success).then((result) => {
+    void props.onCommit(props.api.updateTrack(props.track.id, patch)).then((result) => {
       if (result == null) {
         setPendingTrackValues((current) => {
           if (current[field] !== value) return current;
@@ -158,10 +154,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       )
     : [];
   const showMix = props.trackSize !== 'compact';
-  const trackMeta =
-    props.track.kind === 'instrument'
-      ? `INSTRUMENT${props.track.instrument?.name ? ` · ${props.track.instrument.name}` : ''}`
-      : 'AUDIO';
+  const trackMeta = props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO';
 
   const onResizePointerDown = (event: React.PointerEvent) => {
     event.preventDefault();
@@ -274,23 +267,12 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </div>
           <div className={styles.trackMeta}>
             <span>{trackMeta}</span>
-            {props.focused && <b className={styles.focusBadge}>LIVE</b>}
+            {props.focused && props.track.kind === 'instrument' && (
+              <b className={styles.focusBadge}>LIVE</b>
+            )}
           </div>
         </div>
         <div className={styles.trackSwitches}>
-          {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
-            <button
-              className={styles.playSurfaceButton}
-              aria-label={`Open Play Surface for ${props.track.name}`}
-              title="Open Play Surface"
-              onClick={(event) => {
-                event.stopPropagation();
-                props.onOpenPlaySurface?.();
-              }}
-            >
-              ⌨
-            </button>
-          )}
           <button
             className={(pendingTrackValues.muted ?? props.track.muted) ? styles.muteActive : ''}
             data-state={(pendingTrackValues.muted ?? props.track.muted) ? 'active' : 'idle'}
@@ -298,11 +280,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             aria-label={`Mute ${props.track.name}`}
             title="Mute"
             onClick={() =>
-              commitTrackValue(
-                'muted',
-                !(pendingTrackValues.muted ?? props.track.muted),
-                `${props.track.name} mute updated.`,
-              )
+              commitTrackValue('muted', !(pendingTrackValues.muted ?? props.track.muted))
             }
           >
             M
@@ -313,13 +291,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             aria-pressed={pendingTrackValues.solo ?? props.track.solo}
             aria-label={`Solo ${props.track.name}`}
             title="Solo"
-            onClick={() =>
-              commitTrackValue(
-                'solo',
-                !(pendingTrackValues.solo ?? props.track.solo),
-                `${props.track.name} solo updated.`,
-              )
-            }
+            onClick={() => commitTrackValue('solo', !(pendingTrackValues.solo ?? props.track.solo))}
           >
             S
           </button>
@@ -334,14 +306,10 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                 : 'Arm for recording'
             }
             onClick={() =>
-              commitTrackValue(
-                'armed',
-                !(pendingTrackValues.armed ?? props.track.armed),
-                `${props.track.name} ${(pendingTrackValues.armed ?? props.track.armed) ? 'disarmed' : 'armed'}.`,
-              )
+              commitTrackValue('armed', !(pendingTrackValues.armed ?? props.track.armed))
             }
           >
-            ●
+            R
           </button>
           {props.track.kind === 'audio' && (
             <button
@@ -352,11 +320,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               onClick={() => {
                 const next =
                   activeMonitoring === 'off' ? 'auto' : activeMonitoring === 'auto' ? 'on' : 'off';
-                commitTrackValue(
-                  'monitoring',
-                  next,
-                  `${props.track.name} monitoring set to ${next.toUpperCase()}.`,
-                );
+                commitTrackValue('monitoring', next);
               }}
             >
               {activeMonitoring === 'off' ? 'IN' : activeMonitoring === 'auto' ? 'A' : 'ON'}
@@ -366,6 +330,16 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         <details ref={detailsRef} className={styles.trackMenu}>
           <summary aria-label={`${props.track.name} track menu`}>•••</summary>
           <div>
+            {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
+              <button
+                onClick={(event) => {
+                  props.onOpenPlaySurface?.();
+                  event.currentTarget.closest('details')?.removeAttribute('open');
+                }}
+              >
+                Open Play Surface
+              </button>
+            )}
             <button
               onClick={(event) => {
                 setRenaming(true);
@@ -420,7 +394,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                     props.api.updateTrack(props.track.id, {
                       gainDb: Number(event.currentTarget.value),
                     }),
-                    `${props.track.name} gain updated.`,
                   )
                 }
               />
@@ -441,7 +414,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                     props.api.updateTrack(props.track.id, {
                       pan: Number(event.currentTarget.value),
                     }),
-                    `${props.track.name} pan updated.`,
                   )
                 }
               />

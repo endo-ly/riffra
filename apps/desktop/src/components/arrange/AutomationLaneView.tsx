@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AutomationLane, AutomationParameter, AutomationPoint, Track } from '@/lib/domain';
+import { isEditableTarget } from '@/lib/interaction';
 import styles from './WorkspaceArrange.module.css';
 
 const HEIGHT = 84;
@@ -122,6 +123,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
         onPointerDown={addPoint}
         onKeyDown={(event) => {
           if (event.key !== 'Delete' || !selectedId) return;
+          if (isEditableTarget(event.target)) return;
           event.preventDefault();
           const next = points.filter((point) => point.id !== selectedId);
           setPoints(next);
