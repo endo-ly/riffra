@@ -5,8 +5,9 @@
 
 namespace riffra {
 
-RuntimeLifecycleExecutor::RuntimeLifecycleExecutor()
-    : timeoutHandler([] { std::_Exit(0); }) {
+RuntimeLifecycleExecutor::RuntimeLifecycleExecutor(TaskDispatcher dispatcher)
+    : taskDispatcher(std::move(dispatcher)),
+      timeoutHandler([] { std::_Exit(0); }) {
     // Do not start threads from the member-initializer list. At that point
     // later members (including the watchdog handler and lifecycle flags) have
     // not necessarily been initialized, and the thread would observe a
@@ -171,7 +172,10 @@ void RuntimeLifecycleExecutor::run() {
             currentTaskTimeout = timedTask.timeout;
         }
         try {
-            timedTask.task();
+            if (taskDispatcher)
+                taskDispatcher(std::move(timedTask.task));
+            else
+                timedTask.task();
         } catch (...) {
             // Lifecycle tasks report expected failures through their command
             // response. A defensive boundary keeps one unexpected vendor

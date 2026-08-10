@@ -47,7 +47,7 @@ mod types;
 
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
-    RuntimeProjectionStatus,
+    RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::AudioSupervisor;
 use riffra_core::AppCore;
@@ -58,12 +58,17 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Mutex, OnceLock},
+    time::Duration,
 };
 use storage::SessionStore;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandEvent;
 
 const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
+const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
@@ -166,24 +171,31 @@ fn queue_startup_maintenance(
 ) {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
-        let status = if state.core.safe_mode() {
-            None
+        let (status, runtime_started) = if state.core.safe_mode() {
+            (None, state.core.audio().startup_completed())
         } else {
             match startup::initialize_audio_runtime(&state, || {
                 queue_session_index(&data_root, &session);
             }) {
                 Ok(initialization) => {
+                    let runtime_started = initialization.runtime_error.is_none();
                     if let Some(error) = initialization.runtime_error.as_deref() {
                         let _ = diagnostics::record(&data_root, "startup-runtime", error);
                     }
-                    Some(initialization.status)
+                    (Some(initialization.status), runtime_started)
                 }
                 Err(error) => {
                     let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                    None
+                    (None, false)
                 }
             }
         };
+        let _ = app_handle.emit(
+            "runtime-startup-finished",
+            RuntimeStartupFinishedEvent {
+                succeeded: runtime_started,
+            },
+        );
         state.core.audio().emit_status(&app_handle);
 
         if state.core.safe_mode() {
@@ -227,17 +239,18 @@ fn queue_startup_maintenance(
     });
 }
 
-#[tauri::command]
-async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
-    run_blocking(app, |state| {
-        Ok(BootstrapState {
-            session: state.core.session().lock().map_err(lock_error)?.clone(),
-            recovered_from_generation: state.core.recovered_from_generation(),
-            safe_mode: state.core.safe_mode(),
-            native_available: true,
-            recovery_candidates: SessionStore::new(state.core.data_root())
-                .recovery_candidates()
-                .map_err(|error| format!("Recovery candidates could not be read: {error}"))?
+fn bootstrap_recovery_candidates(
+    data_root: &std::path::Path,
+    recovered_from_generation: bool,
+) -> Result<Vec<RecoveryCandidate>, String> {
+    if !recovered_from_generation {
+        return Ok(Vec::new());
+    }
+    SessionStore::new(data_root)
+        .recovery_candidates()
+        .map_err(|error| format!("Recovery candidates could not be read: {error}"))
+        .map(|candidates| {
+            candidates
                 .into_iter()
                 .map(|candidate| RecoveryCandidate {
                     file_name: candidate.file_name,
@@ -246,7 +259,37 @@ async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
                     project_name: candidate.project_name,
                     note: candidate.note,
                 })
-                .collect(),
+                .collect()
+        })
+}
+
+#[tauri::command]
+async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
+    run_blocking(app, |state| {
+        let plugin_catalog = match plugin_catalog::load(state.core.data_root()) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                let _ = diagnostics::record(
+                    state.core.data_root(),
+                    "plugin-catalog",
+                    &error.to_string(),
+                );
+                Vec::new()
+            }
+        };
+        let recovered_from_generation = state.core.recovered_from_generation();
+        Ok(BootstrapState {
+            session: state.core.session().lock().map_err(lock_error)?.clone(),
+            plugin_catalog,
+            runtime_started: state.core.audio().startup_completed(),
+            runtime_startup_finished: state.core.audio().startup_finished(),
+            recovered_from_generation,
+            safe_mode: state.core.safe_mode(),
+            native_available: true,
+            recovery_candidates: bootstrap_recovery_candidates(
+                state.core.data_root(),
+                recovered_from_generation,
+            )?,
             data_root: state.core.data_root().to_string_lossy().into_owned(),
             vst3_root: DEFAULT_VST3_ROOT.into(),
         })
@@ -294,13 +337,7 @@ fn cancel_background_job(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NativeMidiProbe {
-    #[serde(rename = "type")]
-    message_type: String,
-    #[serde(default)]
-    midi_inputs: Vec<model::MidiDeviceInfo>,
-    #[serde(default)]
-    midi_outputs: Vec<model::MidiDeviceInfo>,
+struct NativeAudioProbe {
     #[serde(default)]
     drivers: Vec<NativeAudioDriver>,
 }
@@ -318,6 +355,27 @@ struct NativeAudioDriver {
     outputs: Vec<model::AudioDeviceInfo>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMidiProbe {
+    #[serde(default)]
+    midi_inputs: Vec<model::MidiDeviceInfo>,
+    #[serde(default)]
+    midi_outputs: Vec<model::MidiDeviceInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeDeviceChannels {
+    driver: String,
+    input_device: String,
+    #[serde(default)]
+    input_channels: Vec<model::AudioChannelInfo>,
+    output_device: String,
+    #[serde(default)]
+    output_channels: Vec<model::AudioChannelInfo>,
+}
+
 #[tauri::command]
 async fn probe_midi_devices(
     app: tauri::AppHandle,
@@ -331,7 +389,8 @@ async fn probe_midi_devices(
             message: "Safe Mode skipped MIDI discovery.".into(),
         });
     }
-    let probe = run_native_probe(app).await?;
+    let stdout = run_native_probe(app, &["--probe-midi"]).await?;
+    let probe = parse_stdout::<NativeMidiProbe>(&stdout, "midiProbe")?;
     let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
     Ok(MidiProbe {
         inputs: probe.midi_inputs,
@@ -353,13 +412,12 @@ async fn probe_audio_devices(
     if state.core.safe_mode() {
         return Ok(AudioDeviceProbe {
             drivers: Vec::new(),
-            midi_inputs: Vec::new(),
-            midi_outputs: Vec::new(),
             refreshed_at_ms: storage::now_ms(),
-            message: "Safe Mode skipped audio and MIDI device discovery.".into(),
+            message: "Safe Mode skipped audio device discovery.".into(),
         });
     }
-    let probe = run_native_probe(app).await?;
+    let stdout = run_native_probe(app, &["--probe"]).await?;
+    let probe = parse_stdout::<NativeAudioProbe>(&stdout, "audioDeviceProbe")?;
     Ok(AudioDeviceProbe {
         drivers: probe
             .drivers
@@ -372,46 +430,158 @@ async fn probe_audio_devices(
                 outputs: driver.outputs,
             })
             .collect(),
-        midi_inputs: probe.midi_inputs,
-        midi_outputs: probe.midi_outputs,
         refreshed_at_ms: storage::now_ms(),
-        message: "Audio and MIDI device list refreshed.".into(),
+        message: "Audio device list refreshed.".into(),
     })
 }
 
-async fn run_native_probe(app: tauri::AppHandle) -> Result<NativeMidiProbe, String> {
-    let command = app
+#[tauri::command]
+async fn probe_device_channels(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    driver: String,
+    input_device: String,
+    output_device: String,
+) -> Result<model::DeviceChannels, String> {
+    if state.core.safe_mode() {
+        return Err("Safe Mode skipped audio channel discovery.".into());
+    }
+    let stdout = run_native_probe(
+        app,
+        &[
+            "--probe-channels",
+            "--audio-driver",
+            &driver,
+            "--input-device",
+            &input_device,
+            "--output-device",
+            &output_device,
+        ],
+    )
+    .await?;
+    let probe = parse_stdout::<NativeDeviceChannels>(&stdout, "deviceChannels")?;
+    Ok(model::DeviceChannels {
+        driver: probe.driver,
+        input_device: probe.input_device,
+        input_channels: probe.input_channels,
+        output_device: probe.output_device,
+        output_channels: probe.output_channels,
+    })
+}
+
+async fn run_native_probe(app: tauri::AppHandle, args: &[&str]) -> Result<Vec<u8>, String> {
+    let _permit = match tokio::time::timeout(
+        NATIVE_PROBE_TIMEOUT,
+        NATIVE_PROBE_GATE
+            .get_or_init(|| tokio::sync::Semaphore::new(1))
+            .acquire(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => return Err("Device probe coordinator is shutting down.".to_owned()),
+        Err(_) => {
+            return Err(format!(
+                "Device probe timed out while waiting for another probe after {} seconds; no device state was changed.",
+                NATIVE_PROBE_TIMEOUT.as_secs()
+            ));
+        }
+    };
+    let mut command = app
         .shell()
         .sidecar("riffra-audio")
-        .map_err(|error| format!("Device probe sidecar could not be prepared: {error}"))?
-        .args(["--probe"]);
-    let output = command.output().await.map_err(|error| {
+        .map_err(|error| format!("Device probe sidecar could not be prepared: {error}"))?;
+    if !args.is_empty() {
+        command = command.args(args);
+    }
+
+    let (mut events, child) = command.spawn().map_err(|error| {
         format!("Device probe could not start; no device state was changed: {error}")
     })?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let collected = tokio::time::timeout(NATIVE_PROBE_TIMEOUT, async {
+        let mut code = None;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        while let Some(event) = events.recv().await {
+            match event {
+                CommandEvent::Terminated(payload) => code = payload.code,
+                CommandEvent::Stdout(line) => {
+                    stdout.extend(line);
+                    stdout.push(b'\n');
+                }
+                CommandEvent::Stderr(line) => {
+                    stderr.extend(line);
+                    stderr.push(b'\n');
+                }
+                CommandEvent::Error(error) => stderr.extend(error.as_bytes()),
+                _ => {}
+            }
+        }
+        (code, stdout, stderr)
+    })
+    .await;
+
+    let (code, stdout, stderr) = match collected {
+        Ok(output) => {
+            drop(child);
+            output
+        }
+        Err(_) => {
+            let kill_error = child
+                .kill()
+                .err()
+                .map(|error| format!(" Kill failed: {error}"));
+            return Err(format!(
+                "Device probe timed out after {} seconds; no device state was changed.{}",
+                NATIVE_PROBE_TIMEOUT.as_secs(),
+                kill_error.unwrap_or_default()
+            ));
+        }
+    };
+
+    let Some(code) = code else {
+        return Err(
+            "Device probe ended without an exit status; no device state was changed.".into(),
+        );
+    };
+    if code != 0 {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
+        let detail = if detail.is_empty() {
+            stdout
+                .split(|byte| *byte == b'\n')
+                .find_map(|line| {
+                    let value = serde_json::from_slice::<serde_json::Value>(line).ok()?;
+                    (value.get("type").and_then(serde_json::Value::as_str) == Some("error"))
+                        .then(|| value.get("message")?.as_str().map(str::to_owned))?
+                })
+                .unwrap_or_default()
+        } else {
+            detail
+        };
         return Err(if detail.is_empty() {
-            format!(
-                "Device probe exited with code {:?}; no device state was changed.",
-                output.status.code()
-            )
+            format!("Device probe exited with code {code}; no device state was changed.")
         } else {
             format!("Device probe failed: {detail}")
         });
     }
-    parse_midi_probe(&output.stdout)
+    Ok(stdout)
 }
 
-fn parse_midi_probe(stdout: &[u8]) -> Result<NativeMidiProbe, String> {
-    let probe = stdout
+fn parse_stdout<T>(stdout: &[u8], expected_type: &str) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let line = stdout
         .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .find_map(|line| serde_json::from_slice::<NativeMidiProbe>(line).ok())
-        .ok_or_else(|| "MIDI probe returned no readable device list.".to_string())?;
-    if probe.message_type != "audioDeviceProbe" {
-        return Err("MIDI probe returned an unexpected response.".into());
-    }
-    Ok(probe)
+        .find(|line| {
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+                return false;
+            };
+            value.get("type").and_then(serde_json::Value::as_str) == Some(expected_type)
+        })
+        .ok_or_else(|| format!("Device probe returned no readable {expected_type} response."))?;
+    serde_json::from_slice::<T>(line)
+        .map_err(|_| format!("Device probe returned an unexpected {expected_type} response."))
 }
 
 // Low-level Audio Runtime passthroughs.
@@ -476,10 +646,53 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
             .map_err(String::from)?;
         if !state.core.audio().startup_completed() {
             state.core.audio().mark_startup_pending();
-            return startup::initialize_audio_runtime(state, || {})
-                .map(|initialization| initialization.status);
+            let initialization = startup::initialize_audio_runtime(state, || {});
+            let succeeded = initialization
+                .as_ref()
+                .map(|result| result.runtime_error.is_none())
+                .unwrap_or(false);
+            let _ = operation_app.emit(
+                "runtime-startup-finished",
+                RuntimeStartupFinishedEvent { succeeded },
+            );
+            let initialization = initialization?;
+            return Ok(initialization.status);
         }
         Ok(recovered)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn retry_startup_runtime(app: AppHandle) -> Result<AudioStatus, String> {
+    let operation_app = app.clone();
+    run_blocking(app, move |state| {
+        if state.core.safe_mode() {
+            return Err(
+                "Safe Mode keeps external audio devices isolated; restart normally to restore the Session runtime."
+                    .into(),
+            );
+        }
+        if state.core.audio().startup_completed() {
+            return state
+                .core
+                .audio()
+                .refresh_status()
+                .map_err(String::from);
+        }
+
+        state.core.audio().mark_startup_pending();
+        let initialization = startup::initialize_audio_runtime(state, || {});
+        let succeeded = initialization
+            .as_ref()
+            .map(|result| result.runtime_error.is_none())
+            .unwrap_or(false);
+        let _ = operation_app.emit(
+            "runtime-startup-finished",
+            RuntimeStartupFinishedEvent { succeeded },
+        );
+        let initialization = initialization?;
+        Ok(initialization.status)
     })
     .await
 }
@@ -588,9 +801,6 @@ pub fn run() {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
             std::fs::create_dir_all(&data_root)?;
-            let loaded = SessionStore::new(&data_root).load_or_create()?;
-            let session = loaded.session;
-            let recovered_from_generation = loaded.recovered_from_generation;
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -599,6 +809,15 @@ pub fn run() {
             } else {
                 AudioSupervisor::start(app.handle(), preferences.clone())
             };
+            let loaded = match SessionStore::new(&data_root).load_or_create() {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    audio.force_shutdown();
+                    return Err(error.into());
+                }
+            };
+            let session = loaded.session;
+            let recovered_from_generation = loaded.recovered_from_generation;
             let runtime_audio = audio.clone();
             let runtime_app = app.handle().clone();
             let runtime_recovery: crate::runtime::projection_coordinator::RuntimeRecovery =
@@ -649,11 +868,13 @@ pub fn run() {
             cancel_background_job,
             probe_audio_devices,
             probe_midi_devices,
+            probe_device_channels,
             get_audio_status,
             get_runtime_projection_status,
             preview_master_gain_db,
             set_emergency_mute,
             recover_audio_device,
+            retry_startup_runtime,
             enable_midi_listening,
             disable_midi_listening,
             session::commands::send_midi_to_track,
@@ -771,12 +992,16 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_midi_probe, safe_mode_from_args};
+    use super::{bootstrap_recovery_candidates, parse_stdout, safe_mode_from_args};
+    use crate::model::DeviceChannels;
+    use crate::session::CreativeSession;
+    use crate::storage::SessionStore;
 
     #[test]
-    fn parses_midi_probe_with_unicode_device_names() {
-        let probe = parse_midi_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}],"midiInputs":[{"id":"midi-in-1","name":"Keyboard"}],"midiOutputs":[{"id":"midi-out-1","name":"Microsoft GS Wavetable Synth"}]}"#,
+    fn parses_audio_probe_with_unicode_device_names() {
+        let probe = parse_stdout::<super::NativeAudioProbe>(
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}]}"#,
+            "audioDeviceProbe",
         )
         .unwrap();
         assert_eq!(probe.drivers[0].name, "ASIO");
@@ -790,15 +1015,25 @@ mod tests {
         );
         assert!(probe.drivers[1].inputs.is_empty());
         assert!(probe.drivers[1].outputs.is_empty());
-        assert_eq!(probe.midi_inputs[0].id, "midi-in-1");
-        assert_eq!(probe.midi_inputs[0].name, "Keyboard");
-        assert_eq!(probe.midi_outputs[0].id, "midi-out-1");
+    }
+
+    #[test]
+    fn parses_device_channels_detail() {
+        let detail = parse_stdout::<DeviceChannels>(
+            br#"{"type":"deviceChannels","driver":"ASIO","inputDevice":"Focusrite","inputChannels":[{"index":0,"name":"Analogue 1"}],"outputDevice":"Focusrite","outputChannels":[{"index":0,"name":"Output 1"}]}"#,
+            "deviceChannels",
+        )
+        .unwrap();
+        assert_eq!(detail.driver, "ASIO");
+        assert_eq!(detail.input_channels[0].name, "Analogue 1");
+        assert_eq!(detail.output_channels[0].name, "Output 1");
     }
 
     #[test]
     fn rejects_non_probe_messages() {
-        let error = parse_midi_probe(br#"{"type":"audioStatus"}"#).unwrap_err();
-        assert!(error.contains("unexpected"));
+        let error = parse_stdout::<DeviceChannels>(br#"{"type":"audioStatus"}"#, "deviceChannels")
+            .unwrap_err();
+        assert!(error.contains("readable"));
     }
 
     #[test]
@@ -806,6 +1041,29 @@ mod tests {
         assert!(safe_mode_from_args(["riffra.exe", "--safe-mode"]));
         assert!(safe_mode_from_args(["--SAFE-MODE"]));
         assert!(!safe_mode_from_args(["riffra.exe", "--serve"]));
+    }
+
+    #[test]
+    fn bootstrap_lists_recovery_candidates_only_after_recovery() {
+        // Arrange
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("riffra-bootstrap-recovery-{nonce}"));
+        let store = SessionStore::new(&root);
+        store.ensure_layout().unwrap();
+        let payload = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
+        std::fs::write(root.join("scratch/generations/1-1.json"), payload).unwrap();
+
+        // Act
+        let normal = bootstrap_recovery_candidates(&root, false).unwrap();
+        let recovered = bootstrap_recovery_candidates(&root, true).unwrap();
+
+        // Assert
+        assert!(normal.is_empty());
+        assert_eq!(recovered.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

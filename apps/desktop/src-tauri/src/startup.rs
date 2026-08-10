@@ -102,10 +102,6 @@ trait StartupAudioPort {
     fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus>;
     fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus>;
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus>;
-    fn release_startup_mute_if_allowed(
-        &self,
-        generation: u64,
-    ) -> NativeAudioResult<Option<AudioStatus>>;
 }
 
 impl StartupAudioPort for AudioSupervisor {
@@ -140,18 +136,11 @@ impl StartupAudioPort for AudioSupervisor {
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
         AudioSupervisor::refresh_status(self)
     }
-
-    fn release_startup_mute_if_allowed(
-        &self,
-        generation: u64,
-    ) -> NativeAudioResult<Option<AudioStatus>> {
-        AudioSupervisor::release_startup_mute_if_allowed(self, generation)
-    }
 }
 
-/// Waits for the current sidecar to become safe and releases only the startup
-/// safety mute. Feature runtime restoration is intentionally performed later,
-/// while the application remains in passive processing mode.
+/// Waits for the current sidecar to become safe while retaining the startup
+/// emergency mute. The active Session audio graph is restored before output
+/// can be released.
 pub(crate) fn initialize_audio_safety(state: &AppState) -> Result<AudioStatus, String> {
     let master_gain_db = state
         .session_actor
@@ -187,7 +176,7 @@ where
                 return Err(error);
             }
         };
-        if !safe_to_release_startup_mute(&status) {
+        if !safe_for_startup_restore(&status) {
             state.core.audio().mark_startup_failed();
             return Ok(StartupInitialization {
                 status,
@@ -201,6 +190,18 @@ where
         for _ in 0..STARTUP_RUNTIME_TARGET_RETRY_LIMIT {
             match restore_startup_runtime(state, generation) {
                 Ok(()) => {
+                    let status = match release_startup_mute(state, generation, &status) {
+                        Ok(status) => status,
+                        Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
+                        Err(StartupRuntimeError::TargetChanged) => continue,
+                        Err(StartupRuntimeError::Feature(error)) => {
+                            state.core.audio().mark_startup_failed();
+                            return Ok(StartupInitialization {
+                                status,
+                                runtime_error: Some(error),
+                            });
+                        }
+                    };
                     if !state.core.audio().mark_startup_completed(generation) {
                         continue 'generation;
                     }
@@ -212,9 +213,7 @@ where
                 Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                 Err(StartupRuntimeError::TargetChanged) => continue,
                 Err(StartupRuntimeError::Feature(error)) => {
-                    if !state.core.audio().mark_startup_completed(generation) {
-                        continue 'generation;
-                    }
+                    state.core.audio().mark_startup_failed();
                     return Ok(StartupInitialization {
                         status,
                         runtime_error: Some(error),
@@ -222,9 +221,7 @@ where
                 }
             }
         }
-        if !state.core.audio().mark_startup_completed(generation) {
-            continue 'generation;
-        }
+        state.core.audio().mark_startup_failed();
         return Ok(StartupInitialization {
             status,
             runtime_error: Some(
@@ -302,23 +299,17 @@ fn initialize_safety_generation<A: StartupAudioPort>(
 
     let status = audio.refresh_status().map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
-    if !safe_to_release_startup_mute(&status) {
+    if !safe_for_startup_restore(&status) {
         return Ok(status);
     }
 
-    match audio
-        .release_startup_mute_if_allowed(generation)
-        .map_err(StartupError::Control)?
-    {
-        Some(status) => Ok(status),
-        None => Ok(status),
-    }
+    Ok(status)
 }
 
-/// Restores feature-specific runtime state after the safety mute has already
-/// been released. No long-running VST or timeline operation owns a Session,
-/// Rack, or Workspace gate. If the canonical target changes while restoration
-/// is running, the old target is left passive and the newer request wins.
+/// Restores feature-specific runtime state while the emergency mute remains
+/// engaged. No long-running VST or timeline operation owns a Session, Rack, or
+/// Workspace gate. If the canonical target changes while restoration is
+/// running, the old target is left passive and the newer request wins.
 fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), StartupRuntimeError> {
     if state.core.safe_mode() {
         return Ok(());
@@ -411,11 +402,7 @@ fn apply_startup_processing_mode(
     } else {
         "passive"
     };
-    let mode_error = state
-        .core
-        .audio()
-        .set_processing_mode_nonblocking(mode)
-        .err();
+    let mode_error = state.core.audio().set_processing_mode(mode).err();
     let Some(error) = mode_error else {
         if sidecar_transitioned(state, generation) {
             return Err(StartupRuntimeError::GenerationChanged(
@@ -435,11 +422,7 @@ fn apply_startup_processing_mode(
         )));
     }
 
-    let passive_error = state
-        .core
-        .audio()
-        .set_processing_mode_nonblocking("passive")
-        .err();
+    let passive_error = state.core.audio().set_processing_mode("passive").err();
     let message = match passive_error {
         Some(passive_error) => format!(
             "startup processing mode could not be applied: {error}; passive mode could not be maintained: {passive_error}"
@@ -447,6 +430,43 @@ fn apply_startup_processing_mode(
         None => format!("startup processing mode could not be applied: {error}"),
     };
     Err(StartupRuntimeError::Feature(message))
+}
+
+fn release_startup_mute(
+    state: &AppState,
+    generation: u64,
+    muted_status: &AudioStatus,
+) -> Result<AudioStatus, StartupRuntimeError> {
+    if sidecar_transitioned(state, generation) {
+        return Err(StartupRuntimeError::GenerationChanged(
+            generation_changed_message(state.core.audio(), generation),
+        ));
+    }
+
+    let released = state
+        .core
+        .audio()
+        .release_startup_mute_if_allowed(generation)
+        .map_err(|error| {
+            if sidecar_transitioned(state, generation) {
+                StartupRuntimeError::GenerationChanged(generation_changed_message(
+                    state.core.audio(),
+                    generation,
+                ))
+            } else {
+                StartupRuntimeError::Feature(format!(
+                    "startup emergency mute could not be released: {error}"
+                ))
+            }
+        })?;
+
+    if sidecar_transitioned(state, generation) {
+        return Err(StartupRuntimeError::GenerationChanged(
+            generation_changed_message(state.core.audio(), generation),
+        ));
+    }
+
+    Ok(released.unwrap_or_else(|| muted_status.clone()))
 }
 
 fn sidecar_transitioned(state: &AppState, generation: u64) -> bool {
@@ -481,7 +501,7 @@ fn ensure_generation<A: StartupAudioPort>(audio: &A, expected: u64) -> Result<()
     }
 }
 
-fn safe_to_release_startup_mute(status: &AudioStatus) -> bool {
+fn safe_for_startup_restore(status: &AudioStatus) -> bool {
     matches!(status.state, AudioState::Ready | AudioState::Muted) && !status.feedback_suspected
 }
 
@@ -503,8 +523,6 @@ mod tests {
         generation: AtomicU64,
         status_state: AudioState,
         lose_first_generation: bool,
-        allow_startup_unmute: bool,
-        unmute_calls: Mutex<Vec<u64>>,
         events: Mutex<Vec<String>>,
     }
 
@@ -514,15 +532,8 @@ mod tests {
                 generation: AtomicU64::new(1),
                 status_state,
                 lose_first_generation,
-                allow_startup_unmute: true,
-                unmute_calls: Mutex::new(Vec::new()),
                 events: Mutex::new(Vec::new()),
             }
-        }
-
-        fn with_startup_unmute_allowed(mut self, allowed: bool) -> Self {
-            self.allow_startup_unmute = allowed;
-            self
         }
 
         fn status(state: AudioState) -> AudioStatus {
@@ -601,33 +612,18 @@ mod tests {
             self.record("status");
             Ok(Self::status(self.status_state))
         }
-
-        fn release_startup_mute_if_allowed(
-            &self,
-            generation: u64,
-        ) -> NativeAudioResult<Option<AudioStatus>> {
-            if self.current_generation() != generation {
-                return Err(NativeAudioError::GenerationChanged {
-                    expected: generation,
-                    actual: self.current_generation(),
-                });
-            }
-            if !self.allow_startup_unmute {
-                return Ok(None);
-            }
-            self.unmute_calls.lock().unwrap().push(generation);
-            Ok(Some(Self::status(AudioState::Ready)))
-        }
     }
 
     #[test]
-    fn retries_a_transport_loss_on_the_new_sidecar_generation() {
+    fn keeps_output_muted_while_retrying_a_transport_loss_on_a_new_generation() {
+        // Arrange
         let audio = FakeStartupAudio::new(AudioState::Muted, true);
 
+        // Act
         let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
 
-        assert_eq!(status.state, AudioState::Ready);
-        assert_eq!(*audio.unmute_calls.lock().unwrap(), vec![2]);
+        // Assert
+        assert_eq!(status.state, AudioState::Muted);
         assert_eq!(
             audio.events.lock().unwrap().as_slice(),
             ["lost", "ready", "gain", "passive", "status"]
@@ -636,21 +632,25 @@ mod tests {
 
     #[test]
     fn does_not_release_mute_for_a_faulted_status() {
+        // Arrange
         let audio = FakeStartupAudio::new(AudioState::Faulted, false);
+
+        // Act
         let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
 
+        // Assert
         assert_eq!(status.state, AudioState::Faulted);
-        assert!(audio.unmute_calls.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn does_not_release_a_manual_startup_mute() {
-        let audio =
-            FakeStartupAudio::new(AudioState::Muted, false).with_startup_unmute_allowed(false);
+    fn retains_a_muted_status_while_preparing_the_runtime() {
+        // Arrange
+        let audio = FakeStartupAudio::new(AudioState::Muted, false);
 
+        // Act
         let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
 
+        // Assert
         assert_eq!(status.state, AudioState::Muted);
-        assert!(audio.unmute_calls.lock().unwrap().is_empty());
     }
 }

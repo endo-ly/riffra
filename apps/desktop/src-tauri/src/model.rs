@@ -64,12 +64,22 @@ pub struct RecoveryCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub session: crate::session::CreativeSession,
+    pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
+    pub runtime_started: bool,
+    pub runtime_startup_finished: bool,
     pub recovered_from_generation: bool,
     pub safe_mode: bool,
     pub native_available: bool,
     pub recovery_candidates: Vec<RecoveryCandidate>,
     pub data_root: String,
     pub vst3_root: String,
+}
+
+/// Reports the result of a Session audio-graph restoration attempt to the UI.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeStartupFinishedEvent {
+    pub succeeded: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, TS)]
@@ -221,10 +231,21 @@ pub enum AudioAccessMode {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDeviceProbe {
     pub drivers: Vec<AudioDriverInfo>,
-    pub midi_inputs: Vec<MidiDeviceInfo>,
-    pub midi_outputs: Vec<MidiDeviceInfo>,
     pub refreshed_at_ms: u64,
     pub message: String,
+}
+
+/// Channel names resolved lazily for a single selected device from Audio
+/// Settings. Startup discovery stays passive (no device open); this detail is
+/// fetched only when the user configures a specific device, opening it once.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceChannels {
+    pub driver: String,
+    pub input_device: String,
+    pub input_channels: Vec<AudioChannelInfo>,
+    pub output_device: String,
+    pub output_channels: Vec<AudioChannelInfo>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]

@@ -15,6 +15,7 @@ import type {
   PluginEntry,
   RecordingAsset,
   RenderResult,
+  ScanReport,
   SeparationResult,
 } from '@/lib/domain';
 import { toAssetId } from '@/lib/domain';
@@ -72,6 +73,8 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     persistTrackPluginState,
     persistTrackPluginParameter,
     syncArrangementRuntime,
+    retryStartupRuntime: retryStartupRuntimeApi,
+    onRuntimeStartupFinished,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
@@ -97,8 +100,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   });
   const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
     drivers: [],
-    midiInputs: [],
-    midiOutputs: [],
     refreshedAtMs: 0,
     message: 'Audio device list has not been refreshed.',
   });
@@ -112,7 +113,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
+  const [runtimeStarted, setRuntimeStarted] = useState(false);
+  const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
   const activeJobId = useRef<string | null>(null);
+  const startupScanStarted = useRef(false);
+  const startupRuntimeRecoveryAttempted = useRef(false);
+  const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const audioRef = useRef(audio);
@@ -378,6 +384,15 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     if (status) setBackgroundJob(status);
   }, [cancelBackgroundJob]);
 
+  const applyScanReport = useCallback((report: ScanReport) => {
+    setPlugins(report.plugins);
+    setScanMessage(
+      report.issues.length
+        ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
+        : `${report.plugins.length}件を検出`,
+    );
+  }, []);
+
   const openRecordingAnalysis = useCallback(
     async (recording: RecordingAsset) => {
       if (!isUsableRecording(recording)) return;
@@ -553,14 +568,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const rescanMissingPlugins = useCallback(async () => {
     const completed = await runBackgroundJob(
       () => startScanJob(boot?.vst3Root),
-      (report) => {
-        setPlugins(report.plugins);
-        setScanMessage(
-          report.issues.length
-            ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-            : `${report.plugins.length}件を検出`,
-        );
-      },
+      applyScanReport,
       (message) => setScanMessage(`VST3 scan failed: ${message}`),
     );
     if (!completed) return;
@@ -569,7 +577,58 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     } finally {
       setMissingDependencies(await getMissingDependencies());
     }
-  }, [boot?.vst3Root, getMissingDependencies, runBackgroundJob, startScanJob, syncArrangeRuntime]);
+  }, [
+    applyScanReport,
+    boot?.vst3Root,
+    getMissingDependencies,
+    runBackgroundJob,
+    startScanJob,
+    syncArrangeRuntime,
+  ]);
+
+  const retryStartupRuntimeAfterScan = useCallback(async () => {
+    if (startupRuntimeRecoveryAttempted.current || runtimeStarted) return;
+    startupRuntimeRecoveryAttempted.current = true;
+    try {
+      setAudio(await retryStartupRuntimeApi());
+    } catch (error) {
+      setScanMessage(
+        `Startup runtime restore failed after the catalog scan: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [retryStartupRuntimeApi, runtimeStarted, setAudio]);
+
+  useEffect(() => {
+    if (
+      startupScanStarted.current ||
+      activeJobId.current ||
+      backgroundJob != null ||
+      !boot?.nativeAvailable ||
+      boot.safeMode ||
+      !runtimeStartupFinished
+    ) {
+      return;
+    }
+    startupScanStarted.current = true;
+    void (async () => {
+      const completed = await runBackgroundJob(
+        () => startScanJob(boot.vst3Root),
+        applyScanReport,
+        (message) => setScanMessage(`VST3 scan failed: ${message}`),
+      );
+      if (completed) await retryStartupRuntimeAfterScan();
+    })();
+  }, [
+    applyScanReport,
+    backgroundJob,
+    boot,
+    retryStartupRuntimeAfterScan,
+    runBackgroundJob,
+    runtimeStartupFinished,
+    startScanJob,
+  ]);
 
   const ignoreMissing = useCallback((item: MissingDependency) => {
     setMissingDependencies((current) =>
@@ -621,12 +680,33 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   useEffect(() => {
     let disposed = false;
     let deferredStartupTimer: ReturnType<typeof setTimeout> | null = null;
-    const bootstrapOperation = bootstrapPromise.current ?? (bootstrapPromise.current = bootstrap());
+    let unlistenRuntimeStartupFinished: (() => void) | null = null;
+    const runtimeStartupListener = onRuntimeStartupFinished((event) => {
+      if (disposed) return;
+      runtimeStartupEventReceived.current = true;
+      setRuntimeStartupFinished(true);
+      setRuntimeStarted(event.succeeded);
+    }).catch((error) => {
+      logNativeError('onRuntimeStartupFinished')(error);
+      return () => undefined;
+    });
+    void runtimeStartupListener.then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenRuntimeStartupFinished = unlisten;
+    });
+    const bootstrapOperation =
+      bootstrapPromise.current ??
+      (bootstrapPromise.current = runtimeStartupListener.then(() => bootstrap()));
     void bootstrapOperation
       .then((state) => {
         if (disposed) return;
         setBoot(state);
         setSession(state.session);
+        setPlugins(state.pluginCatalog);
+        if (!runtimeStartupEventReceived.current) {
+          setRuntimeStarted(state.runtimeStarted);
+          setRuntimeStartupFinished(state.runtimeStartupFinished);
+        }
         void getMissingDependencies()
           .then(setMissingDependencies)
           .catch(logNativeError('getMissingDependencies'));
@@ -634,7 +714,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
         // Let the first workspace paint before starting filesystem/device
         // discovery. These jobs are useful, but none is required to render
-        // the initial shell and they can otherwise compete with VST setup.
+        // the initial shell or restore the Session audio graph.
         deferredStartupTimer = setTimeout(() => {
           if (disposed) return;
           void listRecordings().then(setRecordings).catch(logNativeError('listRecordings'));
@@ -643,18 +723,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
           void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
           void enableMidi().catch(logNativeError('enableMidi'));
           void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
-          void runBackgroundJob(
-            () => startScanJob(state.vst3Root),
-            (report) => {
-              setPlugins(report.plugins);
-              setScanMessage(
-                report.issues.length
-                  ? `${report.plugins.length}件 · ${report.issues.length}件の注意`
-                  : `${report.plugins.length}件を検出`,
-              );
-            },
-            (message) => setScanMessage(`VST3 scan failed: ${message}`),
-          );
         }, 150);
       })
       .catch(logNativeError('bootstrap'));
@@ -882,6 +950,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       unlistenClose?.();
       if (!closeRequested) void flushPluginChanges();
       unlistenAudio();
+      unlistenRuntimeStartupFinished?.();
       unlistenMeters();
       unlistenTrackPluginParameter();
       unlistenTrackPluginState();

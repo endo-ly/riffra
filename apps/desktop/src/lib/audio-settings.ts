@@ -5,6 +5,7 @@ import type {
   AudioDriverConfig,
   AudioDriverInfo,
   AudioStatus,
+  DeviceChannels,
 } from './domain';
 
 export interface RequestedAudioSettings {
@@ -95,6 +96,79 @@ function findInputDevice(
   name: string | null,
 ): AudioDeviceInfo | null {
   return driver?.inputs.find((device) => device.name === name) ?? null;
+}
+
+/**
+ * Fills the channel lists reported by a lazy per-device detail probe into the
+ * passive startup device probe. Startup discovery never opens a device, so its
+ * channels are empty; Audio Settings resolves them for the selected interface
+ * only when the user configures it.
+ */
+export function mergeDeviceChannels(
+  probe: AudioDeviceProbe,
+  detail: DeviceChannels,
+): AudioDeviceProbe {
+  return {
+    ...probe,
+    drivers: probe.drivers.map((driver) => {
+      if (driver.name !== detail.driver) return driver;
+      return {
+        ...driver,
+        inputs: driver.inputs.map((device) =>
+          device.name === detail.inputDevice
+            ? { ...device, channels: detail.inputChannels }
+            : device,
+        ),
+        outputs: driver.outputs.map((device) =>
+          device.name === detail.outputDevice
+            ? { ...device, channels: detail.outputChannels }
+            : device,
+        ),
+      };
+    }),
+  };
+}
+
+/**
+ * Reuses channel details already reported by the active Audio Runtime.
+ * Passive device discovery deliberately leaves channel lists empty, but the
+ * device currently opened by Riffra has already supplied these names through
+ * AudioStatus and does not need another detail probe.
+ */
+export function mergeAudioStatusChannels(
+  probe: AudioDeviceProbe,
+  audio: AudioStatus,
+): AudioDeviceProbe {
+  if (audio.driver == null) return probe;
+
+  const hasInputChannels = audio.inputDevice != null && audio.inputChannels.length > 0;
+  const hasOutputChannels = audio.outputDevice != null && audio.outputChannels.length > 0;
+  if (!hasInputChannels && !hasOutputChannels) return probe;
+
+  let changed = false;
+  const drivers = probe.drivers.map((driver) => {
+    if (driver.name !== audio.driver) return driver;
+    return {
+      ...driver,
+      inputs: hasInputChannels
+        ? driver.inputs.map((device) => {
+            if (device.name !== audio.inputDevice || device.channels === audio.inputChannels)
+              return device;
+            changed = true;
+            return { ...device, channels: audio.inputChannels };
+          })
+        : driver.inputs,
+      outputs: hasOutputChannels
+        ? driver.outputs.map((device) => {
+            if (device.name !== audio.outputDevice || device.channels === audio.outputChannels)
+              return device;
+            changed = true;
+            return { ...device, channels: audio.outputChannels };
+          })
+        : driver.outputs,
+    };
+  });
+  return changed ? { ...probe, drivers } : probe;
 }
 
 function hasSelectableDevices(driver: AudioDriverInfo): boolean {

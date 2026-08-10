@@ -40,6 +40,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitForAppShell();
     await waitFor(() => expect(screen.getByRole('button', { name: /^MUTE$/ })).toBeInTheDocument());
     expect(fake.calls).toContain('bootstrap');
+    expect(fake.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
     await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
     expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('setEmergencyMute');
@@ -52,6 +53,88 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(screen.getByRole('button', { name: /^MUTE$/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument());
     expect(fake.audio.state).toBe('muted');
+  });
+
+  it('uses the cached catalog and waits for Session audio graph restoration before scanning', async () => {
+    // Arrange
+    const fake = new FakeNativeApi({
+      audio: fakeAudioStatus(),
+      plugins: [examplePlugin],
+      bootstrapState: {
+        pluginCatalog: [examplePlugin],
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
+    });
+
+    // Act
+    renderApp(fake);
+
+    // Assert
+    await waitForAppShell();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Example Synth/ })).toBeInTheDocument(),
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(fake.calls).not.toContain('startScanJob');
+
+    fake.emitRuntimeStartupFinished();
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+  });
+
+  it('retries runtime restoration once after the catalog scan repairs startup state', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: {
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
+    });
+    renderApp(fake);
+
+    await waitForAppShell();
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(fake.calls).not.toContain('startScanJob');
+
+    fake.emitRuntimeStartupFinished();
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+    await waitFor(() => expect(fake.calls).toContain('retryStartupRuntime'));
+    expect(fake.calls.filter((call) => call === 'retryStartupRuntime')).toHaveLength(1);
+    expect(fake.calls).not.toContain('recoverAudioDevice');
+    expect(fake.calls.indexOf('startScanJob')).toBeLessThan(
+      fake.calls.indexOf('retryStartupRuntime'),
+    );
+    expect(fake.bootstrapState.runtimeStarted).toBe(true);
+  });
+
+  it('does not retry runtime restoration when the catalog scan fails', async () => {
+    const fake = new FakeNativeApi({
+      bootstrapState: {
+        runtimeStarted: false,
+        runtimeStartupFinished: false,
+      },
+    });
+    fake.startScanJob = async () => {
+      fake.calls.push('startScanJob');
+      return {
+        kind: 'scan',
+        id: 'fake-scan-failure',
+        state: 'failed',
+        progress: 1,
+        message: 'Fake scan failed.',
+        result: null,
+      };
+    };
+    renderApp(fake);
+
+    await waitForAppShell();
+    fake.emitRuntimeStartupFinished(false);
+
+    await waitFor(() => expect(fake.calls).toContain('startScanJob'));
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    expect(fake.calls).not.toContain('recoverAudioDevice');
+    expect(fake.calls).not.toContain('retryStartupRuntime');
   });
 
   it('keeps shell notices and project actions available without a home surface', async () => {

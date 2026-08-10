@@ -12,6 +12,7 @@ import type {
   BootstrapState,
   AssetId,
   AssetPreviewOptions,
+  DeviceChannels,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -54,6 +55,11 @@ export interface TrackPluginParameterChange {
   value: number;
 }
 
+/** Result delivered when the native Session runtime restoration attempt ends. */
+export interface RuntimeStartupFinishedEvent {
+  succeeded: boolean;
+}
+
 /**
  * NativeApi is the seam between the React layer and every side-effectful
  * operation: Tauri commands, the audio sidecar protocol, the filesystem, and
@@ -67,6 +73,10 @@ export interface TrackPluginParameterChange {
  */
 export interface NativeApi {
   bootstrap(): Promise<BootstrapState>;
+  /** Subscribes to completion of a Session audio-graph restoration attempt. */
+  onRuntimeStartupFinished(
+    callback: (event: RuntimeStartupFinishedEvent) => void,
+  ): Promise<() => void>;
   saveSession(session: CreativeSession): Promise<CreativeSession>;
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;
@@ -112,6 +122,11 @@ export interface NativeApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
   probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
+  probeDeviceChannels(
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ): Promise<DeviceChannels>;
 
   listSeparations(): Promise<SeparationResult[]>;
   renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
@@ -150,6 +165,8 @@ export interface NativeApi {
    */
   setMasterGainDb(gainDb: number): Promise<SessionAudioPair>;
   recoverAudioDevice(): Promise<AudioStatus>;
+  /** Rebuilds the saved Session runtime without reopening the audio device. */
+  retryStartupRuntime(): Promise<AudioStatus>;
   /** Sets and persists the application-wide audio-device preference. */
   setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus>;
   /**

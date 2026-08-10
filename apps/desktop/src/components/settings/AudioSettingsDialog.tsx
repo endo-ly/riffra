@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/lib/domain';
+import type {
+  AudioDeviceProbe,
+  AudioDriverConfig,
+  AudioStatus,
+  DeviceChannels,
+} from '@/lib/domain';
 import {
   audioBufferSizeOptions,
   audioSampleRateOptions,
   createAudioSettingsDraft,
   includeEffectiveOption,
   isAudioSettingsDraftValid,
+  mergeAudioStatusChannels,
+  mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
 } from '@/lib/audio-settings';
@@ -21,6 +28,11 @@ interface AudioSettingsDialogProps {
 
   onClose: () => void;
   onRefresh: () => Promise<AudioDeviceProbe>;
+  onProbeChannels: (
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ) => Promise<DeviceChannels>;
   onApply: (config: AudioDriverConfig) => Promise<AudioStatus>;
   onRecover: () => Promise<AudioStatus>;
 }
@@ -33,6 +45,7 @@ export function AudioSettingsDialog({
   recordingActive,
   onClose,
   onRefresh,
+  onProbeChannels,
   onApply,
   onRecover,
 }: AudioSettingsDialogProps) {
@@ -44,20 +57,37 @@ export function AudioSettingsDialog({
   const [applying, setApplying] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const wasOpen = useRef(false);
+  const probedDeviceKeys = useRef(new Set<string>());
+  const audioRef = useRef(audio);
+  audioRef.current = audio;
   const returnFocus = useRef<HTMLElement | null>(null);
   const firstField = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
-    setAvailableProbe(probe);
-    if (open) setDraft((current) => normalizeAudioSettingsDraft(current, probe));
+    const nextProbe = mergeAudioStatusChannels(probe, audioRef.current);
+    setAvailableProbe(nextProbe);
+    if (open) setDraft((current) => normalizeAudioSettingsDraft(current, nextProbe));
   }, [open, probe]);
+
+  useEffect(() => {
+    if (!open) return;
+    setAvailableProbe((current) => mergeAudioStatusChannels(current, audioRef.current));
+  }, [
+    audio.driver,
+    audio.inputChannels,
+    audio.inputDevice,
+    audio.outputChannels,
+    audio.outputDevice,
+    open,
+  ]);
 
   useEffect(() => {
     if (open && !wasOpen.current) {
       returnFocus.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const nextDraft = createAudioSettingsDraft(audio, probe);
-      setAvailableProbe(probe);
+      const nextProbe = mergeAudioStatusChannels(probe, audio);
+      const nextDraft = createAudioSettingsDraft(audio, nextProbe);
+      setAvailableProbe(nextProbe);
       setDraft(nextDraft);
       setInitialDraft(nextDraft);
       setError(null);
@@ -82,6 +112,56 @@ export function AudioSettingsDialog({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [applying, onClose, open]);
+
+  // Startup discovery is passive: it never opens a device, so the selected
+  // interface's channel names are only known after a per-device detail probe.
+  // Resolve them lazily for the currently selected interface so the channel
+  // selector and draft validation have real names without probing every
+  // device (especially every ASIO driver) during startup.
+  useEffect(() => {
+    if (!open || safeMode) return;
+    const driver = draft.driver;
+    const inputDevice = draft.inputDevice;
+    if (driver === '' || inputDevice == null) return;
+    const active = availableProbe.drivers.find((candidate) => candidate.name === driver);
+    const selected = active?.inputs.find((device) => device.name === inputDevice);
+    const activeInputChannels =
+      audio.driver === driver && audio.inputDevice === inputDevice ? audio.inputChannels : [];
+    if (selected == null || selected.channels.length > 0 || activeInputChannels.length > 0) return;
+    if (refreshing || applying || recovering) return;
+    const outputDevice = draft.outputDevice ?? inputDevice;
+    const deviceKey = `${driver}\u0000${inputDevice}\u0000${outputDevice}`;
+    if (probedDeviceKeys.current.has(deviceKey)) return;
+    probedDeviceKeys.current.add(deviceKey);
+    let cancelled = false;
+    setError(null);
+    void onProbeChannels(driver, inputDevice, outputDevice)
+      .then((detail) => {
+        if (cancelled) return;
+        setAvailableProbe((current) => mergeDeviceChannels(current, detail));
+      })
+      .catch((reason) => {
+        if (!cancelled)
+          setError(errorMessage(reason, 'Device channel details could not be loaded.'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    safeMode,
+    draft.driver,
+    draft.inputDevice,
+    draft.outputDevice,
+    availableProbe,
+    refreshing,
+    applying,
+    recovering,
+    audio.driver,
+    audio.inputChannels,
+    audio.inputDevice,
+    onProbeChannels,
+  ]);
 
   if (!open) return null;
 
@@ -129,8 +209,10 @@ export function AudioSettingsDialog({
     setError(null);
     try {
       const nextProbe = await onRefresh();
-      setAvailableProbe(nextProbe);
-      setDraft((current) => normalizeAudioSettingsDraft(current, nextProbe));
+      probedDeviceKeys.current.clear();
+      const effectiveProbe = mergeAudioStatusChannels(nextProbe, audio);
+      setAvailableProbe(effectiveProbe);
+      setDraft((current) => normalizeAudioSettingsDraft(current, effectiveProbe));
     } catch (reason) {
       setError(errorMessage(reason, 'Audio device refresh failed.'));
     } finally {
@@ -208,6 +290,14 @@ export function AudioSettingsDialog({
           </div>
 
           {safeMode && <p className={styles.notice}>Safe Mode blocks audio-driver changes.</p>}
+
+          {activeDriver?.accessMode === 'driverManaged' && (
+            <p className={styles.notice}>
+              {activeDriver.name} manages the audio device itself. Depending on the driver and
+              sample-rate settings, other applications using the same device may be paused while the
+              audio engine is running.
+            </p>
+          )}
 
           {!hasDevices ? (
             <p className={styles.empty}>No audio devices are currently available.</p>

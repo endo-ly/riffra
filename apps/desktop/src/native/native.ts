@@ -10,6 +10,7 @@ import type {
   AssetPreviewOptions,
   BackgroundJobStatus,
   BootstrapState,
+  DeviceChannels,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -43,7 +44,12 @@ import type {
 import { defaultSession } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
 import { invoke, invokeLatest, invokeOrFallback, isNativeRuntime } from './invoke';
-import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type {
+  NativeApi,
+  RuntimeStartupFinishedEvent,
+  TrackPluginParameterChange,
+  TrackPluginStateChange,
+} from './native-api';
 import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -54,6 +60,9 @@ async function bootstrap(): Promise<BootstrapState> {
     {},
     {
       session: defaultSession(),
+      pluginCatalog: [],
+      runtimeStarted: false,
+      runtimeStartupFinished: false,
       recoveredFromGeneration: false,
       safeMode: false,
       nativeAvailable: false,
@@ -62,6 +71,15 @@ async function bootstrap(): Promise<BootstrapState> {
       vst3Root: defaultVst3Root,
     },
   );
+}
+
+async function onRuntimeStartupFinished(
+  callback: (event: RuntimeStartupFinishedEvent) => void,
+): Promise<() => void> {
+  if (!isNativeRuntime()) return () => undefined;
+  return listen<RuntimeStartupFinishedEvent>('runtime-startup-finished', ({ payload }) => {
+    callback(payload);
+  });
 }
 
 async function saveSession(session: CreativeSession): Promise<CreativeSession> {
@@ -203,10 +221,26 @@ async function probeAudioDevices(): Promise<AudioDeviceProbe> {
     {},
     {
       drivers: [],
-      midiInputs: [],
-      midiOutputs: [],
       refreshedAtMs: Date.now(),
       message: 'Audio device probe is unavailable in browser preview.',
+    },
+  );
+}
+
+async function probeDeviceChannels(
+  driver: string,
+  inputDevice: string,
+  outputDevice: string,
+): Promise<DeviceChannels> {
+  return invokeOrFallback<DeviceChannels>(
+    'probe_device_channels',
+    { driver, inputDevice, outputDevice },
+    {
+      driver,
+      inputDevice,
+      inputChannels: [],
+      outputDevice,
+      outputChannels: [],
     },
   );
 }
@@ -369,6 +403,10 @@ async function recoverAudioDevice(): Promise<AudioStatus> {
   } catch (error) {
     return await audioCommandError('Recover audio device', error);
   }
+}
+
+async function retryStartupRuntime(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('retry_startup_runtime');
 }
 
 async function setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus> {
@@ -906,6 +944,7 @@ async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promis
 function createNativeApi(): NativeApi {
   return {
     bootstrap,
+    onRuntimeStartupFinished,
     saveSession,
     restoreRecoveryGeneration,
     exportSession,
@@ -925,6 +964,7 @@ function createNativeApi(): NativeApi {
     analyzeAsset,
     probeMidiDevices,
     probeAudioDevices,
+    probeDeviceChannels,
     listSeparations,
     renderTimeline,
     restoreSamplePads,
@@ -943,6 +983,7 @@ function createNativeApi(): NativeApi {
     setMasterGainDb,
     previewMasterGainDb,
     recoverAudioDevice,
+    retryStartupRuntime,
     setAudioDriver,
     enableMidiListening,
     disableMidiListening,

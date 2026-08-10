@@ -55,7 +55,7 @@ Tauri命令はRustの `#[tauri::command]` で定義し、`apps/desktop/src-tauri
 
 ### 2.1 トップレベル（`lib.rs`）
 
-`get_bootstrap_state` / `export_scratch_session` / `get_background_job` / `cancel_background_job` / `probe_audio_devices` / `probe_midi_devices` / `get_audio_status` / `preview_master_gain_db` / `set_emergency_mute` / `recover_audio_device` / `open_midi_input` / `close_midi_input` / `stop_preview` / `stop_preview_for_key`
+`get_bootstrap_state` / `export_scratch_session` / `get_background_job` / `cancel_background_job` / `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` / `get_audio_status` / `preview_master_gain_db` / `set_emergency_mute` / `recover_audio_device` / `retry_startup_runtime` / `open_midi_input` / `close_midi_input` / `stop_preview` / `stop_preview_for_key`
 
 ### 2.2 Session Application Operations（`session/commands.rs`）
 
@@ -154,9 +154,11 @@ C++ → Rust（応答・イベント）。stdoutへ1行で出力:
 - `requestId`: 数値。Rust側が `AtomicU64` で発行し、要求ごとに対応する応答を `Condvar` でコマンド種別ごとのタイムアウト付きで待機する。イベント通知では省略可
 - C++側は通常のコマンドでは `thread_local` の `currentRequestId` を使い、コマンドスレッド外で完了する処理は要求時に保存したIDを明示して応答へ付与する
 
-VST3のインスタンス生成・初期化・破棄とArrangement Snapshotの準備は、C++のstdin読み取りスレッドを塞がないワーカースレッドで行う。処理中も再生・停止・ワークスペース操作の要求は受け付け、同じプラグイン状態を同時に変更する要求には `pluginBusy` または `timelineBusy` を返す。
+Arrangement Snapshotの準備とVST3ライフサイクル要求は、C++のstdin読み取りスレッドを塞がないワーカースレッドで行う。VST3の探索、インスタンス生成、初期化、状態変更・復元、リソース解放、破棄はJUCEのメッセージスレッドへ同期的に委譲する。処理中も再生・停止・ワークスペース操作の要求は受け付け、同じプラグイン状態を同時に変更する要求には `pluginBusy` または `timelineBusy` を返す。
 
 Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
+
+デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。Audio RuntimeはSessionのSample PadとArrange音声グラフを復元し、処理モードの応答と同一Sidecar世代を確認してから自動解除する。復元に失敗した場合はMuteを維持する。復元処理が終了するたびに、Rust側は`runtime-startup-finished`イベント（`{ succeeded: boolean }`）をUIへ通知し、`BootstrapState.runtimeStartupFinished`と`BootstrapState.runtimeStarted`にも結果を反映する。UIはイベント購読を確立してからBootstrapを1回だけ取得し、`runtimeStartupFinished`を待ってVST3カタログをバックグラウンドで検証する。初回復元が失敗していた場合、カタログ検証が成功した後に`retry_startup_runtime`を一度だけ呼び出して同じAudio Sidecar上のSession Runtimeを再構築する。この再試行はAudio Deviceのclose/openを行わない。`recover_audio_device`は実際にAudio Deviceがfaultした場合の復旧に限る。カタログ検証の成否は出力解除条件に含めない。
 
 ### 4.2 メッセージ種別（C++ → Rust）
 
@@ -170,9 +172,11 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
 | `timelineAck`     | Timeline Snapshotの準備完了revision・適用時刻・利用不能Clip                              | Snapshotコマンド応答      |
 | `transportStatus` | Engine ClockとTimeline位置、再生状態、revision、不連続通知                               | 状態変化時・20 Hz定期送信 |
 
-起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_midi_probe` 等で処理される。
+起動時だけ `audioDeviceProbe` メッセージを別途 stdout に出力する（`--probe` モード、または `--serve` 起動直後のプロービング）。これは `audioStatus` とは別のプロトコルで、Rust側の `parse_stdout` 等で処理される。
 
-`audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels` には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
+起動時のデバイス取得は非侵襲（passive）で、`--probe` はドライバ名とデバイス名だけを返し、デバイスを開かない。`channels` は空配列で、現在Riffraが使用中のデバイスは`AudioStatus`が返したチャンネル情報を設定画面で再利用する。それ以外の対象デバイスは Audio Settings で選択した際に `--probe-channels` で遅延取得し、同じドライバ・入出力デバイスの組み合わせを自動的に再probeしない。probe sidecarは同時に1つだけ実行され、一定時間で終了しない場合は停止する。オーディオデバイス（特にASIOドライバ）を起動時に開くとハードウェア再構成によって他アプリの再生が中断されるため、起動時プロービングは名前列挙で止める。MIDIの一覧も独立しており、`--probe-midi` はMIDIのみを返しオーディオドライバに一切触れない。
+
+`audioDeviceProbe` の `drivers` はドライバ単位の入出力デバイス一覧を持つ。各デバイスの `channels`（起動時は空・`deviceChannels` 取得後に充填）には、設定画面で選択できるチャンネルの論理インデックスと表示名を含める。`devicePairing` が `sameDevice` のドライバでは、同名の入力・出力デバイスだけを同時選択できる。
 
 ```json
 {
@@ -185,19 +189,30 @@ Sidecarの各世代は、デバイス初期化とAudio Callback登録を終え�
       "inputs": [
         {
           "name": "Audio Interface",
-          "channels": [{ "index": 0, "name": "Input 1" }]
+          "channels": []
         }
       ],
       "outputs": [
         {
           "name": "Audio Interface",
-          "channels": [{ "index": 0, "name": "Output 1" }]
+          "channels": []
         }
       ]
     }
-  ],
-  "midiInputs": [],
-  "midiOutputs": []
+  ]
+}
+```
+
+Audio Settingsで対象デバイスを選択したときに `deviceChannels` を取得する。
+
+```json
+{
+  "type": "deviceChannels",
+  "driver": "ASIO",
+  "inputDevice": "Audio Interface",
+  "inputChannels": [{ "index": 0, "name": "Input 1" }],
+  "outputDevice": "Audio Interface",
+  "outputChannels": [{ "index": 0, "name": "Output 1" }]
 }
 ```
 
@@ -264,17 +279,17 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 
 `scope` でエラーの影響範囲を分類する。Rust側の `render_native_error` は `scope == "audioDevice"` のみ `faulted` 状態へ遷移させ、それ以外はコマンド失敗（`message` 更新）扱いにする。
 
-| scope          | 影響                            | C++側の主な発生元                             |
-| -------------- | ------------------------------- | --------------------------------------------- |
-| `audioDevice`  | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗      |
-| `plugin`       | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗           |
-| `pluginBusy`   | コマンド失敗。fault状態にしない | VST3ロード中の同時操作                        |
-| `timelineBusy` | コマンド失敗。fault状態にしない | Arrangement Snapshot準備中の同時操作          |
-| `recording`    | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                |
-| `midi`         | コマンド失敗                    | MIDI入力オープン/クローズ失敗                 |
-| `preview`      | コマンド失敗                    | サンプルプレビュー失敗                        |
-| `protocol`     | コマンド失敗                    | JSONパース失敗・未対応コマンド                |
-| `arguments`    | 起動時失敗                      | CLI引数エラー（`--probe` / `--serve` 起動時） |
+| scope          | 影響                            | C++側の主な発生元                                                                   |
+| -------------- | ------------------------------- | ----------------------------------------------------------------------------------- |
+| `audioDevice`  | **fault状態へ遷移する**         | デバイス切断・ドライバ切替失敗・復旧失敗                                            |
+| `plugin`       | コマンド失敗。fault状態にしない | プラグインのパラメータ/状態設定失敗                                                 |
+| `pluginBusy`   | コマンド失敗。fault状態にしない | VST3ロード中の同時操作                                                              |
+| `timelineBusy` | コマンド失敗。fault状態にしない | Arrangement Snapshot準備中の同時操作                                                |
+| `recording`    | コマンド失敗                    | 録音開始/停止/ディレクトリ失敗                                                      |
+| `midi`         | コマンド失敗                    | MIDI入力オープン/クローズ失敗                                                       |
+| `preview`      | コマンド失敗                    | サンプルプレビュー失敗                                                              |
+| `protocol`     | コマンド失敗                    | JSONパース失敗・未対応コマンド                                                      |
+| `arguments`    | 起動時失敗                      | CLI引数エラー（`--probe` / `--probe-midi` / `--probe-channels` / `--serve` 起動時） |
 
 `dataSafe` は保存済みデータが保全されているかを示す。現在のC++実装は常に `true` を送信し、保存データがsidecarの異常で失われないことを表明する。
 
@@ -306,7 +321,7 @@ Safe Modeでも「失敗を成功として表示しない」契約は維持す�
 
 ### 5.1 外部プロセス許可（`shell:allow-spawn`）
 
-- `riffra-audio`: オーディオsidecar。`sidecar: true`、第1引数は `--(serve|probe)` の正規表現で検証
+- `riffra-audio`: オーディオsidecar。`sidecar: true`、第1引数は `--(serve|probe|probe-midi|probe-channels)` の正規表現で検証
 - `riffra-plugin-scan`: プラグインスキャンsidecar。`sidecar: true`、引数は任意
 
 ### 5.2 shell操作

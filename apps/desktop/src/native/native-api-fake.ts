@@ -16,6 +16,7 @@ import type {
   MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
+  DeviceChannels,
   JobKind,
   LibraryAsset,
   MissingDependency,
@@ -45,7 +46,12 @@ import type {
   TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, toAssetId } from '@/lib/domain';
-import type { NativeApi, TrackPluginParameterChange, TrackPluginStateChange } from './native-api';
+import type {
+  NativeApi,
+  RuntimeStartupFinishedEvent,
+  TrackPluginParameterChange,
+  TrackPluginStateChange,
+} from './native-api';
 import type { AudioMeters } from '@/lib/audio-meters';
 
 const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
@@ -156,6 +162,7 @@ export class FakeNativeApi implements NativeApi {
   private renderCounter = 0;
   private jobCounter = 0;
   private jobs = new Map<string, BackgroundJobStatus>();
+  private runtimeStartupFinishedListeners = new Set<(event: RuntimeStartupFinishedEvent) => void>();
   private runtimeRestartListeners = new Set<(generation: number) => void>();
   private transportStatusListeners = new Set<(status: TransportStatus) => void>();
 
@@ -198,6 +205,24 @@ export class FakeNativeApi implements NativeApi {
   bootstrap = async (): Promise<BootstrapState> => {
     this.calls.push('bootstrap');
     return this.bootstrapState;
+  };
+
+  onRuntimeStartupFinished = async (
+    callback: (event: RuntimeStartupFinishedEvent) => void,
+  ): Promise<() => void> => {
+    this.calls.push('onRuntimeStartupFinished');
+    this.runtimeStartupFinishedListeners.add(callback);
+    return () => this.runtimeStartupFinishedListeners.delete(callback);
+  };
+
+  emitRuntimeStartupFinished = (succeeded = this.bootstrapState.runtimeStarted): void => {
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      runtimeStartupFinished: true,
+      runtimeStarted: succeeded,
+    };
+    const event = { succeeded };
+    this.runtimeStartupFinishedListeners.forEach((callback) => callback(event));
   };
 
   saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
@@ -529,10 +554,26 @@ export class FakeNativeApi implements NativeApi {
           ],
         },
       ],
-      midiInputs: [],
-      midiOutputs: [],
       refreshedAtMs: 1,
       message: 'Fake device probe complete.',
+    };
+  };
+
+  probeDeviceChannels = async (
+    driver: string,
+    inputDevice: string,
+    outputDevice: string,
+  ): Promise<DeviceChannels> => {
+    this.calls.push('probeDeviceChannels');
+    return {
+      driver,
+      inputDevice,
+      inputChannels: [{ index: 0, name: 'Input 1' }],
+      outputDevice,
+      outputChannels: [
+        { index: 0, name: 'Output 1' },
+        { index: 1, name: 'Output 2' },
+      ],
     };
   };
 
@@ -853,12 +894,26 @@ export class FakeNativeApi implements NativeApi {
 
   recoverAudioDevice = async (): Promise<AudioStatus> => {
     this.calls.push('recoverAudioDevice');
+    const startupRecovery = !this.bootstrapState.runtimeStarted;
     this.audio = {
       ...this.audio,
       state: 'muted',
       invalidSamples: 0,
       message: 'Device recovered; output re-enters emergency mute for safety.',
     };
+    if (startupRecovery) this.emitRuntimeStartupFinished(true);
+    return this.audio;
+  };
+
+  retryStartupRuntime = async (): Promise<AudioStatus> => {
+    this.calls.push('retryStartupRuntime');
+    this.audio = {
+      ...this.audio,
+      state: 'muted',
+      invalidSamples: 0,
+      message: 'Session runtime restored without reopening the audio device.',
+    };
+    if (!this.bootstrapState.runtimeStarted) this.emitRuntimeStartupFinished(true);
     return this.audio;
   };
 
@@ -2709,6 +2764,9 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
   const session = overrides?.session ?? defaultSession();
   return {
     session,
+    pluginCatalog: [],
+    runtimeStarted: true,
+    runtimeStartupFinished: true,
     recoveredFromGeneration: false,
     safeMode: false,
     nativeAvailable: true,

@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AudioSettingsDialog } from '@/components';
 import { fakeAudioStatus } from '@/native/native-api-fake';
-import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/lib/domain';
+import type {
+  AudioDeviceProbe,
+  AudioDriverConfig,
+  AudioStatus,
+  DeviceChannels,
+} from '@/lib/domain';
 
 const probe: AudioDeviceProbe = {
   drivers: [
@@ -41,8 +46,6 @@ const probe: AudioDeviceProbe = {
       outputs: [{ name: 'Focusrite USB ASIO', channels: [{ index: 0, name: 'Output 1' }] }],
     },
   ],
-  midiInputs: [],
-  midiOutputs: [],
   refreshedAtMs: 1,
   message: 'Audio device list refreshed.',
 };
@@ -54,6 +57,11 @@ function renderDialog(
     audio: AudioStatus;
     probe: AudioDeviceProbe;
     onApply: (config: AudioDriverConfig) => Promise<AudioStatus>;
+    onProbeChannels: (
+      driver: string,
+      inputDevice: string,
+      outputDevice: string,
+    ) => Promise<DeviceChannels>;
   }> = {},
 ) {
   const onClose = vi.fn();
@@ -68,7 +76,12 @@ function renderDialog(
           driver: 'Windows Audio',
           inputDevice: 'Mic',
           inputChannel: 0,
+          inputChannels: [
+            { index: 0, name: 'Mic 1' },
+            { index: 1, name: 'Mic 2' },
+          ],
           outputDevice: 'Speakers',
+          outputChannels: [{ index: 0, name: 'Left' }],
         })
       }
       probe={activeProbe}
@@ -76,6 +89,19 @@ function renderDialog(
       recordingActive={false}
       onClose={onClose}
       onRefresh={async () => activeProbe}
+      onProbeChannels={
+        overrides.onProbeChannels ??
+        (async (_driver, inputDevice, outputDevice) => ({
+          driver: _driver,
+          inputDevice,
+          inputChannels: [
+            { index: 0, name: 'Mic 1' },
+            { index: 1, name: 'Mic 2' },
+          ],
+          outputDevice,
+          outputChannels: [{ index: 0, name: 'Left' }],
+        }))
+      }
       onApply={onApply}
       onRecover={async () => fakeAudioStatus()}
     />,
@@ -104,6 +130,108 @@ describe('AudioSettingsDialog', () => {
 
     expect(screen.getByRole('option', { name: 'Mic 2' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Input channel' })).toHaveValue('1');
+  });
+
+  it('does not detail-probe the device currently used by the Audio Runtime', async () => {
+    const passiveProbe: AudioDeviceProbe = {
+      ...probe,
+      drivers: probe.drivers.map((driver) => ({
+        ...driver,
+        inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
+        outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
+      })),
+    };
+    const onProbeChannels = vi.fn(async () => ({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannels: [],
+      outputDevice: 'Speakers',
+      outputChannels: [],
+    }));
+
+    renderDialog({
+      probe: passiveProbe,
+      audio: fakeAudioStatus({
+        driver: 'Windows Audio',
+        inputDevice: 'Mic',
+        inputChannel: 1,
+        inputChannels: [
+          { index: 0, name: 'Mic 1' },
+          { index: 1, name: 'Mic 2' },
+        ],
+        outputDevice: 'Speakers',
+        outputChannels: [{ index: 0, name: 'Left' }],
+      }),
+      onProbeChannels,
+    });
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Mic 2' })).toBeInTheDocument());
+    expect(onProbeChannels).not.toHaveBeenCalled();
+  });
+
+  it('does not retry an empty detail-probe result automatically', async () => {
+    const passiveProbe: AudioDeviceProbe = {
+      ...probe,
+      drivers: probe.drivers.map((driver) => ({
+        ...driver,
+        inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
+        outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
+      })),
+    };
+    const onProbeChannels = vi.fn(async () => ({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannels: [],
+      outputDevice: 'Speakers',
+      outputChannels: [],
+    }));
+
+    renderDialog({
+      probe: passiveProbe,
+      audio: fakeAudioStatus({
+        driver: 'Windows Audio',
+        inputDevice: 'Mic',
+        inputChannels: [],
+        outputDevice: 'Speakers',
+        outputChannels: [],
+      }),
+      onProbeChannels,
+    });
+
+    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledOnce());
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(onProbeChannels).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry a failed detail probe automatically', async () => {
+    const passiveProbe: AudioDeviceProbe = {
+      ...probe,
+      drivers: probe.drivers.map((driver) => ({
+        ...driver,
+        inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
+        outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
+      })),
+    };
+    const onProbeChannels = vi.fn(async () => {
+      throw new Error('probe failed');
+    });
+
+    renderDialog({
+      probe: passiveProbe,
+      audio: fakeAudioStatus({
+        driver: 'Windows Audio',
+        inputDevice: 'Mic',
+        inputChannels: [],
+        outputDevice: 'Speakers',
+        outputChannels: [],
+      }),
+      onProbeChannels,
+    });
+
+    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledOnce());
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(onProbeChannels).toHaveBeenCalledOnce();
+    expect(screen.getByRole('alert')).toHaveTextContent('probe failed');
   });
 
   it('uses one Audio device selector for same-device drivers', async () => {
@@ -190,6 +318,13 @@ describe('AudioSettingsDialog', () => {
         recordingActive
         onClose={vi.fn()}
         onRefresh={async () => probe}
+        onProbeChannels={async (_driver, inputDevice, outputDevice) => ({
+          driver: _driver,
+          inputDevice,
+          inputChannels: [{ index: 0, name: 'Mic 1' }],
+          outputDevice,
+          outputChannels: [],
+        })}
         onApply={onApply}
         onRecover={async () => fakeAudioStatus()}
       />,

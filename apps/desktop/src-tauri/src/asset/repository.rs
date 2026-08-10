@@ -18,7 +18,7 @@
 use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
 use crate::session::CreativeSession;
 use crate::storage::now_ms;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
 const DERIVED_FROM: &str = "derived-from";
@@ -455,10 +455,41 @@ pub fn validate_session_references(
     if let Some(asset_id) = session.design_context.target_asset_id.as_ref() {
         references.push(("design target", "target", asset_id));
     }
+    if references.is_empty() {
+        return Ok(());
+    }
 
+    let connection = open(data_root)
+        .map_err(|error| format!("Session Asset validation could not open the Library: {error}"))?;
+    let mut lookup = connection
+        .prepare("SELECT id, kind, name, content_location FROM assets WHERE id = ?1")
+        .map_err(|error| format!("Session Asset validation could not prepare a lookup: {error}"))?;
     let mut checked = std::collections::HashSet::new();
     for (reference_kind, reference_id, asset_id) in references {
-        if checked.insert(asset_id.clone()) && load(data_root, asset_id).is_none() {
+        if !checked.insert(asset_id) {
+            continue;
+        }
+        let record = lookup
+            .query_row(params![asset_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .optional()
+            .map_err(|error| {
+                format!("Session Asset validation could not read '{asset_id}': {error}")
+            })?;
+        let is_canonical = record.is_some_and(|(id, kind, name, content_location)| {
+            id.and_then(|value| AssetId::from_normalized(value).ok())
+                .is_some()
+                && kind.as_deref().and_then(kind_from_db).is_some()
+                && name.is_some()
+                && content_location.is_some()
+        });
+        if !is_canonical {
             return Err(format!(
                 "Session references unknown AssetId {asset_id} ({reference_kind} '{reference_id}')."
             ));
@@ -740,6 +771,44 @@ mod tests {
         let mut session = CreativeSession::new(1_000);
         session.design_context.target_asset_id = Some(asset_id);
         assert!(validate_session_references(&root, &session).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_skips_the_database_without_references() {
+        // Arrange
+        let root = root("validate-empty");
+        let session = CreativeSession::new(1_000);
+
+        // Act
+        let result = validate_session_references(&root, &session);
+
+        // Assert
+        assert!(result.is_ok());
+        assert!(!root.join("library/riffra.db").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_rejects_an_incomplete_asset_record() {
+        // Arrange
+        let root = root("validate-incomplete");
+        let asset_id = mint_asset_id();
+        let connection = open(&root).unwrap();
+        connection
+            .execute(
+                "INSERT INTO assets (id, name, kind) VALUES (?1, ?2, ?3)",
+                params![asset_id.as_str(), "incomplete", "audio"],
+            )
+            .unwrap();
+        let mut session = CreativeSession::new(1_000);
+        session.design_context.target_asset_id = Some(asset_id);
+
+        // Act
+        let result = validate_session_references(&root, &session);
+
+        // Assert
+        assert!(result.is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }

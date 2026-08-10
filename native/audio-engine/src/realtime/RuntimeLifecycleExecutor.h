@@ -27,6 +27,9 @@ namespace riffra {
 class RuntimeLifecycleExecutor final {
 public:
     using Task = std::function<void()>;
+    /// Dispatches a serialized lifecycle task onto the thread that owns VST3
+    /// interactions.
+    using TaskDispatcher = std::function<void(Task)>;
     using TimeoutHandler = std::function<void()>;
 
     enum class StateSubmitResult {
@@ -40,7 +43,10 @@ public:
     /// The watchdog resolution (how often the running task is re-checked).
     static constexpr std::chrono::milliseconds kWatchdogGranularity { 25 };
 
-    RuntimeLifecycleExecutor();
+    /// Creates a lifecycle executor. When supplied, `dispatcher` runs each
+    /// task while the worker remains responsible for sequencing and watchdog
+    /// supervision.
+    explicit RuntimeLifecycleExecutor(TaskDispatcher dispatcher = {});
     ~RuntimeLifecycleExecutor();
 
     RuntimeLifecycleExecutor(const RuntimeLifecycleExecutor&) = delete;
@@ -83,6 +89,7 @@ private:
     std::deque<TimedTask> lifecycleTasks;
     std::deque<std::string> stateOrder;
     std::unordered_map<std::string, TimedTask> stateTasks;
+    TaskDispatcher taskDispatcher;
     TimeoutHandler timeoutHandler;
     bool stopping = false;
     bool running = false;
