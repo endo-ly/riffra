@@ -367,7 +367,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
 
     /// Clears the coordinator's ordering state after a candidate graph was
     /// prepared but its canonical Session commit failed. The caller must
-    /// submit the current canonical projection immediately afterwards.
+    /// submit the current canonical projection immediately afterwards. The
+    /// last canonical recovery snapshot remains available for a later restart.
     pub(crate) fn reset_for_repair(&self) -> bool {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime projection lock poisoned");
@@ -387,8 +388,37 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.active_session_revision = None;
         state.status.runtime_generation = generation;
         state.status.last_error = None;
-        state.last_active_key = None;
-        state.last_active_snapshot = None;
+        wake.notify_all();
+        true
+    }
+
+    /// Invalidates the active graph after the native audio device environment
+    /// changes. The next canonical projection is deliberately allowed to use
+    /// the same key because its native preparation inputs now differ.
+    pub(crate) fn invalidate_for_audio_device_change(&self) -> bool {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().expect("runtime projection lock poisoned");
+        if state.running_operation_id.is_some() {
+            return false;
+        }
+        let generation = self.driver.runtime_generation();
+        observe_generation(&mut state, generation);
+        state.latest_target = None;
+        state.desired_key = None;
+        state.active_projection = None;
+        state.status.state = RuntimeProjectionState::Idle;
+        state.status.running_operation_id = None;
+        state.status.target_projection_sequence = None;
+        state.status.target_session_revision = None;
+        state.status.prepared_session_revision = None;
+        state.status.active_projection_sequence = None;
+        state.status.active_session_revision = None;
+        state.status.runtime_generation = generation;
+        state.status.queued_at_ms = None;
+        state.status.started_at_ms = None;
+        state.status.completed_at_ms = None;
+        state.status.last_native_response_at_ms = None;
+        state.status.last_error = None;
         wake.notify_all();
         true
     }
@@ -910,7 +940,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_projection_is_not_requeued_until_canonical_confirmation() {
+    fn candidate_projection_requeues_the_previous_canonical_snapshot_after_repair() {
         // Arrange
         let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
         let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
@@ -939,8 +969,9 @@ mod tests {
         let requeued = coordinator.requeue_after_runtime_restart(2);
 
         // Assert
-        assert!(!requeued);
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11]);
+        assert!(requeued);
+        wait_until(|| driver.loaded.lock().unwrap().last() == Some(&10));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11, 10]);
     }
 
     #[test]
@@ -975,5 +1006,24 @@ mod tests {
 
         // Assert
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11, 99]);
+    }
+
+    #[test]
+    fn audio_device_change_reprepares_the_same_canonical_projection() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
+        let coordinator =
+            ProjectionCoordinator::new(Arc::clone(&driver), None, activation).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+
+        // Act
+        assert!(coordinator.invalidate_for_audio_device_change());
+        coordinator.submit_nonblocking(snapshot(10), key(1, 10));
+
+        // Assert
+        wait_until(|| driver.loaded.lock().unwrap().as_slice() == [10, 10]);
+        assert_eq!(coordinator.status().active_session_revision, Some(10));
     }
 }

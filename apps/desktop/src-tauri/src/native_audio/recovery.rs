@@ -20,6 +20,17 @@ pub(crate) enum MuteCause {
     RuntimeRestart,
 }
 
+fn mute_cause_after_restart(previous: Option<MuteCause>) -> MuteCause {
+    match previous {
+        Some(MuteCause::User) => MuteCause::User,
+        Some(MuteCause::Feedback) => MuteCause::Feedback,
+        Some(MuteCause::DeviceFault) => MuteCause::DeviceFault,
+        Some(MuteCause::Startup) | Some(MuteCause::RuntimeRestart) | None => {
+            MuteCause::RuntimeRestart
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeControlState {
     pub(crate) processing_mode: String,
@@ -207,11 +218,7 @@ impl AudioSupervisor {
             if let Ok(mut current) = self.recovery.runtime_controls.lock() {
                 current.processing_mode_sent = Some(current.processing_mode.clone());
                 current.emergency_muted = true;
-                current.mute_cause = if current_mute_cause == Some(MuteCause::User) {
-                    Some(MuteCause::User)
-                } else {
-                    Some(MuteCause::RuntimeRestart)
-                };
+                current.mute_cause = Some(mute_cause_after_restart(current_mute_cause));
             }
         }
         Ok(())
@@ -304,5 +311,34 @@ mod tests {
 
         assert_eq!(supervisor.completed_restart_outcome(7), Some(result));
         assert!(supervisor.completed_restart_outcome(8).is_none());
+    }
+
+    #[test]
+    fn restart_preserves_user_mute_cause() {
+        assert_eq!(
+            mute_cause_after_restart(Some(MuteCause::User)),
+            MuteCause::User
+        );
+    }
+
+    #[test]
+    fn restart_preserves_feedback_mute_cause() {
+        assert_eq!(
+            mute_cause_after_restart(Some(MuteCause::Feedback)),
+            MuteCause::Feedback
+        );
+    }
+
+    #[test]
+    fn restart_preserves_device_fault_mute_cause() {
+        assert_eq!(
+            mute_cause_after_restart(Some(MuteCause::DeviceFault)),
+            MuteCause::DeviceFault
+        );
+    }
+
+    #[test]
+    fn restart_assigns_runtime_cause_without_a_persistent_mute_cause() {
+        assert_eq!(mute_cause_after_restart(None), MuteCause::RuntimeRestart);
     }
 }

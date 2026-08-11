@@ -7,6 +7,10 @@
 use crate::AppState;
 use crate::model::{AudioAccessMode, AudioStatus};
 use crate::native_audio::AudioSupervisor;
+use crate::runtime::RuntimeReconciler;
+use crate::session::CreativeSession;
+use crate::session::actor::SessionActor;
+use crate::session::context::SessionContext;
 use crate::storage::replace_file;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -148,6 +152,9 @@ impl AudioPreferencesStore {
 pub struct AudioPreferencesContext<'a> {
     pub app: &'a AppHandle,
     pub audio: &'a AudioSupervisor,
+    pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+    pub session_actor: &'a SessionActor,
+    pub session: &'a Mutex<CreativeSession>,
     pub data_root: &'a Path,
     pub preferences: &'a Mutex<AudioPreferences>,
     pub safe_mode: bool,
@@ -192,19 +199,19 @@ fn apply_audio_preferences(
     let mut audio = context
         .audio
         .set_audio_driver(context.app, &requested.as_driver_config())?;
-    let effective = AudioPreferences::from_effective_status(&audio)?;
+    let effective = match AudioPreferences::from_effective_status(&audio) {
+        Ok(effective) => effective,
+        Err(error) => return Err(rollback_audio_change(context, &previous, error)),
+    };
+    if let Err(error) = synchronize_arrangement_runtime(context) {
+        return Err(rollback_audio_change(context, &previous, error));
+    }
     if let Err(error) = AudioPreferencesStore::new(context.data_root).save(&effective) {
-        let rollback = context
-            .audio
-            .set_audio_driver(context.app, &previous.as_driver_config());
-        return Err(match rollback {
-            Ok(_) => format!(
-                "Audio preferences could not be saved; the previous audio device was restored: {error}"
-            ),
-            Err(rollback_error) => format!(
-                "Audio preferences could not be saved and the previous audio device could not be restored: {error}; {rollback_error}"
-            ),
-        });
+        return Err(rollback_audio_change(
+            context,
+            &previous,
+            format!("Audio preferences could not be saved: {error}"),
+        ));
     }
     context.audio.set_restart_preferences(effective.clone())?;
     *context.preferences.lock().map_err(lock_error)? = effective;
@@ -223,6 +230,43 @@ fn apply_audio_preferences(
     Ok(audio)
 }
 
+fn synchronize_arrangement_runtime(context: &AudioPreferencesContext<'_>) -> Result<(), String> {
+    if !context.runtime.invalidate_for_audio_device_change() {
+        return Err(
+            "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
+        );
+    }
+    crate::session::application::sync_arrangement_runtime(&SessionContext {
+        audio: context.audio,
+        runtime: context.runtime,
+        session_actor: context.session_actor,
+        data_root: context.data_root,
+        session: context.session,
+        safe_mode: context.safe_mode,
+    })
+    .map(|_| ())
+}
+
+fn rollback_audio_change(
+    context: &AudioPreferencesContext<'_>,
+    previous: &AudioPreferences,
+    reason: String,
+) -> String {
+    let rollback = context
+        .audio
+        .set_audio_driver(context.app, &previous.as_driver_config())
+        .map_err(|error| error.to_string())
+        .and_then(|_| synchronize_arrangement_runtime(context));
+    match rollback {
+        Ok(()) => {
+            format!("{reason}; the previous audio device and Arrangement Graph were restored")
+        }
+        Err(rollback_error) => format!(
+            "{reason}; the previous audio device and Arrangement Graph could not be restored: {rollback_error}"
+        ),
+    }
+}
+
 #[tauri::command]
 pub async fn set_audio_driver(
     app: AppHandle,
@@ -233,6 +277,9 @@ pub async fn set_audio_driver(
         &AudioPreferencesContext {
             app: &app,
             audio: state.core.audio(),
+            runtime: &state.runtime,
+            session_actor: &state.session_actor,
+            session: state.core.session(),
             data_root: state.core.data_root(),
             preferences: &state.audio_preferences,
             safe_mode: state.core.safe_mode(),

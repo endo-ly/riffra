@@ -47,6 +47,25 @@ TEST(PluginRackTest, PreparesProcessorBeforeProcessing)
     EXPECT_TRUE(trace.processed);
 }
 
+TEST(PluginRackTest, RepreparesProcessorForTheCurrentAudioDeviceFormat)
+{
+    // Arrange
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = makeRack(trace, error);
+    ASSERT_NE(rack, nullptr) << error;
+
+    // Act
+    rack->prepare(44'100.0, 1024);
+
+    // Assert
+    EXPECT_DOUBLE_EQ(trace.sampleRate, 44'100.0);
+    EXPECT_EQ(trace.blockSize, 1024);
+    EXPECT_DOUBLE_EQ(static_cast<double>(rack->status().getProperty("sampleRate", 0.0)),
+                     44'100.0);
+    EXPECT_EQ(static_cast<int>(rack->status().getProperty("blockSize", 0)), 1024);
+}
+
 TEST(PluginRackTest, ProcessesMonoInputToStereoOutput)
 {
     ProcessorTrace trace;

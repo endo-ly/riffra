@@ -286,6 +286,48 @@ public:
             && liveTrace.midiMessages.size() == 48u;
     }
 
+    static bool audioDeviceRestartRebuildsRuntimeFormat() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        const auto snapshot = makeInstrumentSnapshot("track:audio-device");
+        if (!engine.loadSnapshot(snapshot, formats, 48'000.0, 256, error)
+            || !engine.loadSnapshot(snapshot, formats, 48'000.0, 256, error, false)
+            || !engine.preparedTrackReusesRuntimeDevices("track:audio-device")
+            || !engine.commitPreparedSnapshot(error))
+            return false;
+
+        // Act
+        engine.audioDeviceStarted();
+        if (!engine.loadSnapshot(snapshot, formats, 44'100.0, 1024, error, false))
+            return false;
+
+        double preparedSampleRate = 0.0;
+        int preparedBlockSize = 0;
+        double trackSampleRate = 0.0;
+        bool reusesRuntimeDevices = true;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.pendingTimeline == nullptr || engine.pendingTimeline->tracks.empty())
+                return false;
+            preparedSampleRate = engine.pendingTimeline->outputSampleRate;
+            preparedBlockSize = engine.pendingTimeline->preparedBlockSize;
+            trackSampleRate = engine.pendingTimeline->tracks.front()->outputSampleRate;
+            reusesRuntimeDevices = engine.pendingTimeline->tracks.front()->reuseRuntimeDevices;
+        }
+        if (reusesRuntimeDevices || std::abs(preparedSampleRate - 44'100.0) > 0.1
+            || preparedBlockSize != 1024 || std::abs(trackSampleRate - 44'100.0) > 0.1)
+            return false;
+
+        // Assert
+        return engine.commitPreparedSnapshot(error)
+            && std::abs(static_cast<double>(engine.status().getProperty("sampleRate", 0.0))
+                        - 44'100.0)
+                <= 0.1;
+    }
+
 
     static juce::var run(const juce::File& directory) {
         auto* result = new juce::DynamicObject();
@@ -1585,6 +1627,16 @@ TEST(TimelineEngineTest, RetainsEmergencyPanicUntilAReadableGraphIsAvailable)
     // Arrange
     // Act
     const auto passed = TimelineEngineTestPeer::panicClosesEveryInstrumentRack();
+
+    // Assert
+    EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat)
+{
+    // Arrange
+    // Act
+    const auto passed = TimelineEngineTestPeer::audioDeviceRestartRebuildsRuntimeFormat();
 
     // Assert
     EXPECT_TRUE(passed);

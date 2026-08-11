@@ -2291,9 +2291,9 @@ mod tests {
     use crate::session::actor::SessionActor;
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Barrier, Mutex};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     struct BarrierCommitDriver {
         commit_started: Arc<Barrier>,
@@ -2493,6 +2493,19 @@ mod tests {
         }
     }
 
+    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if predicate() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("condition was not met within {timeout:?}");
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn rejected_plugin_candidate_restores_the_canonical_runtime() {
         // Arrange
@@ -2541,12 +2554,9 @@ mod tests {
 
         // Assert
         assert!(requeued);
-        for _ in 0..10_000 {
-            if driver.loaded.lock().unwrap().len() > loaded_before_restart {
-                break;
-            }
-            thread::yield_now();
-        }
+        wait_until(Duration::from_secs(1), || {
+            driver.loaded.lock().unwrap().len() > loaded_before_restart
+        });
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&0));
         assert!(!driver.loaded.lock().unwrap().contains(&1));
         let _ = std::fs::remove_dir_all(&root);
@@ -2656,16 +2666,13 @@ mod tests {
         .expect("initial update_track must succeed");
         driver.commit_started.wait();
 
-        let update_started = Arc::new(Barrier::new(2));
-        let update_returned = Arc::new(Barrier::new(2));
+        let (update_result_tx, update_result_rx) = mpsc::channel();
         let update_context = {
             let session = Arc::clone(&session);
             let runtime = Arc::clone(&runtime);
             let actor = Arc::clone(&actor);
             let audio = Arc::clone(&audio);
             let root = root.clone();
-            let update_started = Arc::clone(&update_started);
-            let update_returned = Arc::clone(&update_returned);
             thread::spawn(move || {
                 let context = SessionContext {
                     audio: audio.as_ref(),
@@ -2675,34 +2682,31 @@ mod tests {
                     session: session.as_ref(),
                     safe_mode: false,
                 };
-                update_started.wait();
-                update_track(
+                let result = update_track(
                     &context,
                     "track:b",
                     TrackPatch {
                         muted: Some(true),
                         ..Default::default()
                     },
-                )
-                .expect("update_track must succeed while commit is blocked");
-                update_returned.wait();
+                );
+                update_result_tx.send(result).unwrap();
             })
         };
-        update_started.wait();
-        update_returned.wait();
+        let update_result = update_result_rx.recv_timeout(Duration::from_secs(1));
 
         // Act
         driver.release_commit.wait();
         update_context.join().unwrap();
 
         // Assert
+        update_result
+            .expect("update_track must return while commit is blocked")
+            .expect("update_track must succeed while commit is blocked");
         let expected_revision = session.lock().unwrap().arrangement.revision;
-        for _ in 0..10_000 {
-            if driver.loaded.lock().unwrap().last() == Some(&expected_revision) {
-                break;
-            }
-            thread::yield_now();
-        }
+        wait_until(Duration::from_secs(1), || {
+            driver.loaded.lock().unwrap().last() == Some(&expected_revision)
+        });
         assert_eq!(
             driver.loaded.lock().unwrap().last(),
             Some(&expected_revision)

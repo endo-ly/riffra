@@ -163,6 +163,7 @@ Native APIは本番と同じ契約を実装する差替えへ置き換え、次�
 - VSTまたはArrange Runtimeの復元中もSession Actor、Rack、Workspaceの長時間ロックを保持しない
 - Library同期は安全初期化の返却後に独立キューへ投入し、機能Runtime復元やデータベース遅延が緊急ミュート解除を遅らせない
 - 起動完了後の音声Runtime再起動では、Rustが直前のMute原因を確認し、ユーザーMute・Feedback・デバイスfaultを保持する。安全なGraph復元に成功した場合だけ、Reactを介さずRustが以前のUnmute状態へ戻す
+- Audio Driver変更では、DeviceのOpen成功後にRuntime Projectionを無効化し、現在のSample RateとBlock SizeでArrange GraphとTrack Pluginを再構築する。失敗時は前のDeviceとcanonical Graphを復元し、Fault中の正常Device切替ではDevice Faultを解除する
 - VSTを含むInstrumentまたはEffectの追加・置換は、候補Graphが失敗したときcanonical Sessionを変更せず、成功した候補だけを保存する。Application層で候補準備拒否、Session sequence競合、保存失敗、候補破棄後のRuntime再起動を確認する
 - Plugin Scannerのload validationがArrangement Runtimeと同じPluginRackのfactory、layout、precision、prepare経路を通る
 

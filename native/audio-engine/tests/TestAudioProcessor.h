@@ -14,6 +14,8 @@ struct ProcessorTrace final {
     bool prepared = false;
     bool processed = false;
     bool released = false;
+    double sampleRate = 0.0;
+    int blockSize = 0;
 };
 
 class TestProcessor final : public juce::AudioProcessor {
@@ -26,6 +28,8 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
         trace.prepared = sampleRate > 0.0 && samplesPerBlock > 0;
+        trace.sampleRate = sampleRate;
+        trace.blockSize = samplesPerBlock;
     }
     void releaseResources() override { trace.released = true; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {

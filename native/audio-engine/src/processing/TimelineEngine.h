@@ -304,6 +304,7 @@ private:
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;
     std::atomic<PreparedTimeline*> activeTimeline { nullptr };
+    std::atomic<bool> runtimeDevicesNeedReprepare { false };
     std::atomic<std::uint32_t> activeAudioReaders { 0 };
     std::atomic<bool> publishInProgress { false };
     std::atomic<bool> panicAllPending { false };

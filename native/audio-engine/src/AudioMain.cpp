@@ -1868,6 +1868,7 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                     if (restoreError.isEmpty()) {
                         callback.setInputChannel(previousInputChannel);
                         manager.addAudioCallback(&callback);
+                        callback.setDeviceFaulted(false);
                     }
                     return restoreError;
                 };
@@ -1899,6 +1900,7 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 }
                 callback.setInputChannel(requested.inputChannel);
                 manager.addAudioCallback(&callback);
+                callback.setDeviceFaulted(false);
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }

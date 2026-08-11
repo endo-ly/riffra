@@ -50,6 +50,13 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.reset_for_repair()
     }
 
+    /// Invalidates the active graph after the native audio device environment
+    /// changes, so the canonical Session is prepared with the new sample rate
+    /// and block size.
+    pub(crate) fn invalidate_for_audio_device_change(&self) -> bool {
+        self.projection.invalidate_for_audio_device_change()
+    }
+
     /// Requeues the last active projection when a sidecar restart occurred
     /// without an in-flight projection operation.
     pub(crate) fn requeue_after_runtime_restart(&self, generation: u64) -> bool {

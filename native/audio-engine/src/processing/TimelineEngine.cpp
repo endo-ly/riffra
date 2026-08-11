@@ -364,7 +364,8 @@ bool TimelineEngine::prepareSnapshot(
         auto sameRuntimeTopology = false;
         {
             const juce::SpinLock::ScopedLockType lock(timelineLock);
-            if (timeline != nullptr) {
+            if (!runtimeDevicesNeedReprepare.load(std::memory_order_acquire)
+                && timeline != nullptr) {
                 const auto existing = std::find_if(
                     timeline->tracks.begin(), timeline->tracks.end(),
                     [&track](const auto& item) { return item->id == track->id; });
@@ -704,6 +705,7 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         retiredTimeline = std::move(timeline);
         timeline = std::move(candidate);
         activeTimeline.store(timeline.get(), std::memory_order_release);
+        runtimeDevicesNeedReprepare.store(false, std::memory_order_release);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
         monitoringInputChannels.store(
             pendingMonitoringInputChannels,
@@ -746,12 +748,17 @@ void TimelineEngine::audioDeviceStarted() noexcept {
     audioClockSample.store(0, std::memory_order_release);
     const AudioPublishScope publish(*this);
     if (publish.isReady()) {
+        activeTimeline.store(nullptr, std::memory_order_release);
+        monitorLiveInput.store(false, std::memory_order_release);
+        monitoringInputChannels.store(0, std::memory_order_release);
+        armedInstrumentTrack.store(false, std::memory_order_release);
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         if (timeline != nullptr) {
             resetPlaybackTrackState(*timeline);
             resetRecordingTrackState(*timeline);
         }
     }
+    runtimeDevicesNeedReprepare.store(true, std::memory_order_release);
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
