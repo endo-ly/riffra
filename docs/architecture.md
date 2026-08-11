@@ -1,270 +1,272 @@
 # Riffra アーキテクチャ
 
-## 1. 全体構造
+## 1. ドキュメントの目的とスコープ
 
-Riffraは、ArrangeとDesignの二領域を、共通のセッション、素材、音声処理、保存機構で支える。演奏、監視、録音はTrackとArrange下部のPlay Surfaceが担う。
+本書はRiffraのシステム構造と主要機構を記述する。「どの層が何の正準状態を持ち、どのように整合するか」を対象とする。個々の型の詳細は `data-model.md`、境界の契約は `ipc.md`、画面の設計は `ui-ux-design/arrange-screen.md` を参照する。
 
-```text
-┌─────────────────────────────────────────────────────┐
-│ 表示と操作                                            │
-│ Arrange / Design                                      │
-│ Library / Inspector / Transport                      │
-└───────────────────────┬─────────────────────────────┘
-                        │ 操作と表示状態
-┌───────────────────────▼─────────────────────────────┐
-│ 制作状態の調整                                        │
-│ riffra-core: Session / Asset / Rack / AppCore        │
-└───────────────┬───────────────────────┬─────────────┘
-                │ 素材と由来             │ 音声処理の指示
-┌───────────────▼────────────────┐  ┌──▼──────────────┐
-│ 素材と制作記憶                 │  │ リアルタイム音声 │
-│ Inbox / Library / Provenance   │  │ Device / Rack   │
-│ 録音 / 音源 / 生成定義        │  │ VST3 / 信号生成 │
-└───────────────┬────────────────┘  └──┬──────────────┘
-                │ ファイルと索引          │ 子プロセス境界
-┌───────────────▼────────────────────────▼─────────────┐
-│ Platform Adapter                                     │
-│ Tauri / 音声機器 / MIDI / ファイル / VST3 / 外部機能 │
-└─────────────────────────────────────────────────────┘
-```
+### 書くこと
 
-上位層は下位層の実装方法へ依存せず、明示した型と命令を通して利用する。下位層から上位層へは、成功、失敗、進捗、実効値を状態として返す。
+- プロセス構成（Tauriシェルとサイドカー群）
+- レイヤー構成と依存方向
+- セッション正準化、ランタイム投影、永続化・回復、セーフモード、ライブラリ索引、バックグラウンドジョブの各機構
+- ドメインが守る不変条件
 
-## 2. 中心となるデータモデル
+### 書かないこと
 
-| 概念      | 所有する情報                                   | 所有しない情報                   |
-| --------- | ---------------------------------------------- | -------------------------------- |
-| Session   | 制作中の選択、ラック、時間軸、設定、履歴       | 音声ファイル本体、プラグイン本体 |
-| Project   | 保存されたSession、素材参照、版、持出し情報    | 第三者プラグインの配布物         |
-| Asset     | 素材の識別子、種類、場所、由来、関連、状態     | 画面固有の一時表示               |
-| Recording | 原音、加工音、MIDI、録音条件、欠落情報         | 時間軸上の配置                   |
-| 生成定義  | 生成式、接続、パラメーター、乱数条件、形式の版 | 実行中の音声バッファー           |
-| Rack      | 音声処理の順序、分岐、状態、割当               | 実行中の音声バッファー           |
-| Clip      | 素材参照、使用範囲、位置、非破壊編集値         | 元素材の複製                     |
-| Job       | 後処理の種類、進捗、取消し、結果参照           | 画面の操作状態                   |
+- 個別のTauri命令・IPCプロトコルの詳細（`ipc.md`）
+- エンティティのフィールド定義（`data-model.md`、code参照）
+- 画面の操作仕様（`ui-ux-design/`）
 
-同じデータを複数の層で独立して持たない。画面はSessionと実行状態を表示し、保存層は素材と由来を保持し、音声層はリアルタイム処理に必要な最小状態を持つ。
+---
 
-## 3. 表示と操作
+## 2. プロセス構成
 
-### 3.1 制作領域
-
-- **Arrange**は音声・MIDI入力、VST3、ラック、監視、録音に加え、revision付き音楽時間軸、トラック、Clip配置、リアルタイム再生、MIDI編集、ミキサー、書出しを扱う。演奏入力はFocused Instrument Trackを対象にするPlay Surfaceから行う
-- **Design**は信号生成、波形編集、音源化、分析、参照比較、音源分離を扱う
-
-制作領域は同じSessionを参照する。領域の切替によって録音、再生、ミュート、選択、履歴を作り直さない。
-
-初回のAudio Runtime調整はRustがSidecar世代の準備完了を待って行う。Rustは保存済みSessionのMaster Gainを適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認した時点で、起動時の緊急ミュートを解除する。その後、Sample PadとArrange Runtimeを復元し、復元に成功した場合だけArrangeの処理へ切り替える。VSTグラフの復元に失敗した場合はRuntime ProjectionをFailedとし、Sample Padなど機能Runtimeの復元に失敗した場合は機能Runtimeエラーとして通知する。いずれの場合もAudio状態は安全確認済みとして保ち、processing modeはpassiveを維持する。Designではpassiveを維持する。起動時解除とユーザーのミュート操作は同じ短い操作境界で直列化し、ユーザーの手動ミュート意図を自動解除処理が上書きしない。Runtime再起動後の復元はRustだけが所有し、Reactは通知を表示する。起動安全確認が未完了の状態でデバイス復旧に成功した場合は、同じ起動調整へ再接続する。Sample Padの保存・公開後にSidecar世代が変わっていた場合は、最新の正準SessionからPad構成を再適用する。Audio Driverの変更と起動完了後のAudio Device復旧は、出力を緊急ミュートしたままDeviceを開き直し、RustがRuntime復旧のMute所有権を設定してからRuntime Projectionを無効化する。Mute原因がUserまたはFeedbackの場合はその意図を維持し、それ以外はRuntimeRecoveryとしてSample PadとArrange Runtimeを現在のSample RateとBlock Sizeで再構築する。Graphが安全に有効化された場合だけRuntimeRecoveryを解除し、UserまたはFeedbackのMuteは自動解除しない。Sample Padの復元に失敗して空のmappingへ切り替えられた場合は警告としてArrange復旧を続け、空のmappingへも切り替えられない場合だけDevice変更を失敗として扱う。新しいDeviceの実効値が要求値と異なる場合は変更を失敗とし、前のDeviceとcanonical Graphを復元する。Driver変更の失敗後に前のDeviceが復旧した場合も、同じRuntime再構築を完了してから失敗を返す。Sidecar再起動が復旧を引き受けた場合はrestart handlerがSample PadとArrange Runtimeを一度だけ復元し、外側のDevice recoveryは再送しない。Sidecar再起動用のAudio Preferencesは、Deviceの有効化後からRuntime再構築とrollbackの完了まで、再起動時に復元すべきDeviceを指す。
-
-### 3.2 共通領域
-
-- **Library**は素材とプラグインを検索し、選択中の制作領域へ渡す
-- **Inspector**は選択対象の詳細を編集する
-- **Transport**は再生、停止、録音、位置、テンポ、ループを操作する
-- **上部バー**は保存状態、音声状態、安全操作、検索、設定を表示する
-
-画面部品は音声処理、ファイル保存、子プロセス管理を直接実装しない。操作をアプリケーション層へ渡し、返された状態を表示する。
-
-ArrangeのplayheadはC++のEngine Clockを正本とする。Rustは保存済みArrangementからAssetIdを解決したRuntime Timeline Snapshotを構築し、C++の`TimelineEngine`へ渡す。C++はSourceのopen、read-ahead、Sample Rate補正、作業領域確保を非リアルタイムスレッドで行い、Audio Block境界でPrepared Timelineを交換する。Reactは20 Hzの`transport-status`を受け、描画フレーム間だけ表示位置を補間する。
-
-Arrangeの波形はAsset分析結果から派生する表示状態であり、Sessionへ重複保存しない。Trim、Split、Duplicate、Gain、Pan、Fadeの確定操作はRustのArrangement編集へ渡し、返された正準Sessionで表示とRuntimeを収束させる。MIDI Clipも同じCommit境界を使うが、位置・長さはTimelineTickのまま扱う。
-
-ArrangeのRuntime SnapshotはTrack単位でAudio ClipとMIDI Clipを渡す。Trackは挿入Rack・Instrument Rack・Live Instrument Rackを持つ。Audio TrackではAudio Clipを、Instrument TrackではMIDI ClipをTrack Rack経由で処理し、Timeline再生はTrack Gain/PanとPDCを経てMasterへ混ぜる。一方、Play Surfaceや外部MIDIからの「今弾いた音」はLive Instrument RackとLive Effect Chainを通してTrack Gain/PanでMasterへ混ぜ、Track間のPDC遅延補正を適用しない。Instrument TrackはLive Instrument Runtimeを持つ。Audio TrackのLive Effect Chainは入力監視が有効な場合だけ生成・処理し、録音用Effect ChainはArmされたAudio Trackに必要であり、監視が無効でも録音経路を処理する。必要状態が変わったときだけSnapshotを作り直す。これによりTimelineのClip同士は同期しつつ、ライブMIDIは低遅延で鳴る。Seek、Stop、Loop境界ではTrack RackとLive Instrument Rackの両方へ全Note停止を発行し、Noteが鳴り続ける状態を残さない。MIDI ClipのCC、Pitch Bend、Channel PressureはNoteとは別のイベントとして保存し、同じSchedulerから送信する。
-
-Play SurfaceからのMIDIは、Focused Instrument TrackのLive Instrument Rackへ直接送る。Focused TrackがArmedで録音中の場合だけ、同じイベントを`riffra:play-surface`の入力源としてそのTrackへ記録する。外部MIDIのDevice／Channel Routeはこの経路と分離して維持する。
-
-録音停止時は、Native RuntimeのRaw/Processed/MIDI出力をCanonical Assetへ登録し、ArmされたTrackごとにRecordingSessionRecord、RecordingTakeRecord、Timeline Clipを同一Session Commitで作成する。Reactは停止結果のBootstrapでSessionを再取得するため、録音結果をLibraryから手動配置する必要がない。Input MonitoringはTrackのOff/Auto/OnをRuntime Snapshotへ渡し、録音経路とAudition/Monitoring経路を分離する。
-
-Loop Recordingでは、Captureの連続出力をLoop境界に沿ってSource FrameとMIDI Tickの範囲へ分割し、各周回を同じRecording SessionのTakeとして保存する。Punch RangeはRuntime Snapshotの録音窓としてNative callbackへ渡し、前後のPlaybackは継続したまま範囲内だけをRaw/Processedへ書き込む。「Record Another Take」は明示したRecording Session IDをCaptureへ保存して同じSessionへ追加する。
-
-## 4. 制作状態の調整
-
-制作状態の調整層は、利用者の操作を一貫した状態変更へ変換する。
-
-主な責務は次のとおり。
-
-- Scratch SessionとProjectの開始、保存、読込み、終了
-- Arrange、Designで共有する選択と表示状態
-- ラック、録音、素材、クリップ、トラックの関連付け
-- 取消し、やり直し、音色候補、支援提案の履歴
-- 自動保存、復旧世代、保存形式の更新
-- 走査、分析、分離、書出しの開始、進捗、取消し、再実行
-- 音声子プロセスと画面の状態同期
-
-Tauriの命令は、入力の検証、型変換、アプリケーション処理への委譲、結果の返却に限定する。制作規則を命令関数へ埋め込まない。
-
-## 5. 素材と制作記憶
-
-### 5.1 素材の保存
-
-素材は、ファイル本体と検索用索引を分けて扱う。
-
-- 音声、MIDI、生成定義、保存情報はファイルとして保持する
-- 名前、タグ、評価、種類、使用先は索引へ保持する
-- ファイル操作と索引更新は一つの操作として扱い、片方だけを成功にしない
-- 元素材と派生素材は別の識別子を持つ
-- 元素材または生成定義、処理、設定、生成物の関係を由来情報として残す
-
-### 5.2 Inbox
-
-Inboxは未整理素材の保全領域である。録音、取込み、分離結果などは、名前や分類が決まっていなくてもInboxへ入る。
-
-名称変更、タグ、保管、昇格、削除は、関連する音声、MIDI、保存情報、索引を同じ単位で更新する。
-
-### 5.3 非破壊編集
-
-波形編集と時間軸編集は、原本を直接変更しない。
-
-- 範囲、反転、ループ、包絡などは設定として保持する
-- 実体が必要な処理は新しい派生素材を作る
-- Clipは素材の位置と使用範囲だけを持つ
-- 書出し結果は新しい素材として保存する
-
-### 5.4 生成定義
-
-数式から作る音は、編集可能な生成定義と、必要に応じて作る音声素材を分けて保存する。
-
-- 生成定義は、数式、要素の接続、パラメーター、乱数条件、形式の版を持つ
-- 同じ生成定義と入力から、許容誤差内で同じ音を再現する
-- 音声へ変換した場合は、生成定義、変換条件、生成した素材を関連付ける
-- 未知の要素や新しい形式を、既定値へ読み替えて上書きしない
-
-## 6. リアルタイム音声
-
-リアルタイム音声は`riffra-audio.exe`へ分離し、画面と保存処理の遅延から保護する。
-
-主な責務は次のとおり。
-
-- Windows音声機器の列挙、開始、停止、切替
-- サンプルレート、バッファー、入出力チャンネルの適用
-- 音声入力、ラック、メーター、音声出力の処理
-- VST3の読込み、処理、状態取得、画面の所有
-- MIDI入力と発音停止
-- 検証済みの生成定義による信号生成
-- 原音と加工音の録音
-- 緊急ミュート、出力制限、異常値の除去
-
-音声処理のコールバックでは、時間の上限を予測できない処理を行わない。
-
-- ファイル形式の解析
-- JSONの生成と解析
-- SQLiteへのアクセス
-- プラグイン走査
-- ネットワーク通信
-- 大きなメモリー確保
-- 画面更新
-
-これらは別のスレッド、子プロセス、または後処理として実行する。
-
-### 6.1 オフラインレンダー
-
-オフラインレンダーは一要求ごとに終了する`riffra-render`へ分離する。`riffra-render-core`はTimeline処理とファイル入出力を所有し、`juce_audio_devices`へリンクしない。Rustの`riffra-render-worker`が`AudioRuntime`を実装し、デスクトップホストからも同じ経路を使用する。
-
-### 6.2 信号生成の実行境界
-
-Designで編集中の生成定義を、そのまま音声処理へ渡さない。画面とアプリケーション層で構文、接続、値の範囲を検証し、実行量の上限が分かる処理表へ変換してから音声子プロセスへ渡す。
-
-- 生成式からファイル、ネットワーク、任意の外部処理へアクセスさせない
-- 一つの音声ブロックで行う計算量、同時発音数、内部状態、反復回数に上限を設ける
-- 乱数を使う音は、保存した条件から再現できるようにする
-- 非数、無限値、過大音量を各生成要素と最終出力で検出する
-- 無効な定義は直前の有効な音を保つかミュートし、成功として扱わない
-- 音声素材への変換は後処理で行い、リアルタイム音声を止めない
-
-## 7. VST3の実行境界
-
-### 7.1 走査
-
-プラグイン走査は専用の子プロセスで行う。異常終了、応答停止、不正な情報を一つのプラグインに限定し、結果を検証してからCatalogへ反映する。変更されていないパスの検証済み・隔離済み結果はCatalogから再利用し、新規または変更されたプラグインだけを順番にロード検証する。ロード検証はArrangement Runtimeと同じ`PluginRack`のfactory、bus layout、processing precision、`prepareToPlay`経路を使う。検証が応答しない場合はタイムアウトして隔離する。
-
-### 7.2 音声処理
-
-読み込んだプラグインは音声子プロセス内で処理する。プラグインを含むArrangement編集は、候補Snapshotの準備が成功してからcanonical Sessionへ保存する。候補の生成に失敗した場合はSessionを変更せず、候補を復旧元として記録しない。保存後の失敗時は直前のRuntime Graphへ戻し、正準SessionのSnapshotを復旧元として更新する。インスタンス生成・初期化・破棄とArrangement Snapshotの準備は音声コールバックおよびコマンド受付から分離する。画面側はラック状態と操作を管理し、音声バッファーを直接扱わない。
-
-プラグインが失敗した場合は、対象、影響、保存済み状態を上位へ返す。無音を成功として扱わず、迂回、無効化、再試行、置き場所化を選べる状態にする。
-
-### 7.3 プラグイン画面
-
-プラグイン画面は実際のプラグインが提供する編集画面を表示する。画面の開閉と音声処理の生存期間を分離し、編集画面を閉じても音声処理を継続できるようにする。
-
-## 8. 二つの主要な流れ
-
-### 8.1 音の流れ
+Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成される。リアルタイム音声は常にサイドカーが担当し、Tauriプロセスは音声コールバックやプラグインコードを実行しない。
 
 ```text
-音声入力 ─→ 入力保護 ─────────┐
-MIDI ─────→ VST3音源 ─────────┼→ ラック ─→ 出力メーター ─→ 出力保護 ─→ 音声機器
-MIDI ─────→ 信号生成器 ───────┘
-
-入力保護 ──→ 原音録音
-ラック出力 ─→ 加工音録音 ─→ Inbox
-
-生成定義 ─→ 検証・処理表への変換 ─→ 信号生成器
+┌─────────────────────────────────────────────────────────────────┐
+│ Tauri シェル                                                     │
+│ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
+│ │ WebView (React)      │   │ Rust バックエンド                │ │
+│ │ 表示・操作・楽曲編集  │◀──▶│ コマンド受付 / Session Actor /  │ │
+│ │ NativeApi 経由で指令 │   │ ランタイム調整 / 永続化 / Jobs   │ │
+│ └──────────────────────┘   └──────────────────────────────────┘ │
+└──────┬──────────────────────────┬───────────────────────────────┘
+       │ JSON Lines (stdin/stdout)
+       │ 1つのコマンド + 1行の応答
+┌──────▼────────────────┐  ┌──────▼──────────────┐  ┌──────▼────────┐
+│ riffra-audio          │  │ riffra-plugin-scan  │  │ riffra-render │
+│ リアルタイム音声       │  │ VST3スキャン        │  │ -worker       │
+│ JUCE / ASIO / WASAPI  │  │ (起動時・再スキャン) │  │ オフライン    │
+│ 投影・演奏・録音・監視 │  └─────────────────────┘  │ レンダリング  │
+│ VST3 ホスティング     │                            └──────────────┘
+└───────────────────────┘
 ```
 
-ミュートと異常値保護は経路の外側ではなく、常に音の流れへ含める。
+| プロセス             | 役割                                                         | 所有状態                                             |
+| -------------------- | ------------------------------------------------------------ | ---------------------------------------------------- |
+| Tauri シェル         | アプリ全体の監督。UI、セッション正準状態、永続化、ジョブ管理 | CreativeSession（正準）、SQLite ライブラリ索引、設定 |
+| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視     | ランタイムグラフ（投影される一時状態のみ）           |
+| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）   | なし                                                 |
+| riffra-render-worker | タイムラインのオフラインレンダリング                         | なし                                                 |
 
-### 8.2 意図と素材の流れ
+Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
+
+---
+
+## 3. レイヤー構成
+
+依存は上位から下位への一方向。下位層は上位層を知らない。
 
 ```text
-利用者の操作
-      ↓
-Sessionの変更
-  ├─→ 履歴と自動保存
-  ├─→ ラックと音声処理
-  ├─→ 生成定義と音色
-  ├─→ 素材参照と時間軸
-  └─→ 後処理
-          ↓
-      派生素材
-          ↓
-      由来と索引
+React フロントエンド
+  ├─ 状態: 保持しない。CreativeSession を表示・編集するだけ
+  ├─ 編集: NativeApi 経由で Tauri 命令を呼ぶ（フロントエンドは楽曲を直接変えない）
+  └─ 型: src/lib/generated（Rust の ts-rs 出力を gen-barrel.js で束ねたもの）
+
+Tauri 命令層 (src-tauri/src/**/commands.rs)
+  ├─ 受け取った命令を Application 層へ委譲
+  └─ 実行モード: run_blocking（重い操作は spawn_blocking）で async ワーカーを塞がない
+
+Application 層 (src-tauri/src/session, asset, recording, analysis, separation, render, plugins)
+  ├─ 衝突検知付きで 正準 CreativeSession へ操作を適用
+  └─ SessionContext（audio / runtime / session_actor / data_root / session / safe_mode）を介して依存を注入
+
+riffra-core（crates/riffra-core）: プラットフォーム非依存のドメイン
+  ├─ CreativeSession / Asset / Rack / AppCore / AudioRuntime(port)
+  ├─ validate_and_normalize（ロード・保存前に正準化）
+  └─ Tauri・WebView・OS統合を含まない
+
+永続化・外部境界
+  ├─ SessionStore: scratch/current.json + generations（§6）
+  ├─ ライブラリ索引: SQLite リードモデル（§8）
+  └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
 ```
 
-音声処理が異常になっても、保存済みのSession、素材、履歴を引き続き扱える構造を保つ。
+フロントエンドは「編集の瞬間に戻った CreativeSession を受け取って差し替える」方式のみで状態を変更する。直接的な楽曲構造の書き換えや、バックエンドを経ない永続化は行わない。
 
-## 9. 保存と復旧
+---
 
-### 9.1 原則
+## 4. セッション正準化
 
-1. 原本を上書きしない
-2. 保存途中のファイルと完成ファイルを区別する
-3. 有効な保存世代を一つ以上残す
-4. 書込み失敗を成功として返さない
-5. 不明な保存形式を推測で読み替えない
-6. ファイル不足と内容破損を区別する
+### 4.1 単一の正準状態
 
-### 9.2 録音
+CreativeSession（`src-tauri/src/session` + `riffra-core`）が、楽曲の全ての編集可能な状態（アレンジ、クリップ、テイク、トラック、ラック、設定、スナップショット）の単一の正準状態である。WebView・サイドカーはすべて投影であり、正準状態は Rust プロセス内の `Mutex<CreativeSession>` にのみ存在する。
 
-録音中は原音と加工音を途中ファイルへ書き、定期的に確定する。正常停止時だけ完成ファイルへ移す。異常終了時は、取得できたサンプル数、欠落範囲、復旧状態を保存する。
+### 4.2 Session Actor
 
-### 9.3 Session
+`session/actor.rs` は正準状態への操作順序と投影の整合を担う。
 
-Sessionは一時ファイルへ書いてから置き換え、復旧用の世代を保持する。読込み時は形式の版を確認し、破損、不足、古い形式、新しい形式を区別する。
+- **operation_gate（Mutex）**: 正準セッション操作（コマンド）を直列化する。VST準備などの遅い処理はガードの外で行われるため、遅いプラグインがセッション操作を長時間ブロックしない
+- **projection_version（AtomicU64 による seqlock）**: 偶数値が「安定した投影バージョン（sequence × 2）」、奇数値が「コミット境界での一時状態」。`capture_projection` はセッションと sequence のペアを一貫したまま非ブロッキングで取得し、コミット境界の短い交換を挟んで再試行する
 
-## 10. 外部機能と情報保護
+### 4.3 コミットパイプライン
 
-演奏、録音、加工、配置、保存は外部サービスなしで成立させる。
+`session/commit.rs` が正準操作の保存境界を定める。
 
-外部サービスを利用する場合は、次をアプリケーション層で明示する。
+1. `validate_and_normalize()` — ドメイン不変条件の検証と正準化
+2. `updatedAtMs` を単調増加に補正（`next_session_update_timestamp`）
+3. `SessionStore::save()` — 世代保存 + アトミック置換（§6）
+4. `publish_session()` — Actor の `begin_commit` / セッション交換 / `mark_committed` の間で、in-memory と投影の順序を一貫させる。保存中にユーザーがワークスペースを切り替えていた場合は最新の workspace が勝つ
+5. `queue_session_index()` — ライブラリ索引への同期を非ブロッキングで投入（§8）
 
-- 送信する情報
-- 送信先
-- 利用目的
-- 保持方法
-- 音声の短縮、変換、匿名化
-- 利用者の許可
+長時間ジョブ（録音の後処理など）は `commit_merged_session()` を使い、ベース時点から最新セッションへの**操作所有部分のみのマージ**をコミット境界で行う。これにより、ジョブ実行中にユーザーが行った無関係な編集が上書きされない。
 
-秘密値はOSの保護領域へ保存し、診断情報へ出力しない。ログには問題の特定に必要な状態だけを残し、音声、個人情報、絶対パスを無制限に含めない。
+---
 
-## 11. 依存関係の規則
+## 5. ランタイム投影とトランスポート
 
-- 表示層はTauri命令と公開型を通して下位機能を利用する
-- 制作規則はReact部品、Tauri命令、C++の入出力処理へ重複させない
-- Sessionはファイルの実体を所有せず、素材の識別子と参照を持つ
-- Libraryの索引を素材ファイルの存在より正しいものとして扱わない
-- 後処理は音声処理のコールバックと同じ実行経路を使わない
-- プラットフォーム固有の失敗を文字列だけで上位へ渡さず、対象と分類を保持する
-- テスト用の差替えは本番と同じ契約を使い、本番に存在しない成功経路を作らない
+リアルタイム音声グラフは正準状態の**投影（projection）**である。正準セッションが変わると、投影だけが再構築される。
 
-この依存方向を守ることで、Arrange、Designを独立して改善しながら、音声、素材、保存の一貫性を維持する。
+### 5.1 投影プロトコル
+
+`runtime/ports.rs` が 3 つのプリミティブを定める。実装は `native_audio/` の AudioSupervisor がサイドカーへのコマンドとして担う。
+
+| 操作                                  | 意味                                                                              |
+| ------------------------------------- | --------------------------------------------------------------------------------- |
+| `prepare_timeline_snapshot(snapshot)` | 投影候補をサイドカーへ渡して事前構築（VST読み込み・グラフ構築）。まだ再生されない |
+| `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                  |
+| `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                              |
+
+### 5.2 Projection Coordinator
+
+`runtime/projection_coordinator.rs` は専用ワーカースレッド（`riffra-runtime-projection`）を持ち、投影要求を**最新優先（latest-wins）**で直列化する。
+
+- 要求は `ProjectionKey`（更新時刻・世代）を持ち、古いキーの要求は `Superseded` として棄却される
+- 準備失敗・タイムアウト時は再試行し、サイドカー再起動が必要な場合は recovery フックで次の世代を走らせる
+- 準備中は既存の現役グラフが演奏を続けるため、編集中の音が途切れない
+- コミット成功時に `on_activated` フックがトランスポート再開（再生中の継続再生）を試みる
+
+### 5.3 トランスポート
+
+`runtime/transport_controller.rs` / `transport_executor.rs` が Play / Stop の決定と実行を担う。トランスポート操作は投影操作とは別のポート（`TransportDriver`）に分離されており、トランスポートが投影の状態を誤って操作できない構造になっている。投影失敗時は結果に応じて再生を抑制・停止し、UI には「同期待ち」として遷移状態が通知される。
+
+---
+
+## 6. 永続化と回復
+
+### 6.1 ディスクレイアウト
+
+```text
+<data_root>/
+├─ scratch/
+│  ├─ current.json          # 現行セッション（正準の保存先）
+│  └─ generations/          # 世代スナップショット {ms}-{pid}.json（最大20件）
+├─ library/riffra.db        # ライブラリ索引（SQLite リードモデル）
+├─ recordings/
+│  ├─ inbox/                # 録音キャプチャ（録音直後のテイク置き場）
+│  ├─ archive/              # アーカイブ済みテイク
+│  └─ library/              # ライブラリへ昇格済みテイク
+├─ assets/
+│  └─ imports/              # 外部ファイルのインポート先（register で登録）
+├─ separations/             # 音源分離の出力先
+└─ exports/
+   └─ render-{ms}/          # レンダリング出力（timeline.wav + render.json）
+```
+
+### 6.2 アトミック保存と世代管理
+
+`storage.rs` の SessionStore は、クラッシュしても current.json が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
+
+1. 現在の current.json を generations/ へコピー
+2. 新内容を `.tmp` へ書き、`sync_all`（fsync）
+3. `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`（Windows）または `rename` で置換
+4. 古い世代を20件を超えて削除
+
+保存前にスクラッチ領域の空き容量を検証し、容量不足では保存を拒否する（`EnsureStorageCapacity`）。保存はプロセス内のグローバルロックで直列化される。
+
+### 6.3 ロードと回復
+
+`load_or_create()` は以下の順で解決する。
+
+1. current.json を読み、`deserialize_session` → `validate_and_normalize` → **アセット参照検証** を通れば採用
+2. 破損・参照不正なら generations/ を新しい順に読み、**スキーマ検証に通る最新世代** を `recovered_from_generation: true` として採用
+3. 世代も無い場合は新規セッションを作成して保存
+
+破損した current.json は**決して上書きしない**（唯一の回復手段を壊さない）。起動時に世代回復が発生した場合は `recovery_candidates()` が世代ファイルからメタデータだけを軽量に読み、ユーザー選択の `restore_generation()` が指定世代を正準状態として復元・保存する。
+
+### 6.4 参照整合
+
+保存・ロードの両方で `asset::validate_session_references` が実行され、セッションが参照する全アセットIDが登録済みであることを保証する。コンテンツファイルの欠落は許容（MissingDependency としてUIに列挙）だが、**未登録のアセットIDを含むセッションは保存・ロードを拒否**する。
+
+---
+
+## 7. セーフモード
+
+`--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数（`1` / `true` / `yes` / `on`）で起動すると、サイドカーの起動・デバイスアクセス・プラグイン読み込みをすべて省略する。このとき `AudioSupervisor` はオフライン実装として生成され、外部デバイス・MIDI・プラグインから隔離される。
+
+- 初期化は「セッション読込 + ライブラリ索引」のみで完了し、`BootstrapState.safeMode: true` がUIに通知される
+- 音声・録音・再生・プレビュー・VST3読込系の命令はセーフモードではエラーとして無効化される。オフライン解析・書き出し・ライブラリ操作は通常モードと同一に利用できる
+- 外部デバイスやプラグインが原因のハングを切り分けるための診断手段であり、データの読み書きは通常モードと同一
+
+フラグ判定は `--safe-mode` の明示のみを認識し、他の起動引数（`--serve` など）からセーフモードを推測しない。
+
+---
+
+## 8. ライブラリ索引（リードモデル）
+
+ライブラリは SQLite の**読み取り専用モデル**であり、正準状態は常にセッションと Assets である。
+
+- 素材（Asset）、録音（Recording Session/Pass/Take）、セッション内容の全文検索用の眺めを提供する
+- セッション保存のたびに `queue_session_index()` が索引更新を非ブロッキングで投入する。index.rs は**最新1件だけを残す結合キュー**（latest-wins）で駆動され、連続保存時もワーカーの実行を追い越さない
+- UI はライブラリの検索・一覧をこのモデルからのみ読む
+
+---
+
+## 9. バックグラウンドジョブ
+
+時間のかかる処理（音声解析・分離・VST3スキャン）は JobRegistry（`jobs.rs`）のジョブとして実行される。
+
+- **種類**: `Analysis` / `Separation` / `Scan`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
+- **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態から `Running` には戻らない
+- ジョブは `progress` / `message` 付きでUIへ状態が配信され、ID重複を避けた登録とクエリで操作される
+- レンダリングは別経路: `OfflineRenderRequest`（riffra-core のポート）を `riffra-render-worker` 子プロセスが処理する
+
+---
+
+## 10. ドメイン不変条件
+
+riffra-core が `validate_and_normalize` と各モジュールで強制する不変条件。
+
+| 対象           | 不変条件                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| AssetId        | `asset:<UUIDv7>` の形式のみ有効。旧形式や任意文字列は拒否                                                                                   |
+| 素材コンテンツ | 生成済み素材のコンテンツは**不変**。内容変更は新しい Asset を mint する。変更できるのは管理メタデータ（name / tag / note）のみ              |
+| 参照整合       | セッションが参照する AssetId は必ず登録済みでなければならない（§6.4）                                                                       |
+| セッション     | ロード・保存前に `validate_and_normalize` を必ず通過。master gain などの安全限界は正準化でクランプされる                                    |
+| 更新順序       | updatedAtMs は単調増加に補正され、UI 境界での順序トークンとして機能する                                                                     |
+| ランタイム     | 現役の投影グラフはセッションに保存されない。投影はいつでも破棄・再構築できる一時状態                                                        |
+| 安全           | サイドカーは緊急ミュート、起動時低ゲイン、非有限値拒否、DCブロック、音響フィードバック検知を安全チェーンとして持つ（`native/audio-engine`） |
+
+---
+
+## 11. フロントエンドの構造
+
+```text
+apps/desktop/src/
+├─ App.tsx               # ルート。bootstrap 後にワークスペース切替・パネル幅を管理
+├─ native/
+│  ├─ native-api.ts      # NativeApi: Tauri 命令の Promise 型インターフェース
+│  ├─ native-api-fake.ts # テスト用フェイク実装
+│  └─ invoke.ts          # invoke の共通ラッパ（イベント購読含む）
+├─ lib/
+│  ├─ generated/         # ts-rs 生成型（gen:types で再生成）
+│  ├─ domain.ts          # 生成型のバレル再エクスポート
+│  └─ audio-*.ts, arrange-*.ts  # 純粋ヘルパ（安全ロジック・ドラッグ・タイムライン変換）
+├─ hooks/
+│  ├─ useApp.ts          # bootstrap / セッション購読 / 編集の実行と戻り値の適用
+│  ├─ useSession.ts      # セッションのローカル保持と setSession の差し替え
+│  ├─ useAudio.ts        # AudioStatus の購読と状態遷移の再試行
+│  ├─ arrange/           # 楽曲編集（useArrangeEditor / useClipInteractions ほか）
+│  └─ runtime/           # useRuntimeSynchronization / useTransportController / useWorkspaceNavigation
+└─ components/           # 画面コンポーネント
+```
+
+UI はセッションをローカル状態（`setSession`）で保持し、操作のたびに Rust の正準操作を呼び、返却された CreativeSession で置き換える。ランタイム投影との整合（revision / runtimeStatus の不一致検知、再試行）は `useApp` / `useRuntimeSynchronization` などの購読フックが担う。
+
+## 12. 検証
+
+- Rust 単体・結合: `cargo test`（各 crate。Session Actor / Storage / アプリ操作の回復・不変条件テストを含む）
+- フロントエンド: Vitest + Testing Library
+- ネイティブ: CMake + CTest
+- 一括: `npm run verify`（`--native` でネイティブビルドを含む）

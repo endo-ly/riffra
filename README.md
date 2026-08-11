@@ -1,131 +1,91 @@
 # Riffra
 
-Riffra is a music production workbench built around a short creative loop: hear, shape, capture, compare, and reuse. The product contract is defined in [CONCEPT.md](./docs/CONCEPT.md).
+**練習から曲までを一つの作業空間で繋ぐ**ローカルファーストの音楽制作ワークベンチ。楽器や声を入力して音を作り、その音を録音・素材として残し、時間軸上で音楽として組み立てる。どの段階でも、音を作った瞬間の設定と文脈（機器、ラック、録音条件、由来）が失われないことを最優先にする。
 
-## Architecture
+詳細な製品構想は [docs/CONCEPT.md](docs/CONCEPT.md) を参照。
 
-- `riffra-core` owns the platform-independent Asset, Rack, and CreativeSession domain plus shared `AppCore` state.
-- `apps/desktop/src-tauri` owns the Tauri desktop lifecycle, recovery, jobs, permissions, sidecar supervision, and native integration.
-- `apps/desktop/src` contains the React and TypeScript single-window workbench.
-- `riffra-audio` owns real-time audio, MIDI, ASIO/WASAPI, VST3 hosting, metering, and recording.
-- `riffra-render` owns one-shot offline rendering without opening an audio device; `riffra-render-worker` is its Rust process adapter.
-- Plugin discovery and plugin execution cross process boundaries so a bad plugin cannot corrupt the UI or saved session state.
-- SQLite will index reusable assets; portable project and rack manifests remain versioned JSON with standard audio/MIDI files beside them.
-- Arrange uses a separate native graph per Track: physical input routing, playback/live plugin instances, MIDI routing, PDC, and Track-isolated recording taps never pass through a session-global rack. Recording, monitoring, and live rack processing live on the Timeline (Rig mode).
-- Arrange recordings persist a Native Audio Clock manifest plus per-Track Raw, Processed, and MIDI products; Rust finalizes those products into Recording Session / Pass / Take records and stable timeline slots.
+## 全体像
 
-Reference documentation under `docs/`:
+```text
+┌───────────────────────────────────────────────┐
+│  Tauri シェル（1プロセス）                      │
+│  React フロントエンド ── Tauri IPC ── Rust      │
+│  バックエンド（riffra-core ドメイン）          │
+└──────┬──────────────────────┬─────────────────┘
+       │ JSON Lines (stdin/stdout)
+┌──────▼──────────┐   ┌───────▼─────────┐  ┌──────▼────────┐
+│ riffra-audio    │   │ riffra-plugin-  │  │ riffra-render │
+│ リアルタイム音声 │   │ scan            │  │ -worker       │
+│ (C++ / JUCE)    │   │ VST3 スキャン    │  │ オフライン    │
+└─────────────────┘   └─────────────────┘  │ レンダリング   │
+                                           └───────────────┘
+```
 
-- [architecture.md](./docs/architecture.md) — overall structure and layer responsibility boundaries
-- [data-model.md](./docs/data-model.md) — session, project, and asset data model
-- [ipc.md](./docs/ipc.md) — IPC contracts across Tauri, Native, and plugins
-- [ui-ux-design/ui-ux-design.md](./docs/ui-ux-design/ui-ux-design.md) — UI/UX design (see also, [arrange-screen.md](./docs/ui-ux-design/arrange-screen.md))
-- [test-strategy.md](./docs/test-strategy.md) — test strategy and quality policy
+- リアルタイム音声は常に **riffra-audio サイドカー**（C++ / JUCE）が担当し、Tauri プロセスは音声コールバックやプラグインコードを実行しない
+- セッション・素材・由来の正準状態は **riffra-core**（Rust）が保持し、WebView と サイドカーは契約された型と命令のみで接続される
+- データはすべてローカルディスクに保存される（ネットワーク非依存）
 
-## Prerequisites
+## リポジトリ構成
 
-- Windows 11 x64
-- Node.js 24+
-- Rust stable MSVC (`%USERPROFILE%\.cargo\bin` must be on `PATH`)
-- Visual Studio Build Tools 2022 with the C++ workload and CMake
-- WebView2 Runtime
+| パス                           | 内容                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------- |
+| `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
+| `crates/riffra-core/`          | ドメイン層（Session / Asset / Rack / 保存 / ライブラリ）                         |
+| `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
+| `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
+| `scripts/`                     | 型生成（`gen-barrel.js`）、検証（`verify.mjs`）などの開発スクリプト              |
+| `docs/`                        | 設計・調整ドキュメント                                                           |
 
-The target VST3 folder defaults to `C:\Program Files\Common Files\VST3` and is user-configurable.
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
 
-## Development
+## 技術スタック
 
-Riffra has three independent build domains. Use the standard toolchain for each:
+| 層               | 技術                                                          |
+| ---------------- | ------------------------------------------------------------- |
+| シェル           | Tauri 2                                                       |
+| フロントエンド   | React 19 + TypeScript + Vite                                  |
+| バックエンド     | Rust（edition 2024）                                          |
+| リアルタイム音声 | C++ / JUCE サイドカー                                         |
+| 永続化           | SQLite（ライブラリ索引）、JSON（セッション）、WAV（録音素材） |
 
-| Domain              | Toolchain     | Entry point                                   |
-| ------------------- | ------------- | --------------------------------------------- |
-| Frontend            | Vite / npm    | `npm run dev`                                 |
-| Application host    | Cargo / Tauri | `npm run dev:tauri`                           |
-| Native audio engine | CMake         | `native/audio-engine/build.ps1` or `build.sh` |
+## 開発
 
-The domains are kept separate so the C++ engine can be built and tested without
-npm, and the frontend can be developed without a full Tauri build.
+### 前提条件
 
-### 1. Native audio engine (C++)
+- Node.js と npm
+- Rust toolchain（`Cargo.toml` の `rust-version` を確認）
+- ネイティブ音声エンジンのビルド済みサイドカー（`native/audio-engine/` 参照。ビルドは `apps/desktop/src-tauri/binaries/` へ配置される）
 
-Build the sidecars first. They are required by the Tauri application.
-
-Windows:
+### コマンド
 
 ```powershell
-cd native/audio-engine
-.\build.ps1 -Configuration Debug
+npm install            # npm workspace の依存関係を導入
+npm run dev            # Vite のみでフロントエンド開発（ブラウザ）
+npm run dev:tauri      # Tauri アプリ全体を起動（ネイティブ音声を利用する場合はこちら）
+
+npm run gen:types      # Rust 定義から TS 型を再生成（ts-rs + gen-barrel.js）
+npm run check          # 型チェック + ビルド + テスト
+npm run verify         # ルートの一括検証（--native でネイティブビルドを含む）
+
+npm run lint           # ESLint
+npm run typecheck      # tsc
 ```
 
-macOS / Linux:
+### 検証
 
-```bash
-cd native/audio-engine
-./build.sh Debug
-```
+- フロントエンド: Vitest + Testing Library（`apps/desktop/src` 配下に配置）
+- Rust: `cargo test`（各 crate）
+- ネイティブ: CMake + CTest（`native/audio-engine`）
+- 一括検証: `npm run verify`
 
-Each script configures CMake, builds `riffra-audio`, `riffra-plugin-scan`, and `riffra-render`,
-runs CTest, and installs the binaries to `apps/desktop/src-tauri/binaries/` using
-`cmake --install`.
+## ドキュメント
 
-The sidecars are intentionally ignored by Git because they are platform-specific
-build outputs. Rebuild them after a fresh checkout or after changing Native code.
-
-### 2. Tauri application
-
-After the sidecars are built, install Node dependencies and start the desktop
-application:
-
-```powershell
-npm install
-npm run dev:tauri
-```
-
-`npm run dev:tauri` is just `npm run tauri dev`. It does **not** rebuild the
-Native sidecars, so remember to run the C++ build step when Native code changes.
-
-To open a project in recovery-oriented Safe Mode, pass the flag or set the
-environment variable:
-
-```powershell
-npm run dev:tauri -- --safe-mode
-```
-
-```powershell
-$env:RIFFRA_SAFE_MODE = 1
-npm run dev:tauri
-```
-
-Safe Mode keeps VST3 discovery, MIDI input, driver changes, live sample preview,
-and new hardware recordings isolated while still allowing project open, library
-access, offline analysis/render, and manifest export/import.
-
-### 3. Frontend only
-
-To work on the React UI without starting Tauri:
-
-```powershell
-npm run dev
-```
-
-### Verification
-
-Run the non-GUI checks:
-
-```powershell
-npm run verify
-```
-
-Add `--native` to also build and test the C++ engine:
-
-```powershell
-npm run verify:native
-```
-
-The verification script uses `.artifacts/verify/cargo` as its Cargo target
-directory. This is intentionally separate from the Tauri development target, so
-Rust tests and Clippy can run while `npm run dev:tauri` is active without
-competing for Cargo's build lock.
-
-## Licensing note
-
-JUCE framework modules are dual-licensed under AGPLv3 and a commercial JUCE licence. A local development build must comply with one of those options. Distribution terms for Riffra will be finalized before a distributable installer is produced; adding JUCE does not by itself grant a proprietary redistribution right. The VST3 SDK used by current JUCE releases is MIT-licensed, while the optional ASIO dependency has separate terms.
+| ドキュメント                                                               | 内容                                                           |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [docs/CONCEPT.md](docs/CONCEPT.md)                                         | 製品構想（価値、二つの制作領域、利用の形）                     |
+| [docs/architecture.md](docs/architecture.md)                               | システム構造と主要機構（セッション正準化、整合性、保存）       |
+| [docs/data-model.md](docs/data-model.md)                                   | ドメインエンティティの正準カタログと不変条件                   |
+| [docs/ipc.md](docs/ipc.md)                                                 | IPC 境界の契約（Tauri 命令 / イベント / サイドカープロトコル） |
+| [docs/ui-ux-design/arrange-screen.md](docs/ui-ux-design/arrange-screen.md) | Arrange 画面の設計（レイアウト・操作・ショートカット）         |
+| [docs/test-strategy.md](docs/test-strategy.md)                             | テスト戦略                                                     |
+| [docs/headless-linux.md](docs/headless-linux.md)                           | ヘッドレス Linux でのビルド・実行                              |
