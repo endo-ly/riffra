@@ -266,7 +266,8 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 - 安全初期化または機能Runtime復元中にSidecar世代が変わった場合は、その世代の結果を採用せず、最新世代で安全初期化からやり直す。起動完了後のRuntime再起動は、ユーザーが手動Muteしておらず、Feedbackまたはデバイスfaultがなく、Rustが直前のRuntime Graphを復元できた場合にだけMuteを自動解除する
 - 起動時解除とユーザーの緊急ミュート操作は専用の直列化境界を共有する。起動解除は手動ミュート意図を再確認し、解除処理ではその意図を変更しない
 - `faulted` はC++側の `SafetyAudioCallback::setDeviceFaulted(true)` が検出時に出力される
-- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる。起動安全確認が `Failed` または未完了なら、復旧成功後に安全初期化と初期Runtime復元を再実行する
+- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる。起動安全確認が `Failed` または未完了なら、復旧成功後に安全初期化と初期Runtime復元を再実行する。起動完了後の復旧では、RustがSample PadとArrange Runtimeを現在のDevice formatで再構築し、失敗時はDeviceを安全なMute状態に保つ
+- `setAudioDriver` は要求したDeviceのOpen後にrestart preferencesを有効な設定へ更新してから、Sample PadとArrange Runtimeを再構築する。要求が失敗して前のDeviceが復旧した場合も、前の設定をrestart preferencesへ戻し、同じRuntime再構築を完了してから失敗を返す
 - 不明な状態文字列はRust側で `offline` にフォールバックする
 
 ### 4.5 エラー表現

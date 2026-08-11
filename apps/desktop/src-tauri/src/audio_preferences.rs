@@ -5,7 +5,7 @@
 //! consistent without attaching machine-specific settings to a project.
 
 use crate::AppState;
-use crate::model::{AudioAccessMode, AudioStatus};
+use crate::model::{AudioAccessMode, AudioState, AudioStatus};
 use crate::native_audio::AudioSupervisor;
 use crate::runtime::RuntimeReconciler;
 use crate::session::CreativeSession;
@@ -196,14 +196,37 @@ fn apply_audio_preferences(
     }
     .validate_and_normalize()?;
     let previous = context.preferences.lock().map_err(lock_error)?.clone();
-    let mut audio = context
+    let mut audio = match context
         .audio
-        .set_audio_driver(context.app, &requested.as_driver_config())?;
+        .set_audio_driver(context.app, &requested.as_driver_config())
+    {
+        Ok(audio) => audio,
+        Err(error) => {
+            let error = error.to_string();
+            return Err(
+                match reconcile_restored_previous_device(context, &previous) {
+                    Ok(()) => format!(
+                        "{error}; the previous audio device and dependent Runtime were restored"
+                    ),
+                    Err(restore_error) => format!(
+                        "{error}; the previous audio device and dependent Runtime could not be restored: {restore_error}"
+                    ),
+                },
+            );
+        }
+    };
     let effective = match AudioPreferences::from_effective_status(&audio) {
         Ok(effective) => effective,
         Err(error) => return Err(rollback_audio_change(context, &previous, error)),
     };
-    if let Err(error) = synchronize_arrangement_runtime(context) {
+    if let Err(error) = context.audio.set_restart_preferences(effective.clone()) {
+        return Err(rollback_audio_change(
+            context,
+            &previous,
+            format!("Audio Runtime restart preferences could not be updated: {error}"),
+        ));
+    }
+    if let Err(error) = reconcile_runtime_after_audio_device_change(context) {
         return Err(rollback_audio_change(context, &previous, error));
     }
     if let Err(error) = AudioPreferencesStore::new(context.data_root).save(&effective) {
@@ -213,7 +236,6 @@ fn apply_audio_preferences(
             format!("Audio preferences could not be saved: {error}"),
         ));
     }
-    context.audio.set_restart_preferences(effective.clone())?;
     *context.preferences.lock().map_err(lock_error)? = effective;
     audio.message =
         match access_mode_for_driver(audio.driver.as_deref().unwrap_or(&requested.driver)) {
@@ -230,13 +252,10 @@ fn apply_audio_preferences(
     Ok(audio)
 }
 
-fn synchronize_arrangement_runtime(context: &AudioPreferencesContext<'_>) -> Result<(), String> {
-    if !context.runtime.invalidate_for_audio_device_change() {
-        return Err(
-            "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
-        );
-    }
-    crate::session::application::sync_arrangement_runtime(&SessionContext {
+fn reconcile_runtime_after_audio_device_change(
+    context: &AudioPreferencesContext<'_>,
+) -> Result<(), String> {
+    crate::session::application::reconcile_runtime_after_audio_device_change(&SessionContext {
         audio: context.audio,
         runtime: context.runtime,
         session_actor: context.session_actor,
@@ -247,24 +266,79 @@ fn synchronize_arrangement_runtime(context: &AudioPreferencesContext<'_>) -> Res
     .map(|_| ())
 }
 
+fn reconcile_restored_previous_device(
+    context: &AudioPreferencesContext<'_>,
+    previous: &AudioPreferences,
+) -> Result<(), String> {
+    context
+        .audio
+        .set_restart_preferences(previous.clone())
+        .map_err(String::from)?;
+    let status = context.audio.refresh_status().map_err(String::from)?;
+    if !active_device_matches_preferences(&status, previous) {
+        return Err(format!(
+            "the previous audio device was not confirmed: {}",
+            status.message
+        ));
+    }
+    reconcile_runtime_after_audio_device_change(context)
+}
+
 fn rollback_audio_change(
     context: &AudioPreferencesContext<'_>,
     previous: &AudioPreferences,
     reason: String,
 ) -> String {
-    let rollback = context
-        .audio
-        .set_audio_driver(context.app, &previous.as_driver_config())
-        .map_err(|error| error.to_string())
-        .and_then(|_| synchronize_arrangement_runtime(context));
+    let rollback = (|| {
+        context
+            .audio
+            .set_restart_preferences(previous.clone())
+            .map_err(String::from)?;
+        match context
+            .audio
+            .set_audio_driver(context.app, &previous.as_driver_config())
+        {
+            Ok(_) => reconcile_runtime_after_audio_device_change(context),
+            Err(error) => {
+                let error = error.to_string();
+                reconcile_restored_previous_device(context, previous)
+                    .map_err(|restore_error| format!("{error}; {restore_error}"))
+            }
+        }
+    })();
     match rollback {
         Ok(()) => {
-            format!("{reason}; the previous audio device and Arrangement Graph were restored")
+            format!("{reason}; the previous audio device and dependent Runtime were restored")
         }
         Err(rollback_error) => format!(
-            "{reason}; the previous audio device and Arrangement Graph could not be restored: {rollback_error}"
+            "{reason}; the previous audio device and dependent Runtime could not be restored: {rollback_error}"
         ),
     }
+}
+
+fn active_device_matches_preferences(status: &AudioStatus, preferences: &AudioPreferences) -> bool {
+    matches!(status.state, AudioState::Ready | AudioState::Muted)
+        && status
+            .driver
+            .as_deref()
+            .is_some_and(|driver| driver.eq_ignore_ascii_case(&preferences.driver))
+        && optional_text_matches(&status.input_device, &preferences.input_device)
+        && status.input_channel == Some(preferences.input_channel)
+        && optional_text_matches(&status.output_device, &preferences.output_device)
+        && preferences
+            .sample_rate
+            .is_none_or(|sample_rate| status.sample_rate == Some(sample_rate))
+        && preferences
+            .buffer_size
+            .is_none_or(|buffer_size| status.buffer_size == Some(buffer_size))
+}
+
+fn optional_text_matches(actual: &Option<String>, expected: &Option<String>) -> bool {
+    expected.as_deref().is_none_or(|expected| {
+        actual
+            .as_deref()
+            .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+    })
 }
 
 #[tauri::command]
@@ -327,6 +401,7 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::RecordingStatus;
 
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -388,5 +463,98 @@ mod tests {
             access_mode_for_driver("ASIO"),
             AudioAccessMode::DriverManaged
         );
+    }
+
+    fn status_fixture(
+        state: AudioState,
+        driver: &str,
+        input_device: Option<&str>,
+        input_channel: u32,
+        output_device: Option<&str>,
+        sample_rate: Option<u32>,
+        buffer_size: Option<u32>,
+    ) -> AudioStatus {
+        AudioStatus {
+            state,
+            driver: Some(driver.into()),
+            input_device: input_device.map(str::to_owned),
+            input_channel: Some(input_channel),
+            input_channels: Vec::new(),
+            output_device: output_device.map(str::to_owned),
+            output_channels: Vec::new(),
+            sample_rate,
+            buffer_size,
+            round_trip_ms: None,
+            timeline_tick: None,
+            recording: RecordingStatus::default(),
+            plugin: None,
+            midi_inputs: Vec::new(),
+            midi_outputs: Vec::new(),
+            midi_input_active: false,
+            midi_messages: 0,
+            last_midi_note: None,
+            midi_pad_mappings: 0,
+            midi_pad_triggers: 0,
+            input_peak: 0.0,
+            output_peak: 0.0,
+            invalid_samples: 0,
+            feedback_suspected: false,
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn restored_device_matches_preferences_when_native_defaults_are_unspecified() {
+        // Arrange
+        let preferences = AudioPreferences {
+            driver: "ASIO".into(),
+            input_device: Some("Input".into()),
+            input_channel: 1,
+            output_device: None,
+            sample_rate: None,
+            buffer_size: None,
+        };
+        let status = status_fixture(
+            AudioState::Muted,
+            "asio",
+            Some("input"),
+            1,
+            Some("Output"),
+            Some(96_000),
+            Some(1024),
+        );
+
+        // Act
+        let matches = active_device_matches_preferences(&status, &preferences);
+
+        // Assert
+        assert!(matches);
+    }
+
+    #[test]
+    fn restored_device_does_not_match_a_different_sample_rate() {
+        // Arrange
+        let preferences = AudioPreferences {
+            driver: "ASIO".into(),
+            input_channel: 0,
+            sample_rate: Some(96_000),
+            buffer_size: Some(1024),
+            ..AudioPreferences::default()
+        };
+        let status = status_fixture(
+            AudioState::Ready,
+            "ASIO",
+            None,
+            0,
+            None,
+            Some(48_000),
+            Some(1024),
+        );
+
+        // Act
+        let matches = active_device_matches_preferences(&status, &preferences);
+
+        // Assert
+        assert!(!matches);
     }
 }

@@ -640,7 +640,7 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if state.core.safe_mode() {
             return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
         }
-        let recovered = state
+        state
             .core
             .audio()
             .recover_audio_device(&operation_app)
@@ -659,7 +659,21 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
             let initialization = initialization?;
             return Ok(initialization.status);
         }
-        Ok(recovered)
+        session_application::reconcile_runtime_after_audio_device_change(
+            &session::context::SessionContext {
+                audio: state.core.audio(),
+                runtime: state.runtime.as_ref(),
+                session_actor: &state.session_actor,
+                data_root: state.core.data_root(),
+                session: state.core.session(),
+                safe_mode: false,
+            },
+        )
+        .map_err(|error| {
+            format!(
+                "Audio device recovery succeeded, but the dependent Runtime could not be restored: {error}"
+            )
+        })
     })
     .await
 }

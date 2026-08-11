@@ -56,6 +56,27 @@ pub(crate) use crate::session::transport::{
     stop_timeline, switch_workspace, sync_arrangement, sync_arrangement_runtime,
 };
 
+/// Rebuilds every Runtime that depends on the active audio device after the
+/// Native device has been reopened. The canonical Session remains unchanged;
+/// only the device-dependent Sample Pad buffers and Arrangement projection are
+/// prepared again.
+pub(crate) fn reconcile_runtime_after_audio_device_change(
+    context: &SessionContext<'_>,
+) -> Result<AudioStatus, String> {
+    if !context.runtime.invalidate_for_audio_device_change() {
+        return Err(
+            "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
+        );
+    }
+    restore_sample_pads(context).map_err(|error| {
+        format!("Sample Pad restoration failed after the audio device change: {error}")
+    })?;
+    sync_arrangement_runtime(context).map_err(|error| {
+        format!("Arrangement Runtime restoration failed after the audio device change: {error}")
+    })?;
+    context.audio.refresh_status().map_err(String::from)
+}
+
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
 /// asset existence + duplicate rules, pad id / MIDI key assignment, slice
 /// validation, runtime configuration, session update, and persistence. The

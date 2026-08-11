@@ -240,18 +240,45 @@ pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, 
         return context.audio.refresh_status().map_err(String::from);
     }
     let session = context.session.lock().map_err(lock_error)?.clone();
-    let native_pads = resolve_native_pads(
+    let native_pads = match resolve_native_pads(
         context.data_root,
         &session.play_state.sample_instrument.pads,
-    )?;
-    let status = context.audio.configure_sample_pads(&native_pads)?;
+    ) {
+        Ok(native_pads) => native_pads,
+        Err(error) => return Err(disable_sample_pads_after_failure(context, error)),
+    };
+    let status = match context.audio.configure_sample_pads(&native_pads) {
+        Ok(status) => status,
+        Err(error) => {
+            return Err(disable_sample_pads_after_failure(
+                context,
+                error.to_string(),
+            ));
+        }
+    };
     if !audio_command_succeeded(&status) {
-        return Err(format!(
-            "Runtime rejected Sample Pad restoration: {}",
-            status.message
+        return Err(disable_sample_pads_after_failure(
+            context,
+            format!(
+                "Runtime rejected Sample Pad restoration: {}",
+                status.message
+            ),
         ));
     }
     Ok(status)
+}
+
+fn disable_sample_pads_after_failure(context: &SessionContext<'_>, reason: String) -> String {
+    match context.audio.configure_sample_pads(&[]) {
+        Ok(status) if audio_command_succeeded(&status) => format!(
+            "{reason}; Sample Pads were disabled because their buffers could not be restored"
+        ),
+        Ok(status) => format!(
+            "{reason}; Sample Pads could not be disabled: {}",
+            status.message
+        ),
+        Err(error) => format!("{reason}; Sample Pads could not be disabled: {error}"),
+    }
 }
 
 pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
