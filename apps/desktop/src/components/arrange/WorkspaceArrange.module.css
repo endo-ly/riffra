@@ -1297,40 +1297,7 @@
 .emptyActions button {
   margin-top: 0;
 }
-.emptyRecord {
-  color: #ffc4bf !important;
-  background: rgba(231, 96, 88, 0.12) !important;
-  border-color: rgba(231, 96, 88, 0.45) !important;
-}
 
-.statusToast {
-  position: absolute;
-  z-index: 15;
-  left: 12px;
-  bottom: 10px;
-  max-width: calc(100% - 24px);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
-  color: #8f9aa5;
-  font-size: var(--font-micro);
-  background: rgba(12, 16, 20, 0.9);
-  border: 1px solid #2a343d;
-  border-radius: 5px;
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.28);
-  pointer-events: none;
-}
-.statusToast > span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--teal);
-}
-.statusToast > .playingDot {
-  background: var(--cyan);
-  box-shadow: 0 0 7px var(--cyan);
-}
 .selectionChip {
   position: absolute;
   z-index: 14;

@@ -1,4 +1,9 @@
-import type { ArrangeTool, SnapGrid } from '@/lib/arrange-timeline';
+import {
+  SNAP_GRID_OPTIONS,
+  snapGridLabel,
+  type ArrangeTool,
+  type SnapGrid,
+} from '@/lib/arrange-timeline';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeToolbarProps {
@@ -41,9 +46,9 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           value={props.snap}
           onChange={(event) => props.onSnap(event.target.value as SnapGrid)}
         >
-          {['bar', '1/2', '1/4', '1/8', '1/16', '1/32', '1/8t', '1/16t', 'off'].map((value) => (
+          {SNAP_GRID_OPTIONS.map((value) => (
             <option key={value} value={value}>
-              {value === 'bar' ? '1 Bar' : value}
+              {snapGridLabel(value)}
             </option>
           ))}
         </select>

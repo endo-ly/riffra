@@ -26,9 +26,6 @@ function Harness({ api }: { api: FakeNativeApi }) {
       onGoToStart={() => undefined}
       recordingCommandPending={false}
       onToggleRecording={() => undefined}
-      autosaveError={null}
-      audioPreferenceMessage={null}
-      projectActionMessage={null}
       api={api}
     />
   );

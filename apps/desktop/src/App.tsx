@@ -30,7 +30,9 @@ import {
   TransportBar,
   MissingDependencies,
   WorkspaceArrange,
+  ToastStack,
 } from '@/components';
+import { clearToast, showToast, toast } from '@/lib/toasts';
 import styles from './App.module.css';
 
 type ArrangePanelSide = 'library' | 'inspector';
@@ -272,6 +274,27 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   };
   const probeAudioChannels = async (driver: string, inputDevice: string, outputDevice: string) =>
     api.probeDeviceChannels(driver, inputDevice, outputDevice);
+
+  useEffect(() => {
+    if (!autosaveError) {
+      clearToast('app.autosave-error');
+      return;
+    }
+    showToast('app.autosave-error', autosaveError, { kind: 'error', persistent: true });
+    return () => clearToast('app.autosave-error');
+  }, [autosaveError]);
+  useEffect(() => {
+    if (!audioPreferenceMessage) {
+      clearToast('app.audio-preference');
+      return;
+    }
+    showToast('app.audio-preference', audioPreferenceMessage, { kind: 'info', persistent: true });
+    return () => clearToast('app.audio-preference');
+  }, [audioPreferenceMessage]);
+  useEffect(() => {
+    if (exportMessage) toast(exportMessage, { kind: 'info' });
+  }, [exportMessage]);
+
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
@@ -451,8 +474,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}
-            onRecord={() => void toggleRecording()}
-            recordingActive={audio.recording.active}
           />
         )}
         {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
@@ -564,9 +585,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onGoToStart={goToStart}
         recordingCommandPending={recordingCommandPending}
         onToggleRecording={toggleRecording}
-        autosaveError={autosaveError}
-        audioPreferenceMessage={audioPreferenceMessage}
-        projectActionMessage={exportMessage}
         api={nativeApi}
       />
 
@@ -645,6 +663,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           </section>
         </div>
       )}
+
+      <ToastStack />
     </main>
   );
 }

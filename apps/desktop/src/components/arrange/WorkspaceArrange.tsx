@@ -30,11 +30,13 @@ import { PlaySurfacePanel } from './lower-panel/PlaySurfacePanel';
 import { PluginPicker } from './PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { clearToast, showToast, toast } from '@/lib/toasts';
 import {
   BASE_PIXELS_PER_QUARTER,
   buildTrackTimeline,
   timelineObjectEndTick,
   clipDurationTicks,
+  countOffGridNotes,
   formatClock,
   formatMusicalPosition,
   ticksPerBar,
@@ -65,8 +67,6 @@ interface WorkspaceArrangeProps {
   canonicalOperationPending?: boolean;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
-  onRecord?: () => void;
-  recordingActive?: boolean;
 }
 
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
@@ -257,7 +257,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     : unavailableClipCount || missingDeviceCount
       ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
       : editor.message;
-  const showStatus = Boolean(statusMessage);
+  const statusPersistent = playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
+  const { commit: commitEdit, retryRuntimeSync, snapTick } = editor;
+
+  useEffect(() => {
+    if (!statusMessage) {
+      clearToast('arrange.status');
+      return;
+    }
+    showToast('arrange.status', statusMessage, {
+      kind: playbackOutOfSync ? 'error' : 'info',
+      persistent: statusPersistent,
+      ...(playbackOutOfSync
+        ? { action: { label: 'Retry', onClick: () => void retryRuntimeSync() } }
+        : {}),
+    });
+    return () => clearToast('arrange.status');
+  }, [playbackOutOfSync, retryRuntimeSync, statusMessage, statusPersistent]);
 
   const clearRange = useCallback(
     (range: 'loop' | 'punch') => {
@@ -311,6 +327,26 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + tick * nextPixels - cursor);
     });
   };
+
+  const zoomToRange = useCallback(
+    (startTick: number, endTick: number) => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const span = Math.max(1, endTick - startTick);
+      const usableWidth = Math.max(1, scroller.clientWidth - TRACK_HEADER_WIDTH - 32);
+      const bounded = Math.min(
+        4,
+        Math.max(0.35, (usableWidth / span / BASE_PIXELS_PER_QUARTER) * timebase.ppq),
+      );
+      setZoom(bounded);
+      requestAnimationFrame(() => {
+        const nextPixels = (BASE_PIXELS_PER_QUARTER * bounded) / timebase.ppq;
+        programmaticScrollRef.current = true;
+        scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + startTick * nextPixels - 16);
+      });
+    },
+    [timebase.ppq],
+  );
 
   // Track vertical scroll so the ruler and ruler corner stay sticky to the top
   // of the scrolling viewport without leaving the timeline's horizontal flow.
@@ -370,8 +406,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     };
   }, [transport?.state]);
 
+  const addMarkerAt = useCallback(
+    (tick: number) => {
+      const existing = new Set(arrangement.markers.map((marker) => marker.id));
+      void commitEdit(
+        api.addMarker(snapTick(tick), `Marker ${arrangement.markers.length + 1}`),
+      ).then((next) => {
+        if (!next) return;
+        const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
+        if (created) setSelectedMarkerId(created.id);
+      });
+    },
+    [api, arrangement.markers, commitEdit, snapTick],
+  );
+
   // Keyboard: Delete removes the selected Marker or Loop/Punch range when no Clips are selected.
-  // Escape clears the ruler selection.
+  // Escape clears the ruler selection. M adds a Marker at the playhead.
+  // Z zooms to the ruler time selection. F fits every Clip into view.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -407,6 +458,32 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           setSelectedMarkerId(null);
         });
       }
+      if (event.key.toLowerCase() === 'm' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        addMarkerAt(displayTickRef.current);
+      }
+      if (event.key.toLowerCase() === 'z' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (!timeSelection || isEditableTarget(event.target)) return;
+        event.preventDefault();
+        zoomToRange(timeSelection.startTick, timeSelection.endTick);
+      }
+      if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (isEditableTarget(event.target)) return;
+        const clipEdges = [
+          ...arrangement.audioClips.flatMap((clip) => [
+            clip.startTick,
+            timelineObjectEndTick(clip, timebase),
+          ]),
+          ...arrangement.midiClips.flatMap((clip) => [
+            clip.startTick,
+            timelineObjectEndTick(clip, timebase),
+          ]),
+        ];
+        if (!clipEdges.length) return;
+        event.preventDefault();
+        zoomToRange(Math.min(...clipEdges), Math.max(...clipEdges));
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -414,12 +491,19 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     selectedMarkerId,
     selectedRange,
     selectedClipIds.length,
+    arrangement.audioClips,
     arrangement.markers,
+    arrangement.midiClips,
     arrangement.loopRange.enabled,
     arrangement.punchRange,
     api,
+    addMarkerAt,
     clearRange,
     commit,
+    displayTickRef,
+    timeSelection,
+    timebase,
+    zoomToRange,
   ]);
 
   // Close the time selection chip when clicking outside the ruler or the chip itself.
@@ -578,17 +662,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     void commit(
       props.api.updateTimelinePunchRange(true, timeSelection.startTick, timeSelection.endTick),
     );
-  };
-
-  const addMarkerAt = (tick: number) => {
-    const existing = new Set(arrangement.markers.map((marker) => marker.id));
-    void editor
-      .commit(api.addMarker(editor.snapTick(tick), `Marker ${arrangement.markers.length + 1}`))
-      .then((next) => {
-        if (!next) return;
-        const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
-        if (created) setSelectedMarkerId(created.id);
-      });
   };
 
   const renameMarker = (marker: Marker) => {
@@ -832,15 +905,26 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         },
         {
           label: 'Quantize',
+          disabled: gridTicks === 0,
           onClick: () => {
             setContextMenu(null);
-            void editor.commit(
-              api.quantizeMidiNotes(
-                clip.id,
-                clip.notes.map((note) => note.id),
-                gridTicks,
-              ),
-            );
+            const offGrid = countOffGridNotes(clip.notes, gridTicks);
+            if (offGrid === 0) {
+              toast('Notes are already on the grid.');
+              return;
+            }
+            void editor
+              .commit(
+                api.quantizeMidiNotes(
+                  clip.id,
+                  clip.notes.map((note) => note.id),
+                  gridTicks,
+                ),
+              )
+              .then((next) => {
+                if (next)
+                  toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to the grid.`);
+              });
           },
         },
         {
@@ -1165,15 +1249,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 >
                   ＋ Add Instrument Track
                 </button>
-                {props.onRecord && (
-                  <button
-                    className={styles.emptyRecord}
-                    onClick={() => props.onRecord?.()}
-                    title="Arm a Track or drop an Asset to start recording"
-                  >
-                    ● Record
-                  </button>
-                )}
               </div>
             </div>
           ) : (
@@ -1354,7 +1429,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               void editor.commit(props.api.removeMidiNote(clipId, noteId))
             }
             onQuantize={(clipId, noteIds, gridTicks) =>
-              void editor.commit(props.api.quantizeMidiNotes(clipId, noteIds, gridTicks))
+              editor.commit(props.api.quantizeMidiNotes(clipId, noteIds, gridTicks))
             }
             onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
               void editor.commit(props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks))
@@ -1362,16 +1437,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           />
         }
       />
-
-      {showStatus && (
-        <div className={styles.statusToast} role="status">
-          <span className={transport?.state === 'playing' ? styles.playingDot : ''} />
-          {statusMessage}
-          {playbackOutOfSync && (
-            <button onClick={() => void editor.retryRuntimeSync()}>Retry</button>
-          )}
-        </div>
-      )}
 
       {contextMenu && (
         <ContextMenu

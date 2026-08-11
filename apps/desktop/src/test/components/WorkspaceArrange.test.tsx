@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from '@/components';
@@ -14,8 +14,11 @@ import {
 } from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import { ToastStack } from '@/components/shared/ToastStack';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+});
 
 function Harness({
   api,
@@ -29,16 +32,19 @@ function Harness({
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   return (
-    <WorkspaceArrange
-      session={session}
-      setSession={setSession}
-      selection={selection}
-      setSelection={setSelection}
-      api={api}
-      audio={api.audio}
-      focusedTrackId={null}
-      onFocusTrack={() => undefined}
-    />
+    <>
+      <WorkspaceArrange
+        session={session}
+        setSession={setSession}
+        selection={selection}
+        setSelection={setSelection}
+        api={api}
+        audio={api.audio}
+        focusedTrackId={null}
+        onFocusTrack={() => undefined}
+      />
+      <ToastStack />
+    </>
   );
 }
 
@@ -202,6 +208,119 @@ describe('WorkspaceArrange', () => {
     expect(api.calls).toContain('duplicateMidiNotes');
   });
 
+  it('quantizes an off-grid note from the MIDI editor and reports the grid', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:quantize',
+      name: 'Quantize',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:off-grid',
+          note: 60,
+          startTick: 100,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    let finishQuantize: ((next: CreativeSession) => void) | undefined;
+    api.quantizeMidiNotes = async (_clipId, _noteIds, _gridTicks) => {
+      api.calls.push('quantizeMidiNotes');
+      return new Promise<CreativeSession>((resolve) => {
+        finishQuantize = resolve;
+      });
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Act: open the MIDI Editor, select the note, and hit Quantize.
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:quantize"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const note = editor.querySelector('[data-note-id="note:off-grid"]')! as HTMLElement;
+    fireEvent.click(note);
+    fireEvent.click(within(editor).getByRole('button', { name: 'Quantize' }));
+
+    // Assert
+    await waitFor(() => expect(finishQuantize).toBeDefined());
+    expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
+    finishQuantize!(session);
+    await screen.findByText('Quantized 1 note to 1/16.');
+    await waitFor(() => expect(api.calls).toContain('quantizeMidiNotes'));
+  });
+
+  it('reports grid-aligned notes without sending a quantize operation', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:quantize-aligned',
+      name: 'Quantize aligned',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:on-grid',
+          note: 60,
+          startTick: 240,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Act
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:quantize-aligned"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    fireEvent.click(editor.querySelector('[data-note-id="note:on-grid"]')!);
+    fireEvent.click(within(editor).getByRole('button', { name: 'Quantize' }));
+
+    // Assert
+    await screen.findByText('Selected notes are already on the grid.');
+    expect(api.calls).not.toContain('quantizeMidiNotes');
+  });
+
   it('clears a MIDI preview when the canonical response uses an effective value', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
@@ -277,7 +396,7 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerUp(window, { clientX: 148, clientY: 804, pointerId: 1 });
     expect(Number.parseFloat(note.style.left)).toBeCloseTo(43.2);
     expect(note.style.top).toBe('804px');
-    expect(container.querySelector('[class*="statusToast_"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[class*="toast_"]')).not.toBeInTheDocument();
 
     releaseUpdate();
     await waitFor(() => expect(Number.parseFloat(note.style.left)).toBeCloseTo(21.6));
@@ -998,6 +1117,145 @@ describe('WorkspaceArrange', () => {
 
     await waitFor(() => expect(api.calls).toContain('removeMarker'));
     await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
+  });
+
+  it('adds a Marker at the playhead with the M key', async () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+    const ruler = screen.getByLabelText('Timeline ruler');
+    Object.defineProperty(ruler, 'getBoundingClientRect', {
+      value: () => ({ left: 0, width: 2400, top: 0, bottom: 30, right: 2400, height: 30 }),
+    });
+
+    // Act
+    fireEvent.pointerDown(ruler, { clientX: 96 });
+    fireEvent.keyDown(window, { key: 'm' });
+
+    // Assert
+    await waitFor(() => expect(api.calls).toContain('addMarker'));
+    expect(api.bootstrapState.session.arrangement.markers[0]?.tick).toBe(960);
+    expect(api.bootstrapState.session.arrangement.markers[0]?.name).toBe('Marker 1');
+
+    // Act
+    await screen.findByText('Marker 1');
+    fireEvent.keyDown(window, { key: 'm' });
+
+    // Assert
+    await waitFor(() =>
+      expect(api.bootstrapState.session.arrangement.markers[1]?.name).toBe('Marker 2'),
+    );
+    expect(api.bootstrapState.session.arrangement.markers[1]?.tick).toBe(960);
+  });
+
+  it('does not add a Marker with the M key while typing in a text input', () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+
+    // Act
+    fireEvent.keyDown(input, { key: 'm' });
+
+    // Assert
+    expect(api.calls).not.toContain('addMarker');
+    input.remove();
+  });
+
+  it('zooms to the ruler time selection with the Z key', () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    const { container } = render(<Harness api={api} />);
+    const ruler = screen.getByLabelText('Timeline ruler');
+    Object.defineProperty(ruler, 'getBoundingClientRect', {
+      value: () => ({ left: 0, width: 2400, top: 0, bottom: 30, right: 2400, height: 30 }),
+    });
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
+    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+
+    // Act
+    fireEvent.pointerDown(ruler, { clientX: 96 });
+    fireEvent.pointerMove(window, { clientX: 124 });
+    fireEvent.pointerUp(window, { clientX: 124 });
+    expect(screen.getByText('Set Loop')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'z' });
+
+    // Assert: 960..1260 ticks fitted into 1184 usable px needs zoom > 4, so it clamps to 4.
+    expect(zoom.value).toBe('4');
+  });
+
+  it('does not zoom with the Z key without a time selection', () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    const { container } = render(<Harness api={api} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
+    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+
+    // Act
+    fireEvent.keyDown(window, { key: 'z' });
+
+    // Assert
+    expect(zoom.value).toBe('1');
+  });
+
+  it('fits all Clips into view with the F key', () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.midiClips.push(
+      {
+        id: 'clip:fit-start',
+        name: 'Fit start',
+        trackId: 'track:unused',
+        startTick: 0,
+        durationTicks: 960,
+        notes: [],
+        events: [],
+        muted: false,
+        loopEnabled: false,
+      },
+      {
+        id: 'clip:fit-end',
+        name: 'Fit end',
+        trackId: 'track:unused',
+        startTick: 2880,
+        durationTicks: 960,
+        notes: [],
+        events: [],
+        muted: false,
+        loopEnabled: false,
+      },
+    );
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
+    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+
+    // Act
+    fireEvent.keyDown(window, { key: 'f' });
+
+    // Assert: 0..3840 ticks fitted into 1184 usable px -> zoom = 1184/3840 * 10 = 3.083...
+    expect(Number(zoom.value)).toBeCloseTo(3.083, 3);
+  });
+
+  it('does not zoom with the F key when no Clip exists', () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    const { container } = render(<Harness api={api} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
+    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+
+    // Act
+    fireEvent.keyDown(window, { key: 'f' });
+
+    // Assert
+    expect(zoom.value).toBe('1');
   });
 
   it('deletes a marker from its context menu without a success popup', async () => {

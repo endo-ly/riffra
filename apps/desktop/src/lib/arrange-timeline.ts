@@ -3,7 +3,38 @@ import type { AudioClip, MidiClip, ProjectTimebase } from '@/lib/domain';
 export const TRACK_HEADER_WIDTH = 192;
 export const BASE_PIXELS_PER_QUARTER = 96;
 
-export type SnapGrid = 'bar' | '1/2' | '1/4' | '1/8' | '1/16' | '1/32' | '1/8t' | '1/16t' | 'off';
+export type SnapGrid =
+  | 'bar'
+  | '1/2'
+  | '1/2t'
+  | '1/4'
+  | '1/4t'
+  | '1/8'
+  | '1/8t'
+  | '1/16'
+  | '1/16t'
+  | '1/32'
+  | '1/64'
+  | 'off';
+
+export const SNAP_GRID_OPTIONS: readonly SnapGrid[] = [
+  'bar',
+  '1/2',
+  '1/2t',
+  '1/4',
+  '1/4t',
+  '1/8',
+  '1/8t',
+  '1/16',
+  '1/16t',
+  '1/32',
+  '1/64',
+  'off',
+];
+
+export function snapGridLabel(grid: SnapGrid) {
+  return grid === 'bar' ? '1 Bar' : grid;
+}
 
 export type ArrangeTool = 'select' | 'split';
 export type TrackSize = 'compact' | 'normal' | 'large';
@@ -95,14 +126,22 @@ export function snapGridTicks(grid: SnapGrid, timebase: ProjectTimebase) {
   const values: Record<Exclude<SnapGrid, 'off'>, number> = {
     bar: ticksPerBar(timebase),
     '1/2': timebase.ppq * 2,
+    '1/2t': (timebase.ppq * 4) / 3,
     '1/4': timebase.ppq,
+    '1/4t': (timebase.ppq * 2) / 3,
     '1/8': timebase.ppq / 2,
-    '1/16': timebase.ppq / 4,
-    '1/32': timebase.ppq / 8,
     '1/8t': timebase.ppq / 3,
+    '1/16': timebase.ppq / 4,
     '1/16t': timebase.ppq / 6,
+    '1/32': timebase.ppq / 8,
+    '1/64': timebase.ppq / 16,
   };
   return grid === 'off' ? 0 : values[grid];
+}
+
+export function countOffGridNotes(notes: { startTick: number }[], gridTicks: number): number {
+  if (gridTicks <= 0) return 0;
+  return notes.filter((note) => note.startTick % gridTicks !== 0).length;
 }
 
 export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {

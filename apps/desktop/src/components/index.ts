@@ -17,3 +17,4 @@ export { WorkspaceAnalyze } from './design/WorkspaceAnalyze';
 export { ReferenceSuggestion } from './design/ReferenceSuggestion';
 export { WorkspaceSeparate } from './design/WorkspaceSeparate';
 export { WorkspaceArrange } from './arrange/WorkspaceArrange';
+export { ToastStack } from './shared/ToastStack';

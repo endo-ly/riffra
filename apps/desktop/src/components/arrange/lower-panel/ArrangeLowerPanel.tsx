@@ -34,7 +34,7 @@ export function ArrangeLowerPanel({
   const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const startY = event.clientY;
-    const startHeight = collapsed ? 42 : height;
+    const startHeight = collapsed ? 48 : height;
     const workspaceHeight = event.currentTarget.parentElement?.parentElement?.clientHeight || 900;
     const maxHeight = Math.min(900, Math.floor(workspaceHeight * 0.55));
     const move = (pointer: PointerEvent) => {
@@ -59,7 +59,7 @@ export function ArrangeLowerPanel({
   return (
     <section
       className={`${styles.panel}${collapsed ? ` ${styles.collapsed}` : ''}`}
-      style={{ '--panel-height': `${collapsed ? 42 : height}px` } as React.CSSProperties}
+      style={{ '--panel-height': `${collapsed ? 48 : height}px` } as React.CSSProperties}
       aria-label="Arrange lower panel"
     >
       <button

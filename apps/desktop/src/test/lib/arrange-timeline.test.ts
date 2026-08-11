@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AudioClip, MidiClip } from '@/lib/domain';
-import { buildTrackTimeline, layoutClipLanes, timelineGridDensity } from '@/lib/arrange-timeline';
+import {
+  buildTrackTimeline,
+  countOffGridNotes,
+  layoutClipLanes,
+  snapGridTicks,
+  timelineGridDensity,
+} from '@/lib/arrange-timeline';
 import { toAssetId } from '@/lib/domain';
 
 const timebase = {
@@ -24,6 +30,25 @@ describe('arrange timeline layout', () => {
     });
     expect(timelineGridDensity(timebase, 0.1).subdivisionTicks).toBe(240);
     expect(timelineGridDensity(timebase, 0.2).subdivisionTicks).toBe(240);
+  });
+
+  it('computes straight, triplet, and off snap units in ticks', () => {
+    expect(snapGridTicks('bar', timebase)).toBe(3840);
+    expect(snapGridTicks('1/2', timebase)).toBe(1920);
+    expect(snapGridTicks('1/2t', timebase)).toBe(1280);
+    expect(snapGridTicks('1/4', timebase)).toBe(960);
+    expect(snapGridTicks('1/4t', timebase)).toBe(640);
+    expect(snapGridTicks('1/8t', timebase)).toBe(320);
+    expect(snapGridTicks('1/16t', timebase)).toBe(160);
+    expect(snapGridTicks('1/64', timebase)).toBe(60);
+    expect(snapGridTicks('off', timebase)).toBe(0);
+  });
+
+  it('counts notes sitting off the target grid', () => {
+    const notes = [{ startTick: 0 }, { startTick: 240 }, { startTick: 241 }, { startTick: 720 }];
+    expect(countOffGridNotes(notes, 240)).toBe(1);
+    expect(countOffGridNotes(notes, 0)).toBe(0);
+    expect(countOffGridNotes([], 240)).toBe(0);
   });
 
   it('uses one lane namespace for overlapping Audio and MIDI items', () => {

@@ -13,8 +13,8 @@
 }
 
 .panel.collapsed {
-  min-height: 38px;
-  grid-template-rows: 38px;
+  min-height: 48px;
+  grid-template-rows: 48px;
 }
 
 .resizeHandle {

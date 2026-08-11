@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/lib/domain';
-import { snapGridTicks, ticksPerBar, ticksPerBeat } from '@/lib/arrange-timeline';
+import {
+  SNAP_GRID_OPTIONS,
+  snapGridLabel,
+  snapGridTicks,
+  ticksPerBar,
+  ticksPerBeat,
+  countOffGridNotes,
+} from '@/lib/arrange-timeline';
 import type { SnapGrid } from '@/lib/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/lib/musical-typing';
 import { isEditableTarget } from '@/lib/interaction';
+import { toast } from '@/lib/toasts';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import styles from './MidiEditorPanel.module.css';
+
+type MidiEditResult = void | PromiseLike<CreativeSession | null>;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
@@ -17,14 +27,13 @@ interface MidiEditorPanelProps {
   ) => void | PromiseLike<CreativeSession | null>;
   onRemoveNote?: (clipId: string, noteId: string) => void;
   onAddNote?: (clipId: string, startTick: number, pitch: number) => void;
-  onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => void;
+  onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => MidiEditResult;
   onDuplicateNotes?: (clipId: string, noteIds: string[], offsetTicks: number) => void;
 }
 
 const PITCH_HIGH = 128;
 const PITCH_LOW = 0;
 const EMPTY_NOTES: MidiNote[] = [];
-type MidiEditResult = void | PromiseLike<CreativeSession | null>;
 
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const { clip, onRemoveNote } = props;
@@ -314,9 +323,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           <label className={styles.control}>
             <span>Snap</span>
             <select value={snap} onChange={(event) => setSnap(event.target.value as SnapGrid)}>
-              {['bar', '1/2', '1/4', '1/8', '1/8t', '1/16', '1/16t', '1/32', 'off'].map((value) => (
+              {SNAP_GRID_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {snapGridLabel(value)}
                 </option>
               ))}
             </select>
@@ -341,9 +350,30 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           <button
             type="button"
             className={styles.toolButton}
-            disabled={!selectedNoteIds.length || snapTicks === 0}
+            disabled={!selectedNoteIds.length || snapTicks === 0 || !props.onQuantize}
             title={snapTicks === 0 ? 'Select a snap grid before quantizing' : undefined}
-            onClick={() => props.onQuantize?.(props.clip!.id, selectedNoteIds, snapTicks)}
+            onClick={() => {
+              if (!props.clip) return;
+              const selected = props.clip.notes.filter((note) => selectedNoteIds.includes(note.id));
+              const offGrid = countOffGridNotes(selected, snapTicks);
+              if (offGrid === 0) {
+                toast('Selected notes are already on the grid.');
+                return;
+              }
+              const operation = props.onQuantize?.(props.clip.id, selectedNoteIds, snapTicks);
+              if (!operation) return;
+              void Promise.resolve(operation).then(
+                (next) => {
+                  if (next) {
+                    toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to ${snap}.`);
+                  }
+                },
+                (error) => {
+                  const detail = error instanceof Error ? error.message : String(error);
+                  toast(`Quantize failed: ${detail}`, { kind: 'error' });
+                },
+              );
+            }}
           >
             Quantize
           </button>
