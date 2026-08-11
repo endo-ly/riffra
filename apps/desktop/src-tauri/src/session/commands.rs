@@ -460,7 +460,7 @@ pub async fn sync_arrangement_runtime(app: AppHandle) -> Result<RuntimeProjectio
 #[tauri::command]
 pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
     run_blocking(app, |state| {
-        application::restore_sample_pads(&app_context(state))
+        application::restore_sample_pads(&app_context(state)).map(|outcome| outcome.into_status())
     })
     .await
 }

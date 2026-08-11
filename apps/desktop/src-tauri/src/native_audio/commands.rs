@@ -1,6 +1,6 @@
 use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
-use super::recovery::MuteCause;
+use super::recovery::{AudioDeviceReopenOutcome, MuteCause};
 use crate::model::AudioStatus;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use crate::session::AudioTakeVariant;
@@ -481,24 +481,25 @@ impl AudioSupervisor {
     pub fn recover_audio_device<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-    ) -> NativeAudioResult<AudioStatus> {
+    ) -> NativeAudioResult<AudioDeviceReopenOutcome> {
         let command = serde_json::json!({"type": "recoverAudioDevice"});
         let expected_generation = self.sidecar_generation();
         match self.send_command(
-            command.clone(),
+            command,
             "Audio device recovery requested; output remains muted until the device is ready.",
         ) {
-            Ok(status) => Ok(status),
+            Ok(status) => {
+                self.mark_runtime_recovery_mute()?;
+                Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status))
+            }
             Err(error) if error.requires_restart() => {
                 self.restart_sidecar(
                     app,
                     "Native audio sidecar is restarting in emergency-mute state.",
                     expected_generation,
                 )?;
-                self.send_command(
-                    command,
-                    "Audio sidecar restarted and device recovery was requested; output remains muted until the device is ready.",
-                )
+                let status = self.refresh_status()?;
+                Ok(AudioDeviceReopenOutcome::SidecarRestarted(status))
             }
             Err(error) => Err(error),
         }
@@ -508,7 +509,7 @@ impl AudioSupervisor {
         &self,
         app: &AppHandle<R>,
         config: &crate::audio_preferences::AudioDriverConfig,
-    ) -> NativeAudioResult<AudioStatus> {
+    ) -> NativeAudioResult<AudioDeviceReopenOutcome> {
         let mut command = serde_json::json!({"type": "setAudioDriver", "driver": config.driver});
         if let Some(input_device) = config.input_device.as_deref() {
             command["inputDevice"] = serde_json::json!(input_device);
@@ -528,7 +529,10 @@ impl AudioSupervisor {
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
         ) {
-            Ok(status) => Ok(status),
+            Ok(status) => {
+                self.mark_runtime_recovery_mute()?;
+                Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status))
+            }
             Err(error) if error.requires_restart() => {
                 self.restart_sidecar(
                     app,
@@ -542,7 +546,7 @@ impl AudioSupervisor {
                 if let Ok(mut current) = self.status.lock() {
                     current.message = status.message.clone();
                 }
-                Ok(status)
+                Ok(AudioDeviceReopenOutcome::SidecarRestarted(status))
             }
             Err(error) => Err(error),
         }

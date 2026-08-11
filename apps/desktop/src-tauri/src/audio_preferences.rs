@@ -6,7 +6,7 @@
 
 use crate::AppState;
 use crate::model::{AudioAccessMode, AudioState, AudioStatus};
-use crate::native_audio::AudioSupervisor;
+use crate::native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
 use crate::runtime::RuntimeReconciler;
 use crate::session::CreativeSession;
 use crate::session::actor::SessionActor;
@@ -196,11 +196,12 @@ fn apply_audio_preferences(
     }
     .validate_and_normalize()?;
     let previous = context.preferences.lock().map_err(lock_error)?.clone();
-    let mut audio = match context
+    let (mut audio, runtime_already_reconciled) = match context
         .audio
         .set_audio_driver(context.app, &requested.as_driver_config())
     {
-        Ok(audio) => audio,
+        Ok(AudioDeviceReopenOutcome::ReopenedInPlace(audio)) => (audio, false),
+        Ok(AudioDeviceReopenOutcome::SidecarRestarted(audio)) => (audio, true),
         Err(error) => {
             let error = error.to_string();
             return Err(
@@ -215,6 +216,24 @@ fn apply_audio_preferences(
             );
         }
     };
+    if !active_device_matches_preferences(&audio, &requested) {
+        let reason = format!(
+            "The requested audio device was not activated: {}",
+            audio.message
+        );
+        return Err(if runtime_already_reconciled {
+            match confirm_restored_previous_device(context, &previous) {
+                Ok(()) => format!(
+                    "{reason}; the previous audio device and dependent Runtime were restored"
+                ),
+                Err(restore_error) => format!(
+                    "{reason}; the previous audio device and dependent Runtime could not be restored: {restore_error}"
+                ),
+            }
+        } else {
+            rollback_audio_change(context, &previous, reason)
+        });
+    }
     let effective = match AudioPreferences::from_effective_status(&audio) {
         Ok(effective) => effective,
         Err(error) => return Err(rollback_audio_change(context, &previous, error)),
@@ -226,7 +245,9 @@ fn apply_audio_preferences(
             format!("Audio Runtime restart preferences could not be updated: {error}"),
         ));
     }
-    if let Err(error) = reconcile_runtime_after_audio_device_change(context) {
+    if !runtime_already_reconciled
+        && let Err(error) = reconcile_runtime_after_audio_device_change(context)
+    {
         return Err(rollback_audio_change(context, &previous, error));
     }
     if let Err(error) = AudioPreferencesStore::new(context.data_root).save(&effective) {
@@ -237,18 +258,23 @@ fn apply_audio_preferences(
         ));
     }
     *context.preferences.lock().map_err(lock_error)? = effective;
-    audio.message =
+    let access_message =
         match access_mode_for_driver(audio.driver.as_deref().unwrap_or(&requested.driver)) {
-            AudioAccessMode::Shared => audio.message,
-            AudioAccessMode::Exclusive => {
-                "Exclusive audio is active; other applications using this device will be paused."
-                    .into()
-            }
-            AudioAccessMode::DriverManaged => {
-                "Audio sharing is controlled by this driver; other applications may be paused."
-                    .into()
-            }
+            AudioAccessMode::Shared => None,
+            AudioAccessMode::Exclusive => Some(
+                "Exclusive audio is active; other applications using this device will be paused.",
+            ),
+            AudioAccessMode::DriverManaged => Some(
+                "Audio sharing is controlled by this driver; other applications may be paused.",
+            ),
         };
+    if let Some(access_message) = access_message {
+        audio.message = if audio.message.is_empty() {
+            access_message.into()
+        } else {
+            format!("{access_message} {}", audio.message)
+        };
+    }
     Ok(audio)
 }
 
@@ -272,6 +298,18 @@ fn reconcile_restored_previous_device(
 ) -> Result<(), String> {
     context
         .audio
+        .mark_runtime_recovery_mute()
+        .map_err(String::from)?;
+    confirm_restored_previous_device(context, previous)?;
+    reconcile_runtime_after_audio_device_change(context)
+}
+
+fn confirm_restored_previous_device(
+    context: &AudioPreferencesContext<'_>,
+    previous: &AudioPreferences,
+) -> Result<(), String> {
+    context
+        .audio
         .set_restart_preferences(previous.clone())
         .map_err(String::from)?;
     let status = context.audio.refresh_status().map_err(String::from)?;
@@ -281,7 +319,7 @@ fn reconcile_restored_previous_device(
             status.message
         ));
     }
-    reconcile_runtime_after_audio_device_change(context)
+    Ok(())
 }
 
 fn rollback_audio_change(
@@ -298,7 +336,19 @@ fn rollback_audio_change(
             .audio
             .set_audio_driver(context.app, &previous.as_driver_config())
         {
-            Ok(_) => reconcile_runtime_after_audio_device_change(context),
+            Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)) => {
+                if !active_device_matches_preferences(&status, previous) {
+                    Err(format!(
+                        "the previous audio device was not confirmed: {}",
+                        status.message
+                    ))
+                } else {
+                    reconcile_runtime_after_audio_device_change(context)
+                }
+            }
+            Ok(AudioDeviceReopenOutcome::SidecarRestarted(_)) => {
+                confirm_restored_previous_device(context, previous)
+            }
             Err(error) => {
                 let error = error.to_string();
                 reconcile_restored_previous_device(context, previous)
@@ -549,6 +599,31 @@ mod tests {
             None,
             Some(48_000),
             Some(1024),
+        );
+
+        // Act
+        let matches = active_device_matches_preferences(&status, &preferences);
+
+        // Assert
+        assert!(!matches);
+    }
+
+    #[test]
+    fn requested_device_does_not_match_a_different_driver() {
+        // Arrange
+        let preferences = AudioPreferences {
+            driver: "ASIO".into(),
+            input_channel: 0,
+            ..AudioPreferences::default()
+        };
+        let status = status_fixture(
+            AudioState::Ready,
+            "Windows Audio",
+            None,
+            0,
+            None,
+            None,
+            None,
         );
 
         // Act

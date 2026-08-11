@@ -21,8 +21,8 @@ mod sidecar_process;
 use command_bus::CommandBus;
 pub use commands::NativeSamplePad;
 pub(crate) use error::{NativeAudioError, NativeAudioResult};
-pub(crate) use recovery::MuteCause;
 use recovery::RecoveryState;
+pub(crate) use recovery::{AudioDeviceReopenOutcome, MuteCause};
 use sidecar_process::SidecarProcess;
 
 pub(crate) const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);

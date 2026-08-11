@@ -382,8 +382,12 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         session: state.core.session(),
         safe_mode: false,
     };
-    if let Err(error) = session_application::restore_sample_pads(&session_context) {
-        failures.push(format!("sample pad restoration failed: {error}"));
+    match session_application::restore_sample_pads(&session_context) {
+        Ok(session_application::SamplePadRestoreOutcome::Restored(_)) => {}
+        Ok(session_application::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
+            tracing::warn!(%warning, "Sample Pads were disabled during startup restoration");
+        }
+        Err(error) => failures.push(format!("sample pad restoration failed: {error}")),
     }
     if sidecar_transitioned(state, generation) {
         return Err(StartupRuntimeError::GenerationChanged(

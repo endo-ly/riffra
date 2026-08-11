@@ -158,7 +158,7 @@ Arrangement Snapshotの準備とVST3ライフサイクル要求は、C++のstdin
 
 Sidecarの各世代は、デバイス初期化とAudio Callback登録を終えた最初の `audioStatus` を準備完了通知として扱う。Rustはこの通知を受信するまで通常コマンドをstdinへ書き込まない。準備完了待ちは15秒、準備完了後のコマンド応答待ちは3秒であり、起動待ちとコマンド障害を別の失敗として扱う。
 
-デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。RustはMaster Gain、passive、デバイス状態、Feedbackを確認した時点で起動Muteを解除し、その後にSessionのSample PadとArrange音声グラフを復元する。VSTグラフの復元に失敗した場合はRuntime ProjectionをFailedとし、Sample Padなど機能Runtimeの復元に失敗した場合は機能Runtimeエラーとして通知する。音声デバイスが安全である限りAudio状態はReadyを保ち、ユーザーが明示的にMuteしている場合だけMutedを保つ。processing modeはpassiveとする。復元処理が終了するたびに、Rust側は`runtime-startup-finished`イベント（`{ succeeded: boolean }`）をUIへ通知し、`BootstrapState.runtimeStartupFinished`と`BootstrapState.runtimeStarted`にも結果を反映する。UIはイベント購読を確立してからBootstrapを1回だけ取得し、`runtimeStartupFinished`を待ってVST3カタログをバックグラウンドで検証する。初回復元が失敗していた場合、カタログ検証が成功した後に`retry_startup_runtime`を一度だけ呼び出して同じAudio Sidecar上のSession Runtimeを再構築する。この再試行はAudio Deviceのclose/openを行わない。`recover_audio_device`は実際にAudio Deviceがfaultした場合の復旧に限る。カタログ検証の成否は出力解除条件に含めない。
+デスクトップ起動時は、Audio SidecarをEmergency Muteで開始しながら保存Sessionを読込み・検証する。RustはMaster Gain、passive、デバイス状態、Feedbackを確認した時点で起動Muteを解除し、その後にSessionのSample PadとArrange音声グラフを復元する。VSTグラフの復元に失敗した場合はRuntime ProjectionをFailedとし、Sample Padなど機能Runtimeの復元に失敗した場合は機能Runtimeエラーとして通知する。音声デバイスが安全である限りAudio状態はReadyを保ち、ユーザーが明示的にMuteしている場合だけMutedを保つ。processing modeはpassiveとする。復元処理が終了するたびに、Rust側は`runtime-startup-finished`イベント（`{ succeeded: boolean }`）をUIへ通知し、`BootstrapState.runtimeStartupFinished`と`BootstrapState.runtimeStarted`にも結果を反映する。UIはイベント購読を確立してからBootstrapを1回だけ取得し、`runtimeStartupFinished`を待ってVST3カタログをバックグラウンドで検証する。初回復元が失敗していた場合、カタログ検証が成功した後に`retry_startup_runtime`を一度だけ呼び出して同じAudio Sidecar上のSession Runtimeを再構築する。この再試行はAudio Deviceのclose/openを行わない。`recover_audio_device`は実際にAudio Deviceがfaultした場合の復旧に限る。カタログ検証の成否は出力解除条件に含めない。起動完了後の`recover_audio_device`と`set_audio_driver`は、Device reopen後にRustがRuntimeRecoveryのMute所有権を付与し、Sample PadとArrange Graphの復旧完了後に自動解除する。UserまたはFeedbackのMuteは維持される。Sample Padが実効Sample Rateに合わない場合は空のmappingへ切り替えて警告を返し、Arrange復旧を継続する。空のmappingへ切り替えられない場合はArrange復旧を試みたうえで命令を失敗させる。要求したDriver・Device・Sample Rate・Block Sizeと実効値が一致しない変更は失敗として前のDeviceを確認し、sidecar restartが発生した場合はrestart handlerがRuntime復旧を所有するためDevice recovery要求を再送しない。
 
 ### 4.2 メッセージ種別（C++ → Rust）
 
@@ -263,11 +263,11 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 
 - 起動直後は `starting` → 初回 `audioStatus` 受信 → `muted` と進む。Rustが保存済みMaster GainをRuntimeへ適用し、processing modeをpassiveにしてデバイス状態とFeedbackを確認した時点で、機能Runtimeの復元を待たずに緊急ミュートを解除する
 - Sample Pad、Arrange Runtimeの復元は解除後に行う。復元中はpassiveを維持し、復元失敗だけでは音声デバイス障害と判定しない。復元に成功した場合だけWorkspaceに対応するprocessing modeへ切り替える
-- 安全初期化または機能Runtime復元中にSidecar世代が変わった場合は、その世代の結果を採用せず、最新世代で安全初期化からやり直す。起動完了後のRuntime再起動は、ユーザーが手動Muteしておらず、Feedbackまたはデバイスfaultがなく、Rustが直前のRuntime Graphを復元できた場合にだけMuteを自動解除する
+- 安全初期化または機能Runtime復元中にSidecar世代が変わった場合は、その世代の結果を採用せず、最新世代で安全初期化からやり直す。起動完了後のRuntime再起動とDevice reopenでは、UserまたはFeedbackのMuteを維持し、それ以外をRuntimeRecoveryとして扱う。Rustが安全なRuntime Graphを復元できた場合だけRuntimeRecoveryを自動解除する
 - 起動時解除とユーザーの緊急ミュート操作は専用の直列化境界を共有する。起動解除は手動ミュート意図を再確認し、解除処理ではその意図を変更しない
 - `faulted` はC++側の `SafetyAudioCallback::setDeviceFaulted(true)` が検出時に出力される
-- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる。起動安全確認が `Failed` または未完了なら、復旧成功後に安全初期化と初期Runtime復元を再実行する。起動完了後の復旧では、RustがSample PadとArrange Runtimeを現在のDevice formatで再構築し、失敗時はDeviceを安全なMute状態に保つ
-- `setAudioDriver` は要求したDeviceのOpen後にrestart preferencesを有効な設定へ更新してから、Sample PadとArrange Runtimeを再構築する。要求が失敗して前のDeviceが復旧した場合も、前の設定をrestart preferencesへ戻し、同じRuntime再構築を完了してから失敗を返す
+- `recoverAudioDevice` コマンドで `faulted` → `muted` へ復旧する。復旧できない場合はsidecar再起動を試みる。起動安全確認が `Failed` または未完了なら、復旧成功後に安全初期化と初期Runtime復元を再実行する。起動完了後の復旧では、RustがSample PadとArrange Runtimeを現在のDevice formatで再構築する。Sample Padだけが非互換の場合は空のmappingへ切り替えて警告とし、Arrange復旧を続ける。空のmappingへ切り替えられない場合はArrange復旧を試みたうえで命令を失敗させる
+- `setAudioDriver` は要求したDeviceのOpen後にrestart preferencesを有効な設定へ更新してから、Sample PadとArrange Runtimeを再構築する。要求したDriver・Device・Sample Rate・Block Sizeと実効値が異なる場合は変更を失敗として扱う。要求が失敗して前のDeviceが復旧した場合も、前の設定をrestart preferencesへ戻し、同じRuntime再構築を完了してから失敗を返す
 - 不明な状態文字列はRust側で `offline` にフォールバックする
 
 ### 4.5 エラー表現
@@ -306,7 +306,7 @@ C++側は `audioStatus.state` として `faulted` / `muted` / `ready` のいず�
 - VSTを含むTrack Instrument、Track Effectの追加・置換は候補Runtime Graphを先に準備し、成功した場合だけcanonical Sessionを保存する。保存失敗時は候補Graphを破棄して直前のSession Graphを復元する
 - RustのArrangement準備期限は30秒、C++のライフサイクルwatchdogは45秒とし、同時刻の競合を避ける。watchdogによる異常終了は終了コード124でSupervisorへ伝える
 - Arrangement RuntimeのVST失敗は、Rustの`operationId`、Sidecar `generation`、Projection sequence、Session revision、経過時間と、C++が返すTrack、Device、Runtime Role、lifecycle phaseを診断ログへ残す
-- `recoverAudioDevice` / `setAudioDriver` が行き詰まった場合、sidecarを再起動してから再送する
+- `recoverAudioDevice` / `setAudioDriver` が行き詰まった場合はsidecarを再起動する。replacement sidecarのrestart handlerがSample PadとArrange Runtimeを復元するため、元のDevice commandは再送しない
 
 ### 4.7 Safe Mode
 

@@ -51,9 +51,10 @@ pub(crate) use crate::session::commit::{
 };
 pub(crate) use crate::session::context::{SessionContext, lock_error};
 pub(crate) use crate::session::transport::{
-    audio_command_succeeded, go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
-    resolve_native_pads, restore_sample_pads, runtime_snapshot_for_recording, seek_timeline,
-    stop_timeline, switch_workspace, sync_arrangement, sync_arrangement_runtime,
+    SamplePadRestoreOutcome, audio_command_succeeded, go_to_start_timeline, play_timeline,
+    prepare_arrangement_candidate, resolve_native_pads, restore_sample_pads,
+    runtime_snapshot_for_recording, seek_timeline, stop_timeline, switch_workspace,
+    sync_arrangement, sync_arrangement_runtime,
 };
 
 /// Rebuilds every Runtime that depends on the active audio device after the
@@ -63,18 +64,44 @@ pub(crate) use crate::session::transport::{
 pub(crate) fn reconcile_runtime_after_audio_device_change(
     context: &SessionContext<'_>,
 ) -> Result<AudioStatus, String> {
+    context
+        .audio
+        .mark_runtime_recovery_mute()
+        .map_err(|error| format!("Runtime recovery mute could not be recorded: {error}"))?;
     if !context.runtime.invalidate_for_audio_device_change() {
         return Err(
             "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
         );
     }
-    restore_sample_pads(context).map_err(|error| {
-        format!("Sample Pad restoration failed after the audio device change: {error}")
-    })?;
-    sync_arrangement_runtime(context).map_err(|error| {
+    let (pad_warning, pad_error) = match restore_sample_pads(context) {
+        Ok(SamplePadRestoreOutcome::Restored(_)) => (None, None),
+        Ok(SamplePadRestoreOutcome::Disabled { warning, .. }) => (Some(warning), None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "Sample Pad restoration failed after the audio device change: {error}"
+            )),
+        ),
+    };
+    let arrangement_error = sync_arrangement_runtime(context).err().map(|error| {
         format!("Arrangement Runtime restoration failed after the audio device change: {error}")
-    })?;
-    context.audio.refresh_status().map_err(String::from)
+    });
+    let mut status = context.audio.refresh_status().map_err(String::from)?;
+    let errors = [pad_error, arrangement_error]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    if let Some(warning) = pad_warning {
+        status.message = if status.message.is_empty() {
+            warning
+        } else {
+            format!("{} {warning}", status.message)
+        };
+    }
+    Ok(status)
 }
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
@@ -293,7 +320,9 @@ fn reapply_sample_pads_after_generation_change(
     if context.audio.sidecar_generation() == previous_generation {
         return Ok(None);
     }
-    restore_sample_pads(context).map(Some)
+    restore_sample_pads(context)
+        .map(SamplePadRestoreOutcome::into_status)
+        .map(Some)
 }
 
 /// Updates one SamplePad's slice range, gain, or loop flag through the canonical

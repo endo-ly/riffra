@@ -49,7 +49,7 @@ use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
     RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
-use native_audio::AudioSupervisor;
+use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
 use riffra_core::AppCore;
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
@@ -640,7 +640,7 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if state.core.safe_mode() {
             return Err("Safe Mode keeps external audio devices isolated; restart normally to recover a device.".into());
         }
-        state
+        let reopen_outcome = state
             .core
             .audio()
             .recover_audio_device(&operation_app)
@@ -658,6 +658,9 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
             );
             let initialization = initialization?;
             return Ok(initialization.status);
+        }
+        if let AudioDeviceReopenOutcome::SidecarRestarted(status) = reopen_outcome {
+            return Ok(status);
         }
         session_application::reconcile_runtime_after_audio_device_change(
             &session::context::SessionContext {
