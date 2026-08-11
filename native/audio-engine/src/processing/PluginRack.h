@@ -29,7 +29,6 @@ public:
     void reset() noexcept;
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
-    bool setState(const juce::String& base64, juce::String& error) noexcept;
     bool applyPersistedState(const juce::var& state, juce::String& error) noexcept;
     [[nodiscard]] juce::var persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
@@ -68,6 +67,7 @@ private:
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
     [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
+    bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges() noexcept;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 

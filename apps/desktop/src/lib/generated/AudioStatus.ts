@@ -2,7 +2,6 @@
 import type { AudioChannelInfo } from "./AudioChannelInfo";
 import type { AudioState } from "./AudioState";
 import type { MidiDeviceInfo } from "./MidiDeviceInfo";
-import type { PluginStatus } from "./PluginStatus";
 import type { RecordingStatus } from "./RecordingStatus";
 
-export type AudioStatus = { state: AudioState, driver: string | null, inputDevice: string | null, inputChannel: number | null, inputChannels: Array<AudioChannelInfo>, outputDevice: string | null, outputChannels: Array<AudioChannelInfo>, sampleRate: number | null, bufferSize: number | null, roundTripMs: number | null, timelineTick: number | null, recording: RecordingStatus, plugin: PluginStatus | null, midiInputs: Array<MidiDeviceInfo>, midiOutputs: Array<MidiDeviceInfo>, midiInputActive: boolean, midiMessages: number, lastMidiNote: number | null, midiPadMappings: number, midiPadTriggers: number, inputPeak: number, outputPeak: number, invalidSamples: number, feedbackSuspected: boolean, message: string, };
+export type AudioStatus = { state: AudioState, driver: string | null, inputDevice: string | null, inputChannel: number | null, inputChannels: Array<AudioChannelInfo>, outputDevice: string | null, outputChannels: Array<AudioChannelInfo>, sampleRate: number | null, bufferSize: number | null, roundTripMs: number | null, timelineTick: number | null, recording: RecordingStatus, midiInputs: Array<MidiDeviceInfo>, midiOutputs: Array<MidiDeviceInfo>, midiInputActive: boolean, midiMessages: number, lastMidiNote: number | null, midiPadMappings: number, midiPadTriggers: number, inputPeak: number, outputPeak: number, invalidSamples: number, feedbackSuspected: boolean, message: string, };

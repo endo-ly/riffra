@@ -341,14 +341,6 @@ async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
   return await invoke<AudioStatus>('set_emergency_mute', { muted });
 }
 
-async function startRecording(): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('start_recording');
-  } catch (error) {
-    return await audioCommandError('Start recording', error);
-  }
-}
-
 async function startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus> {
   return await invoke<AudioStatus>('start_arrange_recording', {
     recordingSessionId: recordingSessionId ?? null,
@@ -360,14 +352,6 @@ async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatu
     return await invoke<AudioStatus>('record_another_take', { recordingSessionId });
   } catch (error) {
     return await audioCommandError('Start another take', error);
-  }
-}
-
-async function stopRecording(): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('stop_recording');
-  } catch (error) {
-    return await audioCommandError('Stop recording', error);
   }
 }
 
@@ -961,10 +945,8 @@ function createNativeApi(): NativeApi {
     getAudioStatus,
     getRuntimeProjectionStatus,
     setEmergencyMute,
-    startRecording,
     startArrangeRecording,
     recordAnotherTake,
-    stopRecording,
     stopArrangeRecording,
     setMasterGainDb,
     previewMasterGainDb,

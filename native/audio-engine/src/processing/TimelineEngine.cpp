@@ -1751,6 +1751,33 @@ void TimelineEngine::processTracks(
                 destinationStart,
                 sampleCount);
         }
+        processLiveAudioTracks(
+            prepared,
+            physicalInputChannels,
+            physicalInputChannelCount,
+            outputChannels,
+            channelCount,
+            rangeStart,
+            destinationStart,
+            sampleCount);
+    }
+}
+
+void TimelineEngine::processLiveAudioTracks(
+    PreparedTimeline& prepared,
+    const float* const* physicalInputChannels,
+    const int physicalInputChannelCount,
+    float* const* outputChannels,
+    const int channelCount,
+    const std::int64_t rangeStart,
+    const int destinationStart,
+    const int sampleCount) noexcept {
+    const auto hasSolo = std::any_of(
+        prepared.tracks.begin(), prepared.tracks.end(),
+        [](const auto& track) { return track->solo; });
+    for (auto& trackPtr : prepared.tracks) {
+        auto& track = *trackPtr;
+        const auto audible = !track.muted && (!hasSolo || track.solo);
         if (!track.instrument && (track.monitorInput || track.armed)
             && track.audioInputChannel >= 0) {
             const auto* source = ArrangementGraph::audioInputSource(
@@ -2093,6 +2120,15 @@ void TimelineEngine::mix(
     const auto currentState = state.load(std::memory_order_acquire);
     if (currentState == State::stopped) {
         processLiveInstrumentTracks(*active, outputChannels, channelCount, sampleCount);
+        processLiveAudioTracks(
+            *active,
+            inputChannels,
+            inputChannelCount,
+            outputChannels,
+            channelCount,
+            timelineSample.load(std::memory_order_acquire),
+            0,
+            sampleCount);
         return;
     }
     if (currentState != State::playing)

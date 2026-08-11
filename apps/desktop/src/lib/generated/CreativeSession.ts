@@ -2,12 +2,10 @@
 import type { Arrangement } from "./Arrangement";
 import type { DesignContext } from "./DesignContext";
 import type { PlayState } from "./PlayState";
-import type { RackInstance } from "./RackInstance";
 import type { SessionSettings } from "./SessionSettings";
-import type { SessionSnapshot } from "./SessionSnapshot";
 import type { Workspace } from "./Workspace";
 
 /**
  * The canonical production-state model.
  */
-export type CreativeSession = { sessionId: string, updatedAtMs: number, projectName: string | null, workspace: Workspace, designContext: DesignContext, playState: PlayState, arrangement: Arrangement, rack: RackInstance, snapshots: Array<SessionSnapshot>, settings: SessionSettings, };
+export type CreativeSession = { sessionId: string, updatedAtMs: number, projectName: string | null, workspace: Workspace, designContext: DesignContext, playState: PlayState, arrangement: Arrangement, settings: SessionSettings, };

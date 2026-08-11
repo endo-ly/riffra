@@ -1,14 +1,14 @@
 //! Canonical CreativeSession and the production state it owns.
 //!
 //! [`CreativeSession`] is the canonical production-state model. It holds the
-//! active workspace, design context, play state (including the live sample
-//! instrument), the [`Arrangement`], the running rack, snapshots, and session
-//! settings. It deliberately does not own audio/MIDI file bodies, the Library
-//! index, recording files, or background-job state.
+//! active workspace, design context, live sample performance state, the
+//! [`Arrangement`], and session settings. It deliberately does not own
+//! audio/MIDI file bodies, the Library index, recording files, or
+//! background-job state.
 
 use crate::DomainError;
 use crate::asset::AssetId;
-use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
+use crate::rack::{RackDevice, RackInstance};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -1765,22 +1765,6 @@ pub struct PlayState {
     pub sample_instrument: SampleInstrumentState,
 }
 
-/// A captured A/B rack + master snapshot for quick comparison.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSnapshot {
-    pub id: String,
-    pub name: String,
-    pub created_at_ms: u64,
-    pub description: String,
-    pub tag: Option<String>,
-    pub parent_id: Option<String>,
-    pub master_db: f64,
-    pub rack: Vec<RackDevice>,
-    #[serde(default)]
-    pub macros: Vec<RackMacro>,
-}
-
 /// Permitted scope of AI-proposed changes applied to a session.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
@@ -1849,9 +1833,6 @@ pub struct CreativeSession {
     pub play_state: PlayState,
     #[serde(default)]
     pub arrangement: Arrangement,
-    pub rack: RackInstance,
-    #[serde(default)]
-    pub snapshots: Vec<SessionSnapshot>,
     pub settings: SessionSettings,
 }
 
@@ -1863,12 +1844,7 @@ pub struct CreativeSession {
 /// # Errors
 /// Returns a JSON error when the payload cannot be decoded as a valid session.
 pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
-    let mut value = serde_json::from_slice::<serde_json::Value>(payload)?;
-    if value.get("workspace").and_then(serde_json::Value::as_str) == Some("play")
-        && let Some(object) = value.as_object_mut()
-    {
-        object.insert("workspace".into(), serde_json::json!("arrange"));
-    }
+    let value = serde_json::from_slice::<serde_json::Value>(payload)?;
     let legacy_takes = value
         .get("arrangement")
         .and_then(|arrangement| arrangement.get("takes"))
@@ -2044,63 +2020,9 @@ pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json
     Ok(session)
 }
 
-fn default_rack() -> RackInstance {
-    RackInstance {
-        devices: vec![
-            RackDevice {
-                id: "input".into(),
-                name: "Input 1".into(),
-                kind: DeviceKind::Input,
-                path: None,
-                bypassed: false,
-                gain_db: 0.0,
-                parameter_values: Vec::new(),
-                state_data: None,
-                disabled_placeholder: false,
-            },
-            RackDevice {
-                id: "safety".into(),
-                name: "Safety Limiter".into(),
-                kind: DeviceKind::Utility,
-                path: None,
-                bypassed: false,
-                gain_db: 0.0,
-                parameter_values: Vec::new(),
-                state_data: None,
-                disabled_placeholder: false,
-            },
-            RackDevice {
-                id: "output".into(),
-                name: "Main Out".into(),
-                kind: DeviceKind::Output,
-                path: None,
-                bypassed: false,
-                gain_db: -18.0,
-                parameter_values: Vec::new(),
-                state_data: None,
-                disabled_placeholder: false,
-            },
-        ],
-        macros: default_macros(),
-    }
-}
-
-fn default_macros() -> Vec<RackMacro> {
-    ["Brightness", "Gain", "Space", "Width"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, name)| RackMacro {
-            id: format!("macro:{index}"),
-            name: name.into(),
-            value: 0.5,
-            parameter_index: None,
-        })
-        .collect()
-}
-
 impl CreativeSession {
-    /// Creates a fresh session in the Arrange workspace with the default rack,
-    /// arrangement, and safe (muted) settings.
+    /// Creates a fresh session in the Arrange workspace with an empty
+    /// arrangement and safe (muted) settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
             session_id: format!("scratch-{now_ms}"),
@@ -2110,8 +2032,6 @@ impl CreativeSession {
             design_context: DesignContext::default(),
             play_state: PlayState::default(),
             arrangement: Arrangement::default(),
-            rack: default_rack(),
-            snapshots: Vec::new(),
             settings: SessionSettings {
                 master_db: -18.0,
                 loop_enabled: false,
@@ -2155,8 +2075,6 @@ impl CreativeSession {
             normalize_ai_change_set(change_set)?;
         }
 
-        normalize_rack(&mut self.rack)?;
-        normalize_snapshots(&mut self.snapshots)?;
         normalize_arrangement(&mut self.arrangement)?;
         normalize_sample_pads(&mut self.play_state.sample_instrument.pads)?;
         Ok(self)
@@ -2164,13 +2082,10 @@ impl CreativeSession {
 }
 
 const AI_CONTEXT_IDS: &[&str] = &[
-    "selectedRack",
-    "parameterList",
     "analysis",
     "selectedClip",
     "project",
     "userNote",
-    "snapshot",
     "previewAudio",
     "errorLog",
 ];
@@ -2242,32 +2157,6 @@ fn normalize_rack_device(device: &mut RackDevice) -> Result<(), String> {
         && state.len() > 4_000_000
     {
         device.state_data = Some(state.chars().take(4_000_000).collect());
-    }
-    Ok(())
-}
-
-fn normalize_snapshots(snapshots: &mut [SessionSnapshot]) -> Result<(), String> {
-    if snapshots.len() > 16 {
-        return Err("A session cannot contain more than 16 snapshots.".into());
-    }
-    for snapshot in snapshots {
-        if snapshot.id.trim().is_empty() || snapshot.name.trim().is_empty() {
-            return Err("Snapshots require non-empty ids and names.".into());
-        }
-        if !snapshot.master_db.is_finite() {
-            return Err(format!(
-                "Snapshot '{}' has an invalid master gain.",
-                snapshot.name
-            ));
-        }
-        snapshot.master_db = snapshot.master_db.clamp(-90.0, 0.0);
-        snapshot.description.truncate(16_384);
-        if snapshot.rack.len() > 256 {
-            return Err(format!(
-                "Snapshot '{}' contains too many rack devices.",
-                snapshot.name
-            ));
-        }
     }
     Ok(())
 }
@@ -2741,19 +2630,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_play_workspace_loads_as_arrange_and_serializes_canonically() {
-        let mut value = serde_json::to_value(CreativeSession::new(0)).unwrap();
-        value["workspace"] = serde_json::json!("play");
-
-        let session = deserialize_session(&serde_json::to_vec(&value).unwrap()).unwrap();
-
-        assert_eq!(session.workspace, Workspace::Arrange);
-        assert_eq!(
-            serde_json::to_value(session).unwrap()["workspace"],
-            serde_json::json!("arrange")
-        );
-    }
-
     #[test]
     fn design_context_holds_tool_and_target_asset() {
         let id = mint_asset_id();
@@ -3304,10 +3180,9 @@ mod tests {
     }
 
     #[test]
-    fn new_session_has_arrangement_tracks_and_default_rack() {
+    fn new_session_has_empty_arrangement_and_sample_pads() {
         let session = CreativeSession::new(0);
         assert!(session.arrangement.tracks.is_empty());
-        assert_eq!(session.rack.devices.len(), 3);
         assert_eq!(
             session.play_state.sample_instrument.pads,
             Vec::<SamplePad>::new()

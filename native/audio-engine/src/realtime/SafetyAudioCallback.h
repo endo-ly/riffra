@@ -3,8 +3,6 @@
 #include <JuceHeader.h>
 #include "AudioSafetyDsp.h"
 #include "ArrangeRecordingSession.h"
-#include "RecordingSession.h"
-#include "PluginRack.h"
 #include "TimelineEngine.h"
 
 #include <atomic>
@@ -15,7 +13,7 @@ namespace riffra {
 
 class SafetyAudioCallback final : public juce::AudioIODeviceCallback {
 public:
-    enum class ProcessingMode { play, arrange, passive };
+    enum class ProcessingMode { arrange, passive };
 
     SafetyAudioCallback() = default;
     ~SafetyAudioCallback() override;
@@ -33,11 +31,6 @@ public:
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept;
     [[nodiscard]] bool isFeedbackSuspected() const noexcept;
     [[nodiscard]] double getSampleRate() const noexcept;
-    bool startRecording(
-        const juce::File& directory,
-        juce::String& error,
-        bool allowNoInput = false);
-    bool stopRecording(juce::String& error);
     bool startArrangeRecording(
         const juce::File& directory,
         TimelineEngine& timeline,
@@ -56,12 +49,8 @@ public:
     void stopSynthNote(int note) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
-    void setPluginRack(PluginRack* rack) noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
     void setProcessingMode(ProcessingMode mode) noexcept;
-    [[nodiscard]] ProcessingMode getProcessingMode() const noexcept;
-    [[nodiscard]] bool hasInstrumentPlugin() const noexcept;
-    void enqueuePluginMidi(const juce::MidiMessage& message) noexcept;
 
 
     void audioDeviceIOCallbackWithContext(
@@ -80,30 +69,17 @@ public:
 private:
     static constexpr float kMinimumGainDb = -90.0f;
     static void holdPeak(std::atomic<float>& peak, float value) noexcept;
-    void writeRecording(
-        const float* const* inputChannelData,
-        int numInputChannels,
-        const float* const* outputChannelData,
-        int numOutputChannels,
-        int numSamples,
-        int sampleOffset = 0,
-        int capturedSamples = -1) noexcept;
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
     /// Shared epilogue for the silenced paths (emergency-mute and feedback
-    /// detection). Clears the output bus, holds the input peak, zeroes the
-    /// output peak, and writes the recording — all in one place so the two
-    /// call sites cannot drift apart.
+    /// detection). Clears the output bus, holds the input peak, and zeroes the
+    /// output peak so the two call sites cannot drift apart.
     void silenceAndCommit(
         float* const* outputChannelData,
         int numOutputChannels,
         int numSamples,
-        const float* const* inputChannelData,
-        int numInputChannels,
-        float rawInputPeak,
-        int sampleOffset = 0,
-        int capturedSamples = -1) noexcept;
+        float rawInputPeak) noexcept;
 
     /// Panics every sound source: the built-in synth, the arranged
     /// instrument racks, and their live companions. Used by the emergency
@@ -139,16 +115,9 @@ private:
     std::atomic<double> activeSampleRate { 0.0 };
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;
-    std::atomic<int> activeInputChannels { 0 };
-    std::atomic<int> activeOutputChannels { 0 };
-    juce::AudioBuffer<float> silenceBuffer;
-    std::atomic<RecordingSession*> activeRecording { nullptr };
-    std::atomic<unsigned int> recordingReaders { 0 };
     mutable juce::CriticalSection recordingLock;
-    std::unique_ptr<RecordingSession> recording;
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
     std::atomic<bool> arrangeRecordingCancelled { false };
-    juce::AudioBuffer<float> recordingMixBuffer;
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {
         juce::AudioBuffer<float> buffer;
@@ -177,7 +146,6 @@ private:
     };
     static constexpr std::size_t kSynthVoiceCount = 16;
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;
-    PluginRack* pluginRack = nullptr;
     TimelineEngine* timelineEngine = nullptr;
     std::atomic<ProcessingMode> processingMode { ProcessingMode::passive };
 

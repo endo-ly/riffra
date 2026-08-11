@@ -4,7 +4,6 @@
 #include "AudioRuntimeStatus.h"
 #include "FaultInjection.h"
 #include "PluginEditorHost.h"
-#include "PluginRack.h"
 #include "RuntimeLifecycleExecutor.h"
 #include "TimelineEngine.h"
 
@@ -40,7 +39,6 @@ namespace {
 
 using riffra::SafetyAudioCallback;
 using riffra::PluginEditorHost;
-using riffra::PluginRack;
 using riffra::RuntimeLifecycleExecutor;
 using riffra::TimelineEngine;
 
@@ -213,14 +211,6 @@ public:
         bool loop = false;
     };
 
-    struct RecordedEvent {
-        double timeMs = 0.0;
-        int status = 0;
-        int channel = 0;
-        int data1 = 0;
-        int data2 = 0;
-    };
-
     void setAudioCallback(SafetyAudioCallback* const callback) noexcept { audioCallback = callback; }
     void setTimelineEngine(TimelineEngine* const engine) noexcept { timelineEngine = engine; }
 
@@ -229,70 +219,10 @@ public:
         pads = std::move(next);
     }
 
-    void beginRecording(const juce::File& file) {
-        const juce::ScopedLock lock(recordingLock);
-        recordedEvents.clear();
-        recordingFile = file;
-        recordingStartMs = juce::Time::getMillisecondCounterHiRes();
-        recordingMidi.store(true, std::memory_order_release);
-    }
-
-    bool finishRecording(juce::String& error) {
-        std::vector<RecordedEvent> events;
-        juce::File file;
-        {
-            const juce::ScopedLock lock(recordingLock);
-            recordingMidi.store(false, std::memory_order_release);
-            events = recordedEvents;
-            file = recordingFile;
-            recordingFile = {};
-        }
-        if (file == juce::File())
-            return true;
-        if (!file.getParentDirectory().createDirectory()) {
-            error = "MIDI recording destination could not be created.";
-            return false;
-        }
-        juce::Array<juce::var> encoded;
-        for (const auto& event : events) {
-            auto* object = new juce::DynamicObject();
-            object->setProperty("timeMs", event.timeMs);
-            object->setProperty("status", event.status);
-            object->setProperty("channel", event.channel);
-            object->setProperty("data1", event.data1);
-            object->setProperty("data2", event.data2);
-            encoded.add(juce::var(object));
-        }
-        auto* root = new juce::DynamicObject();
-        root->setProperty("version", 1);
-        root->setProperty("events", encoded);
-        if (!file.replaceWithText(juce::JSON::toString(juce::var(root), true))) {
-            error = "MIDI recording JSON could not be finalized.";
-            return false;
-        }
-        return true;
-    }
-
     void handleIncomingMidiMessage(
         juce::MidiInput* source,
         const juce::MidiMessage& message) override {
         messageCount.fetch_add(1, std::memory_order_relaxed);
-        const auto status = message.getRawDataSize() > 0
-            ? (message.getRawData()[0] & 0xf0)
-            : 0;
-        if (status >= 0x80 && status <= 0xe0) {
-            const juce::ScopedLock lock(recordingLock);
-            if (recordingMidi.load(std::memory_order_acquire)
-                && recordedEvents.size() < 200'000) {
-                recordedEvents.push_back(RecordedEvent {
-                    juce::Time::getMillisecondCounterHiRes() - recordingStartMs,
-                    status,
-                    message.getChannel(),
-                    message.getRawDataSize() > 1 ? message.getRawData()[1] : 0,
-                    message.getRawDataSize() > 2 ? message.getRawData()[2] : 0,
-                });
-            }
-        }
         const auto routedToTimeline = timelineEngine != nullptr
             && timelineEngine->enqueueLiveMidi(
                 message,
@@ -306,11 +236,6 @@ public:
             return;
 
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
-
-        if (audioCallback != nullptr && audioCallback->hasInstrumentPlugin()) {
-            audioCallback->enqueuePluginMidi(message);
-            return;
-        }
 
         if (message.isNoteOff()) {
             if (audioCallback != nullptr) {
@@ -365,26 +290,15 @@ public:
         return static_cast<int>(pads.size());
     }
     [[nodiscard]] std::uint64_t getPadTriggerCount() const noexcept { return padTriggers.load(std::memory_order_acquire); }
-    [[nodiscard]] bool isRecording() const noexcept { return recordingMidi.load(std::memory_order_acquire); }
-    [[nodiscard]] std::size_t getRecordedEventCount() const noexcept {
-        const juce::ScopedLock lock(recordingLock);
-        return recordedEvents.size();
-    }
-
 private:
     std::atomic<bool> active { false };
     std::atomic<std::uint64_t> messageCount { 0 };
     std::atomic<int> lastNote { -1 };
     std::atomic<std::uint64_t> padTriggers { 0 };
-    std::atomic<bool> recordingMidi { false };
     SafetyAudioCallback* audioCallback = nullptr;
     TimelineEngine* timelineEngine = nullptr;
     mutable juce::CriticalSection padLock;
     std::map<int, Pad> pads;
-    mutable juce::CriticalSection recordingLock;
-    juce::File recordingFile;
-    double recordingStartMs = 0.0;
-    std::vector<RecordedEvent> recordedEvents;
 };
 
 juce::var makeError(const juce::String& scope, const juce::String& message) {
@@ -633,7 +547,6 @@ std::optional<juce::var> probeDeviceChannels(
 juce::var currentStatus(
     juce::AudioDeviceManager& manager,
     const SafetyAudioCallback& callback,
-    const PluginRack* rack = nullptr,
     const MidiMonitor* midi = nullptr,
     const juce::String& message = {},
     const TimelineEngine* timeline = nullptr) {
@@ -657,8 +570,6 @@ juce::var currentStatus(
         status->setProperty("lastMidiNote", midi->getLastNote());
         status->setProperty("midiPadMappings", midi->getPadMappingCount());
         status->setProperty("midiPadTriggers", static_cast<juce::int64>(midi->getPadTriggerCount()));
-        status->setProperty("midiRecording", midi->isRecording());
-        status->setProperty("midiRecordedEvents", static_cast<juce::int64>(midi->getRecordedEventCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
     if (timeline != nullptr) {
@@ -728,8 +639,6 @@ juce::var currentStatus(
             : 0.0;
         status->setProperty("roundTripMs", latencyMs);
     }
-    if (rack != nullptr)
-        status->setProperty("plugin", rack->status());
     return juce::var(status);
 }
 
@@ -874,8 +783,7 @@ public:
         juce::String ignored;
         timelineEngine.stopRecording();
         audioCallback.stopArrangeRecording(timelineEngine, ignored);
-        audioCallback.stopRecording(ignored);
-        writeJson(currentStatus(deviceManager, audioCallback, nullptr, nullptr));
+        writeJson(currentStatus(deviceManager, audioCallback));
     }
 
 private:
@@ -892,8 +800,6 @@ int serve(
     formatManager.registerBasicFormats();
     TimelineEngine timelineEngine;
     SafetyAudioCallback callback;
-    PluginRack rack;
-    auto pluginEditor = std::make_shared<PluginEditorHost>(rack);
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
@@ -904,7 +810,6 @@ int serve(
     std::vector<std::unique_ptr<juce::MidiInput>> midiInputs;
     std::atomic<bool> midiListeningEnabled { false };
     std::set<juce::String> activeMidiDeviceIds;
-    callback.setPluginRack(&rack);
     callback.setTimelineEngine(&timelineEngine);
     midiMonitor.setAudioCallback(&callback);
     midiMonitor.setTimelineEngine(&timelineEngine);
@@ -968,7 +873,7 @@ int serve(
     manager.addAudioCallback(&callback);
     DeviceFaultWatcher deviceWatcher(manager, callback, timelineEngine);
     manager.addChangeListener(&deviceWatcher);
-    writeJson(currentStatus(manager, callback, &rack, &midiMonitor, startupMessage));
+    writeJson(currentStatus(manager, callback, &midiMonitor, startupMessage));
 
     std::atomic<bool> watchdogRunning { true };
     std::thread watchdog;
@@ -1000,7 +905,7 @@ int serve(
             }
             if (changed) {
                 reopenAllMidiInputs();
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
             }
         }
     });
@@ -1029,7 +934,6 @@ int serve(
     // Plugin construction and timeline preparation may execute third-party
     // code for an unbounded amount of time. Keep that work away from the
     // command reader so transport and workspace commands remain serviceable.
-    std::atomic<bool> pluginOperationRunning { false };
     std::atomic<bool> timelineOperationRunning { false };
     RuntimeLifecycleExecutor runtimeLifecycle(
         [](RuntimeLifecycleExecutor::Task task) {
@@ -1066,8 +970,6 @@ int serve(
                         trackPluginEditorTrackId.clear();
                         trackPluginEditorDeviceId.clear();
                     }
-                    pluginEditor->close();
-                    pluginOperationRunning.store(false, std::memory_order_release);
                     timelineOperationRunning.store(false, std::memory_order_release);
                 },
                 std::chrono::seconds(10));
@@ -1078,16 +980,16 @@ int serve(
             if (type == "setEmergencyMute") {
                 const auto muted = static_cast<bool>(command.getProperty("muted", true));
                 if (!muted && callback.isDeviceFaulted()) {
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                    writeJson(currentStatus(manager, callback, &midiMonitor));
                     continue;
                 }
                 callback.setEmergencyMuted(muted);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "setMasterGainDb") {
                 callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot") {
@@ -1407,11 +1309,8 @@ int serve(
                 continue;
             }
             if (type == "playTimeline") {
-                // Processing mode delivery is intentionally nonblocking during
-                // navigation. Make Arrange playback self-contained so a Play
-                // click cannot race the preceding mode command and leave the
-                // TimelineEngine playing while the audio callback still runs
-                // in passive/live-input mode (which produces silence).
+                // Arrange playback always owns the processing mode while the
+                // transport is running.
                 callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 timelineEngine.play();
                 writeJson(timelineEngine.status());
@@ -1434,9 +1333,7 @@ int serve(
                 const auto mode = command.getProperty("mode", {}).toString();
                 const auto reportStatus = static_cast<bool>(
                     command.getProperty("reportStatus", true));
-                if (mode == "play")
-                    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::play);
-                else if (mode == "arrange")
+                if (mode == "arrange")
                     callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 else if (mode == "passive")
                     callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::passive);
@@ -1446,11 +1343,11 @@ int serve(
                 }
                 if (reportStatus)
                     writeJson(currentStatus(
-                        manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
+                        manager, callback, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "probeMidiDevices") {
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "configureSamplePads") {
@@ -1534,14 +1431,14 @@ int serve(
                     continue;
                 }
                 midiMonitor.replacePads(std::move(nextPads));
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "enableMidiListening") {
                 midiListeningEnabled.store(true, std::memory_order_release);
                 reopenAllMidiInputs();
                 midiMonitor.setActive(true);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "disableMidiListening") {
@@ -1550,7 +1447,7 @@ int serve(
                 callback.stopPreview();
                 callback.allNotesOff();
                 reopenAllMidiInputs();
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "startTakeComparison") {
@@ -1636,7 +1533,7 @@ int serve(
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "switchTakeComparisonVariant") {
@@ -1648,14 +1545,14 @@ int serve(
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "stopTakeComparison") {
                 callback.stopPreviewForKey(1);
                 comparisonRaw.setSize(0, 0);
                 comparisonProcessed.setSize(0, 0);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "previewSample") {
@@ -1709,50 +1606,23 @@ int serve(
                     writeJson(makeError("preview", previewError));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "stopPreview") {
                 callback.stopPreview();
                 callback.allNotesOff();
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "stopPreviewForKey") {
                 const auto voiceKey = static_cast<int>(command.getProperty("voiceKey", -1));
                 callback.stopPreviewForKey(voiceKey);
                 callback.stopSynthNote(voiceKey);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
-if (type == "setPluginState") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The global rack is still loading a VST3. State changes can be retried shortly."));
-                    continue;
-                }
-                const auto stateData = command.getProperty("stateData", {}).toString();
-                const auto requestId = currentRequestId;
-                pluginOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId, stateData] {
-                    juce::String stateError;
-                    const auto changed = rack.setState(stateData, stateError);
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    if (!changed) {
-                        writeJson(makeError("plugin", stateError), requestId);
-                        return;
-                    }
-                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor), requestId);
-                },
-                std::chrono::seconds(10));
-                if (!submitted) {
-                    pluginOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-                }
-                continue;
-            }
-if (type == "sendTrackMidi" || type == "panicTrackMidi") {
+            if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "timelineBusy",
@@ -1782,21 +1652,10 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 continue;
             }
             if (type == "recoverAudioDevice") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The global rack is still changing a VST3. Audio device recovery can be retried shortly."));
-                    continue;
-                }
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "timelineBusy",
                         "The Arrangement Graph is still loading a VST3. Audio device recovery can be retried shortly."));
-                    continue;
-                }
-                juce::String midiError;
-                if (!midiMonitor.finishRecording(midiError)) {
-                    writeJson(makeError("recording", midiError));
                     continue;
                 }
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
@@ -1811,16 +1670,10 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 }
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "setAudioDriver") {
-                if (pluginOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "pluginBusy",
-                        "The global rack is still changing a VST3. Audio driver changes can be retried shortly."));
-                    continue;
-                }
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError(
                         "timelineBusy",
@@ -1843,11 +1696,6 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 }
                 requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
                 requested.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
-                juce::String midiError;
-                if (!midiMonitor.finishRecording(midiError)) {
-                    writeJson(makeError("recording", midiError));
-                    continue;
-                }
                 const auto previousDriver = manager.getCurrentAudioDeviceType();
                 const auto previousInputChannel = callback.getInputChannel();
                 juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
@@ -1901,50 +1749,29 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 callback.setInputChannel(requested.inputChannel);
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
-            if (type == "startRecording" || type == "startArrangeRecording") {
+            if (type == "startArrangeRecording") {
                 const auto directory = command.getProperty("directory", {}).toString();
-                const auto allowNoInput = static_cast<bool>(command.getProperty("allowNoInput", false));
                 juce::String recordingError;
-                const auto started = type == "startArrangeRecording"
-                    ? callback.startArrangeRecording(
-                        juce::File(directory), timelineEngine, recordingError)
-                    : callback.startRecording(
-                        juce::File(directory), recordingError, allowNoInput);
+                const auto started = callback.startArrangeRecording(
+                    juce::File(directory), timelineEngine, recordingError);
                 if (directory.isEmpty() || !started) {
                     writeJson(makeError("recording", directory.isEmpty()
                                                          ? "Recording directory is required."
                                                          : recordingError));
                     continue;
                 }
-                if (type == "startRecording")
-                    midiMonitor.beginRecording(juce::File(directory).getChildFile("midi.json"));
-                if (type == "startArrangeRecording" &&
-                    !timelineEngine.startRecording(
+                if (!timelineEngine.startRecording(
                         static_cast<int>(command.getProperty("countInBeats", 0)),
                         recordingError)) {
                     juce::String rollbackError;
                     (void) callback.stopArrangeRecording(timelineEngine, rollbackError);
-                    (void) midiMonitor.finishRecording(rollbackError);
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
-                continue;
-            }
-            if (type == "stopRecording") {
-                juce::String recordingError;
-                if (!callback.stopRecording(recordingError)) {
-                    writeJson(makeError("recording", recordingError));
-                    continue;
-                }
-                if (!midiMonitor.finishRecording(recordingError)) {
-                    writeJson(makeError("recording", recordingError));
-                    continue;
-                }
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor, {}, &timelineEngine));
+                writeJson(currentStatus(manager, callback, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "stopArrangeRecording") {
@@ -1976,14 +1803,13 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 writeJson(currentStatus(
                     manager,
                     callback,
-                    &rack,
                     &midiMonitor,
                     {},
                     &timelineEngine));
                 continue;
             }
             if (type == "status") {
-                writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "meterStatus") {
@@ -2000,8 +1826,6 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 trackPluginEditorTrackId.clear();
                 trackPluginEditorDeviceId.clear();
             }
-            pluginEditor->close();
-            pluginOperationRunning.store(false, std::memory_order_release);
             timelineOperationRunning.store(false, std::memory_order_release);
         }, std::chrono::seconds(10));
         if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
@@ -2018,8 +1842,6 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
     runtimeLifecycle.join();
 
     callback.setEmergencyMuted(true);
-    juce::String ignoredMidiError;
-    midiMonitor.finishRecording(ignoredMidiError);
     midiMonitor.setActive(false);
     midiListeningEnabled.store(false, std::memory_order_release);
     reopenAllMidiInputs();

@@ -13,6 +13,6 @@ kind: string, id: string, name: string,
 path: string, assetId?: AssetId, 
 /**
  * Where the missing dependency is referenced from, so the UI can point the
- * user at the exact clip, pad, or rack slot.
+ * user at the exact clip, pad, instrument, or effect slot.
  */
 usedBy: Array<string>, };

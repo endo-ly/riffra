@@ -496,7 +496,6 @@ mod tests {
                 round_trip_ms: None,
                 timeline_tick: None,
                 recording: RecordingStatus::default(),
-                plugin: None,
                 midi_inputs: Vec::new(),
                 midi_outputs: Vec::new(),
                 midi_input_active: false,

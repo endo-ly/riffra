@@ -22,7 +22,6 @@ import type {
   MissingDependency,
   MidiExportResult,
   MidiProbe,
-  PluginParameter,
   ProjectExport,
   RecordingAsset,
   RecordingStatus,
@@ -98,7 +97,6 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     roundTripMs: 8,
     timelineTick: null,
     recording,
-    plugin: null,
     midiInputs: [],
     midiOutputs: [],
     midiInputActive: false,
@@ -121,8 +119,6 @@ export interface FakeNativeApiOptions {
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
   separations?: SeparationResult[];
-  /** Parameters the loaded plugin reports, so individual-parameter restore can be exercised. */
-  pluginParameters?: PluginParameter[];
   /** Samples written when a recording is stopped. */
   recordingSamples?: number;
   /** Missing files/plugins the open session references (PRJ-004). */
@@ -152,7 +148,6 @@ export class FakeNativeApi implements NativeApi {
   plugins: ScanReport['plugins'];
   separations: SeparationResult[];
   bootstrapState: BootstrapState;
-  pluginParameters: PluginParameter[];
   recordingSamples: number;
   missing: MissingDependency[];
   private duplicateContent: Record<string, string>;
@@ -189,7 +184,6 @@ export class FakeNativeApi implements NativeApi {
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.separations = options.separations ?? [];
-    this.pluginParameters = options.pluginParameters ?? [];
     this.recordingSamples = options.recordingSamples ?? 22_050;
     this.missing = options.missingDependencies ?? [];
     this.duplicateContent = options.duplicateContent ?? {};
@@ -615,7 +609,7 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  private commitSessionRack = (
+  private commitSession = (
     project: (session: CreativeSession) => CreativeSession,
   ): SessionAudioPair => {
     this.assertPersistence();
@@ -747,8 +741,7 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  startRecording = async (): Promise<AudioStatus> => {
-    this.calls.push('startRecording');
+  private beginRecording = async (): Promise<AudioStatus> => {
     this.audio = {
       ...this.audio,
       recording: {
@@ -780,8 +773,10 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  startArrangeRecording = async (_recordingSessionId?: string): Promise<AudioStatus> =>
-    this.startRecording();
+  startArrangeRecording = async (_recordingSessionId?: string): Promise<AudioStatus> => {
+    this.calls.push('startArrangeRecording');
+    return this.beginRecording();
+  };
 
   recordAnotherTake = async (recordingSessionId: string): Promise<AudioStatus> => {
     this.calls.push('recordAnotherTake');
@@ -792,11 +787,10 @@ export class FakeNativeApi implements NativeApi {
     ) {
       throw new Error(`Recording Session is not registered: ${recordingSessionId}`);
     }
-    return this.startRecording();
+    return this.beginRecording();
   };
 
-  stopRecording = async (): Promise<AudioStatus> => {
-    this.calls.push('stopRecording');
+  private finishRecording = async (): Promise<AudioStatus> => {
     const samples = this.recordingSamples;
     this.audio = {
       ...this.audio,
@@ -869,13 +863,16 @@ export class FakeNativeApi implements NativeApi {
     return this.audio;
   };
 
-  stopArrangeRecording = async (): Promise<AudioStatus> => this.stopRecording();
+  stopArrangeRecording = async (): Promise<AudioStatus> => {
+    this.calls.push('stopArrangeRecording');
+    return this.finishRecording();
+  };
 
   setMasterGainDb = async (gainDb: number): Promise<SessionAudioPair> => {
     this.calls.push('setMasterGainDb');
     const clamped = Math.max(-90, Math.min(0, Number.isFinite(gainDb) ? gainDb : 0));
     this.audio = { ...this.audio, message: `Master gain set to ${clamped.toFixed(1)} dB.` };
-    return this.commitSessionRack((current) => ({
+    return this.commitSession((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       settings: { ...current.settings, masterDb: clamped },
@@ -1020,7 +1017,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSessionRack((current) => ({
+    return this.commitSession((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       workspace: 'design',
@@ -1066,7 +1063,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSessionRack((current) => ({
+    return this.commitSession((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       playState: {
@@ -1091,7 +1088,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSessionRack((current) => ({
+    return this.commitSession((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       playState: {
@@ -1141,12 +1138,6 @@ export class FakeNativeApi implements NativeApi {
     const session = this.bootstrapState.session;
     const next: CreativeSession = {
       ...session,
-      rack: {
-        ...session.rack,
-        devices: session.rack.devices.map((device) =>
-          device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
-        ),
-      },
       arrangement: {
         ...session.arrangement,
         revision: session.arrangement.revision + 1,

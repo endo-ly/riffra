@@ -411,7 +411,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onOpenInDesign: openLibraryAssetAnalysis,
             onImportMidi: () => void importMidi(),
           }}
-          rack={{
+          plugins={{
             plugins,
             visiblePlugins,
             selectedTrack,

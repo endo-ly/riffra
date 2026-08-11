@@ -11,7 +11,6 @@
 
 use crate::asset::AssetId;
 use crate::errors::DomainError;
-use crate::rack::RackDevice;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -118,8 +117,6 @@ pub struct RecordingCapture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub source: Option<String>,
-    #[serde(default)]
-    pub rack_snapshot: Vec<RackDevice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub raw_audio_asset_id: Option<AssetId>,
@@ -160,7 +157,6 @@ impl RecordingCapture {
             loop_recording: false,
             recording_session_id: None,
             source: None,
-            rack_snapshot: Vec::new(),
             raw_audio_asset_id: None,
             processed_audio_asset_id: None,
             midi_asset_id: None,

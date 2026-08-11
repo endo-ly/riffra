@@ -58,7 +58,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 | エンティティ      | 役割                                                                                                                                                   |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CreativeSession` | すべての制作状態の単一の正準モデル。session_id（`scratch-<ms>`）、更新トークン updated_at_ms、workspace、arrangement、rack、snapshots、settings を保持 |
+| `CreativeSession` | すべての制作状態の単一の正準モデル。session_id（`scratch-<ms>`）、更新トークン updated_at_ms、workspace、design_context、play_state、arrangement、settings を保持 |
 | `Workspace`       | `arrange` / `design` の固定二領域。`Sample` / `Analyze` / `Separate` は領域ではなく Design から到達するツール                                          |
 | `DesignContext`   | Design 領域が現在対象としているツールと素材（active_tool, target_asset_id）                                                                            |
 | `SessionSettings` | マスターゲイン、ループ、カウントイン、メトロノーム、ノート、AI権限・履歴など、構造ではないセッション全体の設定                                         |
@@ -87,7 +87,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `RecordingPassRecord`    | 録音範囲を1回通ったパス。ordinal、位置・長さ、部分開始/終了フラグ、そのパスのテイクID列                                                                                                                                                                 |
 | `RecordingTakeRecord`    | 1パスが生んだトラック単位の成果物。`raw_audio` / `processed_audio`（`TakeAudioSource`：asset_id + サンプル範囲 + テール + サンプルレート）、`midi_asset_id`。v1 の raw_audio_asset_id 等はインポート時に移行され新規セッションでは書かれない            |
 | `AudioTakeVariant`       | `raw` / `processed`。AudioClip がどちらの音源を使うか。片方が欠けていれば `preferred_audio_source` がフォールバック                                                                                                                                     |
-| `RecordingCapture`       | 録音イベントそのもの（工程）。状態遷移 `recording → completing → completed \| recoverable \| failed` を唯一の遷移行列で定義。開始時点のセッション文脈（デバイス・マスター・ラックスナップショット・アーム済みトラック）を保存。生成物は Asset ID で参照 |
+| `RecordingCapture`       | 録音イベントそのもの（工程）。状態遷移 `recording → completing → completed \| recoverable \| failed` を唯一の遷移行列で定義。開始時点のセッション文脈（デバイス・マスター・アーム済みトラック）を保存。生成物は Asset ID で参照 |
 | `DropoutInformation`     | 録音中のドロップアウト診断（書き込みサンプル数、欠落ブロック、欠落サンプル、ドロップアウト区間。raw/processed 別）                                                                                                                                      |
 | `RecordingAsset`         | UI 用 read model。`recordings/inbox` のマニフェストから組み立て、回復（recoverable）時の表示・復旧操作を担う。永続ドメインとしては使用しない                                                                                                            |
 
@@ -107,7 +107,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 | エンティティ   | 役割                                                                                                                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RackInstance` | 現在使われている信号チェーン（devices + macros）。トラックごととセッション全体（マスター相当）に存在                                                                                               |
+| `RackInstance` | Trackで現在使われている信号チェーン（devices + macros）                                                                                                                                            |
 | `RackDevice`   | チェーンの1スロット。`input` / `plugin` / `utility` / `output`。パス、バイパス、ゲイン、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインのプレースホルダ（disabled_placeholder） |
 | `RackMacro`    | パラメータに割り当てる名前付きマクロコントロール                                                                                                                                                   |
 
@@ -118,13 +118,12 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `PlayState` / `SampleInstrumentState` | ライブ演奏の状態（サンプルインストゥルメント構成）                         |
 | `SamplePad`                           | パフォーマンス用パッド。素材、再生区間（ms）、MIDIキー割当、ゲイン、ループ |
 
-### 4.7 スナップショットとAI
+### 4.7 AI提案
 
-| エンティティ      | 役割                                                                                   |
-| ----------------- | -------------------------------------------------------------------------------------- |
-| `SessionSnapshot` | A/B 比較用にラック＋マスターを丸ごと保存したスナップショット（親子関係・タグ可）       |
-| `AiPermission`    | AI 提案の許可範囲（Explain / Suggest / Apply）                                         |
-| `AiChangeSet`     | 反転可能なAI提案レコード。対象・現在値・提案値・理由・予想効果・リスク・適用済みフラグ |
+| エンティティ   | 役割                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------- |
+| `AiPermission` | AI 提案の許可範囲（Explain / Suggest / Apply）                                         |
+| `AiChangeSet`  | 反転可能なAI提案レコード。対象・現在値・提案値・理由・予想効果・リスク・適用済みフラグ |
 
 ### 4.8 バックグラウンドジョブ
 
@@ -151,9 +150,8 @@ flowchart TD
     RT -->|raw/processed source| AS[Asset]
     AC -->|asset_id| AS
     MC -->|任意 asset_id| AS
-    CS --> RI[RackInstance]
+    TR --> RI[RackInstance]
     RI --> RD[RackDevice]
-    CS --> SS[SessionSnapshot]
     CS --> PS[PlayState]
     PS --> SI[SampleInstrumentState]
     SI --> SP[SamplePad]
@@ -196,6 +194,6 @@ flowchart TD
 | 方針           | 内容                                                                                                                                                                            |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 後方互換の是認 | 旧フィールドは「読めるが書かない」。読み込み時に現行形へ移行し、シリアライズ時には旧フィールドを出力しない（例: `raw_audio_asset_id` → `raw_audio` への移行）                   |
-| 移行は境界で   | 旧形式の変換（workspace `play` → `arrange`、テイクのパス再構成、レガシーテイクのサンプルレート補完）は `deserialize_session` / ロード境界のみで行い、ドメインは現行形だけを扱う |
+| 移行は境界で   | 旧録音テイク形状の変換、テイクのパス再構成、レガシーテイクのサンプルレート補完は `deserialize_session` / ロード境界のみで行い、ドメインは現行形だけを扱う |
 | 世代回復の前提 | 読み込めない世代はスキップされるため、新スキーマは常に「旧セッションを読み込める」必要がある（保存は現行形で行う）                                                              |
 | 言語間の同期   | 型定義は Rust が唯一の真実源。TS は再生成、C++ は投影プロトコルの検証テスト（`scripts/test-ipc.ps1` ほか）で整合を保つ                                                          |

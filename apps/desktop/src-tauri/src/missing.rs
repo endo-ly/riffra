@@ -20,7 +20,7 @@ pub struct MissingDependency {
     #[ts(optional)]
     pub asset_id: Option<AssetId>,
     /// Where the missing dependency is referenced from, so the UI can point the
-    /// user at the exact clip, pad, or rack slot.
+    /// user at the exact clip, pad, instrument, or effect slot.
     pub used_by: Vec<String>,
 }
 
@@ -108,9 +108,6 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
         }
     }
 
-    for device in &session.rack.devices {
-        collect_missing_plugin(&mut missing, device, format!("rack:{}", device.id));
-    }
     for track in &session.arrangement.tracks {
         if let Some(instrument) = &track.instrument {
             collect_missing_plugin(
@@ -173,11 +170,6 @@ pub fn relink(
 /// relinks a real plugin.
 pub fn mark_disabled_placeholder(session: &CreativeSession, device_id: &str) -> CreativeSession {
     let mut next = session.clone();
-    for device in &mut next.rack.devices {
-        if device.id == device_id {
-            device.disabled_placeholder = true;
-        }
-    }
     let mut arrangement_changed = false;
     for track in &mut next.arrangement.tracks {
         for device in track
@@ -216,20 +208,8 @@ mod tests {
     fn session_with_missing_asset(data_root: &Path) -> (CreativeSession, AssetId) {
         let asset_id = asset::mint_asset_id();
         let mut session = CreativeSession::new(now_ms());
-        session
-            .arrangement
-            .tracks
-            .push(crate::session::Track::audio("main".into(), "Main".into()));
-        session.arrangement.audio_clips.push(AudioClip::full_source(
-            "clip:missing".into(),
-            "lost".into(),
-            "main".into(),
-            asset_id.clone(),
-            crate::session::TimelineTick(0),
-            48_000,
-            48_000,
-        ));
-        session.rack.devices.push(RackDevice {
+        let mut track = crate::session::Track::audio("main".into(), "Main".into());
+        track.rack.devices.push(RackDevice {
             id: "plugin:gone".into(),
             name: "Lost".into(),
             kind: DeviceKind::Plugin,
@@ -240,6 +220,16 @@ mod tests {
             state_data: None,
             disabled_placeholder: false,
         });
+        session.arrangement.tracks.push(track);
+        session.arrangement.audio_clips.push(AudioClip::full_source(
+            "clip:missing".into(),
+            "lost".into(),
+            "main".into(),
+            asset_id.clone(),
+            crate::session::TimelineTick(0),
+            48_000,
+            48_000,
+        ));
         let _ = data_root;
         (session, asset_id)
     }
@@ -294,7 +284,7 @@ mod tests {
         let data_root = root();
         let (session, _) = session_with_missing_asset(&data_root);
         let patched = mark_disabled_placeholder(&session, "plugin:gone");
-        let device = patched
+        let device = patched.arrangement.tracks[0]
             .rack
             .devices
             .iter()
@@ -312,7 +302,7 @@ mod tests {
         let bundle = data_root.join("Present.vst3");
         std::fs::create_dir_all(&bundle).unwrap();
         let (mut session, _) = session_with_missing_asset(&data_root);
-        session
+        session.arrangement.tracks[0]
             .rack
             .devices
             .iter_mut()

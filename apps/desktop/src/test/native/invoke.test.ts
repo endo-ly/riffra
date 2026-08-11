@@ -38,23 +38,23 @@ describe('native invoke bridge', () => {
   });
 
   it('forwards independent commands without a frontend ordering policy', async () => {
-    let releaseRack!: (value: unknown) => void;
-    const rackCompletion = new Promise<unknown>((resolve) => {
-      releaseRack = resolve;
+    let releaseParameter!: (value: unknown) => void;
+    const parameterCompletion = new Promise<unknown>((resolve) => {
+      releaseParameter = resolve;
     });
     tauriInvoke.mockImplementation((command: string) => {
-      if (command === 'restore_current_rack') return rackCompletion;
+      if (command === 'set_track_device_parameter') return parameterCompletion;
       return Promise.resolve({ command });
     });
 
-    const rack = invoke('restore_current_rack');
+    const parameter = invoke('set_track_device_parameter');
     const edit = invoke('update_track', { trackId: 'track:1' });
 
-    expect(tauriInvoke).toHaveBeenNthCalledWith(1, 'restore_current_rack', {});
+    expect(tauriInvoke).toHaveBeenNthCalledWith(1, 'set_track_device_parameter', {});
     await expect(edit).resolves.toEqual({ command: 'update_track' });
     expect(tauriInvoke).toHaveBeenNthCalledWith(2, 'update_track', { trackId: 'track:1' });
 
-    releaseRack(undefined);
-    await expect(rack).resolves.toEqual(undefined);
+    releaseParameter(undefined);
+    await expect(parameter).resolves.toEqual(undefined);
   });
 });

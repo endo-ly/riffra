@@ -43,7 +43,6 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       processedDropoutEndSample: null,
       recoveryStatus: 'clean',
     },
-    plugin: null,
     midiInputs: [],
     midiOutputs: [],
     midiInputActive: false,

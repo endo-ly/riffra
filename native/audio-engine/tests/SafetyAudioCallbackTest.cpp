@@ -12,6 +12,41 @@ namespace {
 
 constexpr int kBlockSize = 32;
 
+juce::var makeMonitoringSnapshot() {
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    auto* audioInput = new juce::DynamicObject();
+    audioInput->setProperty("channelIndex", 0);
+    auto* rack = new juce::DynamicObject();
+    rack->setProperty("devices", juce::Array<juce::var> {});
+    auto* track = new juce::DynamicObject();
+    track->setProperty("id", "track:monitoring");
+    track->setProperty("kind", "audio");
+    track->setProperty("gainDb", 0.0);
+    track->setProperty("pan", 0.0);
+    track->setProperty("muted", false);
+    track->setProperty("solo", false);
+    track->setProperty("armed", false);
+    track->setProperty("monitoring", "on");
+    track->setProperty("audioInput", juce::var(audioInput));
+    track->setProperty("rack", juce::var(rack));
+    track->setProperty("audioClips", juce::Array<juce::var> {});
+    track->setProperty("midiClips", juce::Array<juce::var> {});
+    track->setProperty("automation", juce::Array<juce::var> {});
+
+    juce::Array<juce::var> tracks;
+    tracks.add(juce::var(track));
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+    return juce::var(snapshot);
+}
+
 } // namespace
 
 TEST(SafetyAudioCallbackTest, HoldsInputTransientUntilStatusCollection)
@@ -56,7 +91,6 @@ TEST(SafetyAudioCallbackTest, ReportsInvalidAudioSamples)
 {
     SafetyAudioCallback callback;
     callback.setEmergencyMuted(false);
-    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::play);
     std::array<float, kBlockSize> input {};
     std::array<float, kBlockSize> output {};
     input.fill(std::numeric_limits<float>::quiet_NaN());
@@ -93,9 +127,17 @@ TEST(SafetyAudioCallbackTest, DoesNotMuteForAHotInputWhenMonitoringIsOff)
 
 TEST(SafetyAudioCallbackTest, ReleasingEmergencyMuteClearsFeedbackCause)
 {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(timeline.loadSnapshot(
+        makeMonitoringSnapshot(), formats, 48'000.0, kBlockSize, error));
     SafetyAudioCallback callback;
+    callback.setTimelineEngine(&timeline);
     callback.setEmergencyMuted(false);
-    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::play);
+    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
     std::array<float, kBlockSize> input {};
     std::array<float, kBlockSize> output {};
     input.fill(0.99f);

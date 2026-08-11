@@ -253,7 +253,7 @@ describe('App driven by FakeNativeApi', () => {
       expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
     );
 
-    playRejectors[0](new Error('Cancelled old Play request.'));
+    playRejectors[0](new Error('Cancelled previous transport request.'));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
     );
@@ -456,11 +456,11 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(recordButton);
 
     await waitFor(() => expect(fake.audio.recording.active).toBe(true));
-    expect(fake.calls).toContain('startRecording');
+    expect(fake.calls).toContain('startArrangeRecording');
 
     await user.click(screen.getByRole('button', { name: /Stop recording/ }));
     await waitFor(() => expect(fake.audio.recording.active).toBe(false));
-    expect(fake.calls).toContain('stopRecording');
+    expect(fake.calls).toContain('stopArrangeRecording');
     expect(fake.recordings[0].state).toBe('completed');
     expect(fake.recordings[0].samplesWritten).toBe(48_000);
 
@@ -480,7 +480,9 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
     await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('arrange'));
     expect(fake.bootstrapState.session.arrangement.tracks).toHaveLength(0);
-    expect(fake.bootstrapState.session.rack.devices).toEqual(defaultSession().rack.devices);
+    expect(fake.bootstrapState.session.arrangement.tracks).toEqual(
+      defaultSession().arrangement.tracks,
+    );
   });
 
   it('previews a sample pad through React props, not DOM listeners', async () => {

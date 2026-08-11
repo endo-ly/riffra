@@ -83,6 +83,32 @@ public:
         return true;
     }
 
+    static bool installLiveChainDevice(
+        TimelineEngine& engine,
+        const juce::String& trackId,
+        const juce::String& deviceId,
+        std::unique_ptr<juce::AudioProcessor> processor,
+        const double sampleRate,
+        const int blockSize,
+        juce::String& error) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr)
+            return false;
+        const auto found = std::find_if(
+            engine.timeline->tracks.begin(),
+            engine.timeline->tracks.end(),
+            [&trackId](const auto& item) { return item->id == trackId; });
+        if (found == engine.timeline->tracks.end())
+            return false;
+        return addChainDevice(
+            (*found)->liveEffectChain,
+            deviceId,
+            std::move(processor),
+            sampleRate,
+            blockSize,
+            error);
+    }
+
     static bool instrumentEffectChainsProcessOnce() {
         // Arrange
         juce::AudioFormatManager formats;
@@ -1640,6 +1666,173 @@ TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat)
 
     // Assert
     EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped)
+{
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    const auto makeTrack = [&timebase](const juce::String& id, const bool muted) {
+        auto* track = new juce::DynamicObject();
+        track->setProperty("id", id);
+        track->setProperty("kind", "audio");
+        track->setProperty("gainDb", 0.0);
+        track->setProperty("pan", 0.0);
+        track->setProperty("muted", muted);
+        track->setProperty("solo", false);
+        track->setProperty("armed", false);
+        track->setProperty("monitoring", "on");
+        auto* audioInput = new juce::DynamicObject();
+        audioInput->setProperty("channelIndex", 0);
+        track->setProperty("audioInput", juce::var(audioInput));
+        auto* rack = new juce::DynamicObject();
+        rack->setProperty("devices", juce::Array<juce::var> {});
+        track->setProperty("rack", juce::var(rack));
+        track->setProperty("audioClips", juce::Array<juce::var> {});
+        track->setProperty("midiClips", juce::Array<juce::var> {});
+        track->setProperty("automation", juce::Array<juce::var> {});
+        return juce::var(track);
+    };
+
+    juce::Array<juce::var> tracks;
+    tracks.add(makeTrack("track:guitar", false));
+    tracks.add(makeTrack("track:muted-guitar", true));
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+
+    ASSERT_TRUE(engine.loadSnapshot(
+        juce::var(snapshot), formats, 48'000.0, 512, error));
+
+    constexpr int kBlockSamples = 512;
+    std::array<float, kBlockSamples> input {};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> outputLeft {};
+    std::array<float, kBlockSamples> outputRight {};
+    const std::array<const float*, 1> inputChannels { input.data() };
+    const std::array<float*, 2> outputChannels { outputLeft.data(), outputRight.data() };
+    const auto outputMagnitude = [&] {
+        return std::max(
+            juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
+            juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
+    };
+
+    // Act: monitor the physical input without starting the transport.
+    engine.mix(
+        inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
+
+    // Assert: the stopped transport still routes the Audio Track input to the
+    // output, while a muted track stays silent. Pan law halves the level.
+    EXPECT_GT(outputMagnitude(), 0.02f);
+    EXPECT_LT(outputMagnitude(), 0.08f);
+
+    engine.play();
+    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
+    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
+    engine.mix(
+        inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
+    EXPECT_GT(outputMagnitude(), 0.02f);
+    EXPECT_LT(outputMagnitude(), 0.08f);
+}
+
+TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain)
+{
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    auto* track = new juce::DynamicObject();
+    track->setProperty("id", "track:guitar");
+    track->setProperty("kind", "audio");
+    track->setProperty("gainDb", 0.0);
+    track->setProperty("pan", 0.0);
+    track->setProperty("muted", false);
+    track->setProperty("solo", false);
+    track->setProperty("armed", false);
+    track->setProperty("monitoring", "on");
+    auto* audioInput = new juce::DynamicObject();
+    audioInput->setProperty("channelIndex", 0);
+    track->setProperty("audioInput", juce::var(audioInput));
+    auto* rack = new juce::DynamicObject();
+    rack->setProperty("devices", juce::Array<juce::var> {});
+    track->setProperty("rack", juce::var(rack));
+    track->setProperty("audioClips", juce::Array<juce::var> {});
+    track->setProperty("midiClips", juce::Array<juce::var> {});
+    track->setProperty("automation", juce::Array<juce::var> {});
+
+    juce::Array<juce::var> tracks;
+    tracks.add(juce::var(track));
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+
+    ASSERT_TRUE(engine.loadSnapshot(
+        juce::var(snapshot), formats, 48'000.0, 512, error));
+    std::vector<int> processOrder;
+    ASSERT_TRUE(TimelineEngineTestPeer::installLiveChainDevice(
+        engine,
+        "track:guitar",
+        "device:amp",
+        std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder),
+        48'000.0,
+        512,
+        error));
+
+    constexpr int kBlockSamples = 512;
+    std::array<float, kBlockSamples> input {};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> outputLeft {};
+    std::array<float, kBlockSamples> outputRight {};
+    const std::array<const float*, 1> inputChannels { input.data() };
+    const std::array<float*, 2> outputChannels { outputLeft.data(), outputRight.data() };
+
+    // Act: monitor the physical input through the amplifier device first
+    // without the transport, then with the transport playing.
+    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
+    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
+    engine.mix(
+        inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
+    const auto stoppedPeak = std::max(
+        juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
+        juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
+    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
+    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
+    engine.seekToTick(0);
+    engine.play();
+    engine.mix(
+        inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
+
+    // Assert: the live chain processed the input (2x gain, pan law) and the
+    // monitored signal reaches the output while the transport is stopped and
+    // while it is playing, instead of being turned into silence.
+    const auto playingPeak = std::max(
+        juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
+        juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
+    EXPECT_GT(stoppedPeak, 0.05f);
+    EXPECT_LT(stoppedPeak, 0.2f);
+    EXPECT_GT(playingPeak, 0.05f);
+    EXPECT_LT(playingPeak, 0.2f);
+    EXPECT_EQ(processOrder.size(), 2u);
 }
 
 } // namespace riffra

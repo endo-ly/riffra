@@ -121,10 +121,9 @@ fn merge_recording_session(
 
 /// Starts a new hardware recording. The Audio Runtime begins writing into a
 /// fresh Inbox take directory, and a `RecordingCapture` is persisted next to
-/// the native writer's output with a snapshot of the session context (rack,
-/// workspace, master, count-in) so the take is self-describing if recovery is
-/// ever needed. Capture persistence is part of the operation contract; if it
-/// fails, recording is stopped again and the operation returns an error.
+/// the native writer's output with the session context needed for recovery.
+/// Capture persistence is part of the operation contract; if it fails,
+/// recording is stopped again and the operation returns an error.
 pub fn start_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, String> {
     start_recording_in_session(context, None)
 }
@@ -237,7 +236,6 @@ fn build_startup_capture(
             .map(|channel| channel.name.clone())
     });
     capture.buffer_size = status.buffer_size;
-    capture.rack_snapshot = session.rack.devices.clone();
     capture.workspace = Some(format!("{:?}", session.workspace).to_lowercase());
     capture.master_db = Some(session.settings.master_db);
     capture.count_in_beats = Some(session.settings.count_in_beats);
