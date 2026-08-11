@@ -126,7 +126,7 @@ TimelineEngine::~TimelineEngine() {
     stop();
     publishInProgress.store(true, std::memory_order_release);
     if (!waitForAudioReaders(std::chrono::milliseconds(250)))
-        std::_Exit(0);
+        std::_Exit(125);
     activeTimeline.store(nullptr, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
@@ -147,6 +147,7 @@ bool TimelineEngine::loadSnapshot(
     const bool commitImmediately) {
     std::unique_ptr<PreparedTimeline> prepared;
     bool monitorLiveInputState = false;
+    std::uint32_t monitoringInputChannelsState = 0;
     bool armedInstrumentTrackState = false;
     if (!prepareSnapshot(
             snapshot,
@@ -155,6 +156,7 @@ bool TimelineEngine::loadSnapshot(
             maximumBlockSize,
             prepared,
             monitorLiveInputState,
+            monitoringInputChannelsState,
             armedInstrumentTrackState,
             error))
         return false;
@@ -163,6 +165,7 @@ bool TimelineEngine::loadSnapshot(
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         pendingTimeline = std::move(prepared);
         pendingMonitorLiveInput = monitorLiveInputState;
+        pendingMonitoringInputChannels = monitoringInputChannelsState;
         pendingArmedInstrumentTrack = armedInstrumentTrackState;
     }
     if (!commitImmediately)
@@ -177,10 +180,12 @@ bool TimelineEngine::prepareSnapshot(
     const int maximumBlockSize,
     std::unique_ptr<PreparedTimeline>& prepared,
     bool& monitorLiveInputState,
+    std::uint32_t& monitoringInputChannelsState,
     bool& armedInstrumentTrackState,
     juce::String& error) {
     prepared.reset();
     monitorLiveInputState = false;
+    monitoringInputChannelsState = 0;
     armedInstrumentTrackState = false;
     if (!snapshot.isObject() || outputSampleRate <= 0.0 || maximumBlockSize <= 0) {
         error = "Timeline snapshot requires an active audio device.";
@@ -288,12 +293,18 @@ bool TimelineEngine::prepareSnapshot(
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             monitoring, track->armed, track->instrument);
+        track->liveEffectRuntimeRequired = track->instrument || track->monitorInput;
+        track->recordingEffectRuntimeRequired = !track->instrument && track->armed;
         if (track->monitorInput)
             monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
         if (audioInput.isObject())
             track->audioInputChannel =
                 static_cast<int>(audioInput.getProperty("channelIndex", -1));
+        if (track->monitorInput && track->audioInputChannel >= 0
+            && track->audioInputChannel < 32)
+            monitoringInputChannelsState |=
+                std::uint32_t { 1 } << static_cast<unsigned>(track->audioInputChannel);
 
         const auto automation = trackValue.getProperty(
             "automation", juce::var(juce::Array<juce::var> {}));
@@ -353,7 +364,8 @@ bool TimelineEngine::prepareSnapshot(
         auto sameRuntimeTopology = false;
         {
             const juce::SpinLock::ScopedLockType lock(timelineLock);
-            if (timeline != nullptr) {
+            if (!runtimeDevicesNeedReprepare.load(std::memory_order_acquire)
+                && timeline != nullptr) {
                 const auto existing = std::find_if(
                     timeline->tracks.begin(), timeline->tracks.end(),
                     [&track](const auto& item) { return item->id == track->id; });
@@ -361,7 +373,11 @@ bool TimelineEngine::prepareSnapshot(
                     && (*existing)->effectTopologySignature
                         == track->effectTopologySignature
                     && (*existing)->instrumentTopologySignature
-                        == track->instrumentTopologySignature) {
+                        == track->instrumentTopologySignature
+                    && (*existing)->liveEffectRuntimeRequired
+                        == track->liveEffectRuntimeRequired
+                    && (*existing)->recordingEffectRuntimeRequired
+                        == track->recordingEffectRuntimeRequired) {
                     sameRuntimeTopology = true;
                     existingEffectState = (*existing)->effectState;
                     existingInstrumentState = (*existing)->instrumentState;
@@ -379,14 +395,28 @@ bool TimelineEngine::prepareSnapshot(
         }
         if (rack.isObject()) {
             if (!track->reuseRuntimeDevices
-                && !track->effectChain.load(devices, outputSampleRate, maximumBlockSize, error))
+                && !track->effectChain.load(
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/timeline-effect"))
                 return false;
-            if (!track->reuseRuntimeDevices &&
-                !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error))
+            if (!track->reuseRuntimeDevices && track->liveEffectRuntimeRequired
+                && !track->liveEffectChain.load(
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/live-effect"))
                 return false;
-            if (!track->reuseRuntimeDevices && !track->instrument &&
+            if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
                 !track->recordingCapture.effectChain.load(
-                    devices, outputSampleRate, maximumBlockSize, error))
+                    devices,
+                    outputSampleRate,
+                    maximumBlockSize,
+                    error,
+                    track->id + "/recording-effect"))
                 return false;
         }
         if (instrument.isObject()
@@ -396,20 +426,24 @@ bool TimelineEngine::prepareSnapshot(
             const auto path = instrument.getProperty("path", {}).toString();
             const auto loadInstrumentRack =
                 [&](std::unique_ptr<PluginRack>& rack,
-                    const juce::String& scope) {
+                    const juce::String& runtimeRole) {
                     rack = std::make_unique<PluginRack>();
                     if (const auto loadError =
                             rack->load(path, outputSampleRate, maximumBlockSize)) {
-                        error = scope + " could not be loaded: " + loadError->message;
+                        error = track->id + " device " + track->instrumentDeviceId
+                            + " failed at " + runtimeRole + "/" + loadError->scope + ": "
+                            + loadError->message;
                         return false;
                     }
-                    if (!rack->applyPersistedState(instrument, error))
+                    if (!rack->applyPersistedState(instrument, error)) {
+                        error = track->id + " device " + track->instrumentDeviceId
+                            + " failed at " + runtimeRole + "/stateApply: " + error;
                         return false;
+                    }
                     return true;
                 };
-            if (!loadInstrumentRack(track->instrumentRack, "Track Instrument")
-                || !loadInstrumentRack(
-                    track->liveInstrumentRack, "Track Live Instrument"))
+            if (!loadInstrumentRack(track->instrumentRack, "timeline-instrument")
+                || !loadInstrumentRack(track->liveInstrumentRack, "live-instrument"))
                 return false;
         }
         if (!track->reuseRuntimeDevices) {
@@ -671,7 +705,11 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         retiredTimeline = std::move(timeline);
         timeline = std::move(candidate);
         activeTimeline.store(timeline.get(), std::memory_order_release);
+        runtimeDevicesNeedReprepare.store(false, std::memory_order_release);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
+        monitoringInputChannels.store(
+            pendingMonitoringInputChannels,
+            std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
         if (retiredTimeline == nullptr)
             timelineSample.store(0, std::memory_order_release);
@@ -710,12 +748,17 @@ void TimelineEngine::audioDeviceStarted() noexcept {
     audioClockSample.store(0, std::memory_order_release);
     const AudioPublishScope publish(*this);
     if (publish.isReady()) {
+        activeTimeline.store(nullptr, std::memory_order_release);
+        monitorLiveInput.store(false, std::memory_order_release);
+        monitoringInputChannels.store(0, std::memory_order_release);
+        armedInstrumentTrack.store(false, std::memory_order_release);
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         if (timeline != nullptr) {
             resetPlaybackTrackState(*timeline);
             resetRecordingTrackState(*timeline);
         }
     }
+    runtimeDevicesNeedReprepare.store(true, std::memory_order_release);
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
@@ -1180,12 +1223,13 @@ bool TimelineEngine::mirrorEditorDeviceState(
             return false;
         return true;
     }
-    auto* live = track.liveEffectChain.findDevice(deviceId);
-    if (live == nullptr) {
-        error = "Live Track Device was not found.";
+    auto* playback = track.effectChain.findDevice(deviceId);
+    if (playback == nullptr) {
+        error = "Track Device was not found.";
         return false;
     }
-    if (!live->applyPersistedState(persistedState, error))
+    auto* live = track.liveEffectChain.findDevice(deviceId);
+    if (live != nullptr && !live->applyPersistedState(persistedState, error))
         return false;
     auto* recording = track.recordingCapture.effectChain.findDevice(deviceId);
     if (recording != nullptr && !recording->applyPersistedState(persistedState, error))
@@ -1218,12 +1262,13 @@ bool TimelineEngine::mirrorEditorDeviceParameter(
         sequence.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
-    auto* live = track.liveEffectChain.findDevice(deviceId);
-    if (live == nullptr) {
-        error = "Live Track Device was not found.";
+    auto* playback = track.effectChain.findDevice(deviceId);
+    if (playback == nullptr) {
+        error = "Track Device was not found.";
         return false;
     }
-    live->enqueueParameterChange(parameterIndex, value);
+    if (auto* live = track.liveEffectChain.findDevice(deviceId))
+        live->enqueueParameterChange(parameterIndex, value);
     if (auto* recording = track.recordingCapture.effectChain.findDevice(deviceId))
         recording->enqueueParameterChange(parameterIndex, value);
     sequence.fetch_add(1, std::memory_order_relaxed);
@@ -1380,6 +1425,13 @@ bool TimelineEngine::setDeviceParameter(
 
 bool TimelineEngine::monitoringEnabled() const noexcept {
     return monitorLiveInput.load(std::memory_order_acquire);
+}
+
+bool TimelineEngine::monitoringInputChannel(const int channel) const noexcept {
+    if (channel < 0 || channel >= 32)
+        return false;
+    const auto channels = monitoringInputChannels.load(std::memory_order_acquire);
+    return (channels & (std::uint32_t { 1 } << static_cast<unsigned>(channel))) != 0;
 }
 
 bool TimelineEngine::recordingWindow(
@@ -1713,12 +1765,14 @@ void TimelineEngine::processTracks(
                 else
                     juce::FloatVectorOperations::clear(destination, sampleCount);
             }
-            track.liveEffectChain.process(
-                track.liveInputBuffer.getArrayOfReadPointers(),
-                2,
-                track.liveProcessedBuffer.getArrayOfWritePointers(),
-                2,
-                sampleCount);
+            if (track.monitorInput) {
+                track.liveEffectChain.process(
+                    track.liveInputBuffer.getArrayOfReadPointers(),
+                    2,
+                    track.liveProcessedBuffer.getArrayOfWritePointers(),
+                    2,
+                    sampleCount);
+            }
             const auto captureStart = captureBlockOffset.load(std::memory_order_acquire);
             const auto captureEnd =
                 captureStart + captureBlockSamples.load(std::memory_order_acquire);

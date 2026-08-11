@@ -7,7 +7,7 @@ namespace riffra {
 
 RuntimeLifecycleExecutor::RuntimeLifecycleExecutor(TaskDispatcher dispatcher)
     : taskDispatcher(std::move(dispatcher)),
-      timeoutHandler([] { std::_Exit(0); }) {
+      timeoutHandler([] { std::_Exit(124); }) {
     // Do not start threads from the member-initializer list. At that point
     // later members (including the watchdog handler and lifecycle flags) have
     // not necessarily been initialized, and the thread would observe a
@@ -19,7 +19,7 @@ RuntimeLifecycleExecutor::RuntimeLifecycleExecutor(TaskDispatcher dispatcher)
 RuntimeLifecycleExecutor::~RuntimeLifecycleExecutor() {
     requestStop();
     if (!waitForIdle(std::chrono::milliseconds(1500)))
-        std::_Exit(0);
+        std::_Exit(125);
     join();
 }
 

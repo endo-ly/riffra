@@ -38,8 +38,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
-  padding: 9px 10px;
+  gap: 6px 10px;
+  padding: 7px 10px;
   background: #121d23;
   border: 1px solid #30414b;
   border-radius: 6px;
@@ -124,7 +124,7 @@
 
 .octave button {
   min-width: 25px;
-  min-height: 25px;
+  min-height: var(--control-dense);
   padding: 0;
   color: #d2e3e6;
   background: transparent;
@@ -173,7 +173,14 @@
 
 .instrumentSurface {
   min-height: 0;
+  display: grid;
+  align-content: start;
   overflow: auto;
+}
+
+.instrumentSurface > * {
+  width: min(100%, 720px);
+  max-width: 100%;
 }
 
 .message {

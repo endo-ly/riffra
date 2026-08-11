@@ -12,7 +12,6 @@ interface ArrangeLowerPanelProps {
   onViewChange: (view: Exclude<ArrangeLowerPanelView, 'closed'>) => void;
   onCollapsedChange: (collapsed: boolean) => void;
   onHeightChange: (height: number) => void;
-  onClose: () => void;
   playSurfaceSummary: ReactNode;
   playSurface: ReactNode;
   midiEditor: ReactNode;
@@ -26,7 +25,6 @@ export function ArrangeLowerPanel({
   onViewChange,
   onCollapsedChange,
   onHeightChange,
-  onClose,
   playSurfaceSummary,
   playSurface,
   midiEditor,
@@ -36,12 +34,17 @@ export function ArrangeLowerPanel({
   const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const startY = event.clientY;
-    const startHeight = height;
+    const startHeight = collapsed ? 42 : height;
     const workspaceHeight = event.currentTarget.parentElement?.parentElement?.clientHeight || 900;
     const maxHeight = Math.min(900, Math.floor(workspaceHeight * 0.55));
     const move = (pointer: PointerEvent) => {
-      const nextHeight = Math.max(150, Math.min(maxHeight, startHeight - pointer.clientY + startY));
-      onHeightChange(nextHeight);
+      const nextHeight = Math.min(maxHeight, startHeight - pointer.clientY + startY);
+      if (nextHeight <= 56) {
+        onCollapsedChange(true);
+        return;
+      }
+      onCollapsedChange(false);
+      onHeightChange(Math.max(150, nextHeight));
     };
     const finish = () => {
       window.removeEventListener('pointermove', move);
@@ -89,18 +92,6 @@ export function ArrangeLowerPanel({
         </div>
         <div className={styles.context}>
           {view === 'playSurface' ? playSurfaceSummary : (activeMidiClip?.name ?? 'No MIDI Clip')}
-        </div>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            aria-expanded={!collapsed}
-            onClick={() => onCollapsedChange(!collapsed)}
-          >
-            {collapsed ? 'Expand' : 'Collapse'}
-          </button>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
         </div>
       </header>
       <div className={styles.content} hidden={collapsed}>

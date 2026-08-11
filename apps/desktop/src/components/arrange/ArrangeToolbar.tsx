@@ -1,47 +1,23 @@
-import { useEffect, useState } from 'react';
-import type { ArrangeTool, SnapGrid, TrackSize } from '@/lib/arrange-timeline';
-import type { TrackKind } from '@/lib/domain';
+import type { ArrangeTool, SnapGrid } from '@/lib/arrange-timeline';
 import styles from './WorkspaceArrange.module.css';
 
 interface ArrangeToolbarProps {
   tool: ArrangeTool;
   snap: SnapGrid;
   zoom: number;
-  trackSize: TrackSize;
   rulerMode: 'bars' | 'time';
   follow: boolean;
-  position: string;
-  clock: string;
-  bpm: number;
-  signature: string;
   onTool: (tool: ArrangeTool) => void;
   onSnap: (snap: SnapGrid) => void;
   onZoom: (zoom: number) => void;
-  onTrackSize: (size: TrackSize) => void;
   onRulerMode: (mode: 'bars' | 'time') => void;
   onFollow: (follow: boolean) => void;
-  onTimebase: (bpm: number, numerator: number, denominator: number) => void;
-  onAddTrack: (kind: TrackKind) => void;
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
-  const [tempo, setTempo] = useState(String(props.bpm));
-  const [signature, setSignature] = useState(props.signature);
-  useEffect(() => setTempo(String(props.bpm)), [props.bpm]);
-  useEffect(() => setSignature(props.signature), [props.signature]);
-  const commitTimebase = () => {
-    const bpm = Number(tempo);
-    const [numerator, denominator] = signature.split('/').map(Number);
-    if (Number.isFinite(bpm) && bpm >= 20 && bpm <= 400 && numerator > 0 && denominator > 0)
-      props.onTimebase(bpm, numerator, denominator);
-    else {
-      setTempo(String(props.bpm));
-      setSignature(props.signature);
-    }
-  };
   return (
     <header className={styles.toolbar}>
       <div className={styles.segmented} aria-label="Arrange tool">
@@ -72,51 +48,6 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           ))}
         </select>
       </label>
-
-      <div className={styles.positionDisplay}>
-        <span>POSITION</span>
-        <strong>{props.position}</strong>
-        <small>{props.clock}</small>
-      </div>
-
-      <div className={styles.projectTime}>
-        <div>
-          <span>TEMPO</span>
-          <input
-            aria-label="Project BPM"
-            type="number"
-            min="20"
-            max="400"
-            step="0.1"
-            value={tempo}
-            onChange={(event) => setTempo(event.target.value)}
-            onBlur={commitTimebase}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.currentTarget.blur();
-              }
-            }}
-          />
-        </div>
-        <div>
-          <span>METER</span>
-          <select
-            aria-label="Project time signature"
-            value={signature}
-            onChange={(event) => {
-              setSignature(event.target.value);
-              const [numerator, denominator] = event.target.value.split('/').map(Number);
-              props.onTimebase(props.bpm, numerator, denominator);
-            }}
-          >
-            {['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'].map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
 
       <button
         className={`${styles.toggleButton} ${props.follow ? styles.active : ''}`}
@@ -168,31 +99,6 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           />
           <span>＋</span>
         </label>
-        <select
-          aria-label="Track height"
-          value={props.trackSize}
-          onChange={(event) => props.onTrackSize(event.target.value as TrackSize)}
-        >
-          <option value="compact">Compact</option>
-          <option value="normal">Normal</option>
-          <option value="large">Large</option>
-        </select>
-        <select
-          aria-label="Add track"
-          className={styles.addTrackButton}
-          value=""
-          onChange={(event) => {
-            const kind = event.target.value as TrackKind;
-            if (kind) props.onAddTrack(kind);
-            event.target.value = '';
-          }}
-        >
-          <option value="" disabled>
-            ＋ Track
-          </option>
-          <option value="audio">Audio Track</option>
-          <option value="instrument">Instrument Track</option>
-        </select>
       </div>
     </header>
   );

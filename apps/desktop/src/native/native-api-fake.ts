@@ -144,6 +144,7 @@ export interface FakeNativeApiOptions {
  */
 export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
+  readonly emergencyMuteRequests: boolean[] = [];
   readonly savedSessions: CreativeSession[] = [];
   audio: AudioStatus;
   runtimeProjection: RuntimeProjectionStatus;
@@ -688,13 +689,6 @@ export class FakeNativeApi implements NativeApi {
     return track;
   }
 
-  restoreSamplePadsStrict = async (): Promise<AudioStatus> => {
-    this.calls.push('restoreSamplePads');
-    return this.audio;
-  };
-
-  restoreSamplePads = async (): Promise<AudioStatus> => this.restoreSamplePadsStrict();
-
   previewAsset = async (assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
     this.calls.push('previewAsset');
     this.assertAsset(assetId);
@@ -729,6 +723,7 @@ export class FakeNativeApi implements NativeApi {
 
   setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
     this.calls.push('setEmergencyMute');
+    this.emergencyMuteRequests.push(muted);
     if (muted) {
       this.audio = {
         ...this.audio,
@@ -745,6 +740,7 @@ export class FakeNativeApi implements NativeApi {
       this.audio = {
         ...this.audio,
         state: 'ready',
+        feedbackSuspected: false,
         message: 'Emergency mute released; output is live.',
       };
     }
@@ -909,9 +905,9 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('retryStartupRuntime');
     this.audio = {
       ...this.audio,
-      state: 'muted',
+      state: 'ready',
       invalidSamples: 0,
-      message: 'Session runtime restored without reopening the audio device.',
+      message: 'Session runtime restored without reopening the audio device; output is ready.',
     };
     if (!this.bootstrapState.runtimeStarted) this.emitRuntimeStartupFinished(true);
     return this.audio;

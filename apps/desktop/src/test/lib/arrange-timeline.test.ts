@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AudioClip, MidiClip } from '@/lib/domain';
-import { buildTrackTimeline, layoutClipLanes } from '@/lib/arrange-timeline';
+import { buildTrackTimeline, layoutClipLanes, timelineGridDensity } from '@/lib/arrange-timeline';
 import { toAssetId } from '@/lib/domain';
 
 const timebase = {
@@ -11,6 +11,21 @@ const timebase = {
 };
 
 describe('arrange timeline layout', () => {
+  it('reduces grid detail as the timeline zooms out', () => {
+    expect(timelineGridDensity(timebase, 0.01)).toEqual({
+      showBeats: false,
+      subdivisionTicks: null,
+      labelEveryBars: 2,
+    });
+    expect(timelineGridDensity(timebase, 0.05)).toEqual({
+      showBeats: true,
+      subdivisionTicks: 480,
+      labelEveryBars: 1,
+    });
+    expect(timelineGridDensity(timebase, 0.1).subdivisionTicks).toBe(240);
+    expect(timelineGridDensity(timebase, 0.2).subdivisionTicks).toBe(240);
+  });
+
   it('uses one lane namespace for overlapping Audio and MIDI items', () => {
     const audioClip: AudioClip = {
       id: 'clip:audio',

@@ -9,7 +9,8 @@ bool PluginChain::load(
     const juce::var& values,
     const double sampleRate,
     const int blockSize,
-    juce::String& error) {
+    juce::String& error,
+    const juce::String& runtimeRole) {
     if (!values.isArray()) {
         error = "Plugin Chain devices must be an array.";
         return false;
@@ -27,24 +28,31 @@ bool PluginChain::load(
         }
         auto rack = std::make_unique<PluginRack>();
         if (const auto loadError = rack->load(path, sampleRate, blockSize)) {
-            error = "Plugin Chain device could not be loaded: " + loadError->message;
+            error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": "
+                + loadError->message;
             return false;
         }
-        if (!rack->applyPersistedState(value, error))
+        if (!rack->applyPersistedState(value, error)) {
+            error = runtimeRole + " device " + id + " failed at stateApply: " + error;
             return false;
+        }
         candidate.push_back(Device { id, std::move(rack) });
     }
     devices = std::move(candidate);
-    prepare(sampleRate, blockSize);
+    prepareBuffers(blockSize);
     return true;
 }
 
 void PluginChain::prepare(const double sampleRate, const int blockSize) noexcept {
+    prepareBuffers(blockSize);
+    for (auto& device : devices)
+        device.rack->prepare(sampleRate, blockSize);
+}
+
+void PluginChain::prepareBuffers(const int blockSize) noexcept {
     const auto channels = 2;
     firstBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
     secondBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
-    for (auto& device : devices)
-        device.rack->prepare(sampleRate, blockSize);
 }
 
 void PluginChain::reset() noexcept {

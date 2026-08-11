@@ -107,17 +107,17 @@ Browserで選択した対象は、制作領域に応じたPrimary Actionを持�
 
 | 選択対象    | Arrange                              | Design                |
 | ----------- | ------------------------------------ | --------------------- |
-| Plugin      | Focused Trackへ追加                  | Source処理に使用      |
+| Plugin      | 選択中のTrackへ追加                  | Source処理に使用      |
 | Recording   | Timelineへ配置                       | Sourceとして開く      |
 | Audio Asset | Timelineへ配置                       | 編集・加工する        |
 | Instrument  | Focused Instrument Trackへ割り当てる | Mappingを編集する     |
 | MIDI        | Timelineへ配置                       | Mapping確認に使用する |
 
-Primary ActionとDrag & Dropは同じ結果を生む。Pluginの投入先が複数ある場合は、実行前にFocused Trackを選択できる。
+Primary ActionとDrag & Dropは同じ結果を生む。Pluginの投入先が複数ある場合は、実行前に対象Trackを選択できる。
 
 ### 4.5 SelectionとInspector
 
-Browser、Track、Design Canvas、Timelineで編集対象を選択するObject Selectionを持つ。Arrangeでは、演奏とPlugin投入の対象を示すFocused Trackを別に持つ。
+Browser、Track、Design Canvas、Timelineで編集対象を選択するObject Selectionを持つ。Arrangeでは、一般的な編集対象を示すSelected Trackと、演奏入力の対象を示すFocused Instrument Trackを別に持つ。
 
 ```mermaid
 flowchart LR
@@ -125,11 +125,10 @@ flowchart LR
     T["Arrange Track"] --> S
     D["Design Canvas"] --> S
     A["Arrange Timeline"] --> S
-    T --> F["Focused Track"]
-    S --> I["Inspector"]
-    F --> I
+    T --> F["Focused Instrument Track"]
+    S --> I["Inspector / Plugin投入"]
     S --> W["Workspaceに応じた操作"]
-    F --> P["Plugin投入 / Play Surface"]
+    F --> P["Play Surface"]
 ```
 
 選択できる主な対象:
@@ -141,7 +140,7 @@ flowchart LR
 - Track / Audio Clip / MIDI Clip / MIDI Note
 - Snapshot / Job / Missing Dependency
 
-Object Selectionは編集対象を表し、Focused TrackはInspector、Plugin投入、Play Surfaceの対象を表す。MIDI ClipやNoteを選択してもFocused Trackは失われない。Focused Trackがない場合、Play Surfaceは演奏入力を受け付けない。
+Object Selectionは編集対象を表し、Selected TrackはInspectorとPlugin投入の対象を表す。Focused Instrument TrackはPlay Surfaceの演奏入力と録音対象を表す。MIDI ClipやNoteを選択してもFocused Instrument Trackは失われない。Focused Instrument Trackがない場合、Play Surfaceは演奏入力を受け付けない。
 
 制作領域を切り替えてもSelectionは保持される。Inspectorは選択対象に応じて内容を切り替え、同じ対象が別の制作領域でどのように利用されるかを示す。
 
@@ -220,7 +219,7 @@ Arrangeは、入力された音を聞きながら音を作り、録音し、時�
 │ Take 02    │ MIDI   │ [Chord Progression────────────]      │ Volume / Pan │
 │            │                                               │ Provenance   │
 │ Samples    │                                               │              │
-│ MIDI       │  [Play Surface] Focused Trackを演奏            │              │
+│ MIDI       │  [Play Surface] Focused Instrument Trackを演奏 │              │
 │ Inbox      │                                               │              │
 ├────────────┴───────────────────────────────────────────────┴─────────────┤
 │ Timeline  001.01.000   ◀  ▶  ■  ●   120 BPM  4/4  Loop   Master -6 dB │
@@ -242,7 +241,7 @@ Arrangeで行う主な操作:
 
 #### Arrange Lower Panel
 
-通常のArrange表示では、Timelineの下にLower Panelを開く。Lower PanelはPlay SurfaceとMIDI Editorを同じ領域で切り替え、Timelineの位置、Zoom、Object Selection、Focused Trackを保持する。
+通常のArrange表示では、Timelineの下にLower Panelを開く。Lower PanelはPlay SurfaceとMIDI Editorを同じ領域で切り替え、Timelineの位置、Zoom、Object Selection、Focused Instrument Trackを保持する。
 
 ```text
 ┌ Browser ────┬──────────────────── Arrange ─────────────────┬ Inspector ──┐
@@ -264,9 +263,9 @@ Lower Panelで行う主な操作:
 - Keyboard / Drum Pads、Octave、Velocity、Computer Keyboardを操作する
 - MIDI ClipをMIDI Editorで編集する
 - Timelineの位置とZoomを保ったままPlay SurfaceとMIDI Editorを切り替える
-- Record ArmされたFocused Trackで演奏MIDIを録音する
+- Record ArmされたFocused Instrument Trackで演奏MIDIを録音する
 
-Track Inspectorは、Audio Engineで有効なInstrumentとEffectを処理順に表示する。Plugin CatalogはBrowserに表示し、Focused Trackへ追加するとTrack InspectorとRuntimeへ反映する。
+Track Inspectorは、Audio Engineで有効なInstrumentとEffectを処理順に表示する。Plugin CatalogはBrowserに表示し、Selected Trackへ追加するとTrack InspectorとRuntimeへ反映する。
 
 VST3 EditorはPluginが提供する実画面をNative Windowで表示する。Editorを閉じてもRackの音声処理は継続する。
 

@@ -16,6 +16,32 @@ pub(crate) fn audio_command_succeeded(status: &AudioStatus) -> bool {
     status.state != AudioState::Faulted && status.state != AudioState::Offline
 }
 
+/// Reports whether persisted Sample Pad mappings were restored or safely
+/// disabled because the active device could not accept their buffers.
+#[derive(Debug)]
+pub(crate) enum SamplePadRestoreOutcome {
+    Restored(AudioStatus),
+    Disabled {
+        status: AudioStatus,
+        warning: String,
+    },
+}
+
+impl SamplePadRestoreOutcome {
+    pub(crate) fn into_status(self) -> AudioStatus {
+        match self {
+            Self::Restored(status) => status,
+            Self::Disabled {
+                mut status,
+                warning,
+            } => {
+                status.message = append_status_message(&status.message, &warning);
+                status
+            }
+        }
+    }
+}
+
 /// Resolves the session's pad set into the runtime's native pad shape, failing
 /// on any invalid slice or unresolved asset. Shared by the create workflow and
 /// the direct `configure_sample_pads` command.
@@ -184,10 +210,17 @@ pub(crate) fn sync_arrangement<D: RuntimeDriver>(
     submit_canonical_projection_nonblocking(context, projection)
 }
 
-pub fn sync_arrangement_runtime(
-    context: &SessionContext<'_>,
+pub fn sync_arrangement_runtime<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let projection = context.session_actor.capture_projection(context.session)?;
+    apply_arrangement_projection(context, projection)
+}
+
+fn apply_arrangement_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    projection: crate::session::actor::CanonicalProjection,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
     context
         .runtime
         .apply_and_wait(
@@ -201,25 +234,94 @@ pub fn sync_arrangement_runtime(
         .map_err(String::from)
 }
 
+/// Prepares a proposed Arrangement graph before its Session becomes
+/// canonical. The expected sequence prevents a candidate built from a stale
+/// Session from becoming the active Runtime projection.
+pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    candidate: &CreativeSession,
+    expected_sequence: u64,
+) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    let current = context.session_actor.capture_projection(context.session)?;
+    if current.sequence != expected_sequence {
+        return Err("Canonical Session changed while the VST candidate was being built.".into());
+    }
+    context
+        .runtime
+        .apply_candidate_and_wait(
+            runtime_timeline_snapshot(context.data_root, candidate),
+            crate::runtime::model::ProjectionKey {
+                sequence: expected_sequence.saturating_add(1),
+                session_revision: candidate.arrangement.revision,
+            },
+            ARRANGEMENT_RUNTIME_TIMEOUT,
+        )
+        .map_err(String::from)
+}
+
 /// Rebuilds the persisted Sample Pad mapping after the isolated Audio Runtime
 /// has been replaced. This does not mutate canonical state.
-pub fn restore_sample_pads(context: &SessionContext<'_>) -> Result<AudioStatus, String> {
+pub(crate) fn restore_sample_pads(
+    context: &SessionContext<'_>,
+) -> Result<SamplePadRestoreOutcome, String> {
     if context.safe_mode {
-        return context.audio.refresh_status().map_err(String::from);
+        return context
+            .audio
+            .refresh_status()
+            .map(SamplePadRestoreOutcome::Restored)
+            .map_err(String::from);
     }
     let session = context.session.lock().map_err(lock_error)?.clone();
-    let native_pads = resolve_native_pads(
+    let native_pads = match resolve_native_pads(
         context.data_root,
         &session.play_state.sample_instrument.pads,
-    )?;
-    let status = context.audio.configure_sample_pads(&native_pads)?;
+    ) {
+        Ok(native_pads) => native_pads,
+        Err(error) => return disable_sample_pads_after_failure(context, error),
+    };
+    let status = match context.audio.configure_sample_pads(&native_pads) {
+        Ok(status) => status,
+        Err(error) => return disable_sample_pads_after_failure(context, error.to_string()),
+    };
     if !audio_command_succeeded(&status) {
-        return Err(format!(
-            "Runtime rejected Sample Pad restoration: {}",
-            status.message
-        ));
+        return disable_sample_pads_after_failure(
+            context,
+            format!(
+                "Runtime rejected Sample Pad restoration: {}",
+                status.message
+            ),
+        );
     }
-    Ok(status)
+    Ok(SamplePadRestoreOutcome::Restored(status))
+}
+
+fn disable_sample_pads_after_failure(
+    context: &SessionContext<'_>,
+    reason: String,
+) -> Result<SamplePadRestoreOutcome, String> {
+    match context.audio.configure_sample_pads(&[]) {
+        Ok(status) if audio_command_succeeded(&status) => Ok(SamplePadRestoreOutcome::Disabled {
+            status,
+            warning: format!(
+                "{reason}; Sample Pads were disabled because their buffers could not be restored"
+            ),
+        }),
+        Ok(status) => Err(format!(
+            "{reason}; Sample Pads could not be disabled: {}",
+            status.message
+        )),
+        Err(error) => Err(format!(
+            "{reason}; Sample Pads could not be disabled: {error}"
+        )),
+    }
+}
+
+fn append_status_message(current: &str, addition: &str) -> String {
+    if current.is_empty() {
+        addition.into()
+    } else {
+        format!("{current} {addition}")
+    }
 }
 
 pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
@@ -330,6 +432,7 @@ fn workspace_processing_mode(workspace: Workspace) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::RecordingStatus;
     use crate::rack::RackDevice;
     use crate::session::Track;
     use crate::session::actor::SessionActor;
@@ -374,6 +477,49 @@ mod tests {
         for (workspace, expected_mode) in cases {
             assert_eq!(workspace_processing_mode(workspace), expected_mode);
         }
+    }
+
+    #[test]
+    fn disabled_sample_pad_outcome_keeps_the_warning_in_the_status() {
+        // Arrange
+        let outcome = SamplePadRestoreOutcome::Disabled {
+            status: AudioStatus {
+                state: AudioState::Muted,
+                driver: None,
+                input_device: None,
+                input_channel: None,
+                input_channels: Vec::new(),
+                output_device: None,
+                output_channels: Vec::new(),
+                sample_rate: None,
+                buffer_size: None,
+                round_trip_ms: None,
+                timeline_tick: None,
+                recording: RecordingStatus::default(),
+                plugin: None,
+                midi_inputs: Vec::new(),
+                midi_outputs: Vec::new(),
+                midi_input_active: false,
+                midi_messages: 0,
+                last_midi_note: None,
+                midi_pad_mappings: 0,
+                midi_pad_triggers: 0,
+                input_peak: 0.0,
+                output_peak: 0.0,
+                invalid_samples: 0,
+                feedback_suspected: false,
+                message: "Audio remains muted while the graph is rebuilt.".into(),
+            },
+            warning: "Sample Pads were disabled because their buffers could not be restored".into(),
+        };
+
+        // Act
+        let status = outcome.into_status();
+
+        // Assert
+        assert_eq!(status.state, AudioState::Muted);
+        assert!(status.message.contains("Audio remains muted"));
+        assert!(status.message.contains("Sample Pads were disabled"));
     }
 
     #[test]

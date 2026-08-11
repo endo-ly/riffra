@@ -71,6 +71,70 @@ TEST(SafetyAudioCallbackTest, ReportsInvalidAudioSamples)
     EXPECT_TRUE(std::isfinite(output.front()));
 }
 
+TEST(SafetyAudioCallbackTest, DoesNotMuteForAHotInputWhenMonitoringIsOff)
+{
+    SafetyAudioCallback callback;
+    callback.setEmergencyMuted(false);
+    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::passive);
+    std::array<float, kBlockSize> input {};
+    std::array<float, kBlockSize> output {};
+    input.fill(0.99f);
+    const std::array<const float*, 1> inputs { input.data() };
+    const std::array<float*, 1> outputs { output.data() };
+    const juce::AudioIODeviceCallbackContext context {};
+
+    for (int block = 0; block < 400; ++block)
+        callback.audioDeviceIOCallbackWithContext(
+            inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    EXPECT_FALSE(callback.isEmergencyMuted());
+    EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(SafetyAudioCallbackTest, ReleasingEmergencyMuteClearsFeedbackCause)
+{
+    SafetyAudioCallback callback;
+    callback.setEmergencyMuted(false);
+    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::play);
+    std::array<float, kBlockSize> input {};
+    std::array<float, kBlockSize> output {};
+    input.fill(0.99f);
+    const std::array<const float*, 1> inputs { input.data() };
+    const std::array<float*, 1> outputs { output.data() };
+    const juce::AudioIODeviceCallbackContext context {};
+
+    for (int block = 0; block < 400; ++block)
+        callback.audioDeviceIOCallbackWithContext(
+            inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
+
+    ASSERT_TRUE(callback.isEmergencyMuted());
+    ASSERT_TRUE(callback.isFeedbackSuspected());
+
+    callback.setEmergencyMuted(false);
+
+    EXPECT_FALSE(callback.isEmergencyMuted());
+    EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(SafetyAudioCallbackTest, DeviceFaultKeepsEmergencyMuteEngaged)
+{
+    SafetyAudioCallback callback;
+    callback.setEmergencyMuted(false);
+    ASSERT_FALSE(callback.isEmergencyMuted());
+
+    callback.setDeviceFaulted(true);
+    callback.setEmergencyMuted(true);
+
+    callback.setEmergencyMuted(false);
+
+    EXPECT_TRUE(callback.isEmergencyMuted());
+
+    callback.setDeviceFaulted(false);
+    callback.setEmergencyMuted(false);
+
+    EXPECT_FALSE(callback.isEmergencyMuted());
+}
+
 TEST(SafetyAudioCallbackTest, RequiresFaultWhenActiveDeviceDisappears)
 {
     EXPECT_TRUE(deviceLossRequiresFault(false, true));

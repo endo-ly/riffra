@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeAudioStatus } from '@/test/test-fixtures';
-import { audioCommandSucceeded, isOutputMuted } from '@/lib/audio-safety';
+import { audioCommandSucceeded, isEmergencyMuteActive, isOutputMuted } from '@/lib/audio-safety';
 
 function audio(state: 'offline' | 'starting' | 'ready' | 'muted' | 'faulted') {
   return makeAudioStatus({ state });
@@ -23,5 +23,14 @@ describe('isOutputMuted', () => {
   it('reflects the runtime mute state', () => {
     expect(isOutputMuted(audio('muted'))).toBe(true);
     expect(isOutputMuted(audio('ready'))).toBe(false);
+  });
+});
+
+describe('isEmergencyMuteActive', () => {
+  it('keeps a pending feedback mute actionable as an unmute', () => {
+    expect(
+      isEmergencyMuteActive(makeAudioStatus({ state: 'ready', feedbackSuspected: true })),
+    ).toBe(true);
+    expect(isEmergencyMuteActive(makeAudioStatus({ state: 'ready' }))).toBe(false);
   });
 });

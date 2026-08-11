@@ -44,16 +44,58 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.status()
     }
 
+    /// Clears a failed candidate projection before the canonical graph is
+    /// submitted again.
+    pub(crate) fn reset_for_repair(&self) -> bool {
+        self.projection.reset_for_repair()
+    }
+
+    /// Invalidates the active graph after the native audio device environment
+    /// changes, so the canonical Session is prepared with the new sample rate
+    /// and block size.
+    pub(crate) fn invalidate_for_audio_device_change(&self) -> bool {
+        self.projection.invalidate_for_audio_device_change()
+    }
+
+    /// Requeues the last active projection when a sidecar restart occurred
+    /// without an in-flight projection operation.
+    pub(crate) fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
+        self.projection.requeue_after_runtime_restart(generation)
+    }
+
     pub fn apply_and_wait(
         &self,
         snapshot: Value,
         key: ProjectionKey,
         timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
+        self.apply_and_wait_with_canonical(snapshot, key, timeout, true)
+    }
+
+    /// Applies a proposed graph without making it the restart recovery source.
+    pub(crate) fn apply_candidate_and_wait(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        timeout: Duration,
+    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
+        self.apply_and_wait_with_canonical(snapshot, key, timeout, false)
+    }
+
+    fn apply_and_wait_with_canonical(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        timeout: Duration,
+        canonical: bool,
+    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let deadline = Instant::now() + timeout;
-        let operation = self
-            .projection
-            .submit_with_deadline(snapshot, key, Some(deadline))?;
+        let operation = self.projection.submit_with_canonical_deadline(
+            snapshot,
+            key,
+            Some(deadline),
+            canonical,
+        )?;
         self.projection.wait_for_operation(
             operation.operation_id,
             operation.key,
@@ -172,7 +214,7 @@ mod tests {
     use crate::runtime::error::RuntimeError;
     use crate::runtime::ports::{ProjectionDriver, TransportDriver};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -181,6 +223,9 @@ mod tests {
         loaded: Mutex<Vec<u64>>,
         pending: Mutex<Option<u64>>,
         prepare_delay: Duration,
+        prepare_timeout_ms: AtomicU64,
+        minimum_prepare_timeout_ms: AtomicU64,
+        emergency_muted: AtomicBool,
         prepare_started: AtomicU64,
         discarded: AtomicU64,
         timeout_once: AtomicU64,
@@ -196,6 +241,9 @@ mod tests {
                 loaded: Mutex::new(Vec::new()),
                 pending: Mutex::new(None),
                 prepare_delay: load_delay,
+                prepare_timeout_ms: AtomicU64::new(0),
+                minimum_prepare_timeout_ms: AtomicU64::new(0),
+                emergency_muted: AtomicBool::new(false),
                 prepare_started: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
                 timeout_once: AtomicU64::new(0),
@@ -210,9 +258,17 @@ mod tests {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: Value,
-            _timeout: Duration,
+            timeout: Duration,
         ) -> Result<(), RuntimeError> {
+            self.prepare_timeout_ms
+                .store(timeout.as_millis() as u64, Ordering::Release);
             self.prepare_started.fetch_add(1, Ordering::Release);
+            if timeout.as_millis() < self.minimum_prepare_timeout_ms.load(Ordering::Acquire) as u128
+            {
+                return Err(RuntimeError::Timeout {
+                    message: "VST prepare requires the full lifecycle budget.".into(),
+                });
+            }
             thread::sleep(self.prepare_delay);
             if self
                 .timeout_once
@@ -220,7 +276,7 @@ mod tests {
                 .is_ok()
             {
                 return Err(RuntimeError::Timeout {
-                    message: "Native audio did not acknowledge the command within 15 seconds."
+                    message: "Native audio did not acknowledge the command within 30 seconds."
                         .into(),
                 });
             }
@@ -588,5 +644,36 @@ mod tests {
         wait_until(|| reconciler.status().active_projection_sequence == Some(2));
         assert_eq!(reconciler.status().active_session_revision, Some(40));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[100, 40]);
+    }
+
+    #[test]
+    fn supports_a_slow_vst_prepare_within_the_lifecycle_budget() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver
+            .minimum_prepare_timeout_ms
+            .store(15_000, Ordering::Release);
+        let recovery_calls = Arc::new(AtomicU64::new(0));
+        let recovery_count = Arc::clone(&recovery_calls);
+        let recovery_driver = Arc::clone(&driver);
+        let recovery: RuntimeRecovery = Arc::new(move |_generation, _timeout| {
+            recovery_count.fetch_add(1, Ordering::Release);
+            recovery_driver
+                .emergency_muted
+                .store(true, Ordering::Release);
+            Err(RuntimeError::NativeRejected(
+                "recovery was not expected".into(),
+            ))
+        });
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
+
+        let status = reconciler
+            .apply_and_wait(snapshot(31), key(31, 31), Duration::from_secs(30))
+            .unwrap();
+
+        assert_eq!(status.active_session_revision, Some(31));
+        assert!(driver.prepare_timeout_ms.load(Ordering::Acquire) > 15_000);
+        assert_eq!(driver.runtime_generation(), 1);
+        assert_eq!(recovery_calls.load(Ordering::Acquire), 0);
+        assert!(!driver.emergency_muted.load(Ordering::Acquire));
     }
 }

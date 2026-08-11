@@ -3,12 +3,13 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from '@/components';
 import {
   defaultSession,
   toAssetId,
   type CreativeSession,
+  type Track,
   type TransportStatus,
 } from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
@@ -126,7 +127,7 @@ describe('WorkspaceArrange', () => {
     fireEvent.doubleClick(clip);
 
     const editor = await screen.findByLabelText('MIDI Editor');
-    const lane = editor.querySelector('div[class*="laneViewport"] > div')!;
+    const lane = editor.querySelector('div[class*="laneViewport"] div[class*="lane_"]')!;
     Object.defineProperty(lane, 'getBoundingClientRect', {
       value: () => ({ left: 0, top: 0, right: 400, bottom: 864, width: 400, height: 864 }),
     });
@@ -138,25 +139,335 @@ describe('WorkspaceArrange', () => {
     expect(api.bootstrapState.session.arrangement.midiClips[0]?.notes[0]?.startTick).toBe(240);
   });
 
+  it('keeps the full MIDI pitch range and uses a context menu for note deletion', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-range',
+      name: 'MIDI Range',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        { id: 'note:low', note: 0, startTick: 0, durationTicks: 240, velocity: 1, channel: 0 },
+        {
+          id: 'note:high',
+          note: 127,
+          startTick: 480,
+          durationTicks: 240,
+          velocity: 127,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-range"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+
+    expect(screen.getByLabelText('MIDI piano keyboard')).toBeInTheDocument();
+    expect(editor.querySelectorAll('[data-note-id]')).toHaveLength(2);
+
+    const highNote = editor.querySelector('[data-note-id="note:high"]')!;
+    fireEvent.click(highNote);
+    expect(screen.getByLabelText('Selected MIDI note velocity')).toHaveValue('127');
+    fireEvent.keyDown(screen.getByLabelText('Selected MIDI note velocity'), { key: 'Delete' });
+    expect(api.calls).not.toContain('removeMidiNote');
+
+    fireEvent.contextMenu(highNote, {
+      clientX: 120,
+      clientY: 80,
+    });
+
+    expect(api.calls).not.toContain('removeMidiNote');
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
+    expect(api.calls).toContain('duplicateMidiNotes');
+  });
+
+  it('clears a MIDI preview when the canonical response uses an effective value', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-move',
+      name: 'MIDI Move',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        { id: 'note:move', note: 60, startTick: 0, durationTicks: 240, velocity: 96, channel: 0 },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const originalUpdateMidiNote = api.updateMidiNote.bind(api);
+    let releaseUpdate!: () => void;
+    api.updateMidiNote = (...args) => {
+      const canonical = originalUpdateMidiNote(...args);
+      return new Promise<CreativeSession>((resolve) => {
+        releaseUpdate = () => {
+          void canonical.then((next) =>
+            resolve({
+              ...next,
+              arrangement: {
+                ...next.arrangement,
+                midiClips: next.arrangement.midiClips.map((clip) =>
+                  clip.id === 'clip:midi-move'
+                    ? {
+                        ...clip,
+                        notes: clip.notes.map((note) =>
+                          note.id === 'note:move' ? { ...note, startTick: 120 } : note,
+                        ),
+                      }
+                    : clip,
+                ),
+              },
+            }),
+          );
+        };
+      });
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    api.emitTransportStatus({ revision: session.arrangement.revision });
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-move"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('div[class*="laneViewport"] div[class*="lane_"]')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 1_536, width: 400, height: 1_536 }),
+    });
+    const note = editor.querySelector('[data-note-id="note:move"]')! as HTMLElement;
+    fireEvent.pointerDown(note, { clientX: 100, clientY: 804, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 148, clientY: 804, pointerId: 1 });
+    expect(Number.parseFloat(note.style.left)).toBeCloseTo(43.2);
+    expect(note.style.top).toBe('804px');
+
+    fireEvent.pointerUp(window, { clientX: 148, clientY: 804, pointerId: 1 });
+    expect(Number.parseFloat(note.style.left)).toBeCloseTo(43.2);
+    expect(note.style.top).toBe('804px');
+    expect(container.querySelector('[class*="statusToast_"]')).not.toBeInTheDocument();
+
+    releaseUpdate();
+    await waitFor(() => expect(Number.parseFloat(note.style.left)).toBeCloseTo(21.6));
+  });
+
+  it('previews a selected MIDI note group until the canonical update arrives', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-group',
+      name: 'MIDI Group',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:group-a',
+          note: 60,
+          startTick: 0,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+        {
+          id: 'note:group-b',
+          note: 64,
+          startTick: 480,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const originalUpdateMidiNotes = api.updateMidiNotes.bind(api);
+    let releaseUpdate!: () => void;
+    api.updateMidiNotes = (...args) => {
+      const canonical = originalUpdateMidiNotes(...args);
+      return new Promise<CreativeSession>((resolve) => {
+        releaseUpdate = () => {
+          void canonical.then(resolve);
+        };
+      });
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-group"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('div[class*="laneViewport"] div[class*="lane_"]')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 1_536, width: 400, height: 1_536 }),
+    });
+    const first = editor.querySelector('[data-note-id="note:group-a"]')! as HTMLElement;
+    const second = editor.querySelector('[data-note-id="note:group-b"]')! as HTMLElement;
+    fireEvent.click(first);
+    fireEvent.click(second, { ctrlKey: true });
+
+    fireEvent.pointerDown(first, { clientX: 100, clientY: 804, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 148, clientY: 792, pointerId: 1 });
+    expect(Number.parseFloat(first.style.left)).toBeCloseTo(43.2);
+    expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6);
+    expect(second.style.top).toBe('744px');
+
+    fireEvent.pointerUp(window, { clientX: 148, clientY: 792, pointerId: 1 });
+    expect(api.calls).toContain('updateMidiNotes');
+    expect(Number.parseFloat(first.style.left)).toBeCloseTo(43.2);
+    expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6);
+
+    releaseUpdate();
+    await waitFor(() => expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6));
+  });
+
+  it('renders MIDI keyboard white keys beneath narrower black keys', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-keyboard',
+      name: 'MIDI Keyboard',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-keyboard"]')!);
+    const keyboard = (await screen.findByLabelText('MIDI piano keyboard')) as HTMLElement;
+
+    expect(keyboard.querySelectorAll('[class*="pianoKey_"]')).toHaveLength(128);
+    expect(keyboard.querySelectorAll('[class*="pianoWhiteKey_"]')).toHaveLength(128);
+    expect(keyboard.querySelectorAll('[class*="pianoBlackKey_"]')).toHaveLength(53);
+    expect(
+      Array.from(keyboard.querySelectorAll('[class*="pianoBlackKey_"]')).every((key) =>
+        Boolean(key.parentElement?.querySelector('[class*="pianoWhiteKey_"]')),
+      ),
+    ).toBe(true);
+  });
+
   it('deletes an empty Audio Track from its Track Header', async () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    const userConfirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
 
     await waitFor(() => expect(api.calls).toContain('removeTrack'));
-    expect(userConfirmed).toHaveBeenCalledWith(expect.stringContaining('Source Audio Assets'));
+    expect(screen.queryByText(/Source Audio Assets will be kept/)).not.toBeInTheDocument();
     expect(screen.queryByText('Audio 1')).not.toBeInTheDocument();
+  });
+
+  it('reports MIDI and Audio clips when confirming Track deletion', () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.tracks.push({
+      id: 'track:instrument-delete',
+      name: 'Instrument Delete',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-delete',
+      name: 'MIDI Delete',
+      trackId: 'track:instrument-delete',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    // Act
+    fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    // Assert
+    expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
+    expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
   });
 
   it('uses the latest pending value when Track controls are clicked rapidly', async () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     const mute = await screen.findByRole('button', { name: 'Mute Audio 1' });
     const solo = screen.getByRole('button', { name: 'Solo Audio 1' });
 
@@ -166,6 +477,11 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(solo);
     fireEvent.click(solo);
 
+    expect(
+      screen.getByRole('button', { name: 'Cycle input monitoring for Audio 1' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Audio 1 gain' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Audio 1 pan' })).toBeInTheDocument();
     await waitFor(() => expect(mute).toHaveAttribute('aria-pressed', 'true'));
     expect(solo).toHaveAttribute('aria-pressed', 'false');
     expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(5);
@@ -175,7 +491,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByText('Audio 1'));
     fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
     const lane = screen.getByLabelText('Audio 1 volume automation');
@@ -266,6 +582,25 @@ describe('WorkspaceArrange', () => {
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 
+  it('reports a persistent transport revision mismatch after its grace period', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.revision = 1;
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+    await waitFor(() => expect(api.calls).toContain('onTransportStatus'));
+
+    // Act
+    api.emitTransportStatus({ revision: 0 });
+
+    // Assert
+    await waitFor(
+      () => expect(screen.getByText('Playback runtime is out of sync')).toBeInTheDocument(),
+      { timeout: 2_000 },
+    );
+  });
+
   it('places overlapping Audio and MIDI clips on separate lanes', () => {
     const session = defaultSession();
     session.workspace = 'arrange';
@@ -321,6 +656,38 @@ describe('WorkspaceArrange', () => {
     expect(audioClip).toBeInTheDocument();
     expect(midiClip).toBeInTheDocument();
     expect(audioClip?.style.top).not.toBe(midiClip?.style.top);
+  });
+
+  it('renders one shared grid for a long timeline regardless of Track count', () => {
+    // Arrange
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange.endTick = session.arrangement.timebase.ppq * 4 * 100;
+    const tracks: Track[] = Array.from({ length: 50 }, (_, index) => ({
+      id: `track:grid-${index}`,
+      name: `Grid ${index}`,
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    }));
+    session.arrangement.tracks.push(...tracks);
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+
+    // Act
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Assert
+    expect(container.querySelectorAll('[data-arrange-track]')).toHaveLength(50);
+    expect(container.querySelectorAll('[data-timeline-grid]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-arrange-track] > [class*="lane_"] > i')).toHaveLength(
+      0,
+    );
   });
 
   it('rejects placing a clip on a Track with the wrong source kind', async () => {
@@ -485,28 +852,25 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(clearLoop);
 
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByRole('button', { name: 'Clear loop' })).not.toBeInTheDocument();
   });
 
-  it('disables the loop from the band close button', async () => {
+  it('clears an active loop from the ruler band', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
 
-    const closeButton = await screen.findByRole('button', { name: 'Disable loop' });
-    fireEvent.click(closeButton);
+    const loopRange = screen.getByText('LOOP').parentElement!;
+    fireEvent.pointerDown(loopRange, { clientX: 100 });
+    expect(loopRange).toHaveAttribute('data-range-selected', 'true');
+    fireEvent.keyDown(window, { key: 'Delete' });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Disable loop' })).not.toBeInTheDocument(),
-    );
   });
 
-  it('clears the punch range from the band close button without a time selection', async () => {
+  it('clears an active punch range from the ruler band without a time selection', async () => {
     const session = defaultSession();
     session.workspace = 'arrange';
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
@@ -514,13 +878,37 @@ describe('WorkspaceArrange', () => {
     render(<Harness api={api} initialSession={session} />);
 
     expect(screen.queryByText(/Selection/)).not.toBeInTheDocument();
-    const closeButton = await screen.findByRole('button', { name: 'Clear punch range' });
-    fireEvent.click(closeButton);
+    const punchRange = screen.getByText('PUNCH').parentElement!;
+    fireEvent.pointerDown(punchRange, { clientX: 100 });
+    expect(punchRange).toHaveAttribute('data-range-selected', 'true');
+    fireEvent.keyDown(window, { key: 'Delete' });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Clear punch range' })).not.toBeInTheDocument(),
-    );
+  });
+
+  it('deletes a loop or punch range from the range context menu', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
+    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.contextMenu(screen.getByText('LOOP').parentElement!, {
+      clientX: 100,
+      clientY: 8,
+      button: 2,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
+
+    fireEvent.contextMenu(screen.getByText('PUNCH').parentElement!, {
+      clientX: 100,
+      clientY: 18,
+      button: 2,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
   });
 
   it('renders draggable handles on the loop range band', () => {
@@ -541,6 +929,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
 
+    expect(screen.getByText('PUNCH')).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Punch start' })).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Punch end' })).toBeInTheDocument();
   });
@@ -592,7 +981,7 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerUp(window, { clientX: 100 });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
-    const punchRange = screen.getByRole('button', { name: 'Clear punch range' }).parentElement!;
+    const punchRange = screen.getByRole('slider', { name: 'Punch end' }).parentElement!;
     await waitFor(() => expect(punchRange).toHaveStyle({ width: '288px' }));
   });
 
@@ -609,6 +998,38 @@ describe('WorkspaceArrange', () => {
 
     await waitFor(() => expect(api.calls).toContain('removeMarker'));
     await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
+  });
+
+  it('deletes a marker from its context menu without a success popup', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.markers.push({ id: 'marker:chorus', name: 'Chorus', tick: 0 });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const marker = await screen.findByText('Chorus');
+    fireEvent.contextMenu(marker.closest('[data-marker-id]')!, { clientX: 40, clientY: 12 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+
+    await waitFor(() => expect(api.calls).toContain('removeMarker'));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('renames a marker in the Arrange dialog', async () => {
+    const session = defaultSession();
+    session.workspace = 'arrange';
+    session.arrangement.markers.push({ id: 'marker:intro', name: 'Intro', tick: 0 });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
+
+    const marker = await screen.findByText('Intro');
+    fireEvent.doubleClick(marker.closest('[data-marker-id]')!);
+    const input = screen.getByLabelText('Name');
+    fireEvent.change(input, { target: { value: 'Verse' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(api.calls).toContain('updateMarker'));
+    expect(await screen.findByText('Verse')).toBeInTheDocument();
   });
 
   it('clears the time selection chip when clicking outside the ruler', async () => {
@@ -635,7 +1056,7 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
     render(<Harness api={api} />);
 
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'audio' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
 
     expect(screen.getByText('Delete')).toBeInTheDocument();

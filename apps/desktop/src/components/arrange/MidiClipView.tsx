@@ -18,8 +18,8 @@ interface MidiClipViewProps {
   onContextMenu?: (event: React.MouseEvent, clip: MidiClip) => void;
 }
 
-const PITCH_RANGE = 96;
-const PITCH_FLOOR = 12;
+const PITCH_RANGE = 128;
+const PITCH_FLOOR = 0;
 
 export function MidiClipView(props: MidiClipViewProps) {
   const { clip } = props;
@@ -59,11 +59,10 @@ export function MidiClipView(props: MidiClipViewProps) {
         props.onContextMenu?.(event, clip);
       }}
       onDoubleClick={() => props.onOpenEditor?.(clip)}
-      title={`${clip.name} · ${clip.notes.length} notes · double-click to open MIDI editor`}
     >
       <header className={styles.clipHeader}>
         <strong>{clip.name}</strong>
-        <span>{clip.muted ? 'MUTED' : `${clip.notes.length} NOTES`}</span>
+        {clip.muted && <span>MUTED</span>}
       </header>
       <svg className={styles.waveform} viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden>
         {visibleNotes.map((note) => {

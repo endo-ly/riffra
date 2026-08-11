@@ -4,7 +4,7 @@
   height: var(--panel-height);
   max-height: min(900px, 55vh);
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: 38px minmax(0, 1fr);
   overflow: hidden;
   color: #dbe8ec;
   background: #0d151a;
@@ -13,8 +13,8 @@
 }
 
 .panel.collapsed {
-  min-height: 44px;
-  grid-template-rows: 44px;
+  min-height: 38px;
+  grid-template-rows: 38px;
 }
 
 .resizeHandle {
@@ -63,10 +63,9 @@
   gap: 3px;
 }
 
-.tabs button,
-.actions button {
-  min-height: 30px;
-  padding: 0 10px;
+.tabs button {
+  min-height: 28px;
+  padding: 0 8px;
   color: #9dafb7;
   font-size: 10px;
   font-weight: 550;
@@ -75,8 +74,7 @@
   border-radius: 4px;
 }
 
-.tabs button:hover:not(:disabled),
-.actions button:hover:not(:disabled) {
+.tabs button:hover:not(:disabled) {
   color: #f1fbfc;
   background: #203039;
   border-color: #3c535e;
@@ -102,23 +100,6 @@
   white-space: nowrap;
 }
 
-.actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.actions button {
-  color: #a9bac1;
-  background: #111a20;
-  border-color: #3a4d57;
-}
-
-.actions button:last-child {
-  color: #c3d1d5;
-}
-
 .content {
   min-height: 0;
   overflow: auto;
@@ -135,8 +116,7 @@
     display: none;
   }
 
-  .tabs button,
-  .actions button {
+  .tabs button {
     padding: 0 7px;
   }
 }

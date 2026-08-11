@@ -170,7 +170,7 @@ describe('App driven by FakeNativeApi', () => {
     expect(screen.getByText('Audio Settings')).toBeInTheDocument();
   });
 
-  it('keeps the runtime muted after a sidecar restart following startup', async () => {
+  it('does not re-submit runtime restoration after a sidecar restart', async () => {
     const fake = new FakeNativeApi();
     renderApp(fake);
 
@@ -180,12 +180,13 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    expect(fake.audio.state).toBe('muted');
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
+    expect(fake.calls).not.toContain('syncArrangementRuntime');
     expect(fake.calls).not.toContain('setEmergencyMute');
   });
 
-  it('does not restore the rack runtime after a sidecar restart in Design', async () => {
+  it('leaves sidecar runtime recovery to Rust in Design', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: { ...defaultSession(), workspace: 'design' } },
     });
@@ -196,11 +197,12 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('syncArrangementRuntime');
   });
 
-  it('rehydrates the current Arrange runtime graph after a sidecar restart', async () => {
+  it('does not duplicate Rust runtime recovery in Arrange', async () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
     });
@@ -211,66 +213,9 @@ describe('App driven by FakeNativeApi', () => {
 
     fake.emitRuntimeRestarted(2);
 
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
-  });
-
-  it('does not continue automatic recovery when Sample Pad restoration rejects', async () => {
-    const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
-    });
-    let failRecovery = false;
-    fake.restoreSamplePadsStrict = async () => {
-      fake.calls.push('restoreSamplePads');
-      if (failRecovery) throw new Error('Sample Pad restore failed.');
-      return fake.audio;
-    };
-    renderApp(fake);
-
-    await waitForAppShell();
-    fake.calls.splice(0);
-    failRecovery = true;
-
-    fake.emitRuntimeRestarted(2);
-
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-  });
-
-  it('retries the latest runtime generation after a restart during recovery', async () => {
-    const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
-    });
-    let holdNextRecovery = false;
-    let releaseFirstRecovery: () => void = () => undefined;
-    let firstRecoveryGate: Promise<void> | null = null;
-    const defaultRestoreSamplePads = fake.restoreSamplePadsStrict;
-    fake.restoreSamplePadsStrict = async () => {
-      if (holdNextRecovery) {
-        holdNextRecovery = false;
-        fake.calls.push('restoreSamplePads');
-        await firstRecoveryGate;
-        return fake.audio;
-      }
-      return defaultRestoreSamplePads();
-    };
-    renderApp(fake);
-
-    await waitForAppShell();
-    fake.calls.splice(0);
-    firstRecoveryGate = new Promise<void>((resolve) => {
-      releaseFirstRecovery = resolve;
-    });
-    holdNextRecovery = true;
-
-    fake.emitRuntimeRestarted(2);
-    await waitFor(() => expect(fake.calls).toContain('restoreSamplePads'));
-    fake.emitRuntimeRestarted(3);
-    releaseFirstRecovery();
-
-    await waitFor(() =>
-      expect(fake.calls.filter((call) => call === 'restoreSamplePads')).toHaveLength(2),
-    );
-    await waitFor(() => expect(fake.calls).toContain('syncArrangementRuntime'));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    expect(fake.calls).not.toContain('restoreSamplePads');
+    expect(fake.calls).not.toContain('syncArrangementRuntime');
   });
 
   it('does not let a cancelled playback failure overwrite a newer playing state', async () => {
@@ -469,6 +414,21 @@ describe('App driven by FakeNativeApi', () => {
     );
   });
 
+  it('releases mute when feedback arrives before the native state frame', async () => {
+    const fake = new FakeNativeApi({
+      audio: fakeAudioStatus({ state: 'ready', feedbackSuspected: true }),
+    });
+    renderApp(fake);
+
+    const user = userEvent.setup();
+    const unmute = await screen.findByRole('button', { name: /^UNMUTE$/ });
+    await user.click(unmute);
+
+    await waitFor(() => expect(fake.emergencyMuteRequests).toEqual([false]));
+    expect(fake.audio.state).toBe('ready');
+    expect(fake.audio.feedbackSuspected).toBe(false);
+  });
+
   it('keeps output safe when the device is faulted and recovers into emergency mute', async () => {
     const fake = new FakeNativeApi({
       audio: fakeAudioStatus({ state: 'faulted', message: 'Device disconnected.' }),
@@ -579,11 +539,10 @@ describe('App driven by FakeNativeApi', () => {
 
     await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
     const user = userEvent.setup();
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await user.click(screen.getByRole('button', { name: /Add Instrument Track/ }));
     await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
     await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
 
     await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
     await waitFor(() => {
@@ -595,7 +554,6 @@ describe('App driven by FakeNativeApi', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /Other Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Replace Instrument' }));
     await waitFor(() => {
       const saved = fake.savedSessions[fake.savedSessions.length - 1];
       expect(saved.arrangement.tracks[0]?.instrument?.path).toBe(plugins[1].path);
@@ -623,16 +581,16 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
 
     const user = userEvent.setup();
-    fireEvent.change(screen.getByLabelText('Add track'), { target: { value: 'instrument' } });
+    await user.click(screen.getByRole('button', { name: /Add Instrument Track/ }));
     await waitFor(() => expect(screen.getByText('Instrument 1')).toBeInTheDocument());
     await user.click(screen.getByText('Instrument 1'));
     await user.click(screen.getByRole('button', { name: /Example Synth/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Use as Instrument' }));
     await waitFor(() => expect(fake.calls).toContain('setTrackInstrument'));
 
     const savedSessionCount = fake.savedSessions.length;
     expect(fake.bootstrapState.session.arrangement.tracks[0]?.armed).toBe(false);
-    await user.click(screen.getByRole('button', { name: 'Open Play Surface for Instrument 1' }));
+    await user.click(screen.getByLabelText('Instrument 1 track menu'));
+    await user.click(screen.getByRole('button', { name: 'Open Play Surface' }));
     expect(screen.getByText('Live input only')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Computer Keyboard: Off' })).toBeInTheDocument();
 
@@ -652,15 +610,68 @@ describe('App driven by FakeNativeApi', () => {
       sentBeforeLibraryInput,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Collapse' }));
+    const lowerPanelResize = screen.getByRole('button', { name: 'Resize lower panel' });
+    fireEvent.pointerDown(lowerPanelResize, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: 520, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
     fireEvent.keyDown(window, { key: 's' });
     fireEvent.keyUp(window, { key: 's' });
     await waitFor(() => {
       expect(fake.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(4);
     });
-    await user.click(screen.getByRole('button', { name: 'Expand' }));
+    const collapsedResize = screen.getByRole('button', { name: 'Resize lower panel' });
+    fireEvent.pointerDown(collapsedResize, { clientY: 520, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientY: 300, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
     expect(screen.queryByRole('button', { name: 'Stop Notes' })).not.toBeInTheDocument();
     expect(fake.savedSessions).toHaveLength(savedSessionCount);
+  });
+
+  it('adds an effect to a selected Audio Track from the Library', async () => {
+    // Arrange
+    const fake = new FakeNativeApi({ plugins: [examplePlugin] });
+    renderApp(fake);
+    await waitForAppShell();
+    await waitFor(() => expect(fake.calls).toContain('scanVst3Folder'));
+    const user = userEvent.setup();
+
+    // Act
+    await user.click(screen.getByRole('button', { name: /Add Audio Track/ }));
+    await waitFor(() => expect(screen.getByText('Audio 1')).toBeInTheDocument());
+    await user.click(screen.getByText('Audio 1'));
+    await user.click(screen.getByRole('button', { name: /Example Synth/ }));
+
+    // Assert
+    await waitFor(() => expect(fake.calls).toContain('addTrackEffect'));
+    expect(fake.bootstrapState.session.arrangement.tracks[0]?.rack.devices).toHaveLength(1);
+  });
+
+  it('reopens collapsed side panels with their keyboard expansion direction', async () => {
+    // Arrange
+    const fake = new FakeNativeApi();
+    renderApp(fake);
+    await waitForAppShell();
+    const libraryHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse library panel',
+    });
+    const inspectorHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse inspector panel',
+    });
+
+    // Act
+    fireEvent.pointerDown(libraryHandle, { button: 0, clientX: 220, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.keyDown(libraryHandle, { key: 'ArrowRight' });
+
+    fireEvent.pointerDown(inspectorHandle, { button: 0, clientX: 280, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 600, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    fireEvent.keyDown(inspectorHandle, { key: 'ArrowLeft' });
+
+    // Assert
+    expect(libraryHandle).toHaveAttribute('aria-valuenow', '176');
+    expect(inspectorHandle).toHaveAttribute('aria-valuenow', '220');
   });
 
   it('applies an audio driver selection without changing the Scratch Session', async () => {

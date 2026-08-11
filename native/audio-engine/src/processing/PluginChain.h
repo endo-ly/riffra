@@ -16,7 +16,8 @@ public:
         const juce::var& devices,
         double sampleRate,
         int blockSize,
-        juce::String& error);
+        juce::String& error,
+        const juce::String& runtimeRole);
     void prepare(double sampleRate, int blockSize) noexcept;
     void reset() noexcept;
     void release() noexcept;
@@ -48,6 +49,8 @@ public:
 private:
     friend class PluginChainTestPeer;
     friend class TimelineEngineTestPeer;
+
+    void prepareBuffers(int blockSize) noexcept;
 
     struct Device final {
         juce::String id;

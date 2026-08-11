@@ -284,6 +284,7 @@ impl AudioSupervisor {
                             }
                         }
                         if let Some(response) = handle_native_stdout(&event_status, &bytes) {
+                            event_supervisor.synchronize_mute_cause_from_status();
                             if let Some(request_id) = response.request_id {
                                 record_command_response(
                                     &event_responses,
@@ -522,6 +523,9 @@ impl AudioSupervisor {
         })();
         self.record_restart_outcome(previous_generation, &result);
         if result.is_ok() && self.startup_completed() {
+            if let Some(handler) = self.runtime_restart_handler() {
+                handler(self, self.sidecar_generation());
+            }
             let _ = app.emit(
                 "runtime-restarted",
                 serde_json::json!({ "generation": self.sidecar_generation() }),

@@ -25,12 +25,13 @@ enum StartupRuntimeError {
     GenerationChanged(String),
     TargetChanged,
     Feature(String),
+    Safety(String),
 }
 
 impl std::fmt::Display for StartupRuntimeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::GenerationChanged(message) | Self::Feature(message) => {
+            Self::GenerationChanged(message) | Self::Feature(message) | Self::Safety(message) => {
                 formatter.write_str(message)
             }
             Self::TargetChanged => formatter.write_str("startup runtime target changed"),
@@ -138,9 +139,9 @@ impl StartupAudioPort for AudioSupervisor {
     }
 }
 
-/// Waits for the current sidecar to become safe while retaining the startup
-/// emergency mute. The active Session audio graph is restored before output
-/// can be released.
+/// Waits for the current sidecar to become safe and releases startup mute once
+/// the device safety boundary is confirmed. Arrangement restoration is a
+/// separate Runtime projection and may remain passive when a plugin fails.
 pub(crate) fn initialize_audio_safety(state: &AppState) -> Result<AudioStatus, String> {
     let master_gain_db = state
         .session_actor
@@ -194,7 +195,16 @@ where
                         Ok(status) => status,
                         Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                         Err(StartupRuntimeError::TargetChanged) => continue,
-                        Err(StartupRuntimeError::Feature(error)) => {
+                        Err(StartupRuntimeError::Feature(release_error)) => {
+                            state.core.audio().mark_startup_failed();
+                            return Ok(StartupInitialization {
+                                status,
+                                runtime_error: Some(format!(
+                                    "Arrangement Runtime restored, but startup safety mute could not be released: {release_error}"
+                                )),
+                            });
+                        }
+                        Err(StartupRuntimeError::Safety(error)) => {
                             state.core.audio().mark_startup_failed();
                             return Ok(StartupInitialization {
                                 status,
@@ -212,12 +222,45 @@ where
                 }
                 Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                 Err(StartupRuntimeError::TargetChanged) => continue,
-                Err(StartupRuntimeError::Feature(error)) => {
+                Err(StartupRuntimeError::Safety(error)) => {
                     state.core.audio().mark_startup_failed();
                     return Ok(StartupInitialization {
                         status,
                         runtime_error: Some(error),
                     });
+                }
+                Err(StartupRuntimeError::Feature(error)) => {
+                    match release_startup_mute(state, generation, &status) {
+                        Ok(released) => {
+                            state.core.audio().mark_startup_failed();
+                            return Ok(StartupInitialization {
+                                status: released,
+                                runtime_error: Some(format!(
+                                    "{error}; Arrangement Runtime remains passive"
+                                )),
+                            });
+                        }
+                        Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
+                        Err(StartupRuntimeError::TargetChanged) => continue,
+                        Err(StartupRuntimeError::Feature(release_error)) => {
+                            state.core.audio().mark_startup_failed();
+                            return Ok(StartupInitialization {
+                                status,
+                                runtime_error: Some(format!(
+                                    "{error}; startup safety mute could not be released: {release_error}"
+                                )),
+                            });
+                        }
+                        Err(StartupRuntimeError::Safety(release_error)) => {
+                            state.core.audio().mark_startup_failed();
+                            return Ok(StartupInitialization {
+                                status,
+                                runtime_error: Some(format!(
+                                    "{error}; startup safety mute could not be released: {release_error}"
+                                )),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -339,8 +382,12 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         session: state.core.session(),
         safe_mode: false,
     };
-    if let Err(error) = session_application::restore_sample_pads(&session_context) {
-        failures.push(format!("sample pad restoration failed: {error}"));
+    match session_application::restore_sample_pads(&session_context) {
+        Ok(session_application::SamplePadRestoreOutcome::Restored(_)) => {}
+        Ok(session_application::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
+            tracing::warn!(%warning, "Sample Pads were disabled during startup restoration");
+        }
+        Err(error) => failures.push(format!("sample pad restoration failed: {error}")),
     }
     if sidecar_transitioned(state, generation) {
         return Err(StartupRuntimeError::GenerationChanged(
@@ -374,7 +421,19 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
     if failures.is_empty() {
         apply_startup_processing_mode(state, generation, &target, true)
     } else {
-        apply_startup_processing_mode(state, generation, &target, false)?;
+        match apply_startup_processing_mode(state, generation, &target, false) {
+            Ok(()) => {}
+            Err(StartupRuntimeError::GenerationChanged(message)) => {
+                return Err(StartupRuntimeError::GenerationChanged(message));
+            }
+            Err(StartupRuntimeError::TargetChanged) => {
+                return Err(StartupRuntimeError::TargetChanged);
+            }
+            Err(StartupRuntimeError::Feature(message))
+            | Err(StartupRuntimeError::Safety(message)) => {
+                return Err(StartupRuntimeError::Safety(message));
+            }
+        }
         Err(StartupRuntimeError::Feature(failures.join("; ")))
     }
 }
@@ -466,6 +525,17 @@ fn release_startup_mute(
         ));
     }
 
+    if released.is_none()
+        && state.core.audio().current_mute_cause().map_err(|error| {
+            StartupRuntimeError::Safety(format!(
+                "startup emergency mute cause could not be read: {error}"
+            ))
+        })? != Some(crate::native_audio::MuteCause::User)
+    {
+        return Err(StartupRuntimeError::Safety(
+            "startup emergency mute remains engaged because the audio status is unsafe".into(),
+        ));
+    }
     Ok(released.unwrap_or_else(|| muted_status.clone()))
 }
 

@@ -1,12 +1,18 @@
 import type { AudioClip, MidiClip, ProjectTimebase } from '@/lib/domain';
 
-export const TRACK_HEADER_WIDTH = 184;
+export const TRACK_HEADER_WIDTH = 192;
 export const BASE_PIXELS_PER_QUARTER = 96;
 
 export type SnapGrid = 'bar' | '1/2' | '1/4' | '1/8' | '1/16' | '1/32' | '1/8t' | '1/16t' | 'off';
 
 export type ArrangeTool = 'select' | 'split';
 export type TrackSize = 'compact' | 'normal' | 'large';
+
+export interface TimelineGridDensity {
+  showBeats: boolean;
+  subdivisionTicks: number | null;
+  labelEveryBars: number;
+}
 
 export interface ArrangeAudioTimelineItem {
   kind: 'audio';
@@ -68,6 +74,21 @@ export function ticksPerBeat(timebase: ProjectTimebase) {
 
 export function ticksPerBar(timebase: ProjectTimebase) {
   return ticksPerBeat(timebase) * timebase.timeSignatureNumerator;
+}
+
+export function timelineGridDensity(
+  timebase: ProjectTimebase,
+  pixelsPerTick: number,
+): TimelineGridDensity {
+  const beatTicks = ticksPerBeat(timebase);
+  const beatPixels = beatTicks * pixelsPerTick;
+  const barPixels = ticksPerBar(timebase) * pixelsPerTick;
+
+  return {
+    showBeats: beatPixels >= 18,
+    subdivisionTicks: beatPixels >= 72 ? beatTicks / 4 : beatPixels >= 36 ? beatTicks / 2 : null,
+    labelEveryBars: Math.max(1, Math.ceil(56 / Math.max(1, barPixels))),
+  };
 }
 
 export function snapGridTicks(grid: SnapGrid, timebase: ProjectTimebase) {

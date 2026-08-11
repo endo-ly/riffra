@@ -28,7 +28,7 @@ interface LibraryPanelProps {
   rack: {
     plugins: PluginEntry[];
     visiblePlugins: PluginEntry[];
-    focusedTrack: Track | null;
+    selectedTrack: Track | null;
     onAddPlugin: (plugin: PluginEntry, target: 'instrument' | 'effect') => void;
   };
   recordings: {
@@ -40,8 +40,8 @@ interface LibraryPanelProps {
 }
 
 export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelProps) {
-  const [pluginTarget, setPluginTarget] = useState<PluginEntry | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
   const showHandledError = (operation: Promise<unknown>) => {
     void operation.catch(() => undefined);
   };
@@ -160,74 +160,70 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           </section>
         )}
         {library.section === 'Plugins' ? (
-          <>
+          <div className={styles.pluginArea}>
             <small className={styles.scanMessage}>{rack.visiblePlugins.length}件を表示</small>
             {rack.visiblePlugins.slice(0, 12).map((plugin) => (
-              <button
-                className={styles.pluginRow}
-                key={plugin.id}
-                onClick={() => {
-                  if (!rack.focusedTrack) {
-                    setPluginTarget(null);
-                    setMessage('Select a Track before adding a Plugin.');
-                    return;
-                  }
-                  setMessage(null);
-                  setPluginTarget(plugin);
-                }}
-                disabled={plugin.scanState !== 'validated'}
-                title={
-                  plugin.scanState === 'validated'
-                    ? rack.focusedTrack
-                      ? `Add ${plugin.name} to ${rack.focusedTrack.name}`
-                      : `Select a Track before adding ${plugin.name}`
-                    : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
-                }
-              >
-                <span>{plugin.name.slice(0, 1).toUpperCase()}</span>
-                <div>
-                  <strong>{plugin.name}</strong>
-                  <small>{plugin.vendor ?? 'VST3'}</small>
+              <div className={styles.pluginEntry} key={plugin.id}>
+                <div className={styles.pluginRow}>
+                  <span>{plugin.name.slice(0, 1).toUpperCase()}</span>
+                  <div>
+                    <strong>{plugin.name}</strong>
+                    <small>{plugin.vendor ?? 'VST3'}</small>
+                  </div>
+                  <i className={clsx(styles.stability, styles[plugin.scanState])} />
+                  <button
+                    type="button"
+                    className={styles.pluginAdd}
+                    aria-label={
+                      rack.selectedTrack
+                        ? `${
+                            rack.selectedTrack.kind === 'instrument' &&
+                            rack.selectedTrack.instrument
+                              ? 'Replace instrument with'
+                              : 'Add'
+                          } ${plugin.name} as ${
+                            rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
+                          } on ${rack.selectedTrack.name}`
+                        : `Select a Track before adding ${plugin.name}`
+                    }
+                    onClick={() => {
+                      if (!rack.selectedTrack) {
+                        setMessage('Select a Track before adding a Plugin.');
+                        return;
+                      }
+                      setMessage(null);
+                      rack.onAddPlugin(
+                        plugin,
+                        rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
+                      );
+                    }}
+                    disabled={plugin.scanState !== 'validated'}
+                    title={
+                      plugin.scanState === 'validated'
+                        ? rack.selectedTrack
+                          ? `${
+                              rack.selectedTrack.kind === 'instrument' &&
+                              rack.selectedTrack.instrument
+                                ? 'Replace instrument with'
+                                : 'Add'
+                            } ${plugin.name} on ${rack.selectedTrack.name}`
+                          : `Select a Track before adding ${plugin.name}`
+                        : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
+                    }
+                  >
+                    ＋
+                  </button>
                 </div>
-                <i className={clsx(styles.stability, styles[plugin.scanState])} />
-              </button>
+              </div>
             ))}
             {message && <small className={styles.inboxMessage}>{message}</small>}
-            {pluginTarget && rack.focusedTrack && (
-              <div className={styles.pluginTargetMenu} role="menu">
-                <strong>Add to {rack.focusedTrack.name}</strong>
-                {rack.focusedTrack.kind === 'instrument' && (
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      rack.onAddPlugin(pluginTarget, 'instrument');
-                      setPluginTarget(null);
-                    }}
-                  >
-                    {rack.focusedTrack.instrument ? 'Replace Instrument' : 'Use as Instrument'}
-                  </button>
-                )}
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    rack.onAddPlugin(pluginTarget, 'effect');
-                    setPluginTarget(null);
-                  }}
-                >
-                  Add as Effect
-                </button>
-                <button className="text-button" onClick={() => setPluginTarget(null)}>
-                  Cancel
-                </button>
-              </div>
-            )}
             {rack.visiblePlugins.length === 0 && (
               <div className={styles.libraryEmpty}>
                 <span>一致するVST3がありません</span>
                 <small>検索語を変えるか、VST3フォルダを確認してください。</small>
               </div>
             )}
-          </>
+          </div>
         ) : library.section === 'Recordings' ? (
           <>
             <button

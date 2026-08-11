@@ -93,6 +93,8 @@ public:
         const juce::String& trackId) const noexcept;
     [[nodiscard]] bool hasPreparedSnapshot() const noexcept;
     [[nodiscard]] bool monitoringEnabled() const noexcept;
+    /// Returns whether the active graph routes the physical input channel to a monitored Audio Track.
+    [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
     [[nodiscard]] bool recordingWindow(
         int sampleCount,
         int& sampleOffset,
@@ -177,6 +179,8 @@ private:
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
+        bool liveEffectRuntimeRequired = false;
+        bool recordingEffectRuntimeRequired = false;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
@@ -235,6 +239,7 @@ private:
         int maximumBlockSize,
         std::unique_ptr<PreparedTimeline>& prepared,
         bool& monitorLiveInputState,
+        std::uint32_t& monitoringInputChannelsState,
         bool& armedInstrumentTrackState,
         juce::String& error);
     void mixRange(
@@ -299,10 +304,12 @@ private:
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;
     std::atomic<PreparedTimeline*> activeTimeline { nullptr };
+    std::atomic<bool> runtimeDevicesNeedReprepare { false };
     std::atomic<std::uint32_t> activeAudioReaders { 0 };
     std::atomic<bool> publishInProgress { false };
     std::atomic<bool> panicAllPending { false };
     bool pendingMonitorLiveInput = false;
+    std::uint32_t pendingMonitoringInputChannels = 0;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
     std::atomic<State> state { State::stopped };
@@ -316,6 +323,7 @@ private:
     std::atomic<std::uint64_t> clockGeneration { 0 };
     std::atomic<std::uint64_t> discontinuity { 1 };
     std::atomic<bool> monitorLiveInput { false };
+    std::atomic<std::uint32_t> monitoringInputChannels { 0 };
     std::atomic<bool> armedInstrumentTrack { false };
     std::atomic<RecordingPhase> recordingPhase { RecordingPhase::idle };
     std::atomic<std::int64_t> countInRemainingSamples { 0 };

@@ -29,7 +29,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
-import { useRuntimeRecovery } from './runtime/useRuntimeRecovery';
+import { useRuntimeSynchronization } from './runtime/useRuntimeSynchronization';
 import { useTransportController } from './runtime/useTransportController';
 import { useWorkspaceNavigation } from './runtime/useWorkspaceNavigation';
 import { useLibrary } from './useLibrary';
@@ -52,7 +52,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     probeMidiDevices,
     probeAudioDevices,
     listSeparations,
-    restoreSamplePadsStrict,
     createSamplePad: createSamplePadApi,
     updateSamplePad: updateSamplePadApi,
     removeSamplePad: removeSamplePadApi,
@@ -121,8 +120,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
-  const audioRef = useRef(audio);
-  audioRef.current = audio;
   const pendingPluginChanges = useRef(
     new Map<
       string,
@@ -231,14 +228,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { syncArrangeRuntime } = useRuntimeRecovery({
+  const { syncArrangeRuntime } = useRuntimeSynchronization({
     api,
-    safeMode: boot?.safeMode,
     sessionRef,
-    audioRef,
-    setAudio,
     setScanMessage,
-    restoreSamplePadsStrict,
     syncArrangementRuntime,
   });
 

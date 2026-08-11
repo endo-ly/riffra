@@ -1,37 +1,5 @@
 .inspector {
   min-height: 0;
-  overflow: auto;
-}
-.empty {
-  display: grid;
-  justify-items: center;
-  gap: 7px;
-  padding: 48px 24px;
-  color: var(--muted);
-  text-align: center;
-}
-.emptyGlyph {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-content: center;
-  color: var(--cyan);
-  font-size: 20px;
-  background: rgba(85, 217, 232, 0.07);
-  border: 1px solid rgba(85, 217, 232, 0.18);
-  border-radius: 9px;
-}
-.empty strong {
-  margin-top: 5px;
-  color: #bdc6cf;
-  font-size: 10px;
-}
-.empty p {
-  max-width: 185px;
-  margin: 0;
-  color: var(--faint);
-  font-size: 8px;
-  line-height: 1.6;
 }
 .identity {
   display: grid;
@@ -67,7 +35,7 @@
   overflow: hidden;
   color: var(--faint);
   font:
-    7px 'DM Mono',
+    var(--font-micro) 'DM Mono',
     Consolas,
     monospace;
   text-overflow: ellipsis;
@@ -92,27 +60,28 @@
 .section header span {
   color: var(--faint);
   font:
-    7px 'DM Mono',
+    var(--font-micro) 'DM Mono',
     Consolas,
     monospace;
 }
 .section label,
 .readout {
-  min-height: 29px;
+  min-height: var(--control-normal);
   display: grid;
   grid-template-columns: 55px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-micro);
 }
 .section input[type='number'] {
   width: 100%;
   min-width: 0;
+  min-height: var(--control-normal);
   padding: 5px 7px;
   color: #cfd8df;
   font:
-    8px 'DM Mono',
+    var(--font-small) 'DM Mono',
     Consolas,
     monospace;
   background: #0a0e12;
@@ -128,7 +97,7 @@
 .readout strong {
   color: #aeb9c3;
   font:
-    8px 'DM Mono',
+    var(--font-small) 'DM Mono',
     Consolas,
     monospace;
   font-weight: 500;
@@ -141,10 +110,10 @@
 }
 .toggles button,
 .actions button {
-  min-height: 28px;
+  min-height: var(--control-normal);
   padding: 0 10px;
   color: #9ca7b1;
-  font-size: 8px;
+  font-size: var(--font-micro);
   background: #141a20;
   border: 1px solid #2a333d;
   border-radius: 4px;
@@ -174,7 +143,7 @@
   margin: 0;
   padding: 9px 12px 12px;
   color: #8a96a0;
-  font-size: 8px;
+  font-size: var(--font-micro);
   line-height: 1.5;
   word-break: break-word;
 }

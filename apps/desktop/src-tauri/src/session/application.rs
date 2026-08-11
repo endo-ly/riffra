@@ -11,10 +11,10 @@
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
 //!
-//! - Arrangement operations commit the canonical Session first, then submit a
-//!   resolved runtime Timeline Snapshot to the latest-wins Runtime Reconciler.
-//!   Runtime failure never rolls back a successful save; the Reconciler keeps
-//!   the last active graph while it reports the failed target.
+//! - Arrangement operations that change plugin topology prepare the proposed
+//!   runtime graph before persisting the canonical Session. A failed candidate
+//!   is rejected, and a persistence failure restores the previous graph. Other
+//!   Arrangement operations commit first and submit a nonblocking projection.
 //!
 //! - Pure-session operations ([`commit_session`],
 //!   [`save_session`], [`import_session`], [`restore_generation`], and
@@ -51,10 +51,58 @@ pub(crate) use crate::session::commit::{
 };
 pub(crate) use crate::session::context::{SessionContext, lock_error};
 pub(crate) use crate::session::transport::{
-    audio_command_succeeded, go_to_start_timeline, play_timeline, resolve_native_pads,
-    restore_sample_pads, runtime_snapshot_for_recording, seek_timeline, stop_timeline,
-    switch_workspace, sync_arrangement, sync_arrangement_runtime,
+    SamplePadRestoreOutcome, audio_command_succeeded, go_to_start_timeline, play_timeline,
+    prepare_arrangement_candidate, resolve_native_pads, restore_sample_pads,
+    runtime_snapshot_for_recording, seek_timeline, stop_timeline, switch_workspace,
+    sync_arrangement, sync_arrangement_runtime,
 };
+
+/// Rebuilds every Runtime that depends on the active audio device after the
+/// Native device has been reopened. The canonical Session remains unchanged;
+/// only the device-dependent Sample Pad buffers and Arrangement projection are
+/// prepared again.
+pub(crate) fn reconcile_runtime_after_audio_device_change(
+    context: &SessionContext<'_>,
+) -> Result<AudioStatus, String> {
+    context
+        .audio
+        .mark_runtime_recovery_mute()
+        .map_err(|error| format!("Runtime recovery mute could not be recorded: {error}"))?;
+    if !context.runtime.invalidate_for_audio_device_change() {
+        return Err(
+            "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
+        );
+    }
+    let (pad_warning, pad_error) = match restore_sample_pads(context) {
+        Ok(SamplePadRestoreOutcome::Restored(_)) => (None, None),
+        Ok(SamplePadRestoreOutcome::Disabled { warning, .. }) => (Some(warning), None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "Sample Pad restoration failed after the audio device change: {error}"
+            )),
+        ),
+    };
+    let arrangement_error = sync_arrangement_runtime(context).err().map(|error| {
+        format!("Arrangement Runtime restoration failed after the audio device change: {error}")
+    });
+    let mut status = context.audio.refresh_status().map_err(String::from)?;
+    let errors = [pad_error, arrangement_error]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    if let Some(warning) = pad_warning {
+        status.message = if status.message.is_empty() {
+            warning
+        } else {
+            format!("{} {warning}", status.message)
+        };
+    }
+    Ok(status)
+}
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
 /// asset existence + duplicate rules, pad id / MIDI key assignment, slice
@@ -115,6 +163,7 @@ pub fn create_sample_pad(
 
     // Apply the new pad set to the runtime first (unless Safe Mode keeps it
     // isolated). A faulted runtime is surfaced without touching the session.
+    let runtime_generation = (!context.safe_mode).then(|| context.audio.sidecar_generation());
     let runtime_status = if context.safe_mode {
         None
     } else {
@@ -169,9 +218,12 @@ pub fn create_sample_pad(
 
     // In Safe Mode the runtime stayed isolated; report the current status so
     // React reflects the real (muted/offline) engine.
-    let status = match runtime_status {
+    let status = match reapply_sample_pads_after_generation_change(context, runtime_generation)? {
         Some(status) => status,
-        None => context.audio.refresh_status()?,
+        None => match runtime_status {
+            Some(status) => status,
+            None => context.audio.refresh_status()?,
+        },
     };
     Ok(SessionAudioPair {
         session: committed,
@@ -197,6 +249,7 @@ fn commit_pad_set(
     previous_session: CreativeSession,
     mut session: CreativeSession,
 ) -> Result<SessionAudioPair, String> {
+    let runtime_generation = (!context.safe_mode).then(|| context.audio.sidecar_generation());
     let runtime_status = if context.safe_mode {
         None
     } else {
@@ -244,14 +297,32 @@ fn commit_pad_set(
         session,
         previous_session.workspace,
     )?;
-    let status = match runtime_status {
+    let status = match reapply_sample_pads_after_generation_change(context, runtime_generation)? {
         Some(status) => status,
-        None => context.audio.refresh_status()?,
+        None => match runtime_status {
+            Some(status) => status,
+            None => context.audio.refresh_status()?,
+        },
     };
     Ok(SessionAudioPair {
         session: committed,
         audio: status,
     })
+}
+
+fn reapply_sample_pads_after_generation_change(
+    context: &SessionContext<'_>,
+    previous_generation: Option<u64>,
+) -> Result<Option<AudioStatus>, String> {
+    let Some(previous_generation) = previous_generation else {
+        return Ok(None);
+    };
+    if context.audio.sidecar_generation() == previous_generation {
+        return Ok(None);
+    }
+    restore_sample_pads(context)
+        .map(SamplePadRestoreOutcome::into_status)
+        .map(Some)
 }
 
 /// Updates one SamplePad's slice range, gain, or loop flag through the canonical
@@ -913,6 +984,58 @@ fn commit_structural_arrangement(
     Ok(committed)
 }
 
+fn repair_previous_arrangement<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    original_error: String,
+) -> String {
+    if !context.runtime.reset_for_repair() {
+        return format!(
+            "Arrangement Runtime rejected the VST candidate and could not be reset for the canonical Session: {original_error}"
+        );
+    }
+    match sync_arrangement_runtime(context) {
+        Ok(_) => format!(
+            "Arrangement Runtime rejected the VST candidate; the canonical Session was restored: {original_error}"
+        ),
+        Err(restore_error) => format!(
+            "Arrangement Runtime rejected the VST candidate and the previous graph could not be restored ({restore_error}): {original_error}"
+        ),
+    }
+}
+
+/// Validates a plugin-bearing candidate against the real Arrangement Runtime
+/// before persisting it. A failed candidate never becomes part of the
+/// canonical Session, and a persistence failure repairs the previous graph.
+fn commit_plugin_arrangement<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    candidate: CreativeSession,
+    base_sequence: u64,
+) -> Result<CreativeSession, String> {
+    let candidate = candidate.validate_and_normalize()?;
+    if let Err(error) = prepare_arrangement_candidate(context, &candidate, base_sequence) {
+        return Err(repair_previous_arrangement(context, error));
+    }
+    let commit_result = {
+        let _session_operation = context.session_actor.enter()?;
+        let current = context
+            .session_actor
+            .capture_projection_while_held(context.session)?;
+        if current.sequence != base_sequence {
+            Err("Canonical Session changed while the VST candidate was being prepared.".into())
+        } else {
+            commit_session(context, candidate)
+        }
+    };
+    let committed = match commit_result {
+        Ok(committed) => committed,
+        Err(error) => {
+            return Err(repair_previous_arrangement(context, error));
+        }
+    };
+    let _ = sync_arrangement(context)?;
+    Ok(committed)
+}
+
 fn track_device_mut<'a>(track: &'a mut Track, device_id: &str) -> Option<&'a mut RackDevice> {
     if track
         .instrument
@@ -1008,7 +1131,8 @@ pub fn set_track_instrument(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let revision = session.arrangement.revision;
     let track = session
         .arrangement
@@ -1027,7 +1151,7 @@ pub fn set_track_instrument(
     track.instrument = Some(plugin_device(&validated_path.to_string_lossy(), id)?);
     track.instrument.as_mut().unwrap().name = name;
     session.arrangement.revision = revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 pub fn clear_track_instrument(
@@ -1062,7 +1186,8 @@ pub fn add_track_effect(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let revision = session.arrangement.revision;
     let track = session
         .arrangement
@@ -1075,7 +1200,7 @@ pub fn add_track_effect(
     device.name = name;
     track.rack.devices.push(device);
     session.arrangement.revision = revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 pub fn remove_track_effect(
@@ -2196,7 +2321,8 @@ pub fn replace_missing_track_plugin(
     if !path.exists() {
         return Err("Replacement VST3 path does not exist.".into());
     }
-    let mut session = context.session.lock().map_err(lock_error)?.clone();
+    let previous = context.session_actor.capture_projection(context.session)?;
+    let mut session = previous.session;
     let device = session
         .arrangement
         .tracks
@@ -2205,7 +2331,7 @@ pub fn replace_missing_track_plugin(
         .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
     *device = plugin_device(&path.to_string_lossy(), device_id.to_owned())?;
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    commit_structural_arrangement(context, session)
+    commit_plugin_arrangement(context, session, previous.sequence)
 }
 
 #[cfg(test)]
@@ -2214,24 +2340,26 @@ mod tests {
     use crate::session::RecordingTakeRecord;
     use crate::session::actor::SessionActor;
     use serde_json::Value;
-    use std::sync::atomic::AtomicU64;
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    struct ClickStormDriver {
-        prepare_delay: Duration,
-        commit_delay: Duration,
+    struct BarrierCommitDriver {
+        commit_started: Arc<Barrier>,
+        release_commit: Arc<Barrier>,
+        commit_gate_used: AtomicBool,
         loaded: Mutex<Vec<u64>>,
         pending: Mutex<Option<u64>>,
         generation: AtomicU64,
     }
 
-    impl ClickStormDriver {
-        fn new(prepare_delay: Duration, commit_delay: Duration) -> Self {
+    impl BarrierCommitDriver {
+        fn new() -> Self {
             Self {
-                prepare_delay,
-                commit_delay,
+                commit_started: Arc::new(Barrier::new(2)),
+                release_commit: Arc::new(Barrier::new(2)),
+                commit_gate_used: AtomicBool::new(false),
                 loaded: Mutex::new(Vec::new()),
                 pending: Mutex::new(None),
                 generation: AtomicU64::new(1),
@@ -2239,13 +2367,12 @@ mod tests {
         }
     }
 
-    impl crate::runtime::ports::ProjectionDriver for ClickStormDriver {
+    impl crate::runtime::ports::ProjectionDriver for BarrierCommitDriver {
         fn prepare_timeline_snapshot(
             &self,
             snapshot: Value,
             _timeout: Duration,
         ) -> Result<(), crate::runtime::error::RuntimeError> {
-            thread::sleep(self.prepare_delay);
             *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
             Ok(())
         }
@@ -2254,10 +2381,14 @@ mod tests {
             &self,
             _timeout: Duration,
         ) -> Result<(), crate::runtime::error::RuntimeError> {
-            // Simulates a Sidecar commit that is slow because the graph
-            // (including an instrument VST) has to be switched on the audio
-            // thread before the acknowledgement is sent.
-            thread::sleep(self.commit_delay);
+            if self
+                .commit_gate_used
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                self.commit_started.wait();
+                self.release_commit.wait();
+            }
             let revision = self.pending.lock().unwrap().take().ok_or_else(|| {
                 crate::runtime::error::RuntimeError::NativeRejected(
                     "No prepared timeline snapshot is available.".into(),
@@ -2280,7 +2411,7 @@ mod tests {
         }
     }
 
-    impl crate::runtime::ports::TransportDriver for ClickStormDriver {
+    impl crate::runtime::ports::TransportDriver for BarrierCommitDriver {
         fn play_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
             Ok(())
         }
@@ -2294,10 +2425,259 @@ mod tests {
         }
     }
 
+    struct CandidateRuntimeDriver {
+        fail_prepare: AtomicBool,
+        generation: AtomicU64,
+        pending: Mutex<Option<u64>>,
+        loaded: Mutex<Vec<u64>>,
+        commit_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    }
+
+    impl CandidateRuntimeDriver {
+        fn new(fail_prepare: bool) -> Self {
+            Self {
+                fail_prepare: AtomicBool::new(fail_prepare),
+                generation: AtomicU64::new(1),
+                pending: Mutex::new(None),
+                loaded: Mutex::new(Vec::new()),
+                commit_hook: Mutex::new(None),
+            }
+        }
+
+        fn set_commit_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+            *self.commit_hook.lock().unwrap() = Some(hook);
+        }
+    }
+
+    impl crate::runtime::ports::ProjectionDriver for CandidateRuntimeDriver {
+        fn prepare_timeline_snapshot(
+            &self,
+            snapshot: Value,
+            _timeout: Duration,
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
+            if self.fail_prepare.swap(false, Ordering::AcqRel) {
+                return Err(crate::runtime::error::RuntimeError::NativeRejected(
+                    "Candidate graph was rejected.".into(),
+                ));
+            }
+            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
+            Ok(())
+        }
+
+        fn commit_timeline_snapshot(
+            &self,
+            _timeout: Duration,
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
+            if let Some(hook) = self.commit_hook.lock().unwrap().take() {
+                hook();
+            }
+            let revision = self.pending.lock().unwrap().take().ok_or_else(|| {
+                crate::runtime::error::RuntimeError::NativeRejected(
+                    "No prepared timeline snapshot is available.".into(),
+                )
+            })?;
+            self.loaded.lock().unwrap().push(revision);
+            Ok(())
+        }
+
+        fn discard_timeline_snapshot(
+            &self,
+            _timeout: Duration,
+        ) -> Result<(), crate::runtime::error::RuntimeError> {
+            self.pending.lock().unwrap().take();
+            Ok(())
+        }
+
+        fn runtime_generation(&self) -> u64 {
+            self.generation.load(Ordering::Relaxed)
+        }
+    }
+
+    impl crate::runtime::ports::TransportDriver for CandidateRuntimeDriver {
+        fn play_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            Ok(())
+        }
+
+        fn stop_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            Ok(())
+        }
+
+        fn stop_timeline_nonblocking(&self) -> Result<(), crate::runtime::error::RuntimeError> {
+            self.stop_timeline()
+        }
+    }
+
+    fn plugin_candidate_session() -> CreativeSession {
+        let mut candidate = CreativeSession::new(1);
+        let mut track = Track::audio("track:plugin".into(), "Plugin Track".into());
+        track.rack.devices.push(RackDevice {
+            id: "device:candidate".into(),
+            name: "Candidate".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\plugins\Candidate.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        });
+        candidate.arrangement.tracks.push(track);
+        candidate.arrangement.revision = 1;
+        candidate
+    }
+
+    fn candidate_context<'a>(
+        root: &'a Path,
+        session: &'a Mutex<CreativeSession>,
+        runtime: &'a crate::runtime::RuntimeReconciler<CandidateRuntimeDriver>,
+        actor: &'a SessionActor,
+        audio: &'a crate::native_audio::AudioSupervisor,
+    ) -> SessionContext<'a, CandidateRuntimeDriver> {
+        SessionContext {
+            audio,
+            runtime,
+            session_actor: actor,
+            data_root: root,
+            session,
+            safe_mode: false,
+        }
+    }
+
+    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if predicate() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("condition was not met within {timeout:?}");
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
-    fn update_track_burst_latency_with_slow_runtime_commit() {
-        let root = std::env::temp_dir().join(format!("riffra-burst-{}", crate::storage::now_ms()));
-        let session = Mutex::new({
+    fn rejected_plugin_candidate_restores_the_canonical_runtime() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-rejected-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = Arc::new(Mutex::new(CreativeSession::new(1)));
+        let driver = Arc::new(CandidateRuntimeDriver::new(true));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let actor = SessionActor::default();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let context = candidate_context(&root, &session, &runtime, &actor, &audio);
+
+        // Act
+        let result = commit_plugin_arrangement(&context, plugin_candidate_session(), 0);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(session.lock().unwrap().arrangement.tracks.is_empty());
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [0]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejected_plugin_candidate_is_not_requeued_after_runtime_restart() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-restart-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = Arc::new(Mutex::new(CreativeSession::new(1)));
+        let driver = Arc::new(CandidateRuntimeDriver::new(true));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let actor = SessionActor::default();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let context = candidate_context(&root, &session, &runtime, &actor, &audio);
+        assert!(commit_plugin_arrangement(&context, plugin_candidate_session(), 0).is_err());
+        let loaded_before_restart = driver.loaded.lock().unwrap().len();
+        driver.generation.store(2, Ordering::Release);
+
+        // Act
+        let requeued = runtime.requeue_after_runtime_restart(2);
+
+        // Assert
+        assert!(requeued);
+        wait_until(Duration::from_secs(1), || {
+            driver.loaded.lock().unwrap().len() > loaded_before_restart
+        });
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&0));
+        assert!(!driver.loaded.lock().unwrap().contains(&1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn candidate_sequence_conflict_restores_the_newer_canonical_session() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-conflict-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = Arc::new(Mutex::new(CreativeSession::new(1)));
+        let actor = Arc::new(SessionActor::default());
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let hook_session = Arc::clone(&session);
+        let hook_actor = Arc::clone(&actor);
+        driver.set_commit_hook(Arc::new(move || {
+            let _operation = hook_actor.enter().unwrap();
+            hook_actor.begin_commit();
+            hook_session.lock().unwrap().arrangement.revision = 7;
+            hook_actor.mark_committed();
+        }));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let context = candidate_context(&root, &session, &runtime, &actor, &audio);
+
+        // Act
+        let result = commit_plugin_arrangement(&context, plugin_candidate_session(), 0);
+
+        // Assert
+        assert!(result.is_err());
+        let current = session.lock().unwrap();
+        assert_eq!(current.arrangement.revision, 7);
+        assert!(current.arrangement.tracks.is_empty());
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&7));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn plugin_persistence_failure_restores_the_previous_graph() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-persistence-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::write(&root, b"not a directory").unwrap();
+        let session = Arc::new(Mutex::new(CreativeSession::new(1)));
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let actor = SessionActor::default();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let context = candidate_context(&root, &session, &runtime, &actor, &audio);
+
+        // Act
+        let result = commit_plugin_arrangement(&context, plugin_candidate_session(), 0);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(session.lock().unwrap().arrangement.tracks.is_empty());
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1, 0]);
+        let _ = std::fs::remove_file(&root);
+    }
+
+    #[test]
+    fn update_track_returns_while_runtime_commit_is_blocked() {
+        // Arrange
+        let root =
+            std::env::temp_dir().join(format!("riffra-barrier-{}", crate::storage::now_ms()));
+        let session = Arc::new(Mutex::new({
             let mut session = CreativeSession::new(1);
             session
                 .arrangement
@@ -2308,74 +2688,78 @@ mod tests {
                 .tracks
                 .push(Track::audio("track:b".into(), "Audio".into()));
             session
-        });
+        }));
         let store = crate::storage::SessionStore::new(&root);
         store.ensure_layout().unwrap();
-        let driver = Arc::new(ClickStormDriver::new(
-            Duration::from_millis(10),
-            Duration::from_millis(500),
-        ));
+        let driver = Arc::new(BarrierCommitDriver::new());
         let runtime =
             Arc::new(crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
-        let actor = SessionActor::default();
-        let audio = crate::native_audio::AudioSupervisor::offline("benchmark");
+        let actor = Arc::new(SessionActor::default());
+        let audio = Arc::new(crate::native_audio::AudioSupervisor::offline("test"));
         let context = SessionContext {
-            audio: &audio,
+            audio: audio.as_ref(),
             runtime: runtime.as_ref(),
-            session_actor: &actor,
+            session_actor: actor.as_ref(),
             data_root: &root,
-            session: &session,
+            session: session.as_ref(),
             safe_mode: false,
         };
 
-        let started = Instant::now();
-        for index in 0..12 {
-            let started_op = Instant::now();
-            let track_id = if index % 2 == 0 { "track:a" } else { "track:b" };
-            update_track(
-                &context,
-                track_id,
-                TrackPatch {
-                    muted: Some(index % 2 == 0),
-                    ..Default::default()
-                },
-            )
-            .expect("update_track must succeed");
-            eprintln!(
-                "op {index}: {:.1} ms",
-                started_op.elapsed().as_secs_f64() * 1000.0
-            );
-        }
-        let total = started.elapsed();
-        eprintln!(
-            "TOTAL for 12 sequential clicks: {:.1} ms (commit_delay = 500 ms)",
-            total.as_secs_f64() * 1000.0
-        );
-        // With a blocking submit each click waits ~500 ms behind the slow
-        // commit (12 clicks ≈ 6 s); the non-blocking path must stay far below.
-        assert!(total < Duration::from_secs(2));
-        let expected_revision = session.lock().unwrap().arrangement.revision;
-        let converged = {
-            let deadline = Instant::now() + Duration::from_secs(15);
-            loop {
-                let loaded = driver.loaded.lock().unwrap();
-                if loaded.last() == Some(&expected_revision) {
-                    break true;
-                }
-                if Instant::now() > deadline {
-                    break false;
-                }
-                drop(loaded);
-                thread::sleep(Duration::from_millis(50));
-            }
+        update_track(
+            &context,
+            "track:a",
+            TrackPatch {
+                muted: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("initial update_track must succeed");
+        driver.commit_started.wait();
+
+        let (update_result_tx, update_result_rx) = mpsc::channel();
+        let update_context = {
+            let session = Arc::clone(&session);
+            let runtime = Arc::clone(&runtime);
+            let actor = Arc::clone(&actor);
+            let audio = Arc::clone(&audio);
+            let root = root.clone();
+            thread::spawn(move || {
+                let context = SessionContext {
+                    audio: audio.as_ref(),
+                    runtime: runtime.as_ref(),
+                    session_actor: actor.as_ref(),
+                    data_root: &root,
+                    session: session.as_ref(),
+                    safe_mode: false,
+                };
+                let result = update_track(
+                    &context,
+                    "track:b",
+                    TrackPatch {
+                        muted: Some(true),
+                        ..Default::default()
+                    },
+                );
+                update_result_tx.send(result).unwrap();
+            })
         };
-        eprintln!(
-            "Sidecar loaded revisions: {:?} (expected final revision {expected_revision})",
-            driver.loaded.lock().unwrap()
-        );
-        assert!(
-            converged,
-            "the runtime must eventually apply the latest session revision"
+        let update_result = update_result_rx.recv_timeout(Duration::from_secs(1));
+
+        // Act
+        driver.release_commit.wait();
+        update_context.join().unwrap();
+
+        // Assert
+        update_result
+            .expect("update_track must return while commit is blocked")
+            .expect("update_track must succeed while commit is blocked");
+        let expected_revision = session.lock().unwrap().arrangement.revision;
+        wait_until(Duration::from_secs(1), || {
+            driver.loaded.lock().unwrap().last() == Some(&expected_revision)
+        });
+        assert_eq!(
+            driver.loaded.lock().unwrap().last(),
+            Some(&expected_revision)
         );
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -11,7 +11,6 @@ import {
 
 type ArrangeCommit = (
   operation: Promise<CreativeSession | null>,
-  success: string,
 ) => Promise<CreativeSession | null>;
 
 interface ClipInteractionOptions {
@@ -42,10 +41,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Click inside the selected clip to split it.');
         return;
       }
-      const next = await options.commit(
-        options.api.splitAudioClip(clip.id, target),
-        `${clip.name} split.`,
-      );
+      const next = await options.commit(options.api.splitAudioClip(clip.id, target));
       if (next) {
         options.setSelectedClipIds([
           next.arrangement.audioClips.find((item) => item.startTick === target)?.id ?? clip.id,
@@ -63,7 +59,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Click inside the selected MIDI clip to split it.');
         return;
       }
-      await options.commit(options.api.splitMidiClip(clip.id, target), `${clip.name} split.`);
+      await options.commit(options.api.splitMidiClip(clip.id, target));
     },
     [options],
   );
@@ -123,10 +119,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const deltaTick = pendingTick - originTick;
       if (duplicate) {
         const anchor = Math.min(...selected.map((item) => item.startTick)) + deltaTick;
-        void options.commit(
-          options.api.pasteTimelineClips(movingIds, [], anchor),
-          `${movingIds.length} clip${movingIds.length === 1 ? '' : 's'} duplicated.`,
-        );
+        void options.commit(options.api.pasteTimelineClips(movingIds, [], anchor));
         return;
       }
       const tracks = arrangement.tracks.map((track) => track.id);
@@ -143,10 +136,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Audio Clips can only be placed on an Audio Track.');
         return;
       }
-      void options.commit(
-        options.api.moveAudioClips(targetMoves),
-        `${movingIds.length} clip${movingIds.length === 1 ? '' : 's'} moved.`,
-      );
+      void options.commit(options.api.moveAudioClips(targetMoves));
     };
     element.addEventListener('pointermove', move);
     element.addEventListener('pointerup', finish);
@@ -220,14 +210,11 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           ] ?? item.trackId,
       }));
       if (duplicate) {
-        void options.commit(
-          options.api.pasteTimelineClips([], movingIds, pendingTick),
-          'MIDI clip duplicated.',
-        );
+        void options.commit(options.api.pasteTimelineClips([], movingIds, pendingTick));
       } else if (targetMoves.some((move) => !trackAcceptsKind(move.trackId, 'instrument'))) {
         options.setMessage('MIDI Clips can only be placed on an Instrument Track.');
       } else {
-        void options.commit(options.api.moveMidiClips(targetMoves), 'MIDI clip moved.');
+        void options.commit(options.api.moveMidiClips(targetMoves));
       }
     };
     element.addEventListener('pointermove', move);
@@ -270,10 +257,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       handle.removeEventListener('pointerup', finish);
       options.setSnapGuide(null);
       if (startTick === originStart && durationTicks === originDuration) return;
-      void options.commit(
-        options.api.trimMidiClip(clip.id, startTick, durationTicks),
-        `${clip.name} trimmed.`,
-      );
+      void options.commit(options.api.trimMidiClip(clip.id, startTick, durationTicks));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', finish);
@@ -349,13 +333,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           options.api.updateAudioClip(clip.id, {
             timelineDuration: { frames: duration, sampleRate: clip.sourceSampleRate },
           }),
-          `${clip.name} loop length updated.`,
         );
       } else if (startTick !== originStart || range !== originRange) {
-        void options.commit(
-          options.api.trimAudioClip(clip.id, startTick, range),
-          `${clip.name} trimmed.`,
-        );
+        void options.commit(options.api.trimAudioClip(clip.id, startTick, range));
       }
     };
     handle.addEventListener('pointermove', move);
@@ -384,13 +364,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       };
       const updated = await options.commit(
         options.api.updateAudioClip(clip.id, { sourceRange, timelineDuration }),
-        `${clip.name} merged.`,
       );
       if (updated) {
-        await options.commit(
-          options.api.removeTimelineClips([next.id], []),
-          `${clip.name} merged.`,
-        );
+        await options.commit(options.api.removeTimelineClips([next.id], []));
       }
     },
     [arrangement.audioClips, options, timebase],
@@ -420,13 +396,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const events = [...clip.events, ...shiftedEvents];
       const updated = await options.commit(
         options.api.updateMidiClip(clip.id, { durationTicks, notes, events }),
-        `${clip.name} merged.`,
       );
       if (updated) {
-        await options.commit(
-          options.api.removeTimelineClips([], [next.id]),
-          `${clip.name} merged.`,
-        );
+        await options.commit(options.api.removeTimelineClips([], [next.id]));
       }
     },
     [arrangement.midiClips, options],
@@ -453,13 +425,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       };
       const updated = await options.commit(
         options.api.updateAudioClip(prev.id, { sourceRange, timelineDuration }),
-        `${clip.name} merged.`,
       );
       if (updated) {
-        await options.commit(
-          options.api.removeTimelineClips([clip.id], []),
-          `${clip.name} merged.`,
-        );
+        await options.commit(options.api.removeTimelineClips([clip.id], []));
       }
     },
     [arrangement.audioClips, options, timebase],
@@ -491,13 +459,9 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const events = [...prev.events, ...shiftedEvents];
       const updated = await options.commit(
         options.api.updateMidiClip(prev.id, { durationTicks, notes, events }),
-        `${clip.name} merged.`,
       );
       if (updated) {
-        await options.commit(
-          options.api.removeTimelineClips([], [clip.id]),
-          `${clip.name} merged.`,
-        );
+        await options.commit(options.api.removeTimelineClips([], [clip.id]));
       }
     },
     [arrangement.midiClips, options],
@@ -535,7 +499,6 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           clip.id,
           side === 'in' ? { fadeIn: value } : { fadeOut: value },
         ),
-        `${clip.name} fade updated.`,
       );
     };
     handle.addEventListener('pointermove', move);

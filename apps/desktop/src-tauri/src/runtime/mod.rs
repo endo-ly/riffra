@@ -15,3 +15,7 @@ pub(crate) mod transport_controller;
 pub(crate) mod transport_executor;
 
 pub(crate) use reconciler::RuntimeReconciler;
+
+use std::time::Duration;
+
+pub(crate) const TIMELINE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);

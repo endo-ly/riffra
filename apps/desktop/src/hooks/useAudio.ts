@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDriverConfig, AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { reconcileAudioSettings } from '@/lib/audio-settings';
-import { audioCommandSucceeded, isOutputMuted } from '@/lib/audio-safety';
+import { audioCommandSucceeded, isEmergencyMuteActive } from '@/lib/audio-safety';
 import type { NativeApi } from '@/native/native-api';
 
 interface UseAudioOptions {
@@ -65,7 +65,7 @@ export function useAudio(api: NativeApi, options: UseAudioOptions) {
   }, [disableMidiListening, setAudio]);
 
   const toggleMute = useCallback(async () => {
-    const muted = !isOutputMuted(audio);
+    const muted = !isEmergencyMuteActive(audio);
     setAudio(await setEmergencyMute(muted));
   }, [audio, setAudio, setEmergencyMute]);
 

@@ -276,18 +276,6 @@ async function audioCommandError(
   };
 }
 
-async function restoreSamplePadsStrict(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('restore_sample_pads');
-}
-
-async function restoreSamplePads(): Promise<AudioStatus> {
-  try {
-    return await restoreSamplePadsStrict();
-  } catch (error) {
-    return await audioCommandError('Restore sample pads', error);
-  }
-}
-
 async function previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('preview_asset', {
@@ -967,8 +955,6 @@ function createNativeApi(): NativeApi {
     probeDeviceChannels,
     listSeparations,
     renderTimeline,
-    restoreSamplePads,
-    restoreSamplePadsStrict,
     previewAsset,
     stopSamplePreview,
     stopSamplePreviewKey,

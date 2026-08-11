@@ -1,12 +1,17 @@
 import type { NativeApi } from '@/native/native-api';
 import type { PluginEntry } from '@/lib/domain';
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useApp } from '@/hooks/useApp';
 import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
 import { workspaces } from '@/constants';
-import { isOutputMuted } from '@/lib/audio-safety';
+import { isEmergencyMuteActive } from '@/lib/audio-safety';
 import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
 import {
   AudioSettingsDialog,
@@ -28,9 +33,79 @@ import {
 } from '@/components';
 import styles from './App.module.css';
 
+type ArrangePanelSide = 'library' | 'inspector';
+
+const PANEL_WIDTH_LIMITS: Record<
+  ArrangePanelSide,
+  { default: number; min: number; max: number; collapse: number }
+> = {
+  library: { default: 220, min: 176, max: 360, collapse: 48 },
+  inspector: { default: 280, min: 220, max: 420, collapse: 48 },
+};
+
+function resolvePanelWidth(side: ArrangePanelSide, width: number) {
+  const limits = PANEL_WIDTH_LIMITS[side];
+  if (width <= limits.collapse) return 0;
+  return Math.min(limits.max, Math.max(limits.min, width));
+}
+
+function adjustPanelWidth(side: ArrangePanelSide, width: number, delta: number) {
+  const limits = PANEL_WIDTH_LIMITS[side];
+  if (width === 0 && delta > 0) return limits.min;
+  return resolvePanelWidth(side, width + delta);
+}
+
+function PanelResizeHandle(props: {
+  side: ArrangePanelSide;
+  width: number;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onResizeBy: (delta: number) => void;
+}) {
+  const limits = PANEL_WIDTH_LIMITS[props.side];
+  return (
+    <div
+      className={`panel-resize-handle panel-resize-handle-${props.side}${props.width === 0 ? ' is-collapsed' : ''}`}
+      role="separator"
+      aria-label={`Resize or collapse ${props.side} panel`}
+      aria-orientation="vertical"
+      aria-valuemin={0}
+      aria-valuemax={limits.max}
+      aria-valuenow={props.width}
+      tabIndex={0}
+      onPointerDown={props.onPointerDown}
+      onKeyDown={(event) => {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault();
+          const direction =
+            props.side === 'library'
+              ? event.key === 'ArrowRight'
+                ? 1
+                : -1
+              : event.key === 'ArrowLeft'
+                ? 1
+                : -1;
+          props.onResizeBy(direction * (event.shiftKey ? 24 : 8));
+        }
+      }}
+    />
+  );
+}
+
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [arrangeFocusedTrackId, setArrangeFocusedTrackId] = useState<string | null>(null);
+  const [arrangeCanonicalOperationsPending, setArrangeCanonicalOperationsPending] = useState(0);
+  const [arrangeLibraryWidth, setArrangeLibraryWidth] = useState(
+    PANEL_WIDTH_LIMITS.library.default,
+  );
+  const [arrangeInspectorWidth, setArrangeInspectorWidth] = useState(
+    PANEL_WIDTH_LIMITS.inspector.default,
+  );
+  const [panelResize, setPanelResize] = useState<{
+    side: ArrangePanelSide;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const {
     boot,
@@ -124,8 +199,47 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     api: nativeApi,
   } = useApp(api);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
-  const focusedTrack =
-    session?.arrangement.tracks.find((track) => track.id === arrangeFocusedTrackId) ?? null;
+  const selectedTrack =
+    session && arrangeSelection.kind === 'track'
+      ? (session.arrangement.tracks.find((track) => track.id === arrangeSelection.trackId) ?? null)
+      : null;
+
+  const isArrange = session?.workspace === 'arrange';
+
+  useEffect(() => {
+    if (!panelResize) return;
+    const onPointerMove = (event: PointerEvent) => {
+      const delta = event.clientX - panelResize.startX;
+      const adjustedDelta = panelResize.side === 'library' ? delta : -delta;
+      const nextWidth = adjustPanelWidth(panelResize.side, panelResize.startWidth, adjustedDelta);
+      if (panelResize.side === 'library') setArrangeLibraryWidth(nextWidth);
+      else setArrangeInspectorWidth(nextWidth);
+    };
+    const stopResize = () => setPanelResize(null);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    };
+  }, [panelResize]);
+
+  const startPanelResize = (side: ArrangePanelSide, event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setPanelResize({
+      side,
+      startX: event.clientX,
+      startWidth: side === 'library' ? arrangeLibraryWidth : arrangeInspectorWidth,
+    });
+  };
+
+  const resizePanelBy = (side: ArrangePanelSide, delta: number) => {
+    if (side === 'library') setArrangeLibraryWidth((width) => adjustPanelWidth(side, width, delta));
+    else setArrangeInspectorWidth((width) => adjustPanelWidth(side, width, delta));
+  };
 
   useEffect(() => {
     if (
@@ -136,16 +250,19 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     }
   }, [arrangeFocusedTrackId, session?.arrangement.tracks]);
 
-  const addPluginToFocusedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
-    if (!focusedTrack) return;
+  const addPluginToSelectedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
+    if (!selectedTrack) return;
+    setArrangeCanonicalOperationsPending((count) => count + 1);
     try {
       const next =
         target === 'instrument'
-          ? await nativeApi.setTrackInstrument(focusedTrack.id, plugin.path)
-          : await nativeApi.addTrackEffect(focusedTrack.id, plugin.path);
+          ? await nativeApi.setTrackInstrument(selectedTrack.id, plugin.path)
+          : await nativeApi.addTrackEffect(selectedTrack.id, plugin.path);
       setSession(next);
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
+    } finally {
+      setArrangeCanonicalOperationsPending((count) => Math.max(0, count - 1));
     }
   };
   const refreshAudioDevices = async () => {
@@ -165,9 +282,16 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     );
 
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
-  const isMuted = isOutputMuted(audio) || feedbackSuspected;
+  const isMuted = isEmergencyMuteActive(audio);
+  const shellStyle = {
+    '--library-width': `${isArrange ? arrangeLibraryWidth : PANEL_WIDTH_LIMITS.library.default}px`,
+    '--inspector-width': `${isArrange ? arrangeInspectorWidth : PANEL_WIDTH_LIMITS.inspector.default}px`,
+  } as CSSProperties;
   return (
-    <main className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''}`}>
+    <main
+      className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''} ${panelResize ? 'is-panel-resizing' : ''}`}
+      style={shellStyle}
+    >
       <GlobalBar
         session={session}
         audio={audio}
@@ -270,35 +394,46 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      <LibraryPanel
-        library={{
-          section: librarySection,
-          setSection: setLibrarySection,
-          query: libraryQuery,
-          setQuery: setLibraryQuery,
-          results: libraryResults,
-          searchQuery: query,
-          selectedAsset: selectedLibraryAsset,
-          relatedAssets,
-          onSelectAsset: selectLibraryAsset,
-          onPreviewAsset: previewSelectedLibraryAsset,
-          onEditAsset: editSelectedLibraryAsset,
-          onOpenInDesign: openLibraryAssetAnalysis,
-          onImportMidi: () => void importMidi(),
-        }}
-        rack={{
-          plugins,
-          visiblePlugins,
-          focusedTrack,
-          onAddPlugin: (plugin, target) => void addPluginToFocusedTrack(plugin, target),
-        }}
-        recordings={{
-          visibleRecordings,
-          count: recordings.length,
-          onOpenRecording: openRecordingAnalysis,
-        }}
-        inbox={inbox}
-      />
+      {(!isArrange || arrangeLibraryWidth > 0) && (
+        <LibraryPanel
+          library={{
+            section: librarySection,
+            setSection: setLibrarySection,
+            query: libraryQuery,
+            setQuery: setLibraryQuery,
+            results: libraryResults,
+            searchQuery: query,
+            selectedAsset: selectedLibraryAsset,
+            relatedAssets,
+            onSelectAsset: selectLibraryAsset,
+            onPreviewAsset: previewSelectedLibraryAsset,
+            onEditAsset: editSelectedLibraryAsset,
+            onOpenInDesign: openLibraryAssetAnalysis,
+            onImportMidi: () => void importMidi(),
+          }}
+          rack={{
+            plugins,
+            visiblePlugins,
+            selectedTrack,
+            onAddPlugin: (plugin, target) => void addPluginToSelectedTrack(plugin, target),
+          }}
+          recordings={{
+            visibleRecordings,
+            count: recordings.length,
+            onOpenRecording: openRecordingAnalysis,
+          }}
+          inbox={inbox}
+        />
+      )}
+
+      {isArrange && (
+        <PanelResizeHandle
+          side="library"
+          width={arrangeLibraryWidth}
+          onPointerDown={(event) => startPanelResize('library', event)}
+          onResizeBy={(delta) => resizePanelBy('library', delta)}
+        />
+      )}
 
       <section className="workspace">
         {session.workspace === 'arrange' && (
@@ -312,6 +447,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             plugins={plugins}
             focusedTrackId={arrangeFocusedTrackId}
             onFocusTrack={setArrangeFocusedTrackId}
+            canonicalOperationPending={arrangeCanonicalOperationsPending > 0}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}
@@ -389,22 +525,33 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         )}
       </section>
 
-      <InspectorPanel
-        audio={audio}
-        boot={boot}
-        focusMode={focusMode}
-        setFocusMode={setFocusMode}
-        session={session}
-        setSession={setSession}
-        arrangeSelection={arrangeSelection}
-        setArrangeSelection={setArrangeSelection}
-        missingDependencies={missingDependencies}
-        plugins={plugins}
-        onDisableMissingPlugin={disableMissingPluginDevice}
-        onReplaceMissingPlugin={replaceMissingPluginDevice}
-        onRescanMissingPlugins={rescanMissingPlugins}
-        api={nativeApi}
-      />
+      {(!isArrange || arrangeInspectorWidth > 0) && (
+        <InspectorPanel
+          audio={audio}
+          boot={boot}
+          focusMode={focusMode}
+          setFocusMode={setFocusMode}
+          session={session}
+          setSession={setSession}
+          arrangeSelection={arrangeSelection}
+          setArrangeSelection={setArrangeSelection}
+          missingDependencies={missingDependencies}
+          plugins={plugins}
+          onDisableMissingPlugin={disableMissingPluginDevice}
+          onReplaceMissingPlugin={replaceMissingPluginDevice}
+          onRescanMissingPlugins={rescanMissingPlugins}
+          api={nativeApi}
+        />
+      )}
+
+      {isArrange && (
+        <PanelResizeHandle
+          side="inspector"
+          width={arrangeInspectorWidth}
+          onPointerDown={(event) => startPanelResize('inspector', event)}
+          onResizeBy={(delta) => resizePanelBy('inspector', delta)}
+        />
+      )}
 
       <TransportBar
         session={session}

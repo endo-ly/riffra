@@ -56,7 +56,8 @@ private:
 /// The detector is intentionally conservative: it requires the input peak to
 /// stay above 0.97 for at least kSustainedMs of contiguous samples before
 /// flagging feedback, and resets the accumulator when the level drops below
-/// 0.5 so legitimate loud passages do not trigger false positives.
+/// 0.5 so legitimate loud passages do not trigger false positives. Input is
+/// ignored while software monitoring is disabled.
 class FeedbackDetector {
 public:
     void prepare(const double sampleRate) noexcept {
@@ -69,15 +70,26 @@ public:
         feedbackSuspected.store(false, std::memory_order_relaxed);
     }
 
-    void observe(const float peak, const int numSamples) noexcept {
+    void observe(
+        const float peak,
+        const int numSamples,
+        const bool monitoringEnabled) noexcept {
+        if (!monitoringEnabled) {
+            sustainedSamples.store(0, std::memory_order_release);
+            feedbackSuspected.store(false, std::memory_order_release);
+            return;
+        }
         if (peak >= kPeakThreshold) {
-            sustainedSamples += static_cast<std::uint64_t>(numSamples);
+            const auto observedSamples = sustainedSamples.fetch_add(
+                static_cast<std::uint64_t>(std::max(0, numSamples)),
+                std::memory_order_acq_rel)
+                + static_cast<std::uint64_t>(std::max(0, numSamples));
             const auto threshold = static_cast<std::uint64_t>(
                 currentSampleRate * kSustainedMs / 1000.0);
-            if (sustainedSamples >= threshold)
+            if (observedSamples >= threshold)
                 feedbackSuspected.store(true, std::memory_order_release);
         } else if (peak < kReleaseThreshold) {
-            sustainedSamples = 0;
+            sustainedSamples.store(0, std::memory_order_release);
         }
     }
 
@@ -94,7 +106,7 @@ private:
     static constexpr float kReleaseThreshold = 0.5f;
     static constexpr double kSustainedMs = 250.0;
     double currentSampleRate = 48000.0;
-    std::uint64_t sustainedSamples = 0;
+    std::atomic<std::uint64_t> sustainedSamples { 0 };
     std::atomic<bool> feedbackSuspected { false };
 };
 

@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LibraryPanel } from '@/components';
 import type { InboxController } from '@/hooks/useInbox';
-import type { LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
+import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/lib/domain';
 
 // This suite verifies LibraryPanel's callback wiring only. useInbox/FakeNativeApi
 // behavior is covered separately in src/test/hooks/useInbox.test.tsx.
@@ -94,7 +94,7 @@ const libraryStub = {
 const rackStub = {
   plugins: [] as PluginEntry[],
   visiblePlugins: [] as PluginEntry[],
-  focusedTrack: null,
+  selectedTrack: null,
   onAddPlugin: vi.fn(),
 };
 
@@ -110,6 +110,102 @@ afterEach(() => {
 });
 
 describe('Inbox preservation zone (LIB-003)', () => {
+  it('adds a plugin to the selected instrument track from its add button', async () => {
+    const plugin: PluginEntry = {
+      id: 'plug:example',
+      name: 'Example Synth',
+      vendor: 'Acme',
+      version: null,
+      format: 'VST3',
+      path: 'C:\\VST3\\example.vst3',
+      bundle: false,
+      modifiedAtMs: null,
+      scanState: 'validated',
+    };
+    const user = userEvent.setup();
+    const onAddPlugin = vi.fn();
+    render(
+      <LibraryPanel
+        library={{ ...libraryStub, section: 'Plugins' }}
+        rack={{
+          ...rackStub,
+          plugins: [plugin],
+          visiblePlugins: [plugin],
+          onAddPlugin,
+          selectedTrack: {
+            id: 'track:instrument',
+            name: 'Instrumental',
+            kind: 'instrument',
+            gainDb: 0,
+            pan: 0,
+            muted: false,
+            solo: false,
+            armed: false,
+            monitoring: 'off',
+            midiInput: {},
+            rack: { devices: [], macros: [] },
+          } satisfies Track,
+        }}
+        recordings={recordingsStub}
+        inbox={makeInbox()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Example Synth'));
+    expect(onAddPlugin).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /Example Synth/ }));
+    expect(onAddPlugin).toHaveBeenCalledWith(plugin, 'instrument');
+  });
+
+  it('adds an effect to the selected Audio Track from its add button', async () => {
+    // Arrange
+    const plugin: PluginEntry = {
+      id: 'plug:effect',
+      name: 'Example Effect',
+      vendor: 'Acme',
+      version: null,
+      format: 'VST3',
+      path: 'C:\\VST3\\effect.vst3',
+      bundle: false,
+      modifiedAtMs: null,
+      scanState: 'validated',
+    };
+    const user = userEvent.setup();
+    const onAddPlugin = vi.fn();
+    render(
+      <LibraryPanel
+        library={{ ...libraryStub, section: 'Plugins' }}
+        rack={{
+          ...rackStub,
+          plugins: [plugin],
+          visiblePlugins: [plugin],
+          onAddPlugin,
+          selectedTrack: {
+            id: 'track:audio',
+            name: 'Audio Track',
+            kind: 'audio',
+            gainDb: 0,
+            pan: 0,
+            muted: false,
+            solo: false,
+            armed: false,
+            monitoring: 'off',
+            midiInput: {},
+            rack: { devices: [], macros: [] },
+          } satisfies Track,
+        }}
+        recordings={recordingsStub}
+        inbox={makeInbox()}
+      />,
+    );
+
+    // Act
+    await user.click(screen.getByRole('button', { name: /Example Effect/ }));
+
+    // Assert
+    expect(onAddPlugin).toHaveBeenCalledWith(plugin, 'effect');
+  });
+
   it('exposes every Inbox operation for the selected take', async () => {
     const inbox = makeInbox();
     const user = userEvent.setup();

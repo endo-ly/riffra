@@ -18,3 +18,10 @@ export function audioCommandSucceeded(audio: Pick<AudioStatus, 'state'>): boolea
 export function isOutputMuted(audio: Pick<AudioStatus, 'state'>): boolean {
   return audio.state === 'muted';
 }
+
+/** Returns whether the UI should treat the output as unavailable to release. */
+export function isEmergencyMuteActive(
+  audio: Pick<AudioStatus, 'state' | 'feedbackSuspected'>,
+): boolean {
+  return isOutputMuted(audio) || audio.feedbackSuspected;
+}

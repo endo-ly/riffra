@@ -299,7 +299,8 @@ Arrange は Riffra 共通の Application Shell 内に配置する。
 | Inspector    | 選択対象を精密編集する                |
 | Transport    | 再生・録音・時間情報を操作する        |
 
-- Library と Inspector は個別に折りたためる
+- Library と Inspector は個別に折りたためる。表示中は境界をDragして幅を調整できる
+- 境界を画面端までDragするとパネルが折りたたまれ、同じ境界をDragして再展開できる
 - Lower Panel は必要なときだけ開き、Play SurfaceとMIDI Editorを同時表示しない
 - Timeline を常に最大の作業領域として扱う
 
@@ -316,11 +317,13 @@ Snap  1/16 ▼
 
 [Automation]
 
-120 BPM
-4/4
-
 [Follow]
+[Bars | Time] [Zoom]
 ```
+
+再生位置とClockはRuler左上のCornerへ表示する。BPMと拍子はTransportで編集する。
+
+LibraryとInspectorの表示幅・折りたたみは、各Panel境界のDragだけで操作する。
 
 常時大量の機能ボタンを並べない。
 
@@ -569,8 +572,6 @@ UI アニメーション上の Playhead と、実際の Audio Engine 時間を�
 ```text
 |<   ▶   ■   ●
 
-3.2.1
-
 120 BPM
 4/4
 
@@ -578,6 +579,8 @@ Loop
 Metronome
 Count-in
 ```
+
+現在のPositionとClockはRuler左上のCornerに表示し、BPMと拍子はTransportの入力から編集する。
 
 操作項目：
 
@@ -607,6 +610,19 @@ Follow が ON の場合、再生位置が表示領域を越えると Timeline �
 再生中にユーザーが手動で Scroll または Zoom した場合は、自動 Follow を一時停止する。
 
 再度 Playhead がユーザー操作の対象になった時点、または Follow を再度 ON にした時点で追従を再開する。
+
+#### Grid Density
+
+Grid は Zoom に応じて表示密度を変える。
+
+| Beat の表示幅 | 表示する補助線        |
+| ------------- | --------------------- |
+| 18px 未満     | 小節線のみ            |
+| 18px 以上     | Beat 線を追加         |
+| 36px 以上     | Half-beat 線を追加    |
+| 72px 以上     | Quarter-beat 線を追加 |
+
+Ruler の小節番号・Clock 表示も、隣接するラベルが重ならない間隔へ自動的に間引く。小節線は補助線より強く表示する。
 
 ---
 
@@ -761,7 +777,7 @@ Instrument が存在しない場合、MIDI データは保持されるが音は�
 基本表示：
 
 ```text
-Guitar             M  S  ●
+Guitar             M  S  R  LIVE
 ```
 
 含む情報：
@@ -773,12 +789,17 @@ Guitar             M  S  ●
 - Record Arm
 - Monitoring 状態
 
-Track Header は、次の二状態を持つ。
+Clip 数と Plugin 一覧は Track Header に表示しない。詳細は Inspector で確認する。
 
-| 状態     | 表示内容                                                               |
-| -------- | ---------------------------------------------------------------------- |
-| Compact  | 主要操作だけを表示する                                                 |
-| Expanded | Volume、Pan、Input、Monitoring、Rack / Instrument の概要を追加表示する |
+Track Header は、次の三状態を持つ。
+
+| 状態    | 表示内容                                              |
+| ------- | ----------------------------------------------------- |
+| Compact | Track 名、種別、M / S / Record Arm / Monitoring、Menu |
+| Normal  | Compact に Volume / Pan の compact control を追加     |
+| Large   | Normal と同じ内容のまま、Lane の高さを拡張            |
+
+Selected は Track の選択を示す neutral / amber の accent、Focused は `LIVE` と cyan の下線で示す。Record Arm は赤、Mute は amber、Solo は blue、Monitoring の Auto は amber、On は green とし、状態の意味を背景色だけで表現しない。
 
 詳細設定は Inspector で行う。
 
@@ -871,6 +892,8 @@ Clip 本体を Drag して移動する。
 - MIDI Clip を Audio Track へ配置できない
 - 複数 Clip 移動時は相対位置を維持する
 
+Audio Clip と MIDI Clip はそれぞれ cyan / blue 系と purple 系の面で区別する。Selection は種類によらず共通の明るい outline で示し、Clip 種類の色と選択状態を混同させない。Trim / Fade handle は Hover または Selected 時を中心に表示する。
+
 ---
 
 ### 5.9 Trim / Split / Duplicate
@@ -958,6 +981,8 @@ Waveform は以下に追従する。
 - Trim
 - Clip Gain
 - Loop
+
+Waveform は Clip 背景より高いコントラストで描画し、Selection によって Waveform 自体の色を大きく変更しない。
 
 Scroll や Zoom 中に、操作を妨げるほどの描画遅延を起こさない。
 
@@ -1063,6 +1088,10 @@ Piano Roll では、以下を直接操作できる。
 - Duplicate Note
 - Multiple Selection
 - Velocity
+
+Piano Roll は MIDI pitch `0–127` 全域を保持し、縦方向に Scroll できる。左端には Piano keyboard column を表示し、C 音には `C4` のような Note 名を表示する。低い・高い音域の Note を表示領域外へ失わない。
+
+Note の Right Click は即時削除に使わない。Context Menu から `Delete` または `Duplicate` を選択する。
 
 上部の操作列では、編集単位を `Snap` で選び、`Zoom` でPiano Rollを拡大・縮小する。`Quantize`、`Duplicate`、選択ノートの `Velocity` 変更は、ノートを選択したときに実行できる。表示領域は横方向・縦方向にスクロールできるため、拡大後もクリップ全体と細かなノート位置を確認できる。
 
@@ -1503,6 +1532,8 @@ Track ごとに Automation Lane を表示できる。
 - Pan
 
 Automation 表示は、Track 単位で開閉する。
+
+Automation Header は親 Track と同じ左固定列に接続し、Automation Lane は Track Lane の子領域として認識できる背景とインデントを持つ。Automation の線と Point は、Clip の Selection outline より弱い cyan 系で表示する。
 
 #### Automation Point
 
