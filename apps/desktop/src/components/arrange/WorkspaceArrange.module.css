@@ -592,6 +592,15 @@
     inset 0 -2px 0 var(--cyan);
 }
 
+/*
+ * Each row is its own stacking context (z-index above); an open track menu
+ * would paint below the rows that follow it, so lift the row while the menu
+ * is showing.
+ */
+.trackRow:has(.trackMenu[open]) {
+  z-index: 20;
+}
+
 .trackHeader {
   position: sticky;
   /*
@@ -762,9 +771,6 @@
   color: #ffaaa5;
   background: rgba(205, 67, 60, 0.14);
 }
-.trackHeader:has(.trackMenu[open]) {
-  z-index: 20;
-}
 .trackSwitches button {
   width: 22px;
   height: 22px;
@@ -854,7 +860,7 @@
   position: relative;
   height: var(--track-height);
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.018));
 }
 
 .laneDragOver {
