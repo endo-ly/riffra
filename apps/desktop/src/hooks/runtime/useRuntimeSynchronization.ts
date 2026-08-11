@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { CreativeSession } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 
-interface RuntimeRecoveryOptions {
+interface RuntimeSynchronizationOptions {
   api: Pick<NativeApi, 'onRuntimeRestarted'>;
   sessionRef: { current: CreativeSession | null };
   setScanMessage: (message: string) => void;
@@ -14,12 +14,12 @@ interface RuntimeRecoveryOptions {
  * navigation. Runtime recovery itself belongs to Rust so a sidecar restart
  * cannot cause React to submit a competing graph restoration.
  */
-export function useRuntimeRecovery({
+export function useRuntimeSynchronization({
   api,
   sessionRef,
   setScanMessage,
   syncArrangementRuntime,
-}: RuntimeRecoveryOptions) {
+}: RuntimeSynchronizationOptions) {
   const runtimeReconciliationTail = useRef<Promise<void>>(Promise.resolve());
   const arrangeRuntimeSyncPromise = useRef<Promise<void> | null>(null);
 

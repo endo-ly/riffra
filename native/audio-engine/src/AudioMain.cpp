@@ -1034,7 +1034,7 @@ int serve(
     RuntimeLifecycleExecutor runtimeLifecycle(
         [](RuntimeLifecycleExecutor::Task task) {
             if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
-                std::_Exit(0);
+                std::_Exit(125);
         });
     runtimeLifecycle.setTimeoutHandler([] {
         // Do not write to stdout here. The parent may be the stalled party or
@@ -1072,11 +1072,16 @@ int serve(
                 },
                 std::chrono::seconds(10));
                 if (submitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-                    std::_Exit(0);
+                    std::_Exit(125);
                 break;
             }
             if (type == "setEmergencyMute") {
-                callback.setEmergencyMuted(static_cast<bool>(command.getProperty("muted", true)));
+                const auto muted = static_cast<bool>(command.getProperty("muted", true));
+                if (!muted && callback.isDeviceFaulted()) {
+                    writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
+                    continue;
+                }
+                callback.setEmergencyMuted(muted);
                 writeJson(currentStatus(manager, callback, &rack, &midiMonitor));
                 continue;
             }
@@ -1998,7 +2003,7 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
             timelineOperationRunning.store(false, std::memory_order_release);
         }, std::chrono::seconds(10));
         if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-            std::_Exit(0);
+            std::_Exit(125);
         juce::MessageManager::callAsync(
             [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
     });
@@ -2006,7 +2011,7 @@ if (type == "sendTrackMidi" || type == "panicTrackMidi") {
     juce::MessageManager::getInstance()->runDispatchLoop();
     if (commandThread.joinable()) commandThread.join();
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-        std::_Exit(0);
+        std::_Exit(125);
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 

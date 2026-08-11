@@ -184,8 +184,8 @@ pub(crate) fn sync_arrangement<D: RuntimeDriver>(
     submit_canonical_projection_nonblocking(context, projection)
 }
 
-pub fn sync_arrangement_runtime(
-    context: &SessionContext<'_>,
+pub fn sync_arrangement_runtime<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
     let projection = context.session_actor.capture_projection(context.session)?;
     apply_arrangement_projection(context, projection)
@@ -222,7 +222,7 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
     }
     context
         .runtime
-        .apply_and_wait(
+        .apply_candidate_and_wait(
             runtime_timeline_snapshot(context.data_root, candidate),
             crate::runtime::model::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),

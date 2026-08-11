@@ -25,6 +25,7 @@ struct RuntimeTarget {
     operation_id: u64,
     key: ProjectionKey,
     snapshot: Value,
+    canonical: bool,
     recovery_attempts: u8,
     deadline: Option<Instant>,
 }
@@ -131,7 +132,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         snapshot: Value,
         key: ProjectionKey,
     ) -> RuntimeProjectionStatus {
-        let _ = self.enqueue(snapshot, key, None);
+        let _ = self.enqueue(snapshot, key, None, true);
         self.status()
     }
 
@@ -140,13 +141,14 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         snapshot: Value,
         key: ProjectionKey,
         deadline: Option<Instant>,
+        canonical: bool,
     ) -> SubmissionResult {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime projection lock poisoned");
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
         if let Some(desired) = state.desired_key
-            && key < desired
+            && key.sequence < desired.sequence
         {
             return SubmissionResult::Superseded {
                 desired_key: desired,
@@ -160,6 +162,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .active_projection
                 .is_some_and(|active| active.runtime_generation == generation && active.key == key)
         {
+            if canonical {
+                state.last_active_key = Some(key);
+                state.last_active_snapshot = Some(snapshot);
+            }
             return SubmissionResult::AlreadyActive {
                 operation_id: state.status.operation_id,
                 key,
@@ -167,13 +173,18 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         }
 
         if state.desired_key == Some(key) {
-            if let Some(target) = state.latest_target.as_ref()
-                && target.key == key
-            {
-                return SubmissionResult::FollowingExisting {
-                    operation_id: target.operation_id,
-                    key,
-                };
+            let existing_operation_id = state
+                .latest_target
+                .as_ref()
+                .filter(|target| target.key == key)
+                .map(|target| target.operation_id);
+            if let Some(operation_id) = existing_operation_id {
+                if canonical {
+                    let target = state.latest_target.as_mut().expect("target was checked");
+                    target.snapshot = snapshot;
+                    target.canonical = true;
+                }
+                return SubmissionResult::FollowingExisting { operation_id, key };
             }
             if state.running_operation_id.is_some() {
                 return SubmissionResult::FollowingExisting {
@@ -191,6 +202,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             operation_id,
             key,
             snapshot,
+            canonical,
             recovery_attempts: 0,
             deadline,
         });
@@ -223,7 +235,20 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         key: ProjectionKey,
         deadline: Option<Instant>,
     ) -> Result<ProjectionOperation, RuntimeError> {
-        submission_operation(self.enqueue(snapshot, key, deadline), key)
+        self.submit_with_canonical_deadline(snapshot, key, deadline, true)
+    }
+
+    /// Submits a graph while recording whether it is eligible for restart
+    /// recovery after native activation.
+    pub(crate) fn submit_with_canonical_deadline(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        deadline: Option<Instant>,
+        canonical: bool,
+    ) -> Result<ProjectionOperation, RuntimeError> {
+        let submitted = self.enqueue(snapshot, key, deadline, canonical);
+        submission_operation(submitted, key)
             .map(|(operation_id, key)| ProjectionOperation { operation_id, key })
     }
 
@@ -362,6 +387,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.active_session_revision = None;
         state.status.runtime_generation = generation;
         state.status.last_error = None;
+        state.last_active_key = None;
+        state.last_active_snapshot = None;
         wake.notify_all();
         true
     }
@@ -393,7 +420,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             return false;
         };
         !matches!(
-            self.enqueue(snapshot, key, None),
+            self.enqueue(snapshot, key, None, true),
             SubmissionResult::Superseded { .. }
         )
     }
@@ -486,10 +513,10 @@ fn worker_loop<D: ProjectionDriver>(
                         && !state.stop_requested
                         && state
                             .active_projection
-                            .is_none_or(|active| target.key >= active.key)
+                            .is_none_or(|active| target.key.sequence >= active.key.sequence)
                         && state
                             .desired_key
-                            .is_none_or(|desired| target.key >= desired)
+                            .is_none_or(|desired| target.key.sequence >= desired.sequence)
                 };
                 if !should_publish {
                     None
@@ -638,17 +665,19 @@ fn worker_loop<D: ProjectionDriver>(
                 Ok(()) => {
                     if state
                         .active_projection
-                        .is_none_or(|active| target.key >= active.key)
+                        .is_none_or(|active| target.key.sequence >= active.key.sequence)
                         && state
                             .desired_key
-                            .is_none_or(|desired| target.key >= desired)
+                            .is_none_or(|desired| target.key.sequence >= desired.sequence)
                     {
                         state.active_projection = Some(ActiveProjection {
                             runtime_generation: current_generation,
                             key: target.key,
                         });
-                        state.last_active_key = Some(target.key);
-                        state.last_active_snapshot = Some(target.snapshot.clone());
+                        if target.canonical {
+                            state.last_active_key = Some(target.key);
+                            state.last_active_snapshot = Some(target.snapshot.clone());
+                        }
                     }
                     if state.status.operation_id == target.operation_id {
                         state.status.active_projection_sequence =
@@ -878,5 +907,73 @@ mod tests {
                 && coordinator.status().active_session_revision == Some(11)
         });
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11, 11]);
+    }
+
+    #[test]
+    fn candidate_projection_is_not_requeued_until_canonical_confirmation() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
+        let coordinator =
+            ProjectionCoordinator::new(Arc::clone(&driver), None, activation).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(10, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(11, 11), None, false)
+            .unwrap();
+        coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+                None,
+                None,
+            )
+            .unwrap();
+        wait_until(|| coordinator.status().active_session_revision == Some(11));
+
+        // Act
+        assert!(coordinator.reset_for_repair());
+        driver.generation.store(2, Ordering::Release);
+        let requeued = coordinator.requeue_after_runtime_restart(2);
+
+        // Assert
+        assert!(!requeued);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11]);
+    }
+
+    #[test]
+    fn canonical_confirmation_replaces_a_candidate_snapshot_for_restart_recovery() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let activation: ProjectionActivationHook = Arc::new(|_| Ok(()));
+        let coordinator =
+            ProjectionCoordinator::new(Arc::clone(&driver), None, activation).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(10, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(11, 11), None, false)
+            .unwrap();
+        coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+                None,
+                None,
+            )
+            .unwrap();
+        wait_until(|| coordinator.status().active_session_revision == Some(11));
+
+        // Act
+        coordinator.submit_nonblocking(snapshot(99), key(11, 11));
+        driver.generation.store(2, Ordering::Release);
+        assert!(coordinator.requeue_after_runtime_restart(2));
+        wait_until(|| driver.loaded.lock().unwrap().last() == Some(&99));
+
+        // Assert
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11, 99]);
     }
 }

@@ -68,7 +68,7 @@ PluginEditorHost::~PluginEditorHost() {
     auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
     if (messageManager == nullptr) {
         if (window != nullptr)
-            std::_Exit(0);
+            std::_Exit(125);
         return;
     }
     if (messageManager->isThisTheMessageThread()) {
@@ -79,7 +79,7 @@ PluginEditorHost::~PluginEditorHost() {
     // Deferring a raw `this` capture from a destructor would allow a late
     // Message Thread callback to access freed state.
     if (window != nullptr)
-        std::_Exit(0);
+        std::_Exit(125);
 }
 
 bool PluginEditorHost::open(juce::String& error) {
@@ -104,7 +104,7 @@ bool PluginEditorHost::close() {
         // A plugin editor is third-party code. Once its Message Thread
         // boundary stops responding, destroying it from another thread is
         // unsafe; the sidecar is the recovery boundary.
-        std::_Exit(0);
+        std::_Exit(125);
     }
     return true;
 }
@@ -164,7 +164,7 @@ bool PluginEditorHost::clear(juce::String& error) {
         return false;
     if (!closed->load(std::memory_order_acquire)) {
         error = "The VST3 editor could not be closed safely.";
-        std::_Exit(0);
+        std::_Exit(125);
     }
     return true;
 }

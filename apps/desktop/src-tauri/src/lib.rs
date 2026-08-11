@@ -880,16 +880,15 @@ pub fn run() {
                         "Sample Pad state could not be prepared after Runtime restart"
                     ),
                 }
-                if let Some(runtime) = runtime_for_restart.upgrade() {
-                    if !runtime.requeue_after_runtime_restart(generation)
-                        && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
-                    {
-                        tracing::warn!(
-                            generation,
-                            error = %error,
-                            "Runtime restart had no graph to restore and mute release failed"
-                        );
-                    }
+                if let Some(runtime) = runtime_for_restart.upgrade()
+                    && !runtime.requeue_after_runtime_restart(generation)
+                    && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
+                {
+                    tracing::warn!(
+                        generation,
+                        error = %error,
+                        "Runtime restart had no graph to restore and mute release failed"
+                    );
                 }
             }))?;
             let effective_preferences = preferences.clone();

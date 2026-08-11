@@ -119,10 +119,6 @@ int validateLoad(const juce::String& path) {
         return 2;
     }
 
-    juce::VST3PluginFormat format;
-    juce::OwnedArray<juce::PluginDescription> descriptions;
-    format.findAllTypesForFile(descriptions, path);
-
     const auto loadError = validateInstanceCreation(path);
     const auto durationMs = juce::Time::getMillisecondCounterHiRes() - started;
     if (loadError.has_value()) {

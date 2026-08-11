@@ -1,6 +1,7 @@
 use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
 use crate::audio_preferences::AudioPreferences;
+use crate::model::AudioState;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -67,6 +68,38 @@ impl RecoveryState {
 }
 
 impl AudioSupervisor {
+    /// Aligns the Rust-owned mute cause with feedback and device state emitted
+    /// by the Native sidecar.
+    pub(super) fn synchronize_mute_cause_from_status(&self) {
+        let status = match self.status.lock() {
+            Ok(status) => status.clone(),
+            Err(_) => return,
+        };
+        let cause = if status.feedback_suspected {
+            Some(MuteCause::Feedback)
+        } else if matches!(status.state, AudioState::Faulted | AudioState::Offline) {
+            Some(MuteCause::DeviceFault)
+        } else if status.state == AudioState::Ready {
+            None
+        } else {
+            return;
+        };
+        let Ok(mut controls) = self.recovery.runtime_controls.lock() else {
+            return;
+        };
+        if controls.mute_cause == Some(MuteCause::User) && cause.is_some() {
+            controls.emergency_muted = true;
+            return;
+        }
+        if let Some(cause) = cause {
+            controls.emergency_muted = true;
+            controls.mute_cause = Some(cause);
+        } else if controls.mute_cause == Some(MuteCause::Feedback) {
+            controls.emergency_muted = false;
+            controls.mute_cause = None;
+        }
+    }
+
     /// Installs the Rust-owned Runtime restoration callback used after a
     /// completed sidecar replacement.
     pub(crate) fn set_runtime_restart_handler(
@@ -211,12 +244,23 @@ impl AudioSupervisor {
                 )
             };
             if !safe_to_release {
-                if should_release && let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
-                    controls.mute_cause = Some(if feedback_suspected {
-                        MuteCause::Feedback
-                    } else {
-                        MuteCause::DeviceFault
-                    });
+                if should_release {
+                    let status = audio
+                        .status
+                        .lock()
+                        .map_err(|_| NativeAudioError::LockPoisoned {
+                            resource: "Audio status",
+                        })?
+                        .clone();
+                    super::commands::reinforce_emergency_mute(audio, &status)?;
+                    if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
+                        controls.emergency_muted = true;
+                        controls.mute_cause = Some(if feedback_suspected {
+                            MuteCause::Feedback
+                        } else {
+                            MuteCause::DeviceFault
+                        });
+                    }
                 }
                 return Ok(());
             }
@@ -224,11 +268,12 @@ impl AudioSupervisor {
                 return Ok(());
             }
             let status = audio.send_emergency_mute_command(false)?;
-            if !super::commands::audio_status_is_safe(&status)
-                && let Ok(mut controls) = audio.recovery.runtime_controls.lock()
-            {
-                controls.emergency_muted = true;
-                controls.mute_cause = Some(super::commands::mute_cause_for_status(&status));
+            if !super::commands::audio_status_is_safe(&status) {
+                super::commands::reinforce_emergency_mute(audio, &status)?;
+                if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
+                    controls.emergency_muted = true;
+                    controls.mute_cause = Some(super::commands::mute_cause_for_status(&status));
+                }
             } else if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
                 controls.emergency_muted = false;
                 controls.mute_cause = None;

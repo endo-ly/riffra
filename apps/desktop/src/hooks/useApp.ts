@@ -29,7 +29,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
-import { useRuntimeRecovery } from './runtime/useRuntimeRecovery';
+import { useRuntimeSynchronization } from './runtime/useRuntimeSynchronization';
 import { useTransportController } from './runtime/useTransportController';
 import { useWorkspaceNavigation } from './runtime/useWorkspaceNavigation';
 import { useLibrary } from './useLibrary';
@@ -228,7 +228,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { syncArrangeRuntime } = useRuntimeRecovery({
+  const { syncArrangeRuntime } = useRuntimeSynchronization({
     api,
     sessionRef,
     setScanMessage,

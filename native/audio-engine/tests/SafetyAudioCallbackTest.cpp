@@ -116,6 +116,25 @@ TEST(SafetyAudioCallbackTest, ReleasingEmergencyMuteClearsFeedbackCause)
     EXPECT_FALSE(callback.isFeedbackSuspected());
 }
 
+TEST(SafetyAudioCallbackTest, DeviceFaultKeepsEmergencyMuteEngaged)
+{
+    SafetyAudioCallback callback;
+    callback.setEmergencyMuted(false);
+    ASSERT_FALSE(callback.isEmergencyMuted());
+
+    callback.setDeviceFaulted(true);
+    callback.setEmergencyMuted(true);
+
+    callback.setEmergencyMuted(false);
+
+    EXPECT_TRUE(callback.isEmergencyMuted());
+
+    callback.setDeviceFaulted(false);
+    callback.setEmergencyMuted(false);
+
+    EXPECT_FALSE(callback.isEmergencyMuted());
+}
+
 TEST(SafetyAudioCallbackTest, RequiresFaultWhenActiveDeviceDisappears)
 {
     EXPECT_TRUE(deviceLossRequiresFault(false, true));

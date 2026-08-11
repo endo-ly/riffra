@@ -126,7 +126,7 @@ TimelineEngine::~TimelineEngine() {
     stop();
     publishInProgress.store(true, std::memory_order_release);
     if (!waitForAudioReaders(std::chrono::milliseconds(250)))
-        std::_Exit(0);
+        std::_Exit(125);
     activeTimeline.store(nullptr, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
@@ -293,7 +293,7 @@ bool TimelineEngine::prepareSnapshot(
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             monitoring, track->armed, track->instrument);
-        track->liveEffectRuntimeRequired = track->instrument || track->monitorInput || track->armed;
+        track->liveEffectRuntimeRequired = track->instrument || track->monitorInput;
         track->recordingEffectRuntimeRequired = !track->instrument && track->armed;
         if (track->monitorInput)
             monitorLiveInputState = true;
@@ -1758,12 +1758,14 @@ void TimelineEngine::processTracks(
                 else
                     juce::FloatVectorOperations::clear(destination, sampleCount);
             }
-            track.liveEffectChain.process(
-                track.liveInputBuffer.getArrayOfReadPointers(),
-                2,
-                track.liveProcessedBuffer.getArrayOfWritePointers(),
-                2,
-                sampleCount);
+            if (track.monitorInput) {
+                track.liveEffectChain.process(
+                    track.liveInputBuffer.getArrayOfReadPointers(),
+                    2,
+                    track.liveProcessedBuffer.getArrayOfWritePointers(),
+                    2,
+                    sampleCount);
+            }
             const auto captureStart = captureBlockOffset.load(std::memory_order_acquire);
             const auto captureEnd =
                 captureStart + captureBlockSamples.load(std::memory_order_acquire);

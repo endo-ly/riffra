@@ -284,6 +284,7 @@ impl AudioSupervisor {
                             }
                         }
                         if let Some(response) = handle_native_stdout(&event_status, &bytes) {
+                            event_supervisor.synchronize_mute_cause_from_status();
                             if let Some(request_id) = response.request_id {
                                 record_command_response(
                                     &event_responses,

@@ -62,10 +62,33 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         key: ProjectionKey,
         timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
+        self.apply_and_wait_with_canonical(snapshot, key, timeout, true)
+    }
+
+    /// Applies a proposed graph without making it the restart recovery source.
+    pub(crate) fn apply_candidate_and_wait(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        timeout: Duration,
+    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
+        self.apply_and_wait_with_canonical(snapshot, key, timeout, false)
+    }
+
+    fn apply_and_wait_with_canonical(
+        &self,
+        snapshot: Value,
+        key: ProjectionKey,
+        timeout: Duration,
+        canonical: bool,
+    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let deadline = Instant::now() + timeout;
-        let operation = self
-            .projection
-            .submit_with_deadline(snapshot, key, Some(deadline))?;
+        let operation = self.projection.submit_with_canonical_deadline(
+            snapshot,
+            key,
+            Some(deadline),
+            canonical,
+        )?;
         self.projection.wait_for_operation(
             operation.operation_id,
             operation.key,

@@ -49,6 +49,8 @@ void SafetyAudioCallback::panicAll() noexcept {
 }
 
 void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
+    if (!shouldMute && deviceFaulted.load(std::memory_order_acquire))
+        return;
     if (shouldMute)
         panicAll();
     emergencyMuted.store(shouldMute, std::memory_order_release);
