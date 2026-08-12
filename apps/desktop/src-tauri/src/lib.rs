@@ -55,7 +55,7 @@ use riffra_core::AppCore;
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
 use session::CreativeSession;
-use session::application as session_application;
+use session::adapter as session_adapter;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -673,7 +673,7 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if let AudioDeviceReopenOutcome::SidecarRestarted(status) = reopen_outcome {
             return Ok(status);
         }
-        session_application::reconcile_runtime_after_audio_device_change(
+        session_adapter::reconcile_runtime_after_audio_device_change(
             &session::context::SessionContext {
                 core: &state.core,
                 view_state: &state.view_state,
@@ -883,14 +883,14 @@ pub fn run() {
                         format!("Canonical Session could not be read during Runtime recovery: {error}")
                     })
                     .and_then(|session| {
-                        session_application::resolve_native_pads(
+                        session_adapter::resolve_native_pads(
                             &recovery_data_root,
                             &session.play_state.sample_instrument.pads,
                         )
                     });
                 match pads {
                     Ok(pads) => match runtime_audio.configure_sample_pads(&pads) {
-                        Ok(status) if session_application::audio_command_succeeded(&status) => {}
+                        Ok(status) if session_adapter::audio_command_succeeded(&status) => {}
                         Ok(status) => tracing::warn!(
                             generation,
                             message = %status.message,

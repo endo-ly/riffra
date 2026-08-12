@@ -1,5 +1,5 @@
 use crate::{asset, session::CreativeSession};
-use riffra_core::{AudioRuntime, OfflineRenderRequest};
+use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -71,7 +71,7 @@ struct RenderPlan {
 }
 
 pub fn render_timeline_with_options(
-    audio: &impl AudioRuntime,
+    renderer: &impl RenderRuntime,
     data_root: &Path,
     session: &CreativeSession,
     created_at_ms: u64,
@@ -83,7 +83,7 @@ pub fn render_timeline_with_options(
             .map_err(|error| format!("Render output folder could not be created: {error}"))?;
     }
 
-    audio.render_timeline_offline(OfflineRenderRequest {
+    renderer.render_timeline_offline(OfflineRenderRequest {
         snapshot: plan.snapshot,
         destination: plan.output_path.clone(),
         start_tick: plan.start_tick,
@@ -283,7 +283,7 @@ fn build_render_plan(
         ));
     }
     let snapshot =
-        crate::session::application::runtime_snapshot_for_recording(data_root, &render_session);
+        crate::session::adapter::runtime_snapshot_for_recording(data_root, &render_session);
     fail_for_missing_dependencies(&snapshot)?;
 
     Ok(RenderPlan {

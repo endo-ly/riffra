@@ -182,9 +182,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const setSessionFromChildOperation = useCallback(
     (nextSession: CreativeSession) => {
       const current = sessionRef.current;
-      // `updatedAtMs` is a strictly increasing canonical commit token. A slow
-      // response must not overwrite newer production data.
-      if (current != null && nextSession.updatedAtMs < current.updatedAtMs) return;
       const nextViewState = current
         ? { workspace: current.workspace, designContext: current.designContext }
         : viewState;

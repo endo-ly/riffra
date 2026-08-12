@@ -1,6 +1,12 @@
 //! External capabilities required by Core application operations.
 
-use crate::session::CreativeSession;
+use crate::domain::session::CreativeSession;
+
+mod projection;
+mod render;
+
+pub use projection::ProjectionKey;
+pub use render::{OfflineRenderRequest, RenderRuntime};
 use thiserror::Error;
 
 /// A failure returned by a host-provided Port.

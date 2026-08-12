@@ -1,4 +1,4 @@
-use crate::session::CreativeSession;
+use crate::domain::session::CreativeSession;
 
 const HISTORY_LIMIT: usize = 40;
 

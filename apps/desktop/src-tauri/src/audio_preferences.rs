@@ -281,7 +281,7 @@ fn apply_audio_preferences(
 fn reconcile_runtime_after_audio_device_change(
     context: &AudioPreferencesContext<'_>,
 ) -> Result<(), String> {
-    crate::session::application::reconcile_runtime_after_audio_device_change(&SessionContext {
+    crate::session::adapter::reconcile_runtime_after_audio_device_change(&SessionContext {
         core: context.core,
         view_state: context.view_state,
         audio: context.audio,

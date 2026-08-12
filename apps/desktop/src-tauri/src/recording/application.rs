@@ -111,7 +111,7 @@ fn start_recording_in_session(
         .iter()
         .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
-        crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
+        crate::session::adapter::runtime_snapshot_for_recording(context.data_root, &session),
         crate::runtime::model::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
@@ -471,7 +471,7 @@ fn finalize_arrange_recording(
         return Err("Arrange recording manifest contains an invalid Native Clock range.".into());
     }
     let outputs = register_track_outputs(context.data_root, directory, &manifest)?;
-    let session_context = crate::session::application::SessionContext {
+    let session_context = crate::session::adapter::SessionContext {
         core: context.core,
         view_state: context.view_state,
         audio: context.audio,
@@ -621,8 +621,6 @@ fn finalize_arrange_recording(
                     source_end_sample: segment.file_end_sample,
                     raw_audio: None,
                     processed_audio: None,
-                    raw_audio_asset_id: None,
-                    processed_audio_asset_id: None,
                     midi_asset_id: Some(midi_asset_id.clone()),
                 });
                 attach_take_to_pass(&mut session.arrangement, &pass_ids[index], take_id.clone())?;
@@ -770,8 +768,6 @@ fn finalize_arrange_recording(
                 source_end_sample: source_end,
                 raw_audio,
                 processed_audio,
-                raw_audio_asset_id: None,
-                processed_audio_asset_id: None,
                 midi_asset_id: output.midi_asset_id.clone(),
             };
             session.arrangement.takes.push(take);
@@ -873,12 +869,8 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::application::commit_recording_session(
-        &session_context,
-        &base_session,
-        session,
-    )?;
-    crate::session::application::sync_arrangement_runtime(&session_context)
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
+    crate::session::adapter::sync_arrangement_runtime(&session_context)
         .map(|_| ())
         .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
 }
@@ -1310,7 +1302,7 @@ fn place_recording_on_timeline(
     if armed_track_ids.is_empty() {
         return Ok(());
     }
-    let session_context = crate::session::application::SessionContext {
+    let session_context = crate::session::adapter::SessionContext {
         core: context.core,
         view_state: context.view_state,
         audio: context.audio,
@@ -1531,8 +1523,6 @@ fn place_recording_on_timeline(
                             .unwrap_or(0),
                     })
                 }),
-                raw_audio_asset_id: None,
-                processed_audio_asset_id: None,
                 midi_asset_id: midi_asset_id.clone(),
             });
             attach_take_to_pass(&mut session.arrangement, &pass_id, take_id)?;
@@ -1616,12 +1606,8 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::application::commit_recording_session(
-        &session_context,
-        &base_session,
-        session,
-    )?;
-    crate::session::application::sync_arrangement_runtime(&session_context).map_err(|error| {
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
+    crate::session::adapter::sync_arrangement_runtime(&session_context).map_err(|error| {
         format!("Recorded Timeline clip was saved but runtime sync failed: {error}")
     })?;
     Ok(())
@@ -1965,8 +1951,6 @@ mod tests {
                     source_end_sample: 48_000,
                     raw_audio: None,
                     processed_audio: None,
-                    raw_audio_asset_id: None,
-                    processed_audio_asset_id: None,
                     midi_asset_id: None,
                 });
                 attach_take_to_pass(&mut arrangement, &pass_id, take_id).unwrap();
@@ -2105,8 +2089,6 @@ mod tests {
             source_end_sample: 48_000,
             raw_audio: None,
             processed_audio: None,
-            raw_audio_asset_id: None,
-            processed_audio_asset_id: None,
             midi_asset_id: Some(asset_id),
         };
 

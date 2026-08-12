@@ -24,7 +24,7 @@ pub struct OfflineRenderRequest {
 ///
 /// Process adapters implement the concrete command surface. The production
 /// domain does not need to know how a worker is spawned.
-pub trait AudioRuntime: Send + Sync {
+pub trait RenderRuntime: Send + Sync {
     /// Renders a prepared Timeline without requiring a real-time audio device.
     ///
     /// # Errors

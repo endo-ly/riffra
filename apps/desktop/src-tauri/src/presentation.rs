@@ -1,6 +1,6 @@
 //! Desktop-owned view state.
 
-use riffra_core::asset::AssetId;
+use riffra_core::domain::asset::AssetId;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

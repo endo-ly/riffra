@@ -221,8 +221,10 @@ pub(crate) fn sync_arrangement<D: RuntimeDriver>(
         runtime: context.runtime,
         wait_for_activation: false,
     };
+    let store = crate::storage::SessionStore::new(context.data_root);
     context
         .core
+        .application(&store)
         .project_current(&projection)
         .map_err(|error| error.to_string())?;
     Ok(context.runtime.status())
@@ -236,8 +238,10 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
         runtime: context.runtime,
         wait_for_activation: true,
     };
+    let store = crate::storage::SessionStore::new(context.data_root);
     context
         .core
+        .application(&store)
         .project_current(&projection)
         .map_err(|error| error.to_string())?;
     Ok(context.runtime.status())
@@ -446,18 +450,12 @@ mod tests {
             "riffra-workspace-navigation-{}",
             crate::storage::now_ms()
         ));
-        let session = Arc::new(Mutex::new(CreativeSession::new(1)));
+        let session = CreativeSession::new(1);
         let audio = crate::native_audio::AudioSupervisor::offline("test");
         let runtime_driver = Arc::new(audio.clone());
         let runtime =
             Arc::new(crate::runtime::RuntimeReconciler::new(runtime_driver, None).unwrap());
-        let core = riffra_core::AppCore::from_shared_session(
-            root.clone(),
-            Arc::clone(&session),
-            audio.clone(),
-            false,
-            false,
-        );
+        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
         let view_state = Mutex::new(crate::presentation::DesktopViewState::default());
         let context = SessionContext {
             core: &core,

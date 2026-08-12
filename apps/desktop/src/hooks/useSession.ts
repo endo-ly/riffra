@@ -28,23 +28,10 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const sessionRef = useRef<CreativeSession | null>(null);
   sessionRef.current = session;
 
-  const applyNativeSession = useCallback(
-    (nextSession: CreativeSession, allowExplicitHistoryMove = false) => {
-      const current = sessionRef.current;
-      // Rust assigns a strictly increasing updatedAtMs at the canonical commit
-      // boundary. A late response from an older command must not replace newer
-      // arrangement/rack data just because it crossed the IPC boundary later.
-      if (
-        !allowExplicitHistoryMove &&
-        current != null &&
-        nextSession.updatedAtMs < current.updatedAtMs
-      )
-        return;
-      sessionRef.current = nextSession;
-      setSession(nextSession);
-    },
-    [],
-  );
+  const applyNativeSession = useCallback((nextSession: CreativeSession) => {
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+  }, []);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -59,7 +46,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const undo = useCallback(async () => {
     if (!historyState.canUndo) return;
     try {
-      applyNativeSession(await undoSession(), true);
+      applyNativeSession(await undoSession());
       await refreshHistory();
       setAutosaveError(null);
     } catch (error) {
@@ -70,7 +57,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
   const redo = useCallback(async () => {
     if (!historyState.canRedo) return;
     try {
-      applyNativeSession(await redoSession(), true);
+      applyNativeSession(await redoSession());
       await refreshHistory();
       setAutosaveError(null);
     } catch (error) {

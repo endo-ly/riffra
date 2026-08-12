@@ -219,7 +219,7 @@ fn import_packaged_asset(
     }
     AssetId::from_normalized(asset.asset_id.as_str()).map_err(|_| {
         format!(
-            "Project references a non-canonical AssetId {}; refusing to import legacy format.",
+            "Project references a non-canonical AssetId: {}.",
             asset.asset_id
         )
     })?;

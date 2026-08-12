@@ -45,7 +45,14 @@ import type {
 } from '@/lib/domain';
 import { defaultSession, defaultViewState } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
-import { invoke, invokeLatest, invokeOrFallback, isNativeRuntime } from './invoke';
+import {
+  invoke,
+  invokeLatest,
+  invokeMutation,
+  invokeMutationOrFallback,
+  invokeOrFallback,
+  isNativeRuntime,
+} from './invoke';
 import type {
   NativeApi,
   RuntimeStartupFinishedEvent,
@@ -86,11 +93,11 @@ async function onRuntimeStartupFinished(
 }
 
 async function undoSession(): Promise<CreativeSession> {
-  return invokeOrFallback<CreativeSession>('undo_session', {}, defaultSession());
+  return invokeMutationOrFallback<CreativeSession>('undo_session', {}, defaultSession());
 }
 
 async function redoSession(): Promise<CreativeSession> {
-  return invokeOrFallback<CreativeSession>('redo_session', {}, defaultSession());
+  return invokeMutationOrFallback<CreativeSession>('redo_session', {}, defaultSession());
 }
 
 async function getHistoryState(): Promise<HistoryState> {
@@ -105,7 +112,7 @@ async function getHistoryState(): Promise<HistoryState> {
 }
 
 async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'restore_recovery_generation',
     { fileName },
     null,
@@ -117,7 +124,7 @@ async function exportSession(): Promise<ProjectExport | null> {
 }
 
 async function importSession(path: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('import_scratch_session', { path }, null);
+  return invokeMutationOrFallback<CreativeSession | null>('import_scratch_session', { path }, null);
 }
 
 async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {
@@ -378,7 +385,7 @@ async function stopArrangeRecording(): Promise<AudioStatus> {
 }
 
 async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('set_master_gain_db', {
+  return invokeMutation<SessionAudioPair>('set_master_gain_db', {
     gainDb,
   });
 }
@@ -438,7 +445,7 @@ async function panicMidiTrack(trackId: string): Promise<AudioStatus | null> {
 }
 
 async function createSamplePad(assetId: AssetId, name: string): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('create_sample_pad', {
+  return invokeMutation<SessionAudioPair>('create_sample_pad', {
     assetId,
     name,
   });
@@ -448,14 +455,14 @@ async function updateSamplePad(
   padId: string,
   patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
 ): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('update_sample_pad', {
+  return invokeMutation<SessionAudioPair>('update_sample_pad', {
     padId,
     patch,
   });
 }
 
 async function removeSamplePad(padId: string): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('remove_sample_pad', {
+  return invokeMutation<SessionAudioPair>('remove_sample_pad', {
     padId,
   });
 }
@@ -468,18 +475,21 @@ async function relinkMissingDependency(
   assetId: AssetId,
   newPath: string,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('relink_missing_dependency', { assetId, newPath });
+  return await invokeMutation<CreativeSession>('relink_missing_dependency', { assetId, newPath });
 }
 
 async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
+  return await invokeMutation<CreativeSession>('disable_missing_plugin', { deviceId });
 }
 
 async function replaceMissingTrackPlugin(
   deviceId: string,
   newPath: string,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('replace_missing_track_plugin', { deviceId, newPath });
+  return await invokeMutation<CreativeSession>('replace_missing_track_plugin', {
+    deviceId,
+    newPath,
+  });
 }
 
 async function addAudioClipToArrangement(
@@ -488,7 +498,7 @@ async function addAudioClipToArrangement(
   startTick?: number,
   trackId?: string,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'add_audio_clip_to_arrangement',
     { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
     null,
@@ -501,7 +511,7 @@ async function addMidiClipToArrangement(
   startTick?: number,
   trackId?: string,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'add_midi_clip_to_arrangement',
     { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
     null,
@@ -512,21 +522,29 @@ async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
+  return invokeMutationOrFallback<CreativeSession | null>(
+    'update_audio_clip',
+    { clipId, patch },
+    null,
+  );
 }
 
 async function updateMidiClip(
   clipId: string,
   patch: MidiClipPatch,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('update_midi_clip', { clipId, patch }, null);
+  return invokeMutationOrFallback<CreativeSession | null>(
+    'update_midi_clip',
+    { clipId, patch },
+    null,
+  );
 }
 
 async function removeTimelineClips(
   audioClipIds: string[],
   midiClipIds: string[],
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'remove_timeline_clips',
     { audioClipIds, midiClipIds },
     null,
@@ -538,7 +556,7 @@ async function trimAudioClip(
   startTick: number,
   sourceRange: { start: number; end: number },
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'trim_audio_clip',
     { clipId, startTick, sourceRange },
     null,
@@ -546,19 +564,23 @@ async function trimAudioClip(
 }
 
 async function splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('split_audio_clip', { clipId, splitTick }, null);
+  return invokeMutationOrFallback<CreativeSession | null>(
+    'split_audio_clip',
+    { clipId, splitTick },
+    null,
+  );
 }
 
 async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('duplicate_audio_clip', { clipId }, null);
+  return invokeMutationOrFallback<CreativeSession | null>('duplicate_audio_clip', { clipId }, null);
 }
 
 async function moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
+  return invokeMutationOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
 }
 
 async function moveMidiClips(moves: MidiClipMove[]): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('move_midi_clips', { moves }, null);
+  return invokeMutationOrFallback<CreativeSession | null>('move_midi_clips', { moves }, null);
 }
 
 async function trimMidiClip(
@@ -566,7 +588,7 @@ async function trimMidiClip(
   startTick: number,
   durationTicks: number,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'trim_midi_clip',
     { clipId, startTick, durationTicks },
     null,
@@ -574,11 +596,15 @@ async function trimMidiClip(
 }
 
 async function splitMidiClip(clipId: string, splitTick: number): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('split_midi_clip', { clipId, splitTick }, null);
+  return invokeMutationOrFallback<CreativeSession | null>(
+    'split_midi_clip',
+    { clipId, splitTick },
+    null,
+  );
 }
 
 async function duplicateMidiClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('duplicate_midi_clip', { clipId }, null);
+  return invokeMutationOrFallback<CreativeSession | null>('duplicate_midi_clip', { clipId }, null);
 }
 
 async function pasteTimelineClips(
@@ -586,7 +612,7 @@ async function pasteTimelineClips(
   midiClipIds: string[],
   startTick: number,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'paste_timeline_clips',
     { audioClipIds, midiClipIds, startTick },
     null,
@@ -597,7 +623,7 @@ async function crossfadeAudioClips(
   firstId: string,
   secondId: string,
 ): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+  return invokeMutationOrFallback<CreativeSession | null>(
     'crossfade_audio_clips',
     { firstId, secondId },
     null,
@@ -605,7 +631,7 @@ async function crossfadeAudioClips(
 }
 
 async function addTrack(name: string, kind: TrackKind): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track', { name, kind });
+  return await invokeMutation<CreativeSession>('add_track', { name, kind });
 }
 
 async function updateTrack(
@@ -633,7 +659,7 @@ async function updateTrack(
       `update_track:${trackId}:${latestField}`,
     );
   }
-  return await invoke<CreativeSession>('update_track', { trackId, patch });
+  return await invokeMutation<CreativeSession>('update_track', { trackId, patch });
 }
 
 async function setTrackAutomation(
@@ -641,41 +667,48 @@ async function setTrackAutomation(
   parameter: AutomationParameter,
   points: AutomationPoint[],
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_automation', { trackId, parameter, points });
+  return await invokeMutation<CreativeSession>('set_track_automation', {
+    trackId,
+    parameter,
+    points,
+  });
 }
 
 async function setTrackAudioInput(
   trackId: string,
   channelIndex: number | null,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_audio_input', { trackId, channelIndex });
+  return await invokeMutation<CreativeSession>('set_track_audio_input', { trackId, channelIndex });
 }
 
 async function setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_midi_input', { trackId, route });
+  return await invokeMutation<CreativeSession>('set_track_midi_input', { trackId, route });
 }
 
 async function setTrackInstrument(trackId: string, pluginPath: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_instrument', { trackId, pluginPath });
+  return await invokeMutation<CreativeSession>('set_track_instrument', { trackId, pluginPath });
 }
 
 async function clearTrackInstrument(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('clear_track_instrument', { trackId });
+  return await invokeMutation<CreativeSession>('clear_track_instrument', { trackId });
 }
 
 async function addTrackEffect(trackId: string, pluginPath: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track_effect', { trackId, pluginPath });
+  return await invokeMutation<CreativeSession>('add_track_effect', { trackId, pluginPath });
 }
 
 async function removeTrackEffect(trackId: string, deviceId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_track_effect', { trackId, deviceId });
+  return await invokeMutation<CreativeSession>('remove_track_effect', { trackId, deviceId });
 }
 
 async function reorderTrackEffects(
   trackId: string,
   orderedDeviceIds: string[],
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('reorder_track_effects', { trackId, orderedDeviceIds });
+  return await invokeMutation<CreativeSession>('reorder_track_effects', {
+    trackId,
+    orderedDeviceIds,
+  });
 }
 
 async function setTrackDeviceBypassed(
@@ -683,7 +716,7 @@ async function setTrackDeviceBypassed(
   deviceId: string,
   bypassed: boolean,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_device_bypassed', {
+  return await invokeMutation<CreativeSession>('set_track_device_bypassed', {
     trackId,
     deviceId,
     bypassed,
@@ -696,7 +729,7 @@ async function setTrackDeviceParameter(
   parameterIndex: number,
   value: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_device_parameter', {
+  return await invokeMutation<CreativeSession>('set_track_device_parameter', {
     trackId,
     deviceId,
     parameterIndex,
@@ -709,7 +742,7 @@ async function openTrackPluginEditor(trackId: string, deviceId: string): Promise
 }
 
 async function persistTrackPluginState(change: TrackPluginStateChange): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('persist_track_plugin_state', {
+  return await invokeMutation<CreativeSession>('persist_track_plugin_state', {
     trackId: change.trackId,
     deviceId: change.deviceId,
     parameterValues: change.parameterValues,
@@ -721,7 +754,7 @@ async function persistTrackPluginState(change: TrackPluginStateChange): Promise<
 async function persistTrackPluginParameter(
   change: TrackPluginParameterChange,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('persist_track_plugin_parameter', {
+  return await invokeMutation<CreativeSession>('persist_track_plugin_parameter', {
     trackId: change.trackId,
     deviceId: change.deviceId,
     parameterIndex: change.parameterIndex,
@@ -730,30 +763,30 @@ async function persistTrackPluginParameter(
 }
 
 async function removeTrack(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_track', { trackId });
+  return await invokeMutation<CreativeSession>('remove_track', { trackId });
 }
 
 async function duplicateTrack(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('duplicate_track', { trackId });
+  return await invokeMutation<CreativeSession>('duplicate_track', { trackId });
 }
 
 async function reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('reorder_track', { trackId, targetIndex });
+  return await invokeMutation<CreativeSession>('reorder_track', { trackId, targetIndex });
 }
 
 async function addMarker(tick: number, name: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_marker', { tick, name });
+  return await invokeMutation<CreativeSession>('add_marker', { tick, name });
 }
 
 async function updateMarker(
   markerId: string,
   patch: { name?: string; tick?: number },
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_marker', { markerId, ...patch });
+  return await invokeMutation<CreativeSession>('update_marker', { markerId, ...patch });
 }
 
 async function removeMarker(markerId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_marker', { markerId });
+  return await invokeMutation<CreativeSession>('remove_marker', { markerId });
 }
 
 async function addMidiNote(
@@ -764,7 +797,7 @@ async function addMidiNote(
   velocity: number,
   channel: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_midi_note', {
+  return await invokeMutation<CreativeSession>('add_midi_note', {
     clipId,
     startTick,
     pitch,
@@ -779,7 +812,7 @@ async function updateMidiNote(
   noteId: string,
   patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
+  return await invokeMutation<CreativeSession>('update_midi_note', { clipId, noteId, patch });
 }
 
 async function updateMidiNotes(
@@ -789,11 +822,11 @@ async function updateMidiNotes(
     patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
   }[],
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_midi_notes', { clipId, updates });
+  return await invokeMutation<CreativeSession>('update_midi_notes', { clipId, updates });
 }
 
 async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
+  return await invokeMutation<CreativeSession>('remove_midi_note', { clipId, noteId });
 }
 
 async function quantizeMidiNotes(
@@ -801,7 +834,11 @@ async function quantizeMidiNotes(
   noteIds: string[],
   gridTicks: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('quantize_midi_notes', { clipId, noteIds, gridTicks });
+  return await invokeMutation<CreativeSession>('quantize_midi_notes', {
+    clipId,
+    noteIds,
+    gridTicks,
+  });
 }
 
 async function duplicateMidiNotes(
@@ -809,7 +846,7 @@ async function duplicateMidiNotes(
   noteIds: string[],
   offsetTicks: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('duplicate_midi_notes', {
+  return await invokeMutation<CreativeSession>('duplicate_midi_notes', {
     clipId,
     noteIds,
     offsetTicks,
@@ -820,7 +857,7 @@ async function setAudioClipTakeVariant(
   clipId: string,
   variant: AudioTakeVariant,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_audio_clip_take_variant', { clipId, variant });
+  return await invokeMutation<CreativeSession>('set_audio_clip_take_variant', { clipId, variant });
 }
 
 async function startTakeComparison(takeId: string): Promise<AudioStatus> {
@@ -836,11 +873,11 @@ async function stopTakeComparison(): Promise<AudioStatus> {
 }
 
 async function activateTake(sessionId: string, takeId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('activate_take', { sessionId, takeId });
+  return await invokeMutation<CreativeSession>('activate_take', { sessionId, takeId });
 }
 
 async function placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('place_take_as_separate_clip', { takeId });
+  return await invokeMutation<CreativeSession>('place_take_as_separate_clip', { takeId });
 }
 
 async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {
@@ -864,7 +901,7 @@ async function seekTimeline(tick: number): Promise<void> {
 }
 
 async function updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_arrangement_timebase', { timebase });
+  return await invokeMutation<CreativeSession>('update_arrangement_timebase', { timebase });
 }
 
 async function updateTimelineLoopRange(
@@ -872,7 +909,7 @@ async function updateTimelineLoopRange(
   startTick: number,
   endTick: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_timeline_loop_range', {
+  return await invokeMutation<CreativeSession>('update_timeline_loop_range', {
     enabled,
     startTick,
     endTick,
@@ -884,7 +921,7 @@ async function updateTimelinePunchRange(
   startTick: number,
   endTick: number,
 ): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_timeline_punch_range', {
+  return await invokeMutation<CreativeSession>('update_timeline_punch_range', {
     enabled,
     startTick,
     endTick,
@@ -918,11 +955,11 @@ async function updateSessionSettings(patch: {
   aiPermission?: string;
   aiContext?: string[];
 }): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_session_settings', { patch });
+  return await invokeMutation<CreativeSession>('update_session_settings', { patch });
 }
 
 async function applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('apply_ai_suggestion', { clipId, proposedGainDb });
+  return await invokeMutation<CreativeSession>('apply_ai_suggestion', { clipId, proposedGainDb });
 }
 
 /**

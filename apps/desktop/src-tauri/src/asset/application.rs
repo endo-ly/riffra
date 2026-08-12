@@ -13,7 +13,7 @@ use crate::asset::{AssetId, AssetKind, Provenance, load, resolve_content_locatio
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::projects::unique_import_destination_with_ext;
-use crate::session::application::parse_midi_asset;
+use crate::session::adapter::parse_midi_asset;
 
 /// Concrete dependencies an Asset Application Operation needs.
 pub struct AssetPreviewContext<'a> {

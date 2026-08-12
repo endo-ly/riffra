@@ -1,7 +1,7 @@
+use crate::application::history::History;
+use crate::domain::CreativeSession;
 use crate::errors::ApplicationError;
-use crate::history::History;
 use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
-use crate::session::CreativeSession;
 use serde::Serialize;
 use std::{
     path::{Path, PathBuf},
@@ -79,29 +79,6 @@ impl<A> AppCore<A> {
         }
     }
 
-    /// Creates Core state around an existing canonical session handle.
-    ///
-    /// Hosts use this when the session storage handle is already shared with
-    /// another adapter that observes the same canonical state.
-    pub fn from_shared_session(
-        data_root: PathBuf,
-        session: Arc<Mutex<CreativeSession>>,
-        audio: A,
-        recovered_from_generation: bool,
-        safe_mode: bool,
-    ) -> Self {
-        Self {
-            data_root,
-            session,
-            audio,
-            recovered_from_generation,
-            safe_mode,
-            operation_gate: Mutex::new(()),
-            projection_version: AtomicU64::new(0),
-            history: Mutex::new(History::default()),
-        }
-    }
-
     /// Returns the root used for durable application data.
     pub fn data_root(&self) -> &Path {
         &self.data_root
@@ -156,7 +133,11 @@ impl<A> AppCore<A> {
 
     /// Commits one user-intent mutation through validation, persistence, the
     /// canonical state exchange, and Core-owned history.
-    pub fn commit<S, F>(&self, storage: &S, edit: F) -> Result<CreativeSession, ApplicationError>
+    pub(crate) fn commit<S, F>(
+        &self,
+        storage: &S,
+        edit: F,
+    ) -> Result<CreativeSession, ApplicationError>
     where
         S: SessionStorage + ?Sized,
         F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
@@ -205,31 +186,9 @@ impl<A> AppCore<A> {
         self.commit_candidate_locked(storage, current, candidate)
     }
 
-    /// Commits a production edit and submits the resulting canonical snapshot
-    /// to a host runtime projection Port.
-    ///
-    /// The canonical commit remains durable when the runtime rejects the
-    /// projection; callers can retry the projection from the returned Core
-    /// snapshot without losing production data.
-    pub fn commit_with_projection<S, P, F>(
-        &self,
-        storage: &S,
-        projection: &P,
-        edit: F,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-        P: RuntimeProjection + ?Sized,
-        F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
-    {
-        let committed = self.commit(storage, edit)?;
-        self.project_current(projection)?;
-        Ok(committed)
-    }
-
     /// Submits the current canonical snapshot to a host runtime projection
     /// Port without changing production state.
-    pub fn project_current<P>(&self, projection: &P) -> Result<(), ApplicationError>
+    pub(crate) fn project_current<P>(&self, projection: &P) -> Result<(), ApplicationError>
     where
         P: RuntimeProjection + ?Sized,
     {
@@ -292,7 +251,7 @@ impl<A> AppCore<A> {
     }
 
     /// Undoes the latest committed user edit and persists the restored state.
-    pub fn undo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
+    pub(crate) fn undo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
     where
         S: SessionStorage + ?Sized,
     {
@@ -300,7 +259,7 @@ impl<A> AppCore<A> {
     }
 
     /// Redoes the latest undone user edit and persists the restored state.
-    pub fn redo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
+    pub(crate) fn redo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
     where
         S: SessionStorage + ?Sized,
     {
@@ -308,7 +267,7 @@ impl<A> AppCore<A> {
     }
 
     /// Returns the current Core-owned history capabilities.
-    pub fn history_state(&self) -> Result<HistoryState, ApplicationError> {
+    pub(crate) fn history_state(&self) -> Result<HistoryState, ApplicationError> {
         let history = self
             .history
             .lock()
@@ -460,11 +419,13 @@ fn application_error_from_port(error: PortError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::mint_asset_id;
+    use crate::domain::asset::mint_asset_id;
+    use crate::domain::{
+        AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, RackDevice, SamplePad,
+        TimelineTick, TrackKind,
+    };
     use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
-    use crate::rack::{DeviceKind, RackDevice};
-    use crate::session::{AudioClip, AudioClipMove, MidiClip, SamplePad, TimelineTick, TrackKind};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Barrier, Mutex};
 
     #[derive(Default)]
     struct MemoryStorage {
@@ -502,9 +463,22 @@ mod tests {
 
     struct FailingProjection;
 
+    struct DelayedProjection {
+        started: Arc<Barrier>,
+        release: Arc<Barrier>,
+    }
+
     impl RuntimeProjection for FailingProjection {
         fn project(&self, _request: RuntimeProjectionRequest) -> Result<(), PortError> {
             Err(PortError::Runtime("runtime unavailable".into()))
+        }
+    }
+
+    impl RuntimeProjection for DelayedProjection {
+        fn project(&self, _request: RuntimeProjectionRequest) -> Result<(), PortError> {
+            self.started.wait();
+            self.release.wait();
+            Ok(())
         }
     }
 
@@ -530,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn application_facade_commits_domain_arrangement_operations() {
+    fn core_executes_a_complete_daw_edit_history_and_save_flow() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -562,16 +536,75 @@ mod tests {
             }])
             .unwrap();
 
+        application
+            .trim_audio_clip(
+                "clip:1",
+                TimelineTick(960),
+                FrameRange {
+                    start: 0,
+                    end: 24_000,
+                },
+                48_000,
+            )
+            .unwrap();
+        application
+            .split_audio_clip("clip:1", TimelineTick(1_440), "clip:2".into())
+            .unwrap();
+
+        let with_midi_track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let midi_track_id = with_midi_track.arrangement.tracks[1].id.clone();
+        application
+            .add_midi_clip(MidiClip {
+                id: "midi:1".into(),
+                name: "Pattern".into(),
+                track_id: midi_track_id,
+                asset_id: None,
+                start_tick: TimelineTick(0),
+                duration_ticks: 1_920,
+                notes: Vec::new(),
+                events: Vec::new(),
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .unwrap();
+
+        application
+            .add_track_effect(
+                &track_id,
+                RackDevice {
+                    id: "device:gain".into(),
+                    name: "Gain".into(),
+                    kind: DeviceKind::Utility,
+                    path: None,
+                    bypassed: false,
+                    gain_db: 0.0,
+                    parameter_values: Vec::new(),
+                    state_data: None,
+                    disabled_placeholder: false,
+                },
+            )
+            .unwrap();
+
+        let undone = core.undo(&storage).unwrap();
+        let redone = core.redo(&storage).unwrap();
+
         assert_eq!(with_clip.arrangement.audio_clips.len(), 1);
         assert_eq!(
             moved.arrangement.audio_clips[0].start_tick,
             TimelineTick(960)
         );
-        assert_eq!(storage.sessions.lock().unwrap().len(), 3);
+        assert!(undone.arrangement.tracks[0].rack.devices.is_empty());
+        assert_eq!(redone.arrangement.tracks[0].rack.devices.len(), 1);
+        assert_eq!(redone.arrangement.audio_clips.len(), 2);
+        assert_eq!(redone.arrangement.midi_clips.len(), 1);
+        assert!(storage.sessions.lock().unwrap().len() >= 10);
 
         let duplicated = application.duplicate_track(&track_id).unwrap();
-        assert_eq!(duplicated.arrangement.tracks.len(), 2);
-        assert_eq!(duplicated.arrangement.audio_clips.len(), 2);
+        assert_eq!(duplicated.arrangement.tracks.len(), 3);
+        assert_eq!(duplicated.arrangement.audio_clips.len(), 4);
 
         let marked = application
             .add_marker(TimelineTick(1_920), "  Chorus  ".into())
@@ -834,6 +867,45 @@ mod tests {
     }
 
     #[test]
+    fn long_running_operation_merges_after_a_newer_commit_without_losing_it() {
+        let storage = Arc::new(MemoryStorage::default());
+        let core = Arc::new(AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        ));
+        let base = core.snapshot().unwrap().session;
+        let mut candidate = base.clone();
+        candidate.project_name = Some("operation a".into());
+        let release = Arc::new(Barrier::new(2));
+        let operation = {
+            let core = Arc::clone(&core);
+            let storage = Arc::clone(&storage);
+            let release = Arc::clone(&release);
+            std::thread::spawn(move || {
+                release.wait();
+                core.commit_merged(&*storage, &base, candidate, |current, _, candidate| {
+                    let mut merged = current.clone();
+                    merged.project_name = candidate.project_name;
+                    merged
+                })
+                .unwrap()
+            })
+        };
+
+        core.application(&*storage)
+            .add_track("operation b", TrackKind::Audio)
+            .unwrap();
+        release.wait();
+        let committed = operation.join().unwrap();
+
+        assert_eq!(committed.project_name.as_deref(), Some("operation a"));
+        assert_eq!(committed.arrangement.tracks[0].name, "operation b");
+    }
+
+    #[test]
     fn canonical_snapshot_keeps_sequence_with_session() {
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -882,11 +954,14 @@ mod tests {
             false,
         );
 
-        core.commit_with_projection(&storage, &projection, |session| {
-            session.project_name = Some("Projected".into());
-            Ok(())
-        })
-        .unwrap();
+        let application = core.application(&storage);
+        application
+            .update_session_settings(crate::application::SessionSettingsPatch {
+                project_name: Some(Some("Projected".into())),
+                ..Default::default()
+            })
+            .unwrap();
+        application.project_current(&projection).unwrap();
 
         let requests = projection.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
@@ -895,6 +970,47 @@ mod tests {
             Some("Projected")
         );
         assert_eq!(requests[0].sequence(), 1);
+    }
+
+    #[test]
+    fn delayed_projection_cannot_replace_a_newer_canonical_revision() {
+        let storage = Arc::new(MemoryStorage::default());
+        let core = Arc::new(AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        ));
+        core.application(&*storage)
+            .add_track("revision n", TrackKind::Audio)
+            .unwrap();
+        let started = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let projection = {
+            let core = Arc::clone(&core);
+            let started_for_projection = Arc::clone(&started);
+            let release_for_projection = Arc::clone(&release);
+            std::thread::spawn(move || {
+                core.project_current(&DelayedProjection {
+                    started: started_for_projection,
+                    release: release_for_projection,
+                })
+                .unwrap();
+            })
+        };
+        started.wait();
+
+        core.application(&*storage)
+            .add_marker(TimelineTick(960), "revision n+1".into())
+            .unwrap();
+        let newest = core.snapshot().unwrap();
+        release.wait();
+        projection.join().unwrap();
+
+        let after_delayed_projection = core.snapshot().unwrap();
+        assert_eq!(after_delayed_projection.sequence, newest.sequence);
+        assert_eq!(after_delayed_projection.session, newest.session);
     }
 
     #[test]
@@ -908,12 +1024,14 @@ mod tests {
             false,
         );
 
-        let error = core
-            .commit_with_projection(&storage, &FailingProjection, |session| {
-                session.project_name = Some("Durable".into());
-                Ok(())
+        let application = core.application(&storage);
+        application
+            .update_session_settings(crate::application::SessionSettingsPatch {
+                project_name: Some(Some("Durable".into())),
+                ..Default::default()
             })
-            .unwrap_err();
+            .unwrap();
+        let error = application.project_current(&FailingProjection).unwrap_err();
 
         assert_eq!(
             error,

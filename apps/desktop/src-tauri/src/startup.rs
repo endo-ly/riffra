@@ -4,7 +4,7 @@ use crate::native_audio::{
     AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
 };
 use crate::presentation::Workspace;
-use crate::session::application::{self as session_application, SessionContext};
+use crate::session::adapter::{self as session_adapter, SessionContext};
 use riffra_core::CanonicalSnapshot;
 use std::time::{Duration, Instant};
 
@@ -377,9 +377,9 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         data_root: state.core.data_root(),
         safe_mode: false,
     };
-    match session_application::restore_sample_pads(&session_context) {
-        Ok(session_application::SamplePadRestoreOutcome::Restored(_)) => {}
-        Ok(session_application::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
+    match session_adapter::restore_sample_pads(&session_context) {
+        Ok(session_adapter::SamplePadRestoreOutcome::Restored(_)) => {}
+        Ok(session_adapter::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
             tracing::warn!(%warning, "Sample Pads were disabled during startup restoration");
         }
         Err(error) => failures.push(format!("sample pad restoration failed: {error}")),
@@ -403,7 +403,7 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         .workspace;
     match workspace {
         Workspace::Arrange => {
-            if let Err(error) = session_application::sync_arrangement_runtime(&session_context) {
+            if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
                 failures.push(format!("arrange runtime restoration failed: {error}"));
             }
         }

@@ -6,18 +6,17 @@
 
 mod app;
 pub mod application;
-pub mod asset;
+pub mod domain;
 mod errors;
-mod history;
 pub mod ports;
-pub mod rack;
-mod runtime;
-pub mod session;
 
 pub use app::{AppCore, CanonicalSessionHandle, CanonicalSnapshot, HistoryState};
+pub use domain::*;
 pub use errors::{ApplicationError, DomainError};
-pub use ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
-pub use runtime::{AudioRuntime, OfflineRenderRequest};
+pub use ports::{
+    OfflineRenderRequest, PortError, ProjectionKey, RenderRuntime, RuntimeProjection,
+    RuntimeProjectionRequest, SessionStorage,
+};
 
 impl<A> AppCore<A> {
     /// Creates an application facade over the canonical Core state.

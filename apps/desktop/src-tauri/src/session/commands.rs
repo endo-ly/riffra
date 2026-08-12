@@ -1,12 +1,12 @@
-//! Thin Tauri command boundary for Session Application Operations.
+//! Thin Tauri command boundary for Session Adapter operations.
 //!
 //! Each command receives an `AppHandle`, moves synchronous work to the
 //! blocking pool, and builds a
-//! [`SessionContext`](super::application::SessionContext) of concrete
-//! dependencies, delegates to the matching Application Operation, and returns
+//! [`SessionContext`](super::adapter::SessionContext) of concrete
+//! dependencies, delegates to the matching Core operation, and returns
 //! the resulting DTO. The production workflow (arrangement edit, design
 //! navigation, sample pad runtime sync, validate/persist) lives entirely in
-//! [`super::application`]; nothing here re-implements it.
+//! [`super::adapter`]; nothing here re-implements it.
 
 use tauri::{AppHandle, Manager};
 
@@ -15,7 +15,7 @@ use crate::asset::AssetId;
 use crate::missing::MissingDependency;
 use crate::model::{RuntimeProjectionStatus, SessionAudioPair};
 use crate::presentation::{DesignTool, DesktopViewState, Workspace};
-use crate::session::application::{self, SessionContext};
+use crate::session::adapter::{self, SessionContext};
 use crate::session::{
     AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
     CreativeSession, FrameRange, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
@@ -171,10 +171,14 @@ pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), St
 pub async fn undo_session(app: AppHandle) -> Result<CreativeSession, String> {
     run_blocking(app, |state| {
         let store = SessionStore::new(state.core.data_root());
-        let session = state.core.undo(&store).map_err(|error| error.to_string())?;
+        let session = state
+            .core
+            .application(&store)
+            .undo()
+            .map_err(|error| error.to_string())?;
         crate::queue_session_index(state.core.data_root(), &session);
         if !state.core.safe_mode() {
-            application::sync_arrangement_runtime(&app_context(state))?;
+            adapter::sync_arrangement_runtime(&app_context(state))?;
         }
         Ok(session)
     })
@@ -185,10 +189,14 @@ pub async fn undo_session(app: AppHandle) -> Result<CreativeSession, String> {
 pub async fn redo_session(app: AppHandle) -> Result<CreativeSession, String> {
     run_blocking(app, |state| {
         let store = SessionStore::new(state.core.data_root());
-        let session = state.core.redo(&store).map_err(|error| error.to_string())?;
+        let session = state
+            .core
+            .application(&store)
+            .redo()
+            .map_err(|error| error.to_string())?;
         crate::queue_session_index(state.core.data_root(), &session);
         if !state.core.safe_mode() {
-            application::sync_arrangement_runtime(&app_context(state))?;
+            adapter::sync_arrangement_runtime(&app_context(state))?;
         }
         Ok(session)
     })
@@ -198,8 +206,10 @@ pub async fn redo_session(app: AppHandle) -> Result<CreativeSession, String> {
 #[tauri::command]
 pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
     run_blocking_without_command_gate(app, |state| {
+        let store = SessionStore::new(state.core.data_root());
         state
             .core
+            .application(&store)
             .history_state()
             .map_err(|error| error.to_string())
     })
@@ -212,7 +222,7 @@ pub async fn restore_recovery_generation(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::restore_generation(&app_context(state), &file_name)
+        adapter::restore_generation(&app_context(state), &file_name)
     })
     .await
 }
@@ -224,7 +234,7 @@ pub async fn import_scratch_session(
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
         let path = std::path::PathBuf::from(path);
-        application::import_session(&app_context(state), &path)
+        adapter::import_session(&app_context(state), &path)
     })
     .await
 }
@@ -238,7 +248,7 @@ pub async fn create_sample_pad(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
-        application::create_sample_pad(&app_context(state), asset_id, name)
+        adapter::create_sample_pad(&app_context(state), asset_id, name)
     })
     .await
 }
@@ -246,11 +256,11 @@ pub async fn create_sample_pad(
 #[tauri::command]
 pub async fn update_sample_pad(
     pad_id: String,
-    patch: application::SamplePadPatch,
+    patch: adapter::SamplePadPatch,
     app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
     run_blocking(app, move |state| {
-        application::update_sample_pad(&app_context(state), &pad_id, &patch)
+        adapter::update_sample_pad(&app_context(state), &pad_id, &patch)
     })
     .await
 }
@@ -258,7 +268,7 @@ pub async fn update_sample_pad(
 #[tauri::command]
 pub async fn remove_sample_pad(pad_id: String, app: AppHandle) -> Result<SessionAudioPair, String> {
     run_blocking(app, move |state| {
-        application::remove_sample_pad(&app_context(state), &pad_id)
+        adapter::remove_sample_pad(&app_context(state), &pad_id)
     })
     .await
 }
@@ -274,7 +284,7 @@ pub async fn add_audio_clip_to_arrangement(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
-        application::add_audio_clip(&app_context(state), asset_id, name, start_tick, track_id)
+        adapter::add_audio_clip(&app_context(state), asset_id, name, start_tick, track_id)
     })
     .await
 }
@@ -290,7 +300,7 @@ pub async fn add_midi_clip_to_arrangement(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
-        application::add_midi_clip(&app_context(state), asset_id, name, start_tick, track_id)
+        adapter::add_midi_clip(&app_context(state), asset_id, name, start_tick, track_id)
     })
     .await
 }
@@ -302,7 +312,7 @@ pub async fn update_audio_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_audio_clip(&app_context(state), &clip_id, patch)
+        adapter::update_audio_clip(&app_context(state), &clip_id, patch)
     })
     .await
 }
@@ -314,7 +324,7 @@ pub async fn remove_timeline_clips(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::remove_timeline_clips(&app_context(state), &audio_clip_ids, &midi_clip_ids)
+        adapter::remove_timeline_clips(&app_context(state), &audio_clip_ids, &midi_clip_ids)
     })
     .await
 }
@@ -327,7 +337,7 @@ pub async fn trim_audio_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::trim_audio_clip(&app_context(state), &clip_id, start_tick, source_range)
+        adapter::trim_audio_clip(&app_context(state), &clip_id, start_tick, source_range)
     })
     .await
 }
@@ -339,7 +349,7 @@ pub async fn split_audio_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::split_audio_clip(&app_context(state), &clip_id, split_tick)
+        adapter::split_audio_clip(&app_context(state), &clip_id, split_tick)
     })
     .await
 }
@@ -350,7 +360,7 @@ pub async fn duplicate_audio_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::duplicate_audio_clip(&app_context(state), &clip_id)
+        adapter::duplicate_audio_clip(&app_context(state), &clip_id)
     })
     .await
 }
@@ -361,7 +371,7 @@ pub async fn move_audio_clips(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::move_audio_clips(&app_context(state), moves)
+        adapter::move_audio_clips(&app_context(state), moves)
     })
     .await
 }
@@ -373,7 +383,7 @@ pub async fn update_midi_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_midi_clip(&app_context(state), &clip_id, patch)
+        adapter::update_midi_clip(&app_context(state), &clip_id, patch)
     })
     .await
 }
@@ -384,7 +394,7 @@ pub async fn move_midi_clips(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::move_midi_clips(&app_context(state), moves)
+        adapter::move_midi_clips(&app_context(state), moves)
     })
     .await
 }
@@ -397,7 +407,7 @@ pub async fn trim_midi_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::trim_midi_clip(&app_context(state), &clip_id, start_tick, duration_ticks)
+        adapter::trim_midi_clip(&app_context(state), &clip_id, start_tick, duration_ticks)
     })
     .await
 }
@@ -409,7 +419,7 @@ pub async fn split_midi_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::split_midi_clip(&app_context(state), &clip_id, split_tick)
+        adapter::split_midi_clip(&app_context(state), &clip_id, split_tick)
     })
     .await
 }
@@ -420,7 +430,7 @@ pub async fn duplicate_midi_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::duplicate_midi_clip(&app_context(state), &clip_id)
+        adapter::duplicate_midi_clip(&app_context(state), &clip_id)
     })
     .await
 }
@@ -433,7 +443,7 @@ pub async fn paste_timeline_clips(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::paste_timeline_clips(
+        adapter::paste_timeline_clips(
             &app_context(state),
             &audio_clip_ids,
             &midi_clip_ids,
@@ -450,7 +460,7 @@ pub async fn crossfade_audio_clips(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::crossfade_audio_clips(&app_context(state), &first_id, &second_id)
+        adapter::crossfade_audio_clips(&app_context(state), &first_id, &second_id)
     })
     .await
 }
@@ -458,7 +468,7 @@ pub async fn crossfade_audio_clips(
 #[tauri::command]
 pub async fn retry_runtime_projection(app: AppHandle) -> Result<RuntimeProjectionStatus, String> {
     run_runtime_control(app, |state| {
-        application::sync_arrangement_runtime(&app_context(state))
+        adapter::sync_arrangement_runtime(&app_context(state))
     })
     .await
 }
@@ -466,7 +476,7 @@ pub async fn retry_runtime_projection(app: AppHandle) -> Result<RuntimeProjectio
 #[tauri::command]
 pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
     run_blocking(app, |state| {
-        application::restore_sample_pads(&app_context(state)).map(|outcome| outcome.into_status())
+        adapter::restore_sample_pads(&app_context(state)).map(|outcome| outcome.into_status())
     })
     .await
 }
@@ -474,7 +484,7 @@ pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioSt
 #[tauri::command]
 pub async fn play_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, move |state| {
-        application::play_timeline(&app_context(state), transport_sequence)
+        adapter::play_timeline(&app_context(state), transport_sequence)
     })
     .await
 }
@@ -482,7 +492,7 @@ pub async fn play_timeline(transport_sequence: u64, app: AppHandle) -> Result<()
 #[tauri::command]
 pub async fn stop_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, move |state| {
-        application::stop_timeline(&app_context(state), transport_sequence)
+        adapter::stop_timeline(&app_context(state), transport_sequence)
     })
     .await
 }
@@ -490,7 +500,7 @@ pub async fn stop_timeline(transport_sequence: u64, app: AppHandle) -> Result<()
 #[tauri::command]
 pub async fn go_to_start_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, move |state| {
-        application::go_to_start_timeline(&app_context(state), transport_sequence)
+        adapter::go_to_start_timeline(&app_context(state), transport_sequence)
     })
     .await
 }
@@ -498,7 +508,7 @@ pub async fn go_to_start_timeline(transport_sequence: u64, app: AppHandle) -> Re
 #[tauri::command]
 pub async fn seek_timeline(tick: TimelineTick, app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, move |state| {
-        application::seek_timeline(&app_context(state), tick)
+        adapter::seek_timeline(&app_context(state), tick)
     })
     .await
 }
@@ -509,7 +519,7 @@ pub async fn update_arrangement_timebase(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_timebase(&app_context(state), timebase)
+        adapter::update_timebase(&app_context(state), timebase)
     })
     .await
 }
@@ -522,7 +532,7 @@ pub async fn update_timeline_loop_range(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_loop_range(&app_context(state), enabled, start_tick, end_tick)
+        adapter::update_loop_range(&app_context(state), enabled, start_tick, end_tick)
     })
     .await
 }
@@ -535,7 +545,7 @@ pub async fn update_timeline_punch_range(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_punch_range(&app_context(state), enabled, start_tick, end_tick)
+        adapter::update_punch_range(&app_context(state), enabled, start_tick, end_tick)
     })
     .await
 }
@@ -549,7 +559,7 @@ pub async fn open_asset_in_design(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
-        application::open_asset_in_design(&app_context(state), asset_id, tool)
+        adapter::open_asset_in_design(&app_context(state), asset_id, tool)
     })
     .await
 }
@@ -565,18 +575,18 @@ pub async fn switch_workspace(
     // only performs a short in-memory workspace update and sends a best-effort
     // runtime mode.
     run_workspace_control(app, move |state| {
-        application::switch_workspace(&app_context(state), workspace, transport_sequence)
+        adapter::switch_workspace(&app_context(state), workspace, transport_sequence)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn update_session_settings(
-    patch: application::SessionSettingsPatch,
+    patch: adapter::SessionSettingsPatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_session_settings(&app_context(state), patch)
+        adapter::update_session_settings(&app_context(state), patch)
     })
     .await
 }
@@ -588,7 +598,7 @@ pub async fn add_track(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::add_track(&app_context(state), name, kind)
+        adapter::add_track(&app_context(state), name, kind)
     })
     .await
 }
@@ -596,11 +606,11 @@ pub async fn add_track(
 #[tauri::command]
 pub async fn update_track(
     track_id: String,
-    patch: application::TrackPatch,
+    patch: adapter::TrackPatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_track(&app_context(state), &track_id, patch)
+        adapter::update_track(&app_context(state), &track_id, patch)
     })
     .await
 }
@@ -613,7 +623,7 @@ pub async fn set_track_automation(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_track_automation(&app_context(state), &track_id, parameter, points)
+        adapter::set_track_automation(&app_context(state), &track_id, parameter, points)
     })
     .await
 }
@@ -625,7 +635,7 @@ pub async fn set_track_audio_input(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_track_audio_input(&app_context(state), &track_id, channel_index)
+        adapter::set_track_audio_input(&app_context(state), &track_id, channel_index)
     })
     .await
 }
@@ -637,7 +647,7 @@ pub async fn set_track_midi_input(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_track_midi_input(&app_context(state), &track_id, route)
+        adapter::set_track_midi_input(&app_context(state), &track_id, route)
     })
     .await
 }
@@ -649,7 +659,7 @@ pub async fn set_track_instrument(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking_without_command_gate(app, move |state| {
-        application::set_track_instrument(&app_context(state), &track_id, &plugin_path)
+        adapter::set_track_instrument(&app_context(state), &track_id, &plugin_path)
     })
     .await
 }
@@ -660,7 +670,7 @@ pub async fn clear_track_instrument(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::clear_track_instrument(&app_context(state), &track_id)
+        adapter::clear_track_instrument(&app_context(state), &track_id)
     })
     .await
 }
@@ -672,7 +682,7 @@ pub async fn add_track_effect(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking_without_command_gate(app, move |state| {
-        application::add_track_effect(&app_context(state), &track_id, &plugin_path)
+        adapter::add_track_effect(&app_context(state), &track_id, &plugin_path)
     })
     .await
 }
@@ -684,7 +694,7 @@ pub async fn remove_track_effect(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::remove_track_effect(&app_context(state), &track_id, &device_id)
+        adapter::remove_track_effect(&app_context(state), &track_id, &device_id)
     })
     .await
 }
@@ -696,7 +706,7 @@ pub async fn reorder_track_effects(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::reorder_track_effects(&app_context(state), &track_id, &ordered_device_ids)
+        adapter::reorder_track_effects(&app_context(state), &track_id, &ordered_device_ids)
     })
     .await
 }
@@ -709,7 +719,7 @@ pub async fn set_track_device_bypassed(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_track_device_bypassed(&app_context(state), &track_id, &device_id, bypassed)
+        adapter::set_track_device_bypassed(&app_context(state), &track_id, &device_id, bypassed)
     })
     .await
 }
@@ -723,7 +733,7 @@ pub async fn set_track_device_parameter(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_track_device_parameter(
+        adapter::set_track_device_parameter(
             &app_context(state),
             &track_id,
             &device_id,
@@ -745,7 +755,7 @@ pub async fn open_track_plugin_editor(
     // for a third-party editor on the Message Thread.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        application::open_track_plugin_editor(&app_context(state.inner()), &track_id, &device_id)
+        adapter::open_track_plugin_editor(&app_context(state.inner()), &track_id, &device_id)
     })
     .await
     .map_err(|error| format!("Track plugin editor operation failed: {error}"))?
@@ -761,7 +771,7 @@ pub async fn persist_track_plugin_state(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::persist_track_plugin_state(
+        adapter::persist_track_plugin_state(
             &app_context(state),
             &track_id,
             &device_id,
@@ -782,7 +792,7 @@ pub async fn persist_track_plugin_parameter(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::persist_track_plugin_parameter(
+        adapter::persist_track_plugin_parameter(
             &app_context(state),
             &track_id,
             &device_id,
@@ -796,7 +806,7 @@ pub async fn persist_track_plugin_parameter(
 #[tauri::command]
 pub async fn remove_track(track_id: String, app: AppHandle) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::remove_track(&app_context(state), &track_id)
+        adapter::remove_track(&app_context(state), &track_id)
     })
     .await
 }
@@ -804,7 +814,7 @@ pub async fn remove_track(track_id: String, app: AppHandle) -> Result<CreativeSe
 #[tauri::command]
 pub async fn duplicate_track(track_id: String, app: AppHandle) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::duplicate_track(&app_context(state), &track_id)
+        adapter::duplicate_track(&app_context(state), &track_id)
     })
     .await
 }
@@ -816,7 +826,7 @@ pub async fn reorder_track(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::reorder_track(&app_context(state), &track_id, target_index)
+        adapter::reorder_track(&app_context(state), &track_id, target_index)
     })
     .await
 }
@@ -828,7 +838,7 @@ pub async fn add_marker(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::add_marker(&app_context(state), tick, name)
+        adapter::add_marker(&app_context(state), tick, name)
     })
     .await
 }
@@ -841,7 +851,7 @@ pub async fn update_marker(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_marker(&app_context(state), &marker_id, name, tick)
+        adapter::update_marker(&app_context(state), &marker_id, name, tick)
     })
     .await
 }
@@ -849,7 +859,7 @@ pub async fn update_marker(
 #[tauri::command]
 pub async fn remove_marker(marker_id: String, app: AppHandle) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::remove_marker(&app_context(state), &marker_id)
+        adapter::remove_marker(&app_context(state), &marker_id)
     })
     .await
 }
@@ -865,7 +875,7 @@ pub async fn add_midi_note(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::add_midi_note(
+        adapter::add_midi_note(
             &app_context(state),
             &clip_id,
             start_tick,
@@ -882,11 +892,11 @@ pub async fn add_midi_note(
 pub async fn update_midi_note(
     clip_id: String,
     note_id: String,
-    patch: application::MidiNotePatch,
+    patch: adapter::MidiNotePatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_midi_note(&app_context(state), &clip_id, &note_id, patch)
+        adapter::update_midi_note(&app_context(state), &clip_id, &note_id, patch)
     })
     .await
 }
@@ -894,11 +904,11 @@ pub async fn update_midi_note(
 #[tauri::command]
 pub async fn update_midi_notes(
     clip_id: String,
-    updates: Vec<application::MidiNoteUpdate>,
+    updates: Vec<adapter::MidiNoteUpdate>,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::update_midi_notes(&app_context(state), &clip_id, updates)
+        adapter::update_midi_notes(&app_context(state), &clip_id, updates)
     })
     .await
 }
@@ -910,7 +920,7 @@ pub async fn remove_midi_note(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::remove_midi_note(&app_context(state), &clip_id, &note_id)
+        adapter::remove_midi_note(&app_context(state), &clip_id, &note_id)
     })
     .await
 }
@@ -923,7 +933,7 @@ pub async fn quantize_midi_notes(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::quantize_midi_notes(&app_context(state), &clip_id, &note_ids, grid_ticks)
+        adapter::quantize_midi_notes(&app_context(state), &clip_id, &note_ids, grid_ticks)
     })
     .await
 }
@@ -936,7 +946,7 @@ pub async fn duplicate_midi_notes(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::duplicate_midi_notes(&app_context(state), &clip_id, &note_ids, offset_ticks)
+        adapter::duplicate_midi_notes(&app_context(state), &clip_id, &note_ids, offset_ticks)
     })
     .await
 }
@@ -948,7 +958,7 @@ pub async fn set_audio_clip_take_variant(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::set_audio_clip_take_variant(&app_context(state), &clip_id, variant)
+        adapter::set_audio_clip_take_variant(&app_context(state), &clip_id, variant)
     })
     .await
 }
@@ -959,7 +969,7 @@ pub async fn start_take_comparison(
     app: AppHandle,
 ) -> Result<crate::model::AudioStatus, String> {
     run_blocking(app, move |state| {
-        application::start_take_comparison(&app_context(state), &take_id)
+        adapter::start_take_comparison(&app_context(state), &take_id)
     })
     .await
 }
@@ -970,7 +980,7 @@ pub async fn switch_take_comparison_variant(
     app: AppHandle,
 ) -> Result<crate::model::AudioStatus, String> {
     run_blocking(app, move |state| {
-        application::switch_take_comparison_variant(&app_context(state), variant)
+        adapter::switch_take_comparison_variant(&app_context(state), variant)
     })
     .await
 }
@@ -978,7 +988,7 @@ pub async fn switch_take_comparison_variant(
 #[tauri::command]
 pub async fn stop_take_comparison(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
     run_blocking(app, |state| {
-        application::stop_take_comparison(&app_context(state))
+        adapter::stop_take_comparison(&app_context(state))
     })
     .await
 }
@@ -990,7 +1000,7 @@ pub async fn activate_take(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::activate_take(&app_context(state), &session_id, &take_id)
+        adapter::activate_take(&app_context(state), &session_id, &take_id)
     })
     .await
 }
@@ -1001,7 +1011,7 @@ pub async fn place_take_as_separate_clip(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::place_take_as_separate_clip(&app_context(state), &take_id)
+        adapter::place_take_as_separate_clip(&app_context(state), &take_id)
     })
     .await
 }
@@ -1013,7 +1023,7 @@ pub async fn apply_ai_suggestion(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::apply_ai_suggestion(&app_context(state), &clip_id, proposed_gain_db)
+        adapter::apply_ai_suggestion(&app_context(state), &clip_id, proposed_gain_db)
     })
     .await
 }
@@ -1021,7 +1031,7 @@ pub async fn apply_ai_suggestion(
 #[tauri::command]
 pub async fn set_master_gain_db(gain_db: f64, app: AppHandle) -> Result<SessionAudioPair, String> {
     run_blocking(app, move |state| {
-        application::set_master_gain_db(&app_context(state), gain_db)
+        adapter::set_master_gain_db(&app_context(state), gain_db)
     })
     .await
 }
@@ -1035,7 +1045,7 @@ pub async fn relink_missing_dependency(
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
-        application::relink_missing_dependency(&app_context(state), asset_id, &new_path)
+        adapter::relink_missing_dependency(&app_context(state), asset_id, &new_path)
     })
     .await
 }
@@ -1046,7 +1056,7 @@ pub async fn disable_missing_plugin(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
-        application::disable_missing_plugin(&app_context(state), &device_id)
+        adapter::disable_missing_plugin(&app_context(state), &device_id)
     })
     .await
 }
@@ -1058,7 +1068,7 @@ pub async fn replace_missing_track_plugin(
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking_without_command_gate(app, move |state| {
-        application::replace_missing_track_plugin(&app_context(state), &device_id, &new_path)
+        adapter::replace_missing_track_plugin(&app_context(state), &device_id, &new_path)
     })
     .await
 }

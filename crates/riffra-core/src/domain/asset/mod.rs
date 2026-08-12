@@ -19,7 +19,6 @@ use uuid::Uuid;
 ///
 /// The only valid string form is `asset:<UUIDv7>`.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, TS)]
-#[serde(transparent)]
 #[ts(type = "string & { readonly __brand: 'AssetId' }")]
 pub struct AssetId(String);
 
@@ -28,9 +27,7 @@ impl AssetId {
     ///
     /// # Errors
     /// Returns [`DomainError`] when the value is not exactly an `asset:` prefix
-    /// followed by a version-7 UUID. Any other form (including the legacy
-    /// `asset:<millis>-<counter>` scheme and arbitrary strings) is rejected so
-    /// that only the current UUIDv7 spec is ever valid in the domain.
+    /// followed by a version-7 UUID. Any other form is rejected.
     pub fn from_normalized(value: impl Into<String>) -> Result<Self, DomainError> {
         let value = value.into();
         if value.trim().is_empty() {

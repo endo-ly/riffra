@@ -4,6 +4,6 @@ import type { AssetId } from "./AssetId";
 /**
  * A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
  * live *playback* state for sample performance, distinct from a saved
- * [`crate::asset::AssetKind::Sample`] asset.
+ * [`crate::domain::asset::AssetKind::Sample`] asset.
  */
 export type SamplePad = { id: string, name: string, assetId: AssetId, startMs: number, endMs: number, midiKey: number, gainDb: number, loopEnabled: boolean, };
