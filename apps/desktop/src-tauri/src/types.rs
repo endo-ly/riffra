@@ -19,6 +19,7 @@ use crate::model::{
     SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
+use crate::presentation::{DesignContext, DesignTool, DesktopViewState, Workspace};
 use crate::projects::ProjectExport;
 use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use crate::recording::{
@@ -29,12 +30,12 @@ use crate::separation::SeparationResult;
 use crate::session::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
     AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
-    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
-    ProjectTimebase, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
-    RecordingTakeRecord, SampleInstrumentState, SamplePad, SessionSettings, TimelineLoopRange,
-    Track, TrackKind, Workspace,
+    CreativeSession, FrameDuration, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch,
+    MidiInputRoute, MidiNote, MonitoringState, PlayState, ProjectTimebase, RecordingPassRecord,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState,
+    SamplePad, SessionSettings, TimelineLoopRange, Track, TrackKind,
 };
+use riffra_core::HistoryState;
 use ts_rs::{Config, TS};
 
 #[test]
@@ -59,6 +60,7 @@ fn export_types() {
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
     DesignContext::export_all(&cfg).expect("DesignContext bindings");
+    DesktopViewState::export_all(&cfg).expect("DesktopViewState bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
@@ -86,6 +88,7 @@ fn export_types() {
     AiChangeSet::export_all(&cfg).expect("AiChangeSet bindings");
     SessionSettings::export_all(&cfg).expect("SessionSettings bindings");
     CreativeSession::export_all(&cfg).expect("CreativeSession bindings");
+    HistoryState::export_all(&cfg).expect("HistoryState bindings");
     AudioState::export_all(&cfg).expect("AudioState bindings");
     AudioAccessMode::export_all(&cfg).expect("AudioAccessMode bindings");
     AudioDevicePairing::export_all(&cfg).expect("AudioDevicePairing bindings");

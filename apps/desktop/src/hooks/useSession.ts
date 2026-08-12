@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { BootstrapState, CreativeSession } from '@/lib/domain';
+import type { BootstrapState, CreativeSession, HistoryState } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 
 interface UseSessionOptions {
@@ -9,23 +9,25 @@ interface UseSessionOptions {
 
 export function useSession(api: NativeApi, options: UseSessionOptions) {
   const {
-    saveSession,
+    undoSession,
+    redoSession,
+    getHistoryState,
     updateSessionSettings,
     exportSession: exportSessionApi,
     importSession: importSessionApi,
     restoreRecoveryGeneration,
-    syncArrangementRuntime,
   } = api;
   const { setBoot } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
-  const [undoStack, setUndoStack] = useState<CreativeSession[]>([]);
-  const [redoStack, setRedoStack] = useState<CreativeSession[]>([]);
+  const [historyState, setHistoryState] = useState<HistoryState>({
+    canUndo: false,
+    canRedo: false,
+  });
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
-  const previousSession = useRef<CreativeSession | null>(null);
-  const historySkip = useRef(false);
   const sessionRef = useRef<CreativeSession | null>(null);
   sessionRef.current = session;
+
   const applyNativeSession = useCallback(
     (nextSession: CreativeSession, allowExplicitHistoryMove = false) => {
       const current = sessionRef.current;
@@ -38,64 +40,47 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
         nextSession.updatedAtMs < current.updatedAtMs
       )
         return;
-      const guarded =
-        current != null && current.workspace !== nextSession.workspace
-          ? { ...nextSession, workspace: current.workspace }
-          : nextSession;
-      sessionRef.current = guarded;
-      setSession(guarded);
+      sessionRef.current = nextSession;
+      setSession(nextSession);
     },
     [],
   );
 
-  const undo = useCallback(async () => {
-    if (!session || undoStack.length === 0) return;
-    const previous = undoStack[undoStack.length - 1];
+  const refreshHistory = useCallback(async () => {
     try {
-      const canonical = await saveSession(previous);
-      await syncArrangementRuntime();
-      historySkip.current = true;
-      setUndoStack(undoStack.slice(0, -1));
-      setRedoStack([...redoStack, session].slice(-40));
-      applyNativeSession(canonical, true);
+      setHistoryState(await getHistoryState());
+    } catch (error) {
+      setAutosaveError(
+        `History state could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }, [getHistoryState]);
+
+  const undo = useCallback(async () => {
+    if (!historyState.canUndo) return;
+    try {
+      applyNativeSession(await undoSession(), true);
+      await refreshHistory();
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyNativeSession, redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
+  }, [applyNativeSession, historyState.canUndo, refreshHistory, undoSession]);
 
   const redo = useCallback(async () => {
-    if (!session || redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
+    if (!historyState.canRedo) return;
     try {
-      const canonical = await saveSession(next);
-      await syncArrangementRuntime();
-      historySkip.current = true;
-      setRedoStack(redoStack.slice(0, -1));
-      setUndoStack([...undoStack, session].slice(-40));
-      applyNativeSession(canonical, true);
+      applyNativeSession(await redoSession(), true);
+      await refreshHistory();
       setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyNativeSession, redoStack, saveSession, session, syncArrangementRuntime, undoStack]);
+  }, [applyNativeSession, historyState.canRedo, redoSession, refreshHistory]);
 
   useEffect(() => {
-    if (!session) return;
-    const previous = previousSession.current;
-    // Native application operations return a fresh canonical object for an
-    // actual session mutation. Comparing object identity is enough here and
-    // avoids serializing the entire arrangement/rack on every edit just to
-    // decide whether to push an undo entry.
-    if (previous && previous !== session) {
-      if (historySkip.current) historySkip.current = false;
-      else {
-        setUndoStack((stack) => [...stack, previous].slice(-40));
-        setRedoStack([]);
-      }
-    }
-    previousSession.current = session;
-  }, [session]);
+    if (session) void refreshHistory();
+  }, [refreshHistory, session]);
 
   const renameSession = useCallback(async () => {
     if (!session) return;
@@ -112,7 +97,7 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
         ? `Exported manifest with ${result.assetCount} collected assets: ${result.path}`
         : 'Export failed; the current session remains safe.',
     );
-  }, []);
+  }, [exportSessionApi]);
 
   const importSession = useCallback(async () => {
     const path = window.prompt('Path to a Riffra project.json manifest');
@@ -126,52 +111,46 @@ export function useSession(api: NativeApi, options: UseSessionOptions) {
     setBoot((current) =>
       current ? { ...current, session: imported, recoveredFromGeneration: false } : current,
     );
-    setUndoStack([]);
-    setRedoStack([]);
     setExportMessage(`Imported session: ${imported.projectName ?? imported.sessionId}`);
-  }, []);
+  }, [importSessionApi, setBoot]);
 
-  const restoreRecovery = useCallback(async (fileName: string) => {
-    if (
-      !window.confirm(
-        `Restore autosave generation ${fileName}? The current session will become the selected stable copy.`,
+  const restoreRecovery = useCallback(
+    async (fileName: string) => {
+      if (
+        !window.confirm(
+          `Restore autosave generation ${fileName}? The current session will become the selected stable copy.`,
+        )
       )
-    )
-      return;
-    const restored = await restoreRecoveryGeneration(fileName);
-    if (!restored) {
-      setExportMessage(
-        'Recovery generation could not be restored; the current session remains safe.',
+        return;
+      const restored = await restoreRecoveryGeneration(fileName);
+      if (!restored) {
+        setExportMessage(
+          'Recovery generation could not be restored; the current session remains safe.',
+        );
+        return;
+      }
+      setSession(restored);
+      setBoot((current) =>
+        current ? { ...current, session: restored, recoveredFromGeneration: false } : current,
       );
-      return;
-    }
-    setSession(restored);
-    setBoot((current) =>
-      current ? { ...current, session: restored, recoveredFromGeneration: false } : current,
-    );
-    setUndoStack([]);
-    setRedoStack([]);
-    setExportMessage(`Restored stable generation: ${restored.projectName ?? restored.sessionId}`);
-  }, []);
+      setExportMessage(`Restored stable generation: ${restored.projectName ?? restored.sessionId}`);
+    },
+    [restoreRecoveryGeneration, setBoot],
+  );
 
   const dismissRecovery = useCallback(() => {
     setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
     setExportMessage('Recovered session kept as the active working copy.');
-  }, []);
+  }, [setBoot]);
 
   return {
     session,
     setSession,
-    undoStack,
-    setUndoStack,
-    redoStack,
-    setRedoStack,
+    historyState,
     autosaveError,
     setAutosaveError,
     exportMessage,
     setExportMessage,
-    previousSession,
-    historySkip,
     undo,
     redo,
     renameSession,

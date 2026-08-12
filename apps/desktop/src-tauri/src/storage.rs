@@ -1,4 +1,5 @@
 use crate::session::CreativeSession;
+use riffra_core::{PortError, SessionStorage};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -42,6 +43,12 @@ pub struct SessionStore {
     data_root: PathBuf,
     scratch_dir: PathBuf,
     generations_dir: PathBuf,
+}
+
+impl SessionStorage for SessionStore {
+    fn save(&self, session: &CreativeSession) -> Result<(), PortError> {
+        SessionStore::save(self, session).map_err(|error| PortError::Storage(error.to_string()))
+    }
 }
 
 impl SessionStore {
@@ -496,10 +503,8 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
-        session.workspace = crate::session::Workspace::Arrange;
         store.save(&session).unwrap();
         let loaded = store.load_or_create().unwrap();
-        assert_eq!(loaded.session.workspace, crate::session::Workspace::Arrange);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let _ = fs::remove_dir_all(root);
     }

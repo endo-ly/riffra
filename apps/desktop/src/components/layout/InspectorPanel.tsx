@@ -2,6 +2,7 @@ import type {
   AudioStatus,
   BootstrapState,
   CreativeSession,
+  DesktopSessionView,
   MissingDependency,
   PluginEntry,
 } from '@/lib/domain';
@@ -20,7 +21,7 @@ interface InspectorPanelProps {
   boot: BootstrapState;
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
-  session: CreativeSession;
+  session: DesktopSessionView;
   setSession: (session: CreativeSession) => void;
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
@@ -170,7 +171,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 }
 
 function getInspectorTitle(
-  workspace: CreativeSession['workspace'],
+  workspace: DesktopSessionView['workspace'],
   hasSelectedTrack: boolean,
   audioClipCount: number,
   midiClipCount: number,

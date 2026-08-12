@@ -10,6 +10,7 @@ import type {
   AssetPreviewOptions,
   BackgroundJobStatus,
   BootstrapState,
+  HistoryState,
   DeviceChannels,
   LibraryAsset,
   MissingDependency,
@@ -23,6 +24,7 @@ import type {
   ScanReport,
   SeparationJobStatus,
   CreativeSession,
+  DesktopViewState,
   ProjectTimebase,
   RuntimeProjectionStatus,
   DesignTool,
@@ -41,7 +43,7 @@ import type {
   MidiClipPatch,
   MidiInputRoute,
 } from '@/lib/domain';
-import { defaultSession } from '@/lib/domain';
+import { defaultSession, defaultViewState } from '@/lib/domain';
 import { offlineAudioStatus } from '@/lib/audio-defaults';
 import { invoke, invokeLatest, invokeOrFallback, isNativeRuntime } from './invoke';
 import type {
@@ -60,6 +62,7 @@ async function bootstrap(): Promise<BootstrapState> {
     {},
     {
       session: defaultSession(),
+      viewState: defaultViewState(),
       pluginCatalog: [],
       runtimeStarted: false,
       runtimeStartupFinished: false,
@@ -82,8 +85,23 @@ async function onRuntimeStartupFinished(
   });
 }
 
-async function saveSession(session: CreativeSession): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('save_scratch_session', { session });
+async function undoSession(): Promise<CreativeSession> {
+  return invokeOrFallback<CreativeSession>('undo_session', {}, defaultSession());
+}
+
+async function redoSession(): Promise<CreativeSession> {
+  return invokeOrFallback<CreativeSession>('redo_session', {}, defaultSession());
+}
+
+async function getHistoryState(): Promise<HistoryState> {
+  return invokeOrFallback<HistoryState>(
+    'get_history_state',
+    {},
+    {
+      canUndo: false,
+      canRedo: false,
+    },
+  );
 }
 
 async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
@@ -825,8 +843,8 @@ async function placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>
   return await invoke<CreativeSession>('place_take_as_separate_clip', { takeId });
 }
 
-async function syncArrangementRuntime(): Promise<RuntimeProjectionStatus> {
-  return await invoke<RuntimeProjectionStatus>('sync_arrangement_runtime');
+async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {
+  return await invoke<RuntimeProjectionStatus>('retry_runtime_projection');
 }
 
 async function playTimeline(transportSequence: number): Promise<void> {
@@ -876,15 +894,15 @@ async function updateTimelinePunchRange(
 async function openAssetInDesign(
   assetId: AssetId,
   tool: DesignTool,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('open_asset_in_design', { assetId, tool }, null);
+): Promise<DesktopViewState | null> {
+  return invokeOrFallback<DesktopViewState | null>('open_asset_in_design', { assetId, tool }, null);
 }
 
 async function switchWorkspace(
   workspace: Workspace,
   transportSequence: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+): Promise<DesktopViewState | null> {
+  return invokeOrFallback<DesktopViewState | null>(
     'switch_workspace',
     { workspace, transportSequence },
     null,
@@ -917,7 +935,9 @@ function createNativeApi(): NativeApi {
   return {
     bootstrap,
     onRuntimeStartupFinished,
-    saveSession,
+    undoSession,
+    redoSession,
+    getHistoryState,
     restoreRecoveryGeneration,
     exportSession,
     importSession,
@@ -1012,7 +1032,7 @@ function createNativeApi(): NativeApi {
     stopTakeComparison,
     activateTake,
     placeTakeAsSeparateClip,
-    syncArrangementRuntime,
+    retryRuntimeProjection,
     playTimeline,
     stopTimeline,
     goToStartTimeline,

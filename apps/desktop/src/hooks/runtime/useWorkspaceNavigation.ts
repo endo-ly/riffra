@@ -1,20 +1,17 @@
 import { useCallback, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { CreativeSession, Workspace } from '@/lib/domain';
-import { logNativeError } from '@/native/invoke';
+import type { DesktopSessionView, DesktopViewState, Workspace } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 
 interface WorkspaceNavigationOptions {
   api: Pick<NativeApi, 'switchWorkspace'>;
-  safeMode: boolean | undefined;
-  sessionRef: { current: CreativeSession | null };
-  setNavigationSession: (session: CreativeSession) => void;
+  sessionRef: { current: DesktopSessionView | null };
+  setNavigationWorkspace: (workspace: Workspace) => void;
   runSessionOp: (
-    operation: () => Promise<CreativeSession | null>,
+    operation: () => Promise<DesktopViewState | null>,
     label: string,
-  ) => Promise<CreativeSession | null>;
+  ) => Promise<DesktopViewState | null>;
   setAutosaveError: Dispatch<SetStateAction<string | null>>;
-  syncArrangeRuntime: () => Promise<void>;
   nextTransportSequence: () => number;
   cancelPendingPlay: () => void;
 }
@@ -26,12 +23,10 @@ interface WorkspaceNavigationOptions {
  */
 export function useWorkspaceNavigation({
   api,
-  safeMode,
   sessionRef,
-  setNavigationSession,
+  setNavigationWorkspace,
   runSessionOp,
   setAutosaveError,
-  syncArrangeRuntime,
   nextTransportSequence,
   cancelPendingPlay,
 }: WorkspaceNavigationOptions) {
@@ -49,9 +44,8 @@ export function useWorkspaceNavigation({
       const initialWorkspace = previous?.workspace ?? workspace;
 
       if (previous && previous.workspace !== workspace) {
-        const optimistic = { ...previous, workspace };
-        sessionRef.current = optimistic;
-        setNavigationSession(optimistic);
+        sessionRef.current = { ...previous, workspace };
+        setNavigationWorkspace(workspace);
       }
       workspaceSwitchTarget.current = { workspace, transportSequence };
       if (workspaceSwitchPromise.current) return;
@@ -76,20 +70,15 @@ export function useWorkspaceNavigation({
               ) {
                 const current = sessionRef.current;
                 if (current) {
-                  const rollback = { ...current, workspace: lastCommittedWorkspace };
-                  sessionRef.current = rollback;
-                  setNavigationSession(rollback);
+                  sessionRef.current = { ...current, workspace: lastCommittedWorkspace };
+                  setNavigationWorkspace(lastCommittedWorkspace);
                 }
               }
               continue;
             }
             lastCommittedWorkspace = target;
             if (sessionRef.current?.workspace !== target) continue;
-            sessionRef.current = next;
-            setNavigationSession(next);
-            if (!safeMode && target === 'arrange') {
-              void syncArrangeRuntime().catch(logNativeError('Arrange runtime sync'));
-            }
+            setNavigationWorkspace(next.workspace);
           }
         } catch (error) {
           setAutosaveError(
@@ -107,11 +96,9 @@ export function useWorkspaceNavigation({
       cancelPendingPlay,
       nextTransportSequence,
       runSessionOp,
-      safeMode,
       sessionRef,
       setAutosaveError,
-      setNavigationSession,
-      syncArrangeRuntime,
+      setNavigationWorkspace,
     ],
   );
 }

@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { defaultSession } from '@/lib/domain';
+import { defaultSession, defaultViewState } from '@/lib/domain';
 import type { PluginEntry } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import App from '@/App';
@@ -44,7 +44,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.calls).toContain('getAudioStatus'));
     expect(fake.calls).not.toContain('restoreSamplePads');
     expect(fake.calls).not.toContain('setEmergencyMute');
-    expect(fake.bootstrapState.session.workspace).toBe('arrange');
+    expect(fake.bootstrapState.viewState.workspace).toBe('arrange');
     expect(
       within(screen.getByRole('navigation', { name: /Workspace/ })).getAllByRole('button'),
     ).toHaveLength(2);
@@ -182,13 +182,16 @@ describe('App driven by FakeNativeApi', () => {
 
     await new Promise((resolve) => window.setTimeout(resolve, 50));
     expect(fake.calls).not.toContain('restoreSamplePads');
-    expect(fake.calls).not.toContain('syncArrangementRuntime');
+    expect(fake.calls).not.toContain('retryRuntimeProjection');
     expect(fake.calls).not.toContain('setEmergencyMute');
   });
 
   it('leaves sidecar runtime recovery to Rust in Design', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'design' } },
+      bootstrapState: {
+        session: defaultSession(),
+        viewState: { ...defaultViewState(), workspace: 'design' },
+      },
     });
     renderApp(fake);
 
@@ -199,12 +202,15 @@ describe('App driven by FakeNativeApi', () => {
 
     await new Promise((resolve) => window.setTimeout(resolve, 50));
     expect(fake.calls).not.toContain('restoreSamplePads');
-    expect(fake.calls).not.toContain('syncArrangementRuntime');
+    expect(fake.calls).not.toContain('retryRuntimeProjection');
   });
 
   it('does not duplicate Rust runtime recovery in Arrange', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+      bootstrapState: {
+        session: defaultSession(),
+        viewState: { ...defaultViewState(), workspace: 'arrange' },
+      },
     });
     renderApp(fake);
 
@@ -215,12 +221,15 @@ describe('App driven by FakeNativeApi', () => {
 
     await new Promise((resolve) => window.setTimeout(resolve, 50));
     expect(fake.calls).not.toContain('restoreSamplePads');
-    expect(fake.calls).not.toContain('syncArrangementRuntime');
+    expect(fake.calls).not.toContain('retryRuntimeProjection');
   });
 
   it('does not let a cancelled playback failure overwrite a newer playing state', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+      bootstrapState: {
+        session: defaultSession(),
+        viewState: { ...defaultViewState(), workspace: 'arrange' },
+      },
     });
     const playRejectors: ((reason?: unknown) => void)[] = [];
     fake.playTimeline = () => {
@@ -261,7 +270,10 @@ describe('App driven by FakeNativeApi', () => {
 
   it('sends a new Play while an earlier Stop command is still pending', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+      bootstrapState: {
+        session: defaultSession(),
+        viewState: { ...defaultViewState(), workspace: 'arrange' },
+      },
     });
     const playSequences: number[] = [];
     const stopSequences: number[] = [];
@@ -299,7 +311,10 @@ describe('App driven by FakeNativeApi', () => {
 
   it('sends a new Play while an earlier Go to Start command is still pending', async () => {
     const fake = new FakeNativeApi({
-      bootstrapState: { session: { ...defaultSession(), workspace: 'arrange' } },
+      bootstrapState: {
+        session: defaultSession(),
+        viewState: { ...defaultViewState(), workspace: 'arrange' },
+      },
     });
     const playSequences: number[] = [];
     const goToStartSequences: number[] = [];
@@ -381,7 +396,7 @@ describe('App driven by FakeNativeApi', () => {
     await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
 
     await waitFor(() => expect(fake.calls).toContain('switchWorkspace'));
-    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('design'));
+    await waitFor(() => expect(fake.bootstrapState.viewState.workspace).toBe('design'));
   });
 
   it('previews master gain during a gesture and persists it once at the end', async () => {
@@ -476,9 +491,9 @@ describe('App driven by FakeNativeApi', () => {
     const workspaceNav = screen.getByRole('navigation', { name: /Workspace/ });
     const user = userEvent.setup();
     await user.click(within(workspaceNav).getByRole('button', { name: /Design/ }));
-    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('design'));
+    await waitFor(() => expect(fake.bootstrapState.viewState.workspace).toBe('design'));
     await user.click(within(workspaceNav).getByRole('button', { name: /Arrange/ }));
-    await waitFor(() => expect(fake.bootstrapState.session.workspace).toBe('arrange'));
+    await waitFor(() => expect(fake.bootstrapState.viewState.workspace).toBe('arrange'));
     expect(fake.bootstrapState.session.arrangement.tracks).toHaveLength(0);
     expect(fake.bootstrapState.session.arrangement.tracks).toEqual(
       defaultSession().arrangement.tracks,
@@ -692,7 +707,7 @@ describe('App driven by FakeNativeApi', () => {
     await waitFor(() => expect(fake.audio.sampleRate).toBe(96_000));
     expect(fake.audio.driver).toBe('Fake Driver');
     expect(fake.calls).not.toContain('switchWorkspace');
-    expect(fake.bootstrapState.session.workspace).toBe('arrange');
+    expect(fake.bootstrapState.viewState.workspace).toBe('arrange');
     expect(fake.savedSessions).toHaveLength(savesBeforeSelection);
   });
 });

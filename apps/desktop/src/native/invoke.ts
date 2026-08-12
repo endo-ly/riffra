@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
 /**
  * Thin bridge to Tauri. Ordering that affects Session or Runtime correctness
- * is owned by the Rust Session Actor and Runtime Reconciler; this module only
+ * is owned by the Rust Core and Runtime Reconciler; this module only
  * coalesces high-frequency UI updates through invokeLatest below.
  */
 export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {

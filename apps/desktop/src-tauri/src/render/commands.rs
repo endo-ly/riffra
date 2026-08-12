@@ -13,7 +13,11 @@ pub async fn render_timeline(
 ) -> Result<RenderResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let session = state.core.session().lock().map_err(lock_error)?.clone();
+        let session = state
+            .core
+            .snapshot()
+            .map_err(|error| error.to_string())?
+            .session;
         render::render_timeline_with_options(
             &state.render_worker,
             state.core.data_root(),
@@ -24,10 +28,4 @@ pub async fn render_timeline(
     })
     .await
     .map_err(|error| format!("Timeline render task failed: {error}"))?
-}
-
-fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
-    let message = format!("An internal state lock was poisoned: {error}");
-    tracing::error!(%message, "aborting to prevent corrupted state propagation");
-    std::process::abort();
 }

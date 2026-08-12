@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { AudioAnalysis, CreativeSession, RecordingAsset } from '@/lib/domain';
+import type {
+  AudioAnalysis,
+  CreativeSession,
+  DesktopSessionView,
+  RecordingAsset,
+} from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
@@ -25,7 +30,7 @@ export function ReferenceSuggestion({
   recordings: RecordingAsset[];
   references: Record<string, AudioAnalysis>;
   referenceId: string | null;
-  session: CreativeSession;
+  session: DesktopSessionView;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
   onSelect: (recording: RecordingAsset) => void;

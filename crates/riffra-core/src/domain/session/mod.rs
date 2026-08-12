@@ -1,14 +1,13 @@
 //! Canonical CreativeSession and the production state it owns.
 //!
-//! [`CreativeSession`] is the canonical production-state model. It holds the
-//! active workspace, design context, live sample performance state, the
-//! [`Arrangement`], and session settings. It deliberately does not own
-//! audio/MIDI file bodies, the Library index, recording files, or
-//! background-job state.
+//! [`CreativeSession`] is the canonical production-state model. It holds live
+//! sample performance state, the [`Arrangement`], and session settings. It
+//! deliberately does not own host view state, audio/MIDI file bodies, the
+//! Library index, recording files, or background-job state.
 
 use crate::DomainError;
-use crate::asset::AssetId;
-use crate::rack::{RackDevice, RackInstance};
+use crate::domain::asset::AssetId;
+use crate::domain::rack::{RackDevice, RackInstance};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -103,43 +102,6 @@ pub struct TimelinePunchRange {
     pub end_tick: TimelineTick,
 }
 
-/// The two fixed workspaces. `Sample`, `Analyze`, and `Separate` are not
-/// workspaces; they are [`DesignTool`]s reached from [`Workspace::Design`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum Workspace {
-    Design,
-    Arrange,
-}
-
-/// A design surface reached from the Design workspace.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum DesignTool {
-    Sample,
-    Analyze,
-    Separate,
-}
-
-/// What the Design workspace is currently aimed at.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct DesignContext {
-    pub active_tool: DesignTool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub target_asset_id: Option<AssetId>,
-}
-
-impl Default for DesignContext {
-    fn default() -> Self {
-        Self {
-            active_tool: DesignTool::Sample,
-            target_asset_id: None,
-        }
-    }
-}
-
 /// The production source hosted by a timeline track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -195,6 +157,19 @@ pub struct Track {
     #[ts(optional)]
     pub instrument: Option<RackDevice>,
     pub rack: RackInstance,
+}
+
+/// A partial update for a timeline Track.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackPatch {
+    pub name: Option<String>,
+    pub gain_db: Option<f64>,
+    pub pan: Option<f64>,
+    pub muted: Option<bool>,
+    pub solo: Option<bool>,
+    pub armed: Option<bool>,
+    pub monitoring: Option<MonitoringState>,
 }
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
@@ -1733,7 +1708,7 @@ impl Arrangement {
 
 /// A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
 /// live *playback* state for sample performance, distinct from a saved
-/// [`crate::asset::AssetKind::Sample`] asset.
+/// [`crate::domain::asset::AssetKind::Sample`] asset.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SamplePad {
@@ -1826,9 +1801,6 @@ pub struct CreativeSession {
     pub updated_at_ms: u64,
     #[serde(default)]
     pub project_name: Option<String>,
-    pub workspace: Workspace,
-    #[serde(default)]
-    pub design_context: DesignContext,
     #[serde(default)]
     pub play_state: PlayState,
     #[serde(default)]
@@ -2021,15 +1993,13 @@ pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json
 }
 
 impl CreativeSession {
-    /// Creates a fresh session in the Arrange workspace with an empty
-    /// arrangement and safe (muted) settings.
+    /// Creates a fresh session with an empty arrangement and safe (muted)
+    /// settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
             session_id: format!("scratch-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
-            workspace: Workspace::Arrange,
-            design_context: DesignContext::default(),
             play_state: PlayState::default(),
             arrangement: Arrangement::default(),
             settings: SessionSettings {
@@ -2563,7 +2533,7 @@ fn normalize_sample_pads(pads: &mut [SamplePad]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{Provenance, mint_asset_id};
+    use crate::domain::asset::{Provenance, mint_asset_id};
 
     fn clip(track_id: &str, asset_id: AssetId) -> AudioClip {
         AudioClip::full_source(
@@ -2605,40 +2575,6 @@ mod tests {
             loop_enabled: false,
             recording_take_id: None,
         }
-    }
-
-    #[test]
-    fn workspace_has_exactly_two_variants() {
-        let all = [Workspace::Design, Workspace::Arrange];
-        assert_eq!(all.len(), 2);
-        assert!(matches!(
-            CreativeSession::new(0).workspace,
-            Workspace::Arrange
-        ));
-    }
-
-    #[test]
-    fn workspace_serializes_to_stable_lowercase_values() {
-        assert_eq!(
-            serde_json::to_string(&Workspace::Arrange).unwrap(),
-            "\"arrange\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Workspace::Design).unwrap(),
-            "\"design\""
-        );
-    }
-
-    #[test]
-    #[test]
-    fn design_context_holds_tool_and_target_asset() {
-        let id = mint_asset_id();
-        let ctx = DesignContext {
-            active_tool: DesignTool::Separate,
-            target_asset_id: Some(id.clone()),
-        };
-        assert_eq!(ctx.active_tool, DesignTool::Separate);
-        assert_eq!(ctx.target_asset_id, Some(id));
     }
 
     #[test]

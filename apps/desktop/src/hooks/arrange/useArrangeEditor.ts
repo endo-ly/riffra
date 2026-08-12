@@ -99,7 +99,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const retryRuntimeSync = useCallback(async () => {
     try {
-      await api.syncArrangementRuntime();
+      await api.retryRuntimeProjection();
       setRuntimeOutOfSync(false);
       setMessageState('');
     } catch (error) {

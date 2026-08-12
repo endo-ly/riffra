@@ -7,11 +7,11 @@
 use crate::AppState;
 use crate::model::{AudioAccessMode, AudioState, AudioStatus};
 use crate::native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
+use crate::presentation::DesktopViewState;
 use crate::runtime::RuntimeReconciler;
-use crate::session::CreativeSession;
-use crate::session::actor::SessionActor;
 use crate::session::context::SessionContext;
 use crate::storage::replace_file;
+use riffra_core::AppCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -151,10 +151,10 @@ impl AudioPreferencesStore {
 
 pub struct AudioPreferencesContext<'a> {
     pub app: &'a AppHandle,
+    pub core: &'a AppCore<AudioSupervisor>,
+    pub view_state: &'a Mutex<DesktopViewState>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
-    pub session_actor: &'a SessionActor,
-    pub session: &'a Mutex<CreativeSession>,
     pub data_root: &'a Path,
     pub preferences: &'a Mutex<AudioPreferences>,
     pub safe_mode: bool,
@@ -282,11 +282,11 @@ fn reconcile_runtime_after_audio_device_change(
     context: &AudioPreferencesContext<'_>,
 ) -> Result<(), String> {
     crate::session::application::reconcile_runtime_after_audio_device_change(&SessionContext {
+        core: context.core,
+        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
-        session_actor: context.session_actor,
         data_root: context.data_root,
-        session: context.session,
         safe_mode: context.safe_mode,
     })
     .map(|_| ())
@@ -400,10 +400,10 @@ pub async fn set_audio_driver(
     apply_audio_preferences(
         &AudioPreferencesContext {
             app: &app,
+            core: &state.core,
+            view_state: &state.view_state,
             audio: state.core.audio(),
             runtime: &state.runtime,
-            session_actor: &state.session_actor,
-            session: state.core.session(),
             data_root: state.core.data_root(),
             preferences: &state.audio_preferences,
             safe_mode: state.core.safe_mode(),

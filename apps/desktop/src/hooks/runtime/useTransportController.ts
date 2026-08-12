@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, RenderResult } from '@/lib/domain';
+import type { AudioStatus, DesktopSessionView, RenderResult } from '@/lib/domain';
 import { logNativeError } from '@/native/invoke';
 import type { NativeApi } from '@/native/native-api';
 
@@ -15,7 +15,7 @@ interface TransportControllerOptions {
     | 'previewAsset'
     | 'stopSamplePreview'
   >;
-  sessionRef: { current: CreativeSession | null };
+  sessionRef: { current: DesktopSessionView | null };
   renderResult: RenderResult | null;
   setRenderResult: Dispatch<SetStateAction<RenderResult | null>>;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;

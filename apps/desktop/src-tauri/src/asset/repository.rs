@@ -438,7 +438,7 @@ pub fn validate_session_references(
     data_root: &Path,
     session: &CreativeSession,
 ) -> Result<(), String> {
-    let mut references = session
+    let references = session
         .arrangement
         .audio_clips
         .iter()
@@ -452,9 +452,6 @@ pub fn validate_session_references(
                 .map(|pad| ("sample pad", pad.id.as_str(), &pad.asset_id)),
         )
         .collect::<Vec<_>>();
-    if let Some(asset_id) = session.design_context.target_asset_id.as_ref() {
-        references.push(("design target", "target", asset_id));
-    }
     if references.is_empty() {
         return Ok(());
     }
@@ -742,39 +739,6 @@ mod tests {
     }
 
     #[test]
-    fn session_reference_validation_rejects_unknown_design_target() {
-        let root = root("validate-design-target");
-        let asset_id = mint_asset_id();
-        let mut session = CreativeSession::new(1_000);
-        session.design_context.target_asset_id = Some(asset_id);
-
-        let error = validate_session_references(&root, &session).unwrap_err();
-        assert!(error.contains("design target 'target'"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn session_reference_validation_allows_a_registered_asset_with_missing_file() {
-        let root = root("validate-missing-content");
-        let wav = root.join("take.wav");
-        write_wav(&wav);
-        let asset_id = register(
-            &root,
-            AssetKind::Audio,
-            "take",
-            &wav.to_string_lossy(),
-            None,
-        )
-        .unwrap();
-        std::fs::remove_file(&wav).unwrap();
-
-        let mut session = CreativeSession::new(1_000);
-        session.design_context.target_asset_id = Some(asset_id);
-        assert!(validate_session_references(&root, &session).is_ok());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn session_reference_validation_skips_the_database_without_references() {
         // Arrange
         let root = root("validate-empty");
@@ -786,29 +750,6 @@ mod tests {
         // Assert
         assert!(result.is_ok());
         assert!(!root.join("library/riffra.db").exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn session_reference_validation_rejects_an_incomplete_asset_record() {
-        // Arrange
-        let root = root("validate-incomplete");
-        let asset_id = mint_asset_id();
-        let connection = open(&root).unwrap();
-        connection
-            .execute(
-                "INSERT INTO assets (id, name, kind) VALUES (?1, ?2, ?3)",
-                params![asset_id.as_str(), "incomplete", "audio"],
-            )
-            .unwrap();
-        let mut session = CreativeSession::new(1_000);
-        session.design_context.target_asset_id = Some(asset_id);
-
-        // Act
-        let result = validate_session_references(&root, &session);
-
-        // Assert
-        assert!(result.is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }

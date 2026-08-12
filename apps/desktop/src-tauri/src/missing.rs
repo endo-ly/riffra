@@ -1,5 +1,5 @@
 use crate::asset;
-use crate::asset::{AssetId, AssetKind, Provenance};
+use crate::asset::AssetId;
 use crate::rack::{DeviceKind, RackDevice};
 use crate::session::CreativeSession;
 use serde::Serialize;
@@ -128,67 +128,6 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
     missing
 }
 
-/// Re-points every clip and pad that references `asset_id` at a brand-new Audio
-/// Asset registered from `new_path`. Production content is immutable, so a
-/// relink never mutates the original asset; it mints a new one and updates the
-/// references. Plugin paths are still rewritten in place because a plugin slot
-/// is live rack state, not an immutable Asset.
-pub fn relink(
-    data_root: &Path,
-    session: &CreativeSession,
-    asset_id: &AssetId,
-    new_path: &str,
-) -> Result<CreativeSession, String> {
-    let name = Path::new(new_path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("audio");
-    let new_asset_id = asset::register(
-        data_root,
-        AssetKind::Audio,
-        name,
-        new_path,
-        Some(Provenance::imported()),
-    )?;
-    let mut next = session.clone();
-    for clip in &mut next.arrangement.audio_clips {
-        if clip.asset_id == *asset_id {
-            clip.asset_id = new_asset_id.clone();
-        }
-    }
-    for pad in &mut next.play_state.sample_instrument.pads {
-        if pad.asset_id == *asset_id {
-            pad.asset_id = new_asset_id.clone();
-        }
-    }
-    Ok(next)
-}
-
-/// Marks a missing plugin as a disabled placeholder so the project keeps
-/// working: the rack slot remains, but no sound is produced until the user
-/// relinks a real plugin.
-pub fn mark_disabled_placeholder(session: &CreativeSession, device_id: &str) -> CreativeSession {
-    let mut next = session.clone();
-    let mut arrangement_changed = false;
-    for track in &mut next.arrangement.tracks {
-        for device in track
-            .instrument
-            .iter_mut()
-            .chain(track.rack.devices.iter_mut())
-        {
-            if device.id == device_id && !device.disabled_placeholder {
-                device.disabled_placeholder = true;
-                arrangement_changed = true;
-            }
-        }
-    }
-    if arrangement_changed {
-        next.arrangement.revision = next.arrangement.revision.saturating_add(1);
-    }
-    next
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,52 +190,6 @@ mod tests {
     }
 
     #[test]
-    fn relink_registers_a_new_asset_and_repoints_references() {
-        let data_root = root();
-        let replacement = data_root.join("found.wav");
-        std::fs::create_dir_all(&data_root).unwrap();
-        std::fs::write(&replacement, b"RIFF\0\0\0\0WAVE").unwrap();
-        let (session, old_asset_id) = session_with_missing_asset(&data_root);
-        let relinked = relink(
-            &data_root,
-            &session,
-            &old_asset_id,
-            &replacement.to_string_lossy(),
-        )
-        .unwrap();
-        let new_id = relinked.arrangement.audio_clips[0].asset_id.clone();
-        assert_ne!(new_id, old_asset_id);
-        // The original asset id is no longer referenced anywhere.
-        assert!(
-            relinked
-                .arrangement
-                .audio_clips
-                .iter()
-                .all(|clip| clip.asset_id != old_asset_id)
-        );
-        let location = asset::resolve_content_location(&data_root, &new_id).unwrap();
-        assert_eq!(location, replacement.to_string_lossy());
-        let _ = std::fs::remove_dir_all(data_root);
-    }
-
-    #[test]
-    fn disabled_placeholder_keeps_empty_rack_slot() {
-        let data_root = root();
-        let (session, _) = session_with_missing_asset(&data_root);
-        let patched = mark_disabled_placeholder(&session, "plugin:gone");
-        let device = patched.arrangement.tracks[0]
-            .rack
-            .devices
-            .iter()
-            .find(|device| device.id == "plugin:gone")
-            .unwrap();
-        assert!(device.disabled_placeholder);
-        let missing = collect_missing(&data_root, &patched);
-        assert!(missing.iter().all(|item| item.kind != "plugin"));
-        let _ = std::fs::remove_dir_all(data_root);
-    }
-
-    #[test]
     fn existing_vst3_bundle_directory_is_not_reported_as_missing() {
         let data_root = root();
         let bundle = data_root.join("Present.vst3");
@@ -350,13 +243,6 @@ mod tests {
                 .any(|item| item.used_by == ["track:synth:effect:effect:gone"])
         );
 
-        let disabled = mark_disabled_placeholder(&session, "effect:gone");
-        assert_eq!(
-            disabled.arrangement.revision,
-            session.arrangement.revision + 1
-        );
-        assert_eq!(disabled.arrangement.tracks[0].rack.devices.len(), 1);
-        assert!(disabled.arrangement.tracks[0].rack.devices[0].disabled_placeholder);
-        assert_eq!(collect_missing(&data_root, &disabled).len(), 1);
+        assert_eq!(missing.len(), 2);
     }
 }

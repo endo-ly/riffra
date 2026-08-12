@@ -155,8 +155,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     rescanMissingPlugins,
     ignoreMissing,
     commandOpen,
-    undoStack,
-    redoStack,
+    historyState,
     setSession,
     setLibraryQuery,
     setLibrarySection,
@@ -319,8 +318,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         session={session}
         audio={audio}
         isMuted={isMuted}
-        undoStack={undoStack}
-        redoStack={redoStack}
+        historyState={historyState}
         onUndo={undo}
         onRedo={redo}
         onSwitchWorkspace={switchWorkspace}

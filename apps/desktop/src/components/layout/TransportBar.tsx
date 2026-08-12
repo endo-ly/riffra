@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CreativeSession } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, DesktopSessionView } from '@/lib/domain';
 import clsx from 'clsx';
 import type { NativeApi } from '@/native/native-api';
 import { useAudioMeters } from '@/lib/audio-meters';
@@ -9,7 +9,7 @@ import styles from './TransportBar.module.css';
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
 
 interface TransportBarProps {
-  session: CreativeSession;
+  session: DesktopSessionView;
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
   setAudio: (audio: AudioStatus) => void;
@@ -316,7 +316,7 @@ export function TransportBar(props: TransportBarProps) {
   );
 }
 
-function describeCountIn(session: CreativeSession): string {
+function describeCountIn(session: DesktopSessionView): string {
   const beats = session.settings.countInBeats;
   if (!beats) return 'Count-in: Off';
   const beatsPerBar =
@@ -326,7 +326,7 @@ function describeCountIn(session: CreativeSession): string {
   return `Count-in: ${beats}`;
 }
 
-function nextCountInBeats(session: CreativeSession): number {
+function nextCountInBeats(session: DesktopSessionView): number {
   const beatsPerBar =
     session.workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
   const current = session.settings.countInBeats;

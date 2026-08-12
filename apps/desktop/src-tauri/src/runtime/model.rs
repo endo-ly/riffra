@@ -1,4 +1,4 @@
-/// Absolute ordering assigned by the Session Actor when canonical state is
+/// Absolute ordering assigned by Core when canonical state is
 /// committed. `session_revision` is retained for diagnostics and display, but
 /// it is not an ordering key because restore/import may legitimately move it
 /// backwards.
