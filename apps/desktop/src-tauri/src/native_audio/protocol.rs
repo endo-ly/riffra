@@ -1,7 +1,5 @@
 use super::error::{NativeAudioError, NativeAudioResult};
-use crate::model::{
-    AudioChannelInfo, AudioState, AudioStatus, PluginParameter, PluginStatus, RecordingStatus,
-};
+use crate::model::{AudioChannelInfo, AudioState, AudioStatus, RecordingStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
@@ -35,7 +33,6 @@ struct NativeStatus {
     round_trip_ms: Option<f64>,
     timeline_tick: Option<u64>,
     recording: Option<NativeRecordingStatus>,
-    plugin: Option<NativePluginStatus>,
     midi_inputs: Option<Vec<crate::model::MidiDeviceInfo>>,
     midi_outputs: Option<Vec<crate::model::MidiDeviceInfo>>,
     midi_input_active: Option<bool>,
@@ -91,38 +88,9 @@ struct NativeRecordingStatus {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NativePluginStatus {
-    loaded: bool,
-    bypassed: bool,
-    path: Option<String>,
-    name: Option<String>,
-    sample_rate: Option<f64>,
-    block_size: Option<u32>,
-    input_channels: Option<u32>,
-    output_channels: Option<u32>,
-    bypassed_blocks: Option<u64>,
-    processed_blocks: Option<u64>,
-    contention_blocks: Option<u64>,
-    transition_blocks: Option<u64>,
-    parameters: Option<Vec<NativePluginParameter>>,
-    state_data: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct NativeAudioChannelInfo {
     index: u32,
     name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativePluginParameter {
-    index: u32,
-    name: String,
-    value: f32,
-    default_value: f32,
-    automatable: bool,
 }
 
 fn normalize_sample_rate(rate: f64) -> Option<u32> {
@@ -225,41 +193,6 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 }),
             })
             .unwrap_or_default(),
-        plugin: native.plugin.map(|plugin| PluginStatus {
-            loaded: plugin.loaded,
-            bypassed: plugin.bypassed,
-            path: plugin.path.filter(|path| !path.is_empty()),
-            name: plugin.name.filter(|name| !name.is_empty()),
-            sample_rate: plugin.sample_rate.and_then(normalize_sample_rate),
-            block_size: plugin.block_size,
-            input_channels: plugin.input_channels.unwrap_or_default(),
-            output_channels: plugin.output_channels.unwrap_or_default(),
-            bypassed_blocks: plugin.bypassed_blocks.unwrap_or_default(),
-            processed_blocks: plugin.processed_blocks.unwrap_or_default(),
-            contention_blocks: plugin.contention_blocks.unwrap_or_default(),
-            transition_blocks: plugin.transition_blocks.unwrap_or_default(),
-            parameters: plugin
-                .parameters
-                .unwrap_or_default()
-                .into_iter()
-                .map(|parameter| PluginParameter {
-                    index: parameter.index,
-                    name: parameter.name,
-                    value: if parameter.value.is_finite() {
-                        parameter.value.clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    },
-                    default_value: if parameter.default_value.is_finite() {
-                        parameter.default_value.clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    },
-                    automatable: parameter.automatable,
-                })
-                .collect(),
-            state_data: plugin.state_data.filter(|state| state.len() <= 4_000_000),
-        }),
         midi_inputs: native.midi_inputs.unwrap_or_default(),
         midi_outputs: native.midi_outputs.unwrap_or_default(),
         midi_input_active: native.midi_input_active.unwrap_or(false),
@@ -512,7 +445,6 @@ mod tests {
             round_trip_ms: Some(20.0),
             timeline_tick: None,
             recording: RecordingStatus::default(),
-            plugin: None,
             midi_inputs: Vec::new(),
             midi_outputs: Vec::new(),
             midi_input_active: false,
@@ -749,8 +681,7 @@ mod tests {
             ],
             "sampleRate": 48000.0,
             "bufferSize": 256,
-            "recording": { "active": true, "directory": "/tmp", "samplesWritten": 10 },
-            "plugin": { "loaded": true, "bypassed": false, "path": "v.st3", "name": "V", "contentionBlocks": 3, "parameters": [] }
+            "recording": { "active": true, "directory": "/tmp", "samplesWritten": 10 }
         }))
         .expect("native status");
         let status = native_status_to_audio_status(native);
@@ -762,11 +693,6 @@ mod tests {
         assert_eq!(status.output_channels.len(), 2);
         assert!(status.recording.active);
         assert_eq!(status.recording.samples_written, 10);
-        assert_eq!(
-            status.plugin.as_ref().unwrap().path.as_deref(),
-            Some("v.st3")
-        );
-        assert_eq!(status.plugin.as_ref().unwrap().contention_blocks, 3);
         assert!(status.message.contains("emergency-muted"));
         assert!(!status.feedback_suspected);
     }

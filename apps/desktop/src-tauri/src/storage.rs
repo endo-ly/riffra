@@ -415,7 +415,6 @@ pub struct RecoveryCandidate {
 mod tests {
     use super::*;
     use crate::asset::{AssetKind, mint_asset_id};
-    use crate::rack::DeviceKind;
     use crate::session::AudioClip;
 
     fn test_root(name: &str) -> PathBuf {
@@ -599,12 +598,10 @@ mod tests {
     }
 
     #[test]
-    fn default_session_carries_arrangement_and_safe_rack() {
+    fn default_session_carries_an_empty_arrangement() {
         let session = CreativeSession::new(now_ms())
             .validate_and_normalize()
             .unwrap();
         assert!(session.arrangement.tracks.is_empty());
-        assert_eq!(session.rack.devices.len(), 3);
-        assert_eq!(session.rack.devices[0].kind, DeviceKind::Input);
     }
 }

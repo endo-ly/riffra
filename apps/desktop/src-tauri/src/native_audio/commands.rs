@@ -126,7 +126,7 @@ impl AudioSupervisor {
     }
 
     pub fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus> {
-        if !matches!(mode, "play" | "arrange" | "passive") {
+        if !matches!(mode, "arrange" | "passive") {
             return Err(NativeAudioError::native_rejected(
                 "Audio processing mode is invalid.",
             ));
@@ -162,7 +162,7 @@ impl AudioSupervisor {
     /// Recovery restores the same desired value if the write races with a
     /// sidecar restart.
     pub fn set_processing_mode_nonblocking(&self, mode: &str) -> NativeAudioResult<()> {
-        if !matches!(mode, "play" | "arrange" | "passive") {
+        if !matches!(mode, "arrange" | "passive") {
             return Err(NativeAudioError::native_rejected(
                 "Audio processing mode is invalid.",
             ));

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-// Shared production types live in feature modules; nothing is re-exported here
-// because this module no longer aggregates the removed mirror types.
+// Shared production types live in feature modules; this module owns the
+// application-level audio and runtime status types.
 
 /// A paired session and audio status returned by Application Operations that
 /// change the Audio Runtime and the persisted `CreativeSession` in one atomic
@@ -109,35 +109,6 @@ pub struct RecordingStatus {
     pub recovery_status: String,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginParameter {
-    pub index: u32,
-    pub name: String,
-    pub value: f32,
-    pub default_value: f32,
-    pub automatable: bool,
-}
-
-#[derive(Clone, Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginStatus {
-    pub loaded: bool,
-    pub bypassed: bool,
-    pub path: Option<String>,
-    pub name: Option<String>,
-    pub sample_rate: Option<u32>,
-    pub block_size: Option<u32>,
-    pub input_channels: u32,
-    pub output_channels: u32,
-    pub bypassed_blocks: u64,
-    pub processed_blocks: u64,
-    pub contention_blocks: u64,
-    pub transition_blocks: u64,
-    pub parameters: Vec<PluginParameter>,
-    pub state_data: Option<String>,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioChannelInfo {
@@ -169,7 +140,6 @@ pub struct AudioStatus {
     #[serde(default)]
     pub timeline_tick: Option<u64>,
     pub recording: RecordingStatus,
-    pub plugin: Option<PluginStatus>,
     pub midi_inputs: Vec<MidiDeviceInfo>,
     pub midi_outputs: Vec<MidiDeviceInfo>,
     pub midi_input_active: bool,

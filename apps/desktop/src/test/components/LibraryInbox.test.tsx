@@ -127,7 +127,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={{ ...libraryStub, section: 'Plugins' }}
-        rack={{
+        plugins={{
           ...rackStub,
           plugins: [plugin],
           visiblePlugins: [plugin],
@@ -175,7 +175,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={{ ...libraryStub, section: 'Plugins' }}
-        rack={{
+        plugins={{
           ...rackStub,
           plugins: [plugin],
           visiblePlugins: [plugin],
@@ -212,7 +212,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={libraryStub}
-        rack={rackStub}
+        plugins={rackStub}
         recordings={recordingsStub}
         inbox={inbox}
       />,
@@ -254,7 +254,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={libraryStub}
-        rack={rackStub}
+        plugins={rackStub}
         recordings={recordingsStub}
         inbox={inbox}
       />,
@@ -275,7 +275,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={libraryStub}
-        rack={rackStub}
+        plugins={rackStub}
         recordings={{ ...recordingsStub, visibleRecordings: [broken] }}
         inbox={inbox}
       />,
@@ -290,7 +290,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={libraryStub}
-        rack={rackStub}
+        plugins={rackStub}
         recordings={recordingsStub}
         inbox={inbox}
       />,
@@ -309,7 +309,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     render(
       <LibraryPanel
         library={libraryStub}
-        rack={rackStub}
+        plugins={rackStub}
         recordings={{ ...recordingsStub, visibleRecordings: [recording] }}
         inbox={makeInbox()}
       />,

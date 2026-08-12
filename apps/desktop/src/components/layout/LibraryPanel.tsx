@@ -25,7 +25,7 @@ interface LibraryPanelProps {
     onOpenInDesign: (asset: LibraryAsset) => void;
     onImportMidi: () => void;
   };
-  rack: {
+  plugins: {
     plugins: PluginEntry[];
     visiblePlugins: PluginEntry[];
     selectedTrack: Track | null;
@@ -39,7 +39,7 @@ interface LibraryPanelProps {
   inbox: InboxController;
 }
 
-export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelProps) {
+export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
 
   const showHandledError = (operation: Promise<unknown>) => {
@@ -74,7 +74,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
           >
             <span className={`nav-glyph glyph-${section.toLowerCase()}`} />
             {section}
-            <small>{section === 'Plugins' ? rack.plugins.length : ''}</small>
+            <small>{section === 'Plugins' ? plugins.plugins.length : ''}</small>
           </button>
         ))}
       </nav>
@@ -161,8 +161,8 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
         )}
         {library.section === 'Plugins' ? (
           <div className={styles.pluginArea}>
-            <small className={styles.scanMessage}>{rack.visiblePlugins.length}件を表示</small>
-            {rack.visiblePlugins.slice(0, 12).map((plugin) => (
+            <small className={styles.scanMessage}>{plugins.visiblePlugins.length}件を表示</small>
+            {plugins.visiblePlugins.slice(0, 12).map((plugin) => (
               <div className={styles.pluginEntry} key={plugin.id}>
                 <div className={styles.pluginRow}>
                   <span>{plugin.name.slice(0, 1).toUpperCase()}</span>
@@ -175,39 +175,39 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
                     type="button"
                     className={styles.pluginAdd}
                     aria-label={
-                      rack.selectedTrack
+                      plugins.selectedTrack
                         ? `${
-                            rack.selectedTrack.kind === 'instrument' &&
-                            rack.selectedTrack.instrument
+                            plugins.selectedTrack.kind === 'instrument' &&
+                            plugins.selectedTrack.instrument
                               ? 'Replace instrument with'
                               : 'Add'
                           } ${plugin.name} as ${
-                            rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
-                          } on ${rack.selectedTrack.name}`
+                            plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
+                          } on ${plugins.selectedTrack.name}`
                         : `Select a Track before adding ${plugin.name}`
                     }
                     onClick={() => {
-                      if (!rack.selectedTrack) {
+                      if (!plugins.selectedTrack) {
                         setMessage('Select a Track before adding a Plugin.');
                         return;
                       }
                       setMessage(null);
-                      rack.onAddPlugin(
+                      plugins.onAddPlugin(
                         plugin,
-                        rack.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
+                        plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
                       );
                     }}
                     disabled={plugin.scanState !== 'validated'}
                     title={
                       plugin.scanState === 'validated'
-                        ? rack.selectedTrack
-                          ? `${
-                              rack.selectedTrack.kind === 'instrument' &&
-                              rack.selectedTrack.instrument
-                                ? 'Replace instrument with'
-                                : 'Add'
-                            } ${plugin.name} on ${rack.selectedTrack.name}`
-                          : `Select a Track before adding ${plugin.name}`
+                          ? plugins.selectedTrack
+                            ? `${
+                                plugins.selectedTrack.kind === 'instrument' &&
+                                plugins.selectedTrack.instrument
+                                  ? 'Replace instrument with'
+                                  : 'Add'
+                              } ${plugin.name} on ${plugins.selectedTrack.name}`
+                            : `Select a Track before adding ${plugin.name}`
                         : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
                     }
                   >
@@ -217,7 +217,7 @@ export function LibraryPanel({ library, rack, recordings, inbox }: LibraryPanelP
               </div>
             ))}
             {message && <small className={styles.inboxMessage}>{message}</small>}
-            {rack.visiblePlugins.length === 0 && (
+            {plugins.visiblePlugins.length === 0 && (
               <div className={styles.libraryEmpty}>
                 <span>一致するVST3がありません</span>
                 <small>検索語を変えるか、VST3フォルダを確認してください。</small>

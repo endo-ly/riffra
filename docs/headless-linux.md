@@ -118,14 +118,13 @@ Linux 版の `riffra-audio` は VST3 プラグインホスティングを含ま�
 
 影響箇所：
 
-`PluginRack` は以下に直接組み込まれている。
+`PluginRack` はTrack単位の処理グラフとプラグインスキャンで利用される。
 
-- `SafetyAudioCallback`
 - `TimelineEngine`
 - `PluginChain`
 - `AudioMain.cpp`
 
-オフラインMVPでは、VST3 Deviceを含むTrackを明示的な未対応依存として報告する。`PluginRack`をno-op化して無音レンダーを成功扱いにはしない。
+オフラインレンダーでは、VST3 Deviceを含むTrackを明示的な未対応依存として報告する。`PluginRack`をno-op化して無音レンダーを成功扱いにはしない。
 
 Instrument Trackの音声化を追加する場合は、Track processor graphに内蔵音源processorを実装する。内蔵音源が存在しない状態では、MIDIデータの保存・編集・書出しまでを対応範囲とする。
 
@@ -157,11 +156,11 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 | クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip`                       | `listClips`, `getClip`                   |
 | 音符         | `updateNote`（ピッチ、ベロシティ、CC、タイミング）                                        | `getNotes`                               |
 | 再生         | `play`, `stop`, `seek`                                                                    | `getTransportStatus`                     |
-| 録音         | `startRecording`, `stopRecording`                                                         | —                                        |
+| 録音         | `startArrangeRecording`, `stopArrangeRecording`                                             | —                                        |
 | 音源         | `loadInstrument`, `setInstrumentParameter`                                                | `listInstruments`, `getInstrument`       |
 | 書き出し     | `render`, `cancelJob`                                                                     | `getJobs`, `getJob`                      |
 | 状態         | —                                                                                         | `getStatus`                              |
-| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`, `saveSnapshot`, `loadSnapshot` | `listSnapshots`                          |
+| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`                                    | —                                        |
 
 ---
 
@@ -200,7 +199,7 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 ### 非同期ジョブ
 
-`render`や`startRecording`など時間のかかる操作は、ジョブとして即座に`jobId`を返す。進行状況は`jobProgress`イベントで通知し、完了時は`jobDone`、失敗時は`jobFailed`を送る。`cancelJob`で中止できる。レスポンスを待つ間もほかのコマンドを受け付けられる。
+`render`や`startArrangeRecording`など時間のかかる操作は、ジョブとして即座に`jobId`を返す。進行状況は`jobProgress`イベントで通知し、完了時は`jobDone`、失敗時は`jobFailed`を送る。`cancelJob`で中止できる。レスポンスを待つ間もほかのコマンドを受け付けられる。
 
 ### 編集の安全
 
@@ -209,7 +208,6 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 | 原子性           | 全コマンド                                      | 1コマンドは1つの原子操作。失敗時に状態が壊れない |
 | 取り消し         | `undo`, `redo`                                  | セッションの操作履歴を戻す、やり直す             |
 | トランザクション | `beginEdit`, `commitEdit`, `rollbackEdit`       | 複数コマンドの編集をまとめて適用または破棄する   |
-| スナップショット | `saveSnapshot`, `listSnapshots`, `loadSnapshot` | 状態を保存し、後から復元できる                   |
 | 冪等性           | リクエスト側                                    | 処理済み`requestId`の再送は無視する。再送に安全  |
 
 ### 外部エンジンとの境界

@@ -73,7 +73,7 @@ Application 層 (src-tauri/src/session, asset, recording, analysis, separation, 
   └─ SessionContext（audio / runtime / session_actor / data_root / session / safe_mode）を介して依存を注入
 
 riffra-core（crates/riffra-core）: プラットフォーム非依存のドメイン
-  ├─ CreativeSession / Asset / Rack / AppCore / AudioRuntime(port)
+  ├─ CreativeSession / Asset / Track Rack / AppCore / AudioRuntime(port)
   ├─ validate_and_normalize（ロード・保存前に正準化）
   └─ Tauri・WebView・OS統合を含まない
 

@@ -1164,25 +1164,6 @@ function audioStatusSignature(status: AudioStatus): string {
     status.roundTripMs,
     status.timelineTick,
     status.recording,
-    // PluginStateSummary: the full plugin status includes a binary stateData
-    // blob and the parameter list; stringifying those on every status frame
-    // would cost more than the re-render this signature is meant to avoid.
-    status.plugin == null
-      ? null
-      : [
-          status.plugin.loaded,
-          status.plugin.bypassed,
-          status.plugin.path,
-          status.plugin.name,
-          status.plugin.sampleRate,
-          status.plugin.blockSize,
-          status.plugin.inputChannels,
-          status.plugin.outputChannels,
-          status.plugin.bypassedBlocks,
-          status.plugin.processedBlocks,
-          status.plugin.contentionBlocks,
-          status.plugin.transitionBlocks,
-        ],
     status.midiInputs,
     status.midiOutputs,
     status.midiInputActive,

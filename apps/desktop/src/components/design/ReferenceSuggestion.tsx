@@ -54,13 +54,10 @@ export function ReferenceSuggestion({
   const [previewing, setPreviewing] = useState(false);
   const [applied, setApplied] = useState(false);
   const contextOptions = [
-    { id: 'selectedRack', label: 'Selected rack' },
-    { id: 'parameterList', label: 'Parameter list' },
     { id: 'analysis', label: 'Analysis result' },
     { id: 'selectedClip', label: 'Selected clip' },
     { id: 'project', label: 'Project structure' },
     { id: 'userNote', label: 'User note' },
-    { id: 'snapshot', label: 'Snapshot' },
     { id: 'previewAudio', label: 'Preview audio' },
     { id: 'errorLog', label: 'Error log' },
   ];

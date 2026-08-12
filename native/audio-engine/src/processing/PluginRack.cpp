@@ -438,7 +438,7 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
     return true;
 }
 
-bool PluginRack::setState(const juce::String& base64, juce::String& error) noexcept {
+bool PluginRack::applyStateData(const juce::String& base64, juce::String& error) noexcept {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
@@ -472,7 +472,7 @@ bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error
     }
     const auto stateData = state.getProperty("stateData", {}).toString();
     if (stateData.isNotEmpty()) {
-        if (!setState(stateData, error))
+        if (!applyStateData(stateData, error))
             return false;
     }
     const auto values = state.getProperty("parameterValues", {});

@@ -1,8 +1,7 @@
 //! Canonical Rack domain model.
 //!
-//! A running rack on a [`crate::session::CreativeSession`] is a
-//! [`RackInstance`]: the live device order, plugin state, parameters, bypass,
-//! and utility settings needed for audio processing right now.
+//! A Track's live signal chain: device order, plugin state, parameters,
+//! bypass, and utility settings needed for audio processing right now.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

@@ -22,7 +22,7 @@ const missing: MissingDependency[] = [
     id: 'plugin:gone',
     name: 'Lost Plugin',
     path: 'C:\\gone\\Lost.vst3',
-    usedBy: ['rack:plugin:gone'],
+    usedBy: ['track:main:effect:plugin:gone'],
   },
 ];
 

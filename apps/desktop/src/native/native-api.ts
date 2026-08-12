@@ -147,10 +147,8 @@ export interface NativeApi {
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
-  startRecording(): Promise<AudioStatus>;
   startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
-  stopRecording(): Promise<AudioStatus>;
   stopArrangeRecording(): Promise<AudioStatus>;
   /**
    * Sets the master gain on the Audio Runtime and persists the clamped value

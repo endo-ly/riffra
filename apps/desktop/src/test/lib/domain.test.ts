@@ -7,8 +7,8 @@ describe('Scratch Session safety defaults', () => {
 
     expect(session.projectName).toBeNull();
     expect(session.settings.masterDb).toBe(-18);
-    expect(session.rack.devices.map((device) => device.id)).toEqual(['input', 'safety', 'output']);
-    expect(session.rack.devices.find((device) => device.id === 'safety')?.bypassed).toBe(false);
+    expect(session.arrangement.tracks).toHaveLength(0);
+    expect(session.playState.sampleInstrument.pads).toHaveLength(0);
   });
 });
 

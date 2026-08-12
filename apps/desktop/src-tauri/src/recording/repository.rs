@@ -1201,7 +1201,7 @@ mod tests {
         fs::write(take.join("manifest.json"), br#"{"state":"completed"}"#).unwrap();
         fs::write(
             take.join("provenance.json"),
-            br#"{"recordedAtMs":42,"sessionId":"scratch-42","workspace":"play","masterDb":-18.0,"countInBeats":0,"rack":[],"source":"raw DI"}"#,
+            br#"{"recordedAtMs":42,"sessionId":"scratch-42","workspace":"arrange","masterDb":-18.0,"countInBeats":0,"source":"raw DI"}"#,
         )
         .unwrap();
         // A manifest with no canonical capture is not a current-format take, so

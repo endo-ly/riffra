@@ -15,8 +15,8 @@ use crate::missing::MissingDependency;
 use crate::model::{
     AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo,
     AudioState, AudioStatus, BootstrapState, DeviceChannels, MidiDeviceInfo, MidiProbe,
-    PluginParameter, PluginStatus, RecordingStatus, RecoveryCandidate, RuntimeProjectionState,
-    RuntimeProjectionStatus, SessionAudioPair,
+    RecordingStatus, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -32,8 +32,8 @@ use crate::session::{
     CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
     MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
     ProjectTimebase, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
-    RecordingTakeRecord, SampleInstrumentState, SamplePad, SessionSettings, SessionSnapshot,
-    TimelineLoopRange, Track, TrackKind, Workspace,
+    RecordingTakeRecord, SampleInstrumentState, SamplePad, SessionSettings, TimelineLoopRange,
+    Track, TrackKind, Workspace,
 };
 use ts_rs::{Config, TS};
 
@@ -83,7 +83,6 @@ fn export_types() {
     SamplePad::export_all(&cfg).expect("SamplePad bindings");
     SampleInstrumentState::export_all(&cfg).expect("SampleInstrumentState bindings");
     PlayState::export_all(&cfg).expect("PlayState bindings");
-    SessionSnapshot::export_all(&cfg).expect("SessionSnapshot bindings");
     AiChangeSet::export_all(&cfg).expect("AiChangeSet bindings");
     SessionSettings::export_all(&cfg).expect("SessionSettings bindings");
     CreativeSession::export_all(&cfg).expect("CreativeSession bindings");
@@ -96,8 +95,6 @@ fn export_types() {
     DeviceChannels::export_all(&cfg).expect("DeviceChannels bindings");
     MidiProbe::export_all(&cfg).expect("MidiProbe bindings");
     MidiDeviceInfo::export_all(&cfg).expect("MidiDeviceInfo bindings");
-    PluginParameter::export_all(&cfg).expect("PluginParameter bindings");
-    PluginStatus::export_all(&cfg).expect("PluginStatus bindings");
     RecordingStatus::export_all(&cfg).expect("RecordingStatus bindings");
     RecoveryCandidate::export_all(&cfg).expect("RecoveryCandidate bindings");
     AudioStatus::export_all(&cfg).expect("AudioStatus bindings");

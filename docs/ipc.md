@@ -107,7 +107,7 @@
 
 | 領域           | 命令                                                                                                                                                |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 録音制御       | `start_recording`、`stop_recording`、`start_arrange_recording`、`stop_arrange_recording`、`record_another_take`                                     |
+| 録音制御       | `start_arrange_recording`、`stop_arrange_recording`、`record_another_take`                                                                                           |
 | テイク         | `activate_take`、`place_take_as_separate_clip`、`start_take_comparison`、`switch_take_comparison_variant`、`stop_take_comparison`                   |
 | キャプチャ管理 | `list_recordings`、`rename_recording`、`archive_recording`、`promote_recording`、`tag_recording`、`delete_recording`、`detect_duplicate_recordings` |
 
@@ -169,7 +169,7 @@
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | 状態照会            | `status`、`meterStatus`                                                                     |
 | 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`              |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（play / passive）       |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（arrange / passive）   |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setMasterGainDb`               |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す） |
@@ -188,7 +188,7 @@
 
 | type                                                      | 内容                                                                                           |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・プラグイン・MIDI の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）         |
 | `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知                                         |
 | `transportStatus`                                         | トランスポート状態の変化                                                                       |
 | `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                       |

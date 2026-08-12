@@ -1036,10 +1036,8 @@ pub fn run() {
             recording::commands::promote_recording,
             recording::commands::detect_duplicate_recordings,
             recording::commands::tag_recording,
-            recording::commands::start_recording,
             recording::commands::start_arrange_recording,
             recording::commands::record_another_take,
-            recording::commands::stop_recording,
             recording::commands::stop_arrange_recording,
             // Library Read Model queries / updates.
             library::commands::search_library,

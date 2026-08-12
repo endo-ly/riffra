@@ -261,6 +261,15 @@ private:
         float* const* outputChannels,
         int channelCount,
         int sampleCount) noexcept;
+    void processLiveAudioTracks(
+        PreparedTimeline& timeline,
+        const float* const* inputChannels,
+        int inputChannelCount,
+        float* const* outputChannels,
+        int channelCount,
+        std::int64_t rangeStart,
+        int destinationStart,
+        int sampleCount) noexcept;
     void processInstrumentTrack(
         Track& track,
         int sampleCount,
