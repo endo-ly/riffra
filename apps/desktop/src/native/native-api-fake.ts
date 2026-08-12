@@ -609,7 +609,7 @@ export class FakeNativeApi implements NativeApi {
     };
   };
 
-  private commitSession = (
+  private commitSessionWithAudio = (
     project: (session: CreativeSession) => CreativeSession,
   ): SessionAudioPair => {
     this.assertPersistence();
@@ -872,7 +872,7 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push('setMasterGainDb');
     const clamped = Math.max(-90, Math.min(0, Number.isFinite(gainDb) ? gainDb : 0));
     this.audio = { ...this.audio, message: `Master gain set to ${clamped.toFixed(1)} dB.` };
-    return this.commitSession((current) => ({
+    return this.commitSessionWithAudio((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       settings: { ...current.settings, masterDb: clamped },
@@ -1017,7 +1017,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSession((current) => ({
+    return this.commitSessionWithAudio((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       workspace: 'design',
@@ -1063,7 +1063,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSession((current) => ({
+    return this.commitSessionWithAudio((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       playState: {
@@ -1088,7 +1088,7 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSession((current) => ({
+    return this.commitSessionWithAudio((current) => ({
       ...current,
       updatedAtMs: Date.now(),
       playState: {

@@ -12,7 +12,7 @@ namespace {
 
 constexpr int kBlockSize = 32;
 
-juce::var makeMonitoringSnapshot() {
+juce::var makeMonitoringSnapshot(const int channelIndex = 0) {
     auto* timebase = new juce::DynamicObject();
     timebase->setProperty("ppq", 960);
     timebase->setProperty("bpm", 120.0);
@@ -20,7 +20,7 @@ juce::var makeMonitoringSnapshot() {
     timebase->setProperty("timeSignatureDenominator", 4);
 
     auto* audioInput = new juce::DynamicObject();
-    audioInput->setProperty("channelIndex", 0);
+    audioInput->setProperty("channelIndex", channelIndex);
     auto* rack = new juce::DynamicObject();
     rack->setProperty("devices", juce::Array<juce::var> {});
     auto* track = new juce::DynamicObject();
@@ -156,6 +156,39 @@ TEST(SafetyAudioCallbackTest, ReleasingEmergencyMuteClearsFeedbackCause)
 
     EXPECT_FALSE(callback.isEmergencyMuted());
     EXPECT_FALSE(callback.isFeedbackSuspected());
+}
+
+TEST(SafetyAudioCallbackTest, DetectsFeedbackOnEveryMonitoredInputChannel)
+{
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(timeline.loadSnapshot(
+        makeMonitoringSnapshot(1), formats, 48'000.0, kBlockSize, error));
+    SafetyAudioCallback callback;
+    callback.setTimelineEngine(&timeline);
+    callback.setInputChannel(0);
+    callback.setEmergencyMuted(false);
+    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
+    std::array<float, kBlockSize> selectedInput {};
+    std::array<float, kBlockSize> monitoredInput {};
+    std::array<float, kBlockSize> output {};
+    monitoredInput.fill(0.99f);
+    const std::array<const float*, 2> inputs {
+        selectedInput.data(), monitoredInput.data()};
+    const std::array<float*, 1> outputs { output.data() };
+    const juce::AudioIODeviceCallbackContext context {};
+
+    // Act
+    for (int block = 0; block < 400; ++block)
+        callback.audioDeviceIOCallbackWithContext(
+            inputs.data(), 2, outputs.data(), 1, kBlockSize, context);
+
+    // Assert
+    EXPECT_TRUE(callback.isEmergencyMuted());
+    EXPECT_TRUE(callback.isFeedbackSuspected());
 }
 
 TEST(SafetyAudioCallbackTest, DeviceFaultKeepsEmergencyMuteEngaged)

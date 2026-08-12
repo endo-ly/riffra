@@ -1751,16 +1751,16 @@ void TimelineEngine::processTracks(
                 destinationStart,
                 sampleCount);
         }
-        processLiveAudioTracks(
-            prepared,
-            physicalInputChannels,
-            physicalInputChannelCount,
-            outputChannels,
-            channelCount,
-            rangeStart,
-            destinationStart,
-            sampleCount);
     }
+    processLiveAudioTracks(
+        prepared,
+        physicalInputChannels,
+        physicalInputChannelCount,
+        outputChannels,
+        channelCount,
+        rangeStart,
+        destinationStart,
+        sampleCount);
 }
 
 void TimelineEngine::processLiveAudioTracks(

@@ -407,23 +407,50 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         int recordedSamples = numSamples;
         (void) timelineEngine->recordingWindow(numSamples, recordingOffset, recordedSamples);
     }
+    const auto mode = processingMode.load(std::memory_order_acquire);
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
-    const auto* selectedInput = selectedChannel < numInputChannels
+    const auto* selectedInput = inputChannelData != nullptr
+        && selectedChannel < numInputChannels
         ? inputChannelData[selectedChannel]
         : nullptr;
-    const auto mode = processingMode.load(std::memory_order_acquire);
-    const auto monitoringActive = mode == ProcessingMode::arrange
+    const auto monitoringRoutesActive = mode == ProcessingMode::arrange
         && timelineEngine != nullptr
-        && timelineEngine->monitoringEnabled()
-        && timelineEngine->monitoringInputChannel(selectedChannel);
-    float rawInputPeak = 0.0f;
-    if (selectedInput != nullptr) {
-        const auto maxVal = std::abs(juce::FloatVectorOperations::findMaximum(
-            selectedInput, numSamples));
-        const auto minVal = std::abs(juce::FloatVectorOperations::findMinimum(
-            selectedInput, numSamples));
-        rawInputPeak = std::max({rawInputPeak, maxVal, minVal});
+        && timelineEngine->monitoringEnabled();
+    std::uint64_t invalidInputSamples = 0;
+    const auto peakForInput = [numSamples, &invalidInputSamples](
+                                  const float* const input,
+                                  const bool countInvalid) noexcept {
+        if (input == nullptr || numSamples <= 0)
+            return 0.0f;
+        float peak = 0.0f;
+        for (int sample = 0; sample < numSamples; ++sample) {
+            const auto value = input[sample];
+            if (!std::isfinite(value)) {
+                if (countInvalid)
+                    ++invalidInputSamples;
+                continue;
+            }
+            peak = std::max(peak, std::abs(value));
+        }
+        return peak;
+    };
+    const auto rawInputPeak = peakForInput(selectedInput, true);
+    float monitoredInputPeak = 0.0f;
+    bool monitoringActive = false;
+    if (monitoringRoutesActive && inputChannelData != nullptr) {
+        for (int channel = 0; channel < numInputChannels; ++channel) {
+            if (!timelineEngine->monitoringInputChannel(channel))
+                continue;
+            monitoringActive = true;
+            monitoredInputPeak = std::max(
+                monitoredInputPeak,
+                peakForInput(
+                    inputChannelData[channel],
+                    inputChannelData[channel] != selectedInput));
+        }
     }
+    if (invalidInputSamples > 0)
+        invalidSamples.fetch_add(invalidInputSamples, std::memory_order_relaxed);
 
     if (emergencyMuted.load(std::memory_order_acquire)) {
         for (int channel = 0; channel < numOutputChannels; ++channel)
@@ -444,7 +471,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         return;
     }
 
-    feedbackDetector.observe(rawInputPeak, numSamples, monitoringActive);
+    feedbackDetector.observe(monitoredInputPeak, numSamples, monitoringActive);
     if (feedbackDetector.consumeSuspected()) {
         emergencyMuted.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);

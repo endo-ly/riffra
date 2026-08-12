@@ -63,6 +63,53 @@ juce::var makeInstrumentSnapshot(
     return juce::var(snapshot);
 }
 
+juce::var makeAudioTrackSnapshot(
+    const int trackCount,
+    const bool monitorFirstTrack,
+    const bool armFirstTrack) {
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    juce::Array<juce::var> tracks;
+    for (int index = 0; index < trackCount; ++index) {
+        const auto primary = index == 0;
+        auto* track = new juce::DynamicObject();
+        track->setProperty(
+            "id",
+            primary
+                ? juce::String("track:live")
+                : juce::String("track:unrelated-") + juce::String(index));
+        track->setProperty("kind", "audio");
+        track->setProperty("gainDb", 0.0);
+        track->setProperty("pan", 0.0);
+        track->setProperty("muted", false);
+        track->setProperty("solo", false);
+        track->setProperty("armed", primary && armFirstTrack);
+        track->setProperty(
+            "monitoring",
+            primary && monitorFirstTrack ? "on" : "off");
+        auto* audioInput = new juce::DynamicObject();
+        audioInput->setProperty("channelIndex", 0);
+        track->setProperty("audioInput", juce::var(audioInput));
+        auto* rack = new juce::DynamicObject();
+        rack->setProperty("devices", juce::Array<juce::var> {});
+        track->setProperty("rack", juce::var(rack));
+        track->setProperty("audioClips", juce::Array<juce::var> {});
+        track->setProperty("midiClips", juce::Array<juce::var> {});
+        track->setProperty("automation", juce::Array<juce::var> {});
+        tracks.add(juce::var(track));
+    }
+
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+    return juce::var(snapshot);
+}
+
 } // namespace
 
 class TimelineEngineTestPeer final {
@@ -1744,6 +1791,115 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped)
         inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
     EXPECT_GT(outputMagnitude(), 0.02f);
     EXPECT_LT(outputMagnitude(), 0.08f);
+}
+
+TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback)
+{
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    constexpr int kBlockSamples = 512;
+    const auto measurePeak = [&](const int trackCount, float& peak) {
+        TimelineEngine engine;
+        juce::String error;
+        if (!engine.loadSnapshot(
+                makeAudioTrackSnapshot(trackCount, true, false),
+                formats,
+                48'000.0,
+                kBlockSamples,
+                error))
+            return false;
+        std::array<float, kBlockSamples> input {};
+        input.fill(0.05f);
+        std::array<float, kBlockSamples> outputLeft {};
+        std::array<float, kBlockSamples> outputRight {};
+        const std::array<const float*, 1> inputChannels { input.data() };
+        const std::array<float*, 2> outputChannels {
+            outputLeft.data(), outputRight.data()};
+
+        engine.play();
+        engine.mix(
+            inputChannels.data(),
+            1,
+            outputChannels.data(),
+            2,
+            kBlockSamples);
+        peak = std::max(
+            juce::FloatVectorOperations::findMaximum(
+                outputLeft.data(), kBlockSamples),
+            juce::FloatVectorOperations::findMaximum(
+                outputRight.data(), kBlockSamples));
+        return true;
+    };
+    float oneTrackPeak = 0.0f;
+    float twoTrackPeak = 0.0f;
+    float tenTrackPeak = 0.0f;
+
+    // Act
+    ASSERT_TRUE(measurePeak(1, oneTrackPeak));
+    ASSERT_TRUE(measurePeak(2, twoTrackPeak));
+    ASSERT_TRUE(measurePeak(10, tenTrackPeak));
+
+    // Assert
+    EXPECT_GT(oneTrackPeak, 0.02f);
+    EXPECT_NEAR(twoTrackPeak, oneTrackPeak, 0.0001f);
+    EXPECT_NEAR(tenTrackPeak, oneTrackPeak, 0.0001f);
+}
+
+TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback)
+{
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(
+        makeAudioTrackSnapshot(10, false, true),
+        formats,
+        48'000.0,
+        kBlockSamples,
+        error));
+    CaptureIsolationSink captureSink;
+    engine.setRecordingSink(&captureSink);
+    std::array<float, kBlockSamples> input {};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> outputLeft {};
+    std::array<float, kBlockSamples> outputRight {};
+    const std::array<const float*, 1> inputChannels { input.data() };
+    const std::array<float*, 2> outputChannels {
+        outputLeft.data(), outputRight.data()};
+    int captureOffset = 0;
+    int captureSamples = 0;
+    ASSERT_TRUE(engine.startRecording(0, error));
+    ASSERT_TRUE(engine.recordingWindow(
+        kBlockSamples, captureOffset, captureSamples));
+
+    // Act
+    engine.mix(
+        inputChannels.data(),
+        1,
+        outputChannels.data(),
+        2,
+        kBlockSamples);
+    const auto rawSamplesAfterCallback = captureSink.totalRawSamples;
+    const auto beginCountAfterCallback = captureSink.beginCount;
+    const auto endCountAfterCallback = captureSink.endCount;
+    engine.stopRecording();
+    const auto flushed = engine.flushRecordingTail(error);
+    engine.stop();
+    engine.clearRecordingSink();
+
+    // Assert
+    EXPECT_TRUE(flushed);
+    EXPECT_EQ(captureOffset, 0);
+    EXPECT_EQ(captureSamples, kBlockSamples);
+    EXPECT_EQ(rawSamplesAfterCallback, kBlockSamples);
+    EXPECT_EQ(beginCountAfterCallback, 1);
+    EXPECT_EQ(endCountAfterCallback, 0);
+    EXPECT_EQ(captureSink.totalRawSamples, kBlockSamples);
+    EXPECT_EQ(captureSink.beginCount, 1);
+    EXPECT_EQ(captureSink.endCount, 1);
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain)
