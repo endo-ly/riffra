@@ -1,4 +1,4 @@
-import type { AssetId, MissingDependency, CreativeSession } from '@/lib/domain';
+import type { AssetId, MissingDependency, CreativeSession } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function getMissingDependencies(): Promise<MissingDependency[]> {

@@ -1,5 +1,5 @@
-import type { AssetId, HistoryState, ProjectExport, CreativeSession } from '@/lib/domain';
-import { defaultSession } from '@/lib/domain';
+import type { AssetId, HistoryState, ProjectExport, CreativeSession } from '@/model/domain';
+import { defaultSession } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function undoSession(): Promise<CreativeSession> {

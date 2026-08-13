@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { CreativeSession } from '@/lib/domain';
+import type { CreativeSession } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 
 export type ClipCommands = Pick<

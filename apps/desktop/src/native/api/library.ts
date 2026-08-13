@@ -1,4 +1,4 @@
-import type { LibraryAsset, RecordingAsset } from '@/lib/domain';
+import type { LibraryAsset, RecordingAsset } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
-import type { LibraryAsset, RecordingAsset } from '@/lib/domain';
-import { audioCommandSucceeded } from '@/lib/audio-safety';
+import type { LibraryAsset, RecordingAsset } from '@/model/domain';
+import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 import type { AudioApi, LibraryApi } from '@/native/native-api';
 
 interface UseInboxOptions {

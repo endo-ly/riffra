@@ -1,4 +1,4 @@
-import type { RuntimeProjectionStatus } from '@/lib/domain';
+import type { RuntimeProjectionStatus } from '@/model/domain';
 import { invoke } from '../invoke';
 
 export async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {

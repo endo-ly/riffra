@@ -39,8 +39,8 @@ import type {
   TrackKind,
   Workspace,
   TransportStatus,
-} from '@/lib/domain';
-import type { AudioMeters } from '@/lib/audio-meters';
+} from '@/model/domain';
+import type { AudioMeters } from '@/shared/audio/audio-meters';
 
 export interface TrackPluginStateChange {
   trackId: string;

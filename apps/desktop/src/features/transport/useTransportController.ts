@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, RenderResult } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, RenderResult } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
 import type { AudioApi, DesignApi, NativeEventApi, TransportApi } from '@/native/native-api';
 

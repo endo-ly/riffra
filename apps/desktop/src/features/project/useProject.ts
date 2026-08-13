@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { BootstrapState, CreativeSession, HistoryState } from '@/lib/domain';
+import type { BootstrapState, CreativeSession, HistoryState } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
 
 interface UseSessionOptions {

@@ -1,4 +1,4 @@
-import type { AudioMeters } from '@/lib/audio-meters';
+import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type {
   AudioStatus,
   BackgroundJobStatus,
@@ -12,8 +12,8 @@ import type {
   ScanReport,
   SeparationResult,
   TransportStatus,
-} from '@/lib/domain';
-import { defaultSession, defaultViewState, toAssetId } from '@/lib/domain';
+} from '@/model/domain';
+import { defaultSession, defaultViewState, toAssetId } from '@/model/domain';
 import type {
   NativeApi,
   RuntimeStartupFinishedEvent,

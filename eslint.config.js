@@ -17,7 +17,7 @@ export default tseslint.config(
       '.artifacts',
       'apps/desktop/src-tauri',
       'native',
-      'apps/desktop/src/lib/generated',
+      'apps/desktop/src/model/generated',
       '*.config.ts',
     ],
   },

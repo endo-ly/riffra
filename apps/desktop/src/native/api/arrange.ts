@@ -14,7 +14,7 @@ import type {
   MidiClipMove,
   MidiClipPatch,
   MidiInputRoute,
-} from '@/lib/domain';
+} from '@/model/domain';
 import { invokeLatest, invokeOrFallback, invoke } from '../invoke';
 
 export async function addAudioClipToArrangement(

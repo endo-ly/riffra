@@ -62,7 +62,10 @@ Tauriシェルはセーフモード（§7）で起動するとサイドカーの
 React フロントエンド
   ├─ 状態: CreativeSession と DesktopViewState を独立して保持・描画する
   ├─ 編集: Feature別の NativeApi capability 経由で Tauri 命令を呼ぶ
-  └─ 型: src/lib/generated（Rust の ts-rs 出力を gen-barrel.js で束ねたもの）
+  ├─ app: 起動とアプリ全体のシェル（App、GlobalBar）
+  ├─ features: 機能ごとの状態・hooks・components・テスト（arrange、library、design など）
+  ├─ shared: 機能を持たない横断UI（Toast、ContextMenu、確認ダイアログなど）
+  └─ 型: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねたもの）
 
 Tauri 命令層 (src-tauri/src/**/commands.rs)
   ├─ 受け取った命令を Desktop Adapter へ委譲

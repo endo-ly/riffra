@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ProjectTimebase, TransportStatus } from '@/lib/domain';
+import type { ProjectTimebase, TransportStatus } from '@/model/domain';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
 
 export function useArrangeTransport(

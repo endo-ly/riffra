@@ -1,5 +1,11 @@
 import { useCallback } from 'react';
-import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, TrackKind } from '@/lib/domain';
+import type {
+  AudioAnalysis,
+  AudioClip,
+  CreativeSession,
+  MidiClip,
+  TrackKind,
+} from '@/model/domain';
 import type { ClipCommands } from './useArrangeCommands';
 import {
   clipDurationTicks,
@@ -7,7 +13,7 @@ import {
   midiClipDurationTicks,
   ticksToFrames,
   type ArrangeTool,
-} from '@/lib/arrange-timeline';
+} from '@/features/arrange/model/arrange-timeline';
 
 type ArrangeCommit = (
   operation: Promise<CreativeSession | null>,

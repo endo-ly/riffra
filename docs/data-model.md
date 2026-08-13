@@ -25,15 +25,15 @@
 
 ## 2. 型定義の場所
 
-| エンティティ群                                  | 正準定義（Rust）                                                         | TypeScript                                          | C++ ミラー                                              |
-| ----------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------- |
-| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                         | `apps/desktop/src/lib/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
-| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                   | 同上                                                | —                                                       |
-| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                    | 同上                                                | `native/audio-engine`（グラフ構築）                     |
-| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                          | 同上                                                | `native/audio-engine`（録音制御）                       |
-| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`） | 同上                                                | —                                                       |
-| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                     | 同上                                                | —                                                       |
-| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                               | 同上                                                | `native/audio-engine`                                   |
+| エンティティ群                                  | 正準定義（Rust）                                                         | TypeScript                                            | C++ ミラー                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------- |
+| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                         | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
+| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                   | 同上                                                  | —                                                       |
+| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                    | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
+| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                          | 同上                                                  | `native/audio-engine`（録音制御）                       |
+| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`） | 同上                                                  | —                                                       |
+| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                     | 同上                                                  | —                                                       |
+| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                               | 同上                                                  | `native/audio-engine`                                   |
 
 TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scripts/gen-barrel.js` のバレル生成）で常に Rust から再生成される。手書きの型は追加しない。
 

@@ -8,8 +8,8 @@ import type {
   MidiProbe,
   RuntimeProjectionStatus,
   SessionAudioPair,
-} from '@/lib/domain';
-import { offlineAudioStatus } from '@/lib/audio-defaults';
+} from '@/model/domain';
+import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
 import { invokeOrFallback, invoke } from '../invoke';
 import { audioCommandError } from './audio-error';
 

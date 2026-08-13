@@ -1,4 +1,4 @@
-import type { AssetId, DesktopViewState, DesignTool, Workspace } from '@/lib/domain';
+import type { AssetId, DesktopViewState, DesignTool, Workspace } from '@/model/domain';
 import { invokeOrFallback } from '../invoke';
 
 export async function openAssetInDesign(

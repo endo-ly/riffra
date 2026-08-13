@@ -5,7 +5,7 @@ import type {
   RenderResult,
   CreativeSession,
   SeparationResult,
-} from '@/lib/domain';
+} from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null> {

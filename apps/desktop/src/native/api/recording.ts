@@ -1,4 +1,4 @@
-import type { AudioStatus, AssetId, SessionAudioPair } from '@/lib/domain';
+import type { AudioStatus, AssetId, SessionAudioPair } from '@/model/domain';
 import { invoke } from '../invoke';
 import { audioCommandError } from './audio-error';
 

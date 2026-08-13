@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
-import type { BootstrapState, RecoveryCandidate } from '@/lib/domain';
-import { defaultSession, defaultViewState } from '@/lib/domain';
+import type { BootstrapState, RecoveryCandidate } from '@/model/domain';
+import { defaultSession, defaultViewState } from '@/model/domain';
 import { invokeOrFallback, isNativeRuntime } from '../invoke';
 import type { RuntimeStartupFinishedEvent } from '../native-api';
 import { defaultVst3Root } from './constants';

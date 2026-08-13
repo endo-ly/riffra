@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioAnalysis, AudioClip } from '@/lib/domain';
+import type { AudioAnalysis, AudioClip } from '@/model/domain';
 import type { DesignApi } from '@/native/native-api';
 
 export function useWaveformAnalyses(api: Pick<DesignApi, 'analyzeAsset'>, clips: AudioClip[]) {

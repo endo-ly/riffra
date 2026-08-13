@@ -1,6 +1,6 @@
-import type { AudioStatus } from '@/lib/domain';
+import type { AudioStatus } from '@/model/domain';
 import { invokeOrFallback } from '../invoke';
-import { offlineAudioStatus } from '@/lib/audio-defaults';
+import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
 
 function nativeErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;

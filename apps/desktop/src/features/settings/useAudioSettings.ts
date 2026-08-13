@@ -1,8 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioDriverConfig, AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
-import { reconcileAudioSettings } from '@/lib/audio-settings';
-import { audioCommandSucceeded, isEmergencyMuteActive } from '@/lib/audio-safety';
+import type {
+  AudioDriverConfig,
+  AudioStatus,
+  CreativeSession,
+  RecordingAsset,
+} from '@/model/domain';
+import { reconcileAudioSettings } from '@/features/settings/audio-settings';
+import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import type { AudioApi, BootstrapApi, LibraryApi, RecordingApi } from '@/native/native-api';
 
 interface UseAudioOptions {

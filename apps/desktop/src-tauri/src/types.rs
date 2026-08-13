@@ -2,7 +2,7 @@
 //!
 //! Every Rust struct or enum that crosses the Tauri IPC boundary derives
 //! `ts_rs::TS`. This module regenerates the TypeScript declaration files under
-//! `src/lib/generated/` from those types. `scripts/verify.mjs` runs this export
+//! `src/model/generated/` from those types. `scripts/verify.mjs` runs this export
 //! before the TypeScript build and fails when the committed bindings differ
 //! from the freshly generated output, so the two sides cannot drift.
 
@@ -39,7 +39,7 @@ use ts_rs::{Config, TS};
 #[test]
 fn export_types() {
     let cfg = Config::new()
-        .with_out_dir("../src/lib/generated")
+        .with_out_dir("../src/model/generated")
         .with_large_int("number");
     AssetId::export_all(&cfg).expect("AssetId bindings");
     BackgroundJobStatus::export_all(&cfg).expect("BackgroundJobStatus bindings");

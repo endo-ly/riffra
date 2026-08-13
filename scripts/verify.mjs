@@ -124,7 +124,7 @@ function main() {
   const artifactsRoot = join(root, '.artifacts', 'verify');
   process.env.CARGO_TARGET_DIR = join(artifactsRoot, 'cargo');
 
-  const generatedTypes = join(root, 'apps', 'desktop', 'src', 'lib', 'generated');
+  const generatedTypes = join(root, 'apps', 'desktop', 'src', 'model', 'generated');
   const typesBeforeGeneration = snapshotDirectory(generatedTypes);
   run('Regenerate TypeScript bindings', resolveCommand('npm'), ['run', 'gen:types']);
   if (snapshotDirectory(generatedTypes) !== typesBeforeGeneration) {

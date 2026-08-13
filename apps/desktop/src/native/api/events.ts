@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
-import type { AudioStatus, TransportStatus } from '@/lib/domain';
-import type { AudioMeters } from '@/lib/audio-meters';
+import type { AudioStatus, TransportStatus } from '@/model/domain';
+import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type {
   NativeEventApi,
   TrackPluginParameterChange,

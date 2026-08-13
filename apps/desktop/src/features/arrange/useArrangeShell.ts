@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CreativeSession, PluginEntry } from '@/lib/domain';
+import type { CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import type { ArrangeSelection } from './hooks/useArrangeEditor';

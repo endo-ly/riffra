@@ -5,7 +5,7 @@ import type {
   ScanJobStatus,
   ScanReport,
   SeparationJobStatus,
-} from '@/lib/domain';
+} from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 import { defaultVst3Root } from './constants';
 

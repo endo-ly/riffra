@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CreativeSession, TrackKind } from '@/lib/domain';
+import type { AudioAnalysis, CreativeSession, TrackKind } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
@@ -7,9 +7,9 @@ import {
   TRACK_HEADER_WIDTH,
   type ArrangeTool,
   type SnapGrid,
-} from '@/lib/arrange-timeline';
-import { readAssetDrag } from '@/lib/arrange-drag';
-import { isEditableTarget } from '@/lib/interaction';
+} from '@/features/arrange/model/arrange-timeline';
+import { readAssetDrag } from '@/shared/asset-drag';
+import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useClipInteractions } from './useClipInteractions';
 import { useArrangeCommands } from './useArrangeCommands';
 

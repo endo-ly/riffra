@@ -1,4 +1,4 @@
-import type { CreativeSession } from '@/lib/domain';
+import type { CreativeSession } from '@/model/domain';
 import { invoke } from '../invoke';
 import type { TrackPluginParameterChange, TrackPluginStateChange } from '../native-api';
 

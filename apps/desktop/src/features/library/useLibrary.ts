@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { AudioStatus, LibraryAsset } from '@/lib/domain';
-import { toAssetId } from '@/lib/domain';
+import type { AudioStatus, LibraryAsset } from '@/model/domain';
+import { toAssetId } from '@/model/domain';
 import type { AudioApi, LibraryApi, ProjectApi } from '@/native/native-api';
 import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
