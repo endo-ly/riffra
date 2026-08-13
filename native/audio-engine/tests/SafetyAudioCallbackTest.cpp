@@ -109,7 +109,6 @@ TEST(SafetyAudioCallbackTest, DoesNotMuteForAHotInputWhenMonitoringIsOff)
 {
     SafetyAudioCallback callback;
     callback.setEmergencyMuted(false);
-    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::passive);
     std::array<float, kBlockSize> input {};
     std::array<float, kBlockSize> output {};
     input.fill(0.99f);
@@ -137,7 +136,6 @@ TEST(SafetyAudioCallbackTest, ReleasingEmergencyMuteClearsFeedbackCause)
     SafetyAudioCallback callback;
     callback.setTimelineEngine(&timeline);
     callback.setEmergencyMuted(false);
-    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
     std::array<float, kBlockSize> input {};
     std::array<float, kBlockSize> output {};
     input.fill(0.99f);
@@ -171,7 +169,6 @@ TEST(SafetyAudioCallbackTest, DetectsFeedbackOnEveryMonitoredInputChannel)
     callback.setTimelineEngine(&timeline);
     callback.setInputChannel(0);
     callback.setEmergencyMuted(false);
-    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
     std::array<float, kBlockSize> selectedInput {};
     std::array<float, kBlockSize> monitoredInput {};
     std::array<float, kBlockSize> output {};

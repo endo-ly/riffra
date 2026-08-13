@@ -243,7 +243,6 @@ pub fn add_midi_clip(
                 events,
             })
     })?;
-    context.view_state.lock().map_err(lock_error)?.workspace = Workspace::Arrange;
     sync_arrangement(context)?;
     Ok(committed)
 }

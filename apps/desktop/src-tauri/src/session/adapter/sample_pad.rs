@@ -64,12 +64,6 @@ pub fn create_sample_pad(
             core.application(store).add_sample_pad(pad)
         })
     })?;
-    if result.session != previous_session {
-        let mut view_state = context.view_state.lock().map_err(lock_error)?;
-        view_state.workspace = Workspace::Design;
-        view_state.design_context.active_tool = DesignTool::Sample;
-        view_state.design_context.target_asset_id = Some(asset_id);
-    }
     Ok(result)
 }
 

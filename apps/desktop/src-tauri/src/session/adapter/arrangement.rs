@@ -271,7 +271,6 @@ pub fn add_audio_clip(
             |id| asset::load(context.data_root, id).is_some(),
         )
     })?;
-    context.view_state.lock().map_err(lock_error)?.workspace = Workspace::Arrange;
     sync_arrangement(context)?;
     Ok(committed)
 }

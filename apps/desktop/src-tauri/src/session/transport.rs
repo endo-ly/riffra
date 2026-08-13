@@ -3,10 +3,9 @@
 use crate::asset;
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::NativeSamplePad;
-use crate::presentation::{DesktopViewState, Workspace};
 use crate::runtime::RuntimeReconciler;
 use crate::runtime::ports::RuntimeDriver;
-use crate::session::context::{SessionContext, lock_error};
+use crate::session::context::SessionContext;
 use riffra_core::{
     CreativeSession, DeviceKind, PortError, RuntimeProjection, RuntimeProjectionRequest, SamplePad,
     TimelineTick,
@@ -347,7 +346,7 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
     // no longer sufficient. Register the Play intent before waiting for the
     // graph so a concurrent Stop can cancel the pending start.
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    let played = context.runtime.apply_and_play_if(
+    context.runtime.apply_and_play(
         transport_sequence,
         runtime_timeline_snapshot(context.data_root, &projection.session),
         riffra_core::ProjectionKey {
@@ -355,17 +354,7 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
             session_revision: projection.session.arrangement.revision,
         },
         std::time::Duration::from_secs(30),
-        || {
-            context
-                .view_state
-                .lock()
-                .map(|view_state| view_state.workspace == Workspace::Arrange)
-                .unwrap_or(false)
-        },
     )?;
-    if !played {
-        return Err("Arrange playback was cancelled because the workspace changed.".into());
-    }
     Ok(())
 }
 
@@ -396,95 +385,11 @@ pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result
     context.audio.seek_timeline(tick.0).map_err(String::from)
 }
 
-/// Returns the active workspace snapshot and updates the desired audio mode.
-///
-/// Workspace navigation updates only the desktop view state and sends a
-/// best-effort processing-mode request to the Audio Runtime.
-pub fn switch_workspace(
-    context: &SessionContext<'_>,
-    workspace: Workspace,
-    transport_sequence: u64,
-) -> Result<DesktopViewState, String> {
-    context.view_state.lock().map_err(lock_error)?.workspace = workspace;
-    if workspace != Workspace::Arrange
-        && let Err(error) = context.runtime.stop_nonblocking(transport_sequence)
-    {
-        tracing::warn!(
-            error = ?error,
-            workspace = ?workspace,
-            "Workspace snapshot returned, but stale Arrange transport could not be stopped."
-        );
-    }
-    let mode = workspace_processing_mode(workspace);
-    if let Err(error) = context.audio.set_processing_mode_nonblocking(mode) {
-        tracing::warn!(
-            error = ?error,
-            workspace = ?workspace,
-            "Workspace snapshot returned, but the audio processing mode could not be sent; recovery will retry the desired mode."
-        );
-    }
-    context
-        .view_state
-        .lock()
-        .map_err(lock_error)
-        .map(|view_state| view_state.clone())
-}
-
-fn workspace_processing_mode(workspace: Workspace) -> &'static str {
-    match workspace {
-        Workspace::Arrange => "arrange",
-        Workspace::Design => "passive",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::RecordingStatus;
     use riffra_core::{RackDevice, Track};
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn workspace_navigation_updates_memory_without_creating_a_session_save() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-workspace-navigation-{}",
-            crate::storage::now_ms()
-        ));
-        let session = CreativeSession::new(1);
-        let audio = crate::native_audio::AudioSupervisor::offline("test");
-        let runtime_driver = Arc::new(audio.clone());
-        let runtime =
-            Arc::new(crate::runtime::RuntimeReconciler::new(runtime_driver, None).unwrap());
-        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
-        let view_state = Mutex::new(crate::presentation::DesktopViewState::default());
-        let context = SessionContext {
-            core: &core,
-            view_state: &view_state,
-            audio: &audio,
-            runtime: runtime.as_ref(),
-            data_root: &root,
-            safe_mode: false,
-        };
-
-        let next = switch_workspace(&context, Workspace::Arrange, 1).unwrap();
-
-        assert_eq!(next.workspace, Workspace::Arrange);
-        assert_eq!(view_state.lock().unwrap().workspace, Workspace::Arrange);
-        assert!(!root.join("scratch").join("current.json").exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn workspace_processing_mode_matches_workspace() {
-        let cases = [
-            (Workspace::Arrange, "arrange"),
-            (Workspace::Design, "passive"),
-        ];
-
-        for (workspace, expected_mode) in cases {
-            assert_eq!(workspace_processing_mode(workspace), expected_mode);
-        }
-    }
 
     #[test]
     fn disabled_sample_pad_outcome_keeps_the_warning_in_the_status() {

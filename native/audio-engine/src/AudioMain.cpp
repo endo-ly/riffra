@@ -1309,9 +1309,6 @@ int serve(
                 continue;
             }
             if (type == "playTimeline") {
-                // Arrange playback always owns the processing mode while the
-                // transport is running.
-                callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 timelineEngine.play();
                 writeJson(timelineEngine.status());
                 continue;
@@ -1327,23 +1324,6 @@ int serve(
                     command.getProperty("tick", 0)));
                 timelineEngine.seekToTick(tick);
                 writeJson(timelineEngine.status());
-                continue;
-            }
-            if (type == "setProcessingMode") {
-                const auto mode = command.getProperty("mode", {}).toString();
-                const auto reportStatus = static_cast<bool>(
-                    command.getProperty("reportStatus", true));
-                if (mode == "arrange")
-                    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
-                else if (mode == "passive")
-                    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::passive);
-                else {
-                    writeJson(makeError("processingMode", "Processing mode is invalid."));
-                    continue;
-                }
-                if (reportStatus)
-                    writeJson(currentStatus(
-                        manager, callback, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "probeMidiDevices") {

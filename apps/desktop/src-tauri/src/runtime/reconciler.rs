@@ -106,24 +106,14 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         )
     }
 
-    pub fn apply_and_play_if<F>(
+    pub fn apply_and_play(
         &self,
         sequence: u64,
         snapshot: Value,
         key: ProjectionKey,
         timeout: Duration,
-        should_play: F,
-    ) -> Result<bool, RuntimeError>
-    where
-        F: FnOnce() -> bool,
-    {
+    ) -> Result<bool, RuntimeError> {
         let lease = self.transport.acquire()?;
-        if !should_play() {
-            if matches!(lease.request_stop(sequence), StopDecision::Accepted) {
-                self.projection.notify();
-            }
-            return Ok(false);
-        }
         if matches!(
             lease.request_play(sequence, Some(key)),
             PlayDecision::Rejected
@@ -178,17 +168,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
         self.projection.notify();
         lease.stop()?;
-        drop(lease);
-        Ok(self.status())
-    }
-
-    pub fn stop_nonblocking(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        let lease = self.transport.acquire()?;
-        if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
-            return Ok(self.status());
-        }
-        self.projection.notify();
-        lease.stop_nonblocking()?;
         drop(lease);
         Ok(self.status())
     }
@@ -320,10 +299,6 @@ mod tests {
             self.stopped.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
-
-        fn stop_timeline_nonblocking(&self) -> Result<(), RuntimeError> {
-            self.stop_timeline()
-        }
     }
 
     fn snapshot(revision: u64) -> Value {
@@ -429,7 +404,7 @@ mod tests {
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
         let caller = Arc::clone(&reconciler);
         let play = thread::spawn(move || {
-            caller.apply_and_play_if(1, snapshot(7), key(7, 7), Duration::from_secs(1), || true)
+            caller.apply_and_play(1, snapshot(7), key(7, 7), Duration::from_secs(1))
         });
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -449,9 +424,7 @@ mod tests {
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
         let caller = Arc::clone(&reconciler);
         let play = thread::spawn(move || {
-            caller.apply_and_play_if(1, snapshot(71), key(71, 71), Duration::from_secs(1), || {
-                true
-            })
+            caller.apply_and_play(1, snapshot(71), key(71, 71), Duration::from_secs(1))
         });
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -469,9 +442,7 @@ mod tests {
 
         reconciler.stop(2).unwrap();
         let played = reconciler
-            .apply_and_play_if(1, snapshot(72), key(72, 72), Duration::from_secs(1), || {
-                true
-            })
+            .apply_and_play(1, snapshot(72), key(72, 72), Duration::from_secs(1))
             .unwrap();
 
         assert!(!played);
@@ -485,13 +456,7 @@ mod tests {
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         reconciler.submit_nonblocking(snapshot(2), key(2, 2));
 
-        let play = reconciler.apply_and_play_if(
-            10,
-            snapshot(1),
-            key(1, 1),
-            Duration::from_secs(1),
-            || true,
-        );
+        let play = reconciler.apply_and_play(10, snapshot(1), key(1, 1), Duration::from_secs(1));
 
         assert!(play.is_err());
         wait_until(|| reconciler.status().active_session_revision == Some(2));
@@ -504,13 +469,7 @@ mod tests {
         driver.play_failure_once.store(1, Ordering::Release);
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
 
-        let _ = reconciler.apply_and_play_if(
-            1,
-            snapshot(30),
-            key(30, 30),
-            Duration::from_secs(1),
-            || true,
-        );
+        let _ = reconciler.apply_and_play(1, snapshot(30), key(30, 30), Duration::from_secs(1));
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
 
@@ -527,38 +486,18 @@ mod tests {
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
         let first = Arc::clone(&reconciler);
         let old_play = thread::spawn(move || {
-            first.apply_and_play_if(1, snapshot(73), key(73, 73), Duration::from_secs(1), || {
-                true
-            })
+            first.apply_and_play(1, snapshot(73), key(73, 73), Duration::from_secs(1))
         });
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         reconciler.stop(2).unwrap();
-        let new_play = reconciler.apply_and_play_if(
-            3,
-            snapshot(73),
-            key(73, 73),
-            Duration::from_secs(1),
-            || true,
-        );
+        let new_play =
+            reconciler.apply_and_play(3, snapshot(73), key(73, 73), Duration::from_secs(1));
 
         assert!(old_play.join().unwrap().is_err());
         assert!(new_play.is_ok());
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn guarded_play_is_dropped_after_workspace_navigation() {
-        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-
-        let played = reconciler
-            .apply_and_play_if(1, snapshot(8), key(8, 8), Duration::from_secs(1), || false)
-            .unwrap();
-
-        assert!(!played);
-        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -619,9 +558,7 @@ mod tests {
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
         let played = reconciler
-            .apply_and_play_if(1, snapshot(20), key(20, 20), Duration::from_secs(1), || {
-                true
-            })
+            .apply_and_play(1, snapshot(20), key(20, 20), Duration::from_secs(1))
             .unwrap();
         assert!(played);
         thread::sleep(Duration::from_millis(20));

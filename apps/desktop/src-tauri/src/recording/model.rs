@@ -93,10 +93,6 @@ pub struct RecordingCapture {
     pub input_channel: Option<u32>,
     pub input_channel_name: Option<String>,
     pub buffer_size: Option<u32>,
-    /// Session context captured at recording start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub workspace: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub master_db: Option<f64>,
@@ -148,7 +144,6 @@ impl RecordingCapture {
             input_channel: None,
             input_channel_name: None,
             buffer_size: None,
-            workspace: None,
             master_db: None,
             count_in_beats: None,
             timeline_start_tick: 0,

@@ -686,7 +686,7 @@ fn worker_loop<D: ProjectionDriver>(
             );
         }
         let completed_at_ms = now_ms();
-        let (should_autoplay, should_keep_audio_passive) = {
+        let should_autoplay = {
             let lock = &state.0;
             let mut state = lock.lock().expect("runtime projection lock poisoned");
             state.running_operation_id = None;
@@ -724,13 +724,12 @@ fn worker_loop<D: ProjectionDriver>(
                         } else {
                             RuntimeProjectionState::Active
                         };
-                        (state.latest_target.is_none(), false)
+                        state.latest_target.is_none()
                     } else {
-                        (false, false)
+                        false
                     }
                 }
                 Err(error) => {
-                    let should_keep_audio_passive = state.active_projection.is_none();
                     if state.status.operation_id == target.operation_id {
                         state.status.state = RuntimeProjectionState::Failed;
                         state.status.runtime_generation = current_generation;
@@ -739,26 +738,12 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_session_revision = None;
                         state.status.last_error = Some(error.to_string());
                     }
-                    (false, should_keep_audio_passive)
+                    false
                 }
             }
         };
 
-        let passive_is_safe = if should_keep_audio_passive {
-            match driver.set_processing_mode_passive() {
-                Ok(()) => true,
-                Err(passive_error) => {
-                    tracing::warn!(
-                        error = ?passive_error,
-                        "Failed to keep Audio Runtime in passive mode after graph failure"
-                    );
-                    false
-                }
-            }
-        } else {
-            true
-        };
-        if passive_is_safe && let Err(error) = driver.release_runtime_mute_if_allowed() {
+        if let Err(error) = driver.release_runtime_mute_if_allowed() {
             tracing::warn!(error = ?error, "Runtime graph recovery stayed muted");
         }
 

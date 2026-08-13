@@ -40,8 +40,6 @@ fn mute_cause_after_recovery(previous: Option<MuteCause>) -> MuteCause {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeControlState {
-    pub(crate) processing_mode: String,
-    pub(crate) processing_mode_sent: Option<String>,
     pub(crate) master_gain_db: f64,
     pub(crate) midi_listening: bool,
     pub(crate) emergency_muted: bool,
@@ -51,8 +49,6 @@ pub(crate) struct RuntimeControlState {
 impl Default for RuntimeControlState {
     fn default() -> Self {
         Self {
-            processing_mode: "passive".into(),
-            processing_mode_sent: None,
             master_gain_db: -18.0,
             midi_listening: false,
             emergency_muted: true,
@@ -195,13 +191,6 @@ impl AudioSupervisor {
             .clone();
         self.wait_for_command(
             serde_json::json!({
-                "type": "setProcessingMode",
-                "mode": controls.processing_mode,
-            }),
-            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
-        )?;
-        self.wait_for_command(
-            serde_json::json!({
                 "type": "setMasterGainDb",
                 "gainDb": controls.master_gain_db,
             }),
@@ -239,7 +228,6 @@ impl AudioSupervisor {
                 super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
             )?;
             if let Ok(mut current) = self.recovery.runtime_controls.lock() {
-                current.processing_mode_sent = Some(current.processing_mode.clone());
                 current.emergency_muted = true;
                 current.mute_cause = Some(mute_cause_after_recovery(current_mute_cause));
             }

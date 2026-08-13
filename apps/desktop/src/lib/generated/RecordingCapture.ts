@@ -6,8 +6,4 @@ import type { RecordingCaptureStatus } from "./RecordingCaptureStatus";
 /**
  * One recording event and the assets it produced.
  */
-export type RecordingCapture = { captureId: string, sessionId: string, status: RecordingCaptureStatus, startedAtMs: number, completedAtMs?: number, sampleRate?: number, inputDevice?: string, audioDriver: string | null, inputChannel: number | null, inputChannelName: string | null, bufferSize: number | null, 
-/**
- * Session context captured at recording start.
- */
-workspace?: string, masterDb?: number, countInBeats?: number, timelineStartTick: number, armedTrackIds: Array<string>, loopRecording: boolean, recordingSessionId?: string, source?: string, rawAudioAssetId?: AssetId, processedAudioAssetId?: AssetId, midiAssetId?: AssetId, dropoutInformation: DropoutInformation, };
+export type RecordingCapture = { captureId: string, sessionId: string, status: RecordingCaptureStatus, startedAtMs: number, completedAtMs?: number, sampleRate?: number, inputDevice?: string, audioDriver: string | null, inputChannel: number | null, inputChannelName: string | null, bufferSize: number | null, masterDb?: number, countInBeats?: number, timelineStartTick: number, armedTrackIds: Array<string>, loopRecording: boolean, recordingSessionId?: string, source?: string, rawAudioAssetId?: AssetId, processedAudioAssetId?: AssetId, midiAssetId?: AssetId, dropoutInformation: DropoutInformation, };

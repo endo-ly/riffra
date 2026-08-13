@@ -9,6 +9,7 @@ use std::{
 use ts_rs::TS;
 
 pub(crate) mod commands;
+pub(crate) mod index;
 
 const SEARCH_LIMIT: i64 = 200;
 
@@ -207,10 +208,7 @@ pub fn sync_recordings(data_root: &Path, recordings: &[RecordingAsset]) -> Resul
                     .processed_path
                     .clone()
                     .or_else(|| recording.raw_path.clone()),
-                tag: recording
-                    .capture
-                    .as_ref()
-                    .and_then(|value| value.workspace.clone()),
+                tag: None,
                 note: recording
                     .capture
                     .as_ref()

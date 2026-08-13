@@ -16,9 +16,6 @@ pub(crate) trait ProjectionDriver: Send + Sync + 'static {
     fn release_runtime_mute_if_allowed(&self) -> Result<(), RuntimeError> {
         Ok(())
     }
-    fn set_processing_mode_passive(&self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
     fn force_shutdown(&self) {}
 }
 
@@ -26,9 +23,6 @@ pub(crate) trait ProjectionDriver: Send + Sync + 'static {
 pub(crate) trait TransportDriver: Send + Sync + 'static {
     fn play_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
-
-    /// Sends the stop intent without waiting for a native acknowledgement.
-    fn stop_timeline_nonblocking(&self) -> Result<(), RuntimeError>;
 }
 
 /// Compatibility bound for callers that own one AudioSupervisor for both
