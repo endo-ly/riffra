@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  AudioDeviceProbe,
   AudioStatus,
   BootstrapState,
   CreativeSession,
   DesktopViewState,
-  RenderResult,
   Workspace,
 } from '@/model/domain';
 import { defaultViewState } from '@/app/view-state';
@@ -20,12 +18,12 @@ import type {
   ProjectApi,
   ProjectSettingsApi,
 } from '@/native/native-api';
-import { useProject } from '@/app/runtime/useProject';
+import { useProject } from '@/features/project/hooks/useProject';
 
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &
   ProjectSettingsApi &
-  Pick<AudioApi, 'probeAudioDevices' | 'getAudioStatus'> &
+  Pick<AudioApi, 'getAudioStatus'> &
   Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters'>;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
@@ -33,12 +31,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [viewState, setViewState] = useState<DesktopViewState>(defaultViewState);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
-  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-  const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
-    drivers: [],
-    refreshedAtMs: 0,
-    message: 'Audio device list has not been refreshed.',
-  });
   const [runtimeStarted, setRuntimeStarted] = useState(false);
   const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
   const runtimeStartupEventReceived = useRef(false);
@@ -149,10 +141,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
     setViewState: applyViewState,
     audio,
     setAudio,
-    renderResult,
-    setRenderResult,
-    deviceProbe,
-    setDeviceProbe,
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,

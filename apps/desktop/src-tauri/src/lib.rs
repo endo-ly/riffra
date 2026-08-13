@@ -11,12 +11,13 @@
 //!   feature-level implementations,
 //! - startup state construction and the invoke registration table.
 //!
-//! All Production Workflow lives in the feature modules: Recording lifecycle
-//! and Inbox management in `recording`, background-job orchestration in
-//! `analysis` / `separation` / `render` / `plugins`, session + arrangement +
-//! design + missing-dep recovery in `session`, library read-model queries in
-//! `library`, and asset preview in `asset`. App-level commands and native
-//! probes live in `host_commands`.
+//! riffra-core owns the production rules and the canonical Application /
+//! Domain operations. This crate hosts the filesystem, runtime, and OS
+//! integration: recording lifecycle and Inbox management in `recording`,
+//! background-job orchestration in `analysis` / `separation` / `render` /
+//! `plugins`, session command hosting in `session`, library read-model
+//! queries in `library`, asset preview in `asset`, and app-level commands
+//! and native probes in `host_commands`.
 
 mod analysis;
 mod asset;

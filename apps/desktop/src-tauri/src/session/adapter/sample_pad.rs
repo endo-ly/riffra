@@ -16,9 +16,6 @@ pub fn create_sample_pad(
     asset_id: AssetId,
     name: String,
 ) -> Result<SessionAudioPair, String> {
-    if name.trim().is_empty() {
-        return Err("Sample pad name must not be empty.".into());
-    }
     let source_asset = asset::load(context.data_root, &asset_id)
         .ok_or_else(|| format!("Sample pad references an unregistered asset: {asset_id}"))?;
     if source_asset.kind != AssetKind::Audio {

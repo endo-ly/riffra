@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioDriverConfig, AudioStatus } from '@/model/domain';
+import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/domain';
 import { reconcileAudioSettings } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import type { AudioApi } from '@/native/native-api';
@@ -14,6 +14,23 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
   const { recoverAudioDevice, setAudioDriver, enableMidiListening, setEmergencyMute } = api;
   const { audio, setAudio } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
+  const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
+    drivers: [],
+    refreshedAtMs: 0,
+    message: 'Audio device list has not been refreshed.',
+  });
+
+  const refreshAudioDevices = useCallback(async () => {
+    const nextProbe = await api.probeAudioDevices();
+    setDeviceProbe(nextProbe);
+    return nextProbe;
+  }, [api]);
+
+  const probeAudioChannels = useCallback(
+    async (driver: string, inputDevice: string, outputDevice: string) =>
+      api.probeDeviceChannels(driver, inputDevice, outputDevice),
+    [api],
+  );
 
   const recoverAudio = useCallback(async () => {
     setAudioPreferenceMessage(null);
@@ -52,6 +69,9 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
 
   return {
     audioPreferenceMessage,
+    deviceProbe,
+    refreshAudioDevices,
+    probeAudioChannels,
     recoverAudio,
     selectAudioDriver,
     enableMidi,

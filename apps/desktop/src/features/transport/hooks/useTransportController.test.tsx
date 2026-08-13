@@ -6,23 +6,25 @@ import { useRef, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultViewState } from '@/app/view-state';
 import { defaultSession } from '@/native/browser-defaults';
-import type { RenderResult } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import { useTransportController } from './useTransportController';
 
 afterEach(cleanup);
 
-function Harness({ api }: { api: FakeNativeApi }) {
-  const [workspace, setWorkspace] = useState<'arrange' | 'design'>('arrange');
+function Harness({
+  api,
+  startWorkspace = 'arrange',
+}: {
+  api: FakeNativeApi;
+  startWorkspace?: 'arrange' | 'design';
+}) {
+  const [workspace, setWorkspace] = useState<'arrange' | 'design'>(startWorkspace);
   const [audio, setAudio] = useState(api.audio);
-  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const sessionRef = useRef(defaultSession());
   const transport = useTransportController({
     api,
     sessionRef,
     playbackMode: workspace === 'arrange' ? 'timeline' : 'preview',
-    renderResult,
-    setRenderResult,
     setAudio,
   });
   return (
@@ -34,6 +36,19 @@ function Harness({ api }: { api: FakeNativeApi }) {
         onClick={() => setWorkspace((current) => (current === 'arrange' ? 'design' : 'arrange'))}
       >
         Switch workspace
+      </button>
+      <button
+        onClick={() => {
+          const session = sessionRef.current;
+          if (session) {
+            sessionRef.current = {
+              ...session,
+              arrangement: { ...session.arrangement, revision: session.arrangement.revision + 1 },
+            };
+          }
+        }}
+      >
+        Mutate session
       </button>
       <output>{audio.message}</output>
       <output>{transport.transportPlaying ? 'transport-playing' : ''}</output>
@@ -100,29 +115,7 @@ describe('useTransportController', () => {
     const api = new FakeNativeApi({
       bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
     });
-    function DesignHarness() {
-      const [workspace, setWorkspace] = useState<'arrange' | 'design'>('design');
-      const [, setAudio] = useState(api.audio);
-      const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-      const sessionRef = useRef(defaultSession());
-      const transport = useTransportController({
-        api,
-        sessionRef,
-        playbackMode: workspace === 'arrange' ? 'timeline' : 'preview',
-        renderResult,
-        setRenderResult,
-        setAudio,
-      });
-      return (
-        <>
-          <button onClick={() => void transport.playTransport()}>Play</button>
-          <button onClick={() => void transport.stopTransport()}>Stop</button>
-          <button onClick={() => setWorkspace('arrange')}>Switch workspace</button>
-        </>
-      );
-    }
-
-    render(<DesignHarness />);
+    render(<Harness api={api} startWorkspace="design" />);
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() => expect(api.calls).toContain('previewAsset'));
     fireEvent.click(screen.getByRole('button', { name: 'Switch workspace' }));
@@ -159,5 +152,38 @@ describe('useTransportController', () => {
     );
 
     stop.resolve();
+  });
+
+  it('does not reuse a render result after the arrangement revision changes', async () => {
+    const api = new FakeNativeApi({
+      bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
+    });
+    render(<Harness api={api} startWorkspace="design" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('renderTimeline'));
+    expect(api.calls).toContain('previewAsset');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mutate session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'renderTimeline')).toHaveLength(2),
+    );
+    expect(api.calls).toContain('previewAsset');
+  });
+
+  it('reuses a render result while the arrangement revision is unchanged', async () => {
+    const api = new FakeNativeApi({
+      bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
+    });
+    render(<Harness api={api} startWorkspace="design" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('previewAsset'));
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'previewAsset')).toHaveLength(2),
+    );
+    expect(api.calls.filter((call) => call === 'renderTimeline')).toHaveLength(1);
   });
 });

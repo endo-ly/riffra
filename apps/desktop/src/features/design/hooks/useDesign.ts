@@ -11,7 +11,7 @@ import type {
   RecordingAsset,
   SeparationResult,
 } from '@/model/domain';
-import type { ArrangeApi, AudioApi, DesignApi, JobApi, RecordingApi } from '@/native/native-api';
+import type { ArrangeApi, AudioApi, DesignApi, JobApi, SamplePadApi } from '@/native/native-api';
 import { isUsableRecording } from '@/shared/recordings';
 import { toAssetId } from '@/native/contracts';
 import { useSampleKeyboard } from '@/features/design/sample/useSampleKeyboard';
@@ -23,7 +23,7 @@ type DesignFeatureApi = Pick<
   Pick<ArrangeApi, 'addAudioClipToArrangement'> &
   Pick<DesignApi, 'analyzeAsset' | 'listSeparations'> &
   Pick<JobApi, 'startAnalysisJob' | 'startSeparationJob'> &
-  Pick<RecordingApi, 'createSamplePad' | 'updateSamplePad' | 'removeSamplePad'>;
+  Pick<SamplePadApi, 'createSamplePad' | 'updateSamplePad' | 'removeSamplePad'>;
 
 type BackgroundJobRunner = <J extends BackgroundJobStatus>(
   start: () => Promise<J>,

@@ -11,6 +11,8 @@ import * as presentationApi from './presentation';
 import * as projectApi from './project';
 import * as rackApi from './rack';
 import * as recordingApi from './recording';
+import * as renderApi from './render';
+import * as samplePadApi from './sample-pad';
 import * as transportApi from './transport';
 
 export function createNativeApi(): NativeApi {
@@ -20,8 +22,10 @@ export function createNativeApi(): NativeApi {
     ...jobsApi,
     ...libraryApi,
     ...designApi,
+    ...renderApi,
     ...audioApi,
     ...recordingApi,
+    ...samplePadApi,
     ...arrangeApi,
     ...rackApi,
     ...transportApi,

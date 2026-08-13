@@ -136,8 +136,11 @@ export interface LibraryApi {
 export interface DesignApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
   listSeparations(): Promise<SeparationResult[]>;
-  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
   applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
+}
+
+export interface RenderApi {
+  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
 }
 
 export interface AudioApi {
@@ -193,6 +196,9 @@ export interface RecordingApi {
   startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
   stopArrangeRecording(): Promise<SessionAudioPair>;
+}
+
+export interface SamplePadApi {
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
@@ -419,8 +425,10 @@ export interface NativeApi
     JobApi,
     LibraryApi,
     DesignApi,
+    RenderApi,
     AudioApi,
     RecordingApi,
+    SamplePadApi,
     ArrangeApi,
     TransportApi,
     PresentationApi,

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CreativeSession, RenderResult } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { AudioApi, DesignApi, NativeEventApi, TransportApi } from '@/native/native-api';
+import type { AudioApi, NativeEventApi, RenderApi, TransportApi } from '@/native/native-api';
 
 interface TransportControllerOptions {
   api: Pick<
-    AudioApi & DesignApi & NativeEventApi & TransportApi,
+    AudioApi & RenderApi & NativeEventApi & TransportApi,
     | 'onTransportStatus'
     | 'playTimeline'
     | 'stopTimeline'
@@ -17,8 +17,6 @@ interface TransportControllerOptions {
   >;
   sessionRef: { current: CreativeSession | null };
   playbackMode: PlaybackMode;
-  renderResult: RenderResult | null;
-  setRenderResult: Dispatch<SetStateAction<RenderResult | null>>;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
 }
 
@@ -36,12 +34,12 @@ export function useTransportController({
   api,
   sessionRef,
   playbackMode,
-  renderResult,
-  setRenderResult,
   setAudio,
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  const [renderedRevision, setRenderedRevision] = useState<number | null>(null);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   const playbackSourceRef = useRef<PlaybackSource | null>(null);
   const sequenceRef = useRef(0);
@@ -97,7 +95,7 @@ export function useTransportController({
         return;
       }
 
-      let result = renderResult;
+      let result = renderedRevision === currentSession.arrangement.revision ? renderResult : null;
       if (!result) {
         result = await api.renderTimeline({
           range: { kind: 'entireArrangement' },
@@ -106,6 +104,7 @@ export function useTransportController({
         });
         if (!result || !isCurrentIntent()) return;
         setRenderResult(result);
+        setRenderedRevision(currentSession.arrangement.revision);
       }
       if (!isCurrentIntent()) return;
       const nextAudio = await api.previewAsset(result.assetId, {
@@ -123,9 +122,9 @@ export function useTransportController({
     nextTransportSequence,
     playbackMode,
     renderResult,
+    renderedRevision,
     sessionRef,
     setAudio,
-    setRenderResult,
     runPlayOperation,
   ]);
 

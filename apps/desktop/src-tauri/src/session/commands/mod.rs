@@ -5,8 +5,9 @@
 //! [`SessionContext`](super::adapter::SessionContext) of concrete
 //! dependencies, delegates to the matching Core operation, and returns
 //! the resulting DTO. The production workflow (arrangement edit, design
-//! navigation, sample pad runtime sync, validate/persist) lives entirely in
-//! [`super::adapter`]; nothing here re-implements it.
+//! navigation, sample pad runtime sync, validate/persist) is hosted by
+//! [`super::adapter`], which delegates canonical edits to riffra-core;
+//! nothing here re-implements it.
 
 use tauri::{AppHandle, Manager};
 

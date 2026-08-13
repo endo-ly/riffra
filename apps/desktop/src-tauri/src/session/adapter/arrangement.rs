@@ -229,8 +229,7 @@ pub fn trim_audio_clip(
     Ok(committed)
 }
 
-/// Adds an audio clip referencing a canonical Asset to the arrangement, then
-/// commits the session and switches to the Arrange workspace.
+/// Adds an audio clip referencing a canonical Asset and commits the session.
 pub fn add_audio_clip(
     context: &SessionContext<'_>,
     asset_id: AssetId,
@@ -238,9 +237,6 @@ pub fn add_audio_clip(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
 ) -> Result<CreativeSession, String> {
-    if name.trim().is_empty() {
-        return Err("Audio clip name must not be empty.".into());
-    }
     let source_asset = asset::load(context.data_root, &asset_id)
         .ok_or_else(|| format!("Audio Asset is not registered: {asset_id}"))?;
     if source_asset.kind != AssetKind::Audio {

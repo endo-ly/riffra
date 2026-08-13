@@ -16,13 +16,13 @@ import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useInbox } from '@/features/library/hooks/useInbox';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
-import { useRecording } from '@/app/useRecording';
+import { useRecording } from '@/features/recording/hooks/useRecording';
 import { useDesign } from '@/features/design/hooks/useDesign';
-import { usePluginCatalog } from '@/app/runtime/usePluginCatalog';
-import { usePluginStatePersistence } from '@/app/runtime/usePluginStatePersistence';
+import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
+import { usePluginStatePersistence } from '@/features/plugins/hooks/usePluginStatePersistence';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
-  const { probeAudioDevices, getAudioStatus, openAssetInDesign: openAssetInDesignApi } = api;
+  const { getAudioStatus, openAssetInDesign: openAssetInDesignApi } = api;
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const runtime = useAppRuntime(api);
@@ -33,10 +33,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     setViewState,
     audio,
     setAudio,
-    renderResult,
-    setRenderResult,
-    deviceProbe,
-    setDeviceProbe,
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
@@ -109,8 +105,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     api,
     sessionRef,
     playbackMode: viewState.workspace === 'arrange' ? 'timeline' : 'preview',
-    renderResult,
-    setRenderResult,
     setAudio,
   });
 
@@ -137,8 +131,16 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     audio,
     setAudio,
   });
-  const { audioPreferenceMessage, recoverAudio, selectAudioDriver, enableMidi, toggleMute } =
-    audioHook;
+  const {
+    audioPreferenceMessage,
+    deviceProbe,
+    refreshAudioDevices,
+    probeAudioChannels,
+    recoverAudio,
+    selectAudioDriver,
+    enableMidi,
+    toggleMute,
+  } = audioHook;
   const recording = useRecording(api, { audio, setAudio, setSession });
   const {
     recordings,
@@ -221,7 +223,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     const timer = setTimeout(() => {
       void reloadRecordings().catch(logNativeError('listRecordings'));
       void reloadSeparations().catch(logNativeError('listSeparations'));
-      void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
+      void refreshAudioDevices().catch(logNativeError('probeAudioDevices'));
       void enableMidi().catch(logNativeError('enableMidi'));
       void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
     }, 150);
@@ -230,11 +232,10 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     enableMidi,
     getAudioStatus,
     reloadSeparations,
-    probeAudioDevices,
+    refreshAudioDevices,
     reloadRecordings,
     boot,
     setAudio,
-    setDeviceProbe,
   ]);
 
   useEffect(() => {
@@ -309,7 +310,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     previewPadId,
     exportMessage,
     deviceProbe,
-    setDeviceProbe,
+    refreshAudioDevices,
+    probeAudioChannels,
     analysis,
     referenceId,
     referencePreviewingId,

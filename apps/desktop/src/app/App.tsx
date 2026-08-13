@@ -162,7 +162,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     setCommandOpen,
     setFocusMode,
     setReferenceLoopPreview,
-    setDeviceProbe,
+    refreshAudioDevices,
+    probeAudioChannels,
     renameSession,
     undo,
     redo,
@@ -237,14 +238,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     if (side === 'library') setArrangeLibraryWidth((width) => adjustPanelWidth(side, width, delta));
     else setArrangeInspectorWidth((width) => adjustPanelWidth(side, width, delta));
   };
-
-  const refreshAudioDevices = async () => {
-    const nextProbe = await nativeApi.probeAudioDevices();
-    setDeviceProbe(nextProbe);
-    return nextProbe;
-  };
-  const probeAudioChannels = async (driver: string, inputDevice: string, outputDevice: string) =>
-    api.probeDeviceChannels(driver, inputDevice, outputDevice);
 
   useEffect(() => {
     if (!autosaveError) {
