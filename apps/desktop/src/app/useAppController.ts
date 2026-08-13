@@ -10,15 +10,15 @@ import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
-import { useTransportController } from '@/features/transport/useTransportController';
+import { useTransportController } from '@/features/transport/hooks/useTransportController';
 import { useWorkspaceNavigation } from '@/app/navigation/useWorkspaceNavigation';
-import { useLibrary } from '@/features/library/useLibrary';
-import { useInbox } from '@/features/library/useInbox';
-import { useAudioSettings } from '@/features/audio/useAudioSettings';
-import { useMissingDependencies } from '@/features/project/useMissingDependencies';
-import { useRecording } from '@/features/recording/useRecording';
-import { useDesign } from '@/features/design/useDesign';
-import { usePluginCatalog } from '@/features/plugins/usePluginCatalog';
+import { useLibrary } from '@/features/library/hooks/useLibrary';
+import { useInbox } from '@/features/library/hooks/useInbox';
+import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
+import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
+import { useRecording } from '@/app/useRecording';
+import { useDesign } from '@/features/design/hooks/useDesign';
+import { usePluginCatalog } from '@/app/runtime/usePluginCatalog';
 import { usePluginStatePersistence } from '@/app/runtime/usePluginStatePersistence';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {

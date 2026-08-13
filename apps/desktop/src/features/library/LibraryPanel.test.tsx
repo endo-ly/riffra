@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LibraryPanel } from './LibraryPanel';
-import type { InboxController } from '@/features/library/useInbox';
+import type { InboxController } from '@/features/library/hooks/useInbox';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/domain';
 
 // This suite verifies LibraryPanel's callback wiring only. useInbox/FakeNativeApi

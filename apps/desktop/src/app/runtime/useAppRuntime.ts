@@ -20,7 +20,7 @@ import type {
   ProjectApi,
   ProjectSettingsApi,
 } from '@/native/native-api';
-import { useProject } from '@/features/project/useProject';
+import { useProject } from '@/app/runtime/useProject';
 
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &

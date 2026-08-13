@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/model/domain';
 import type { Track } from '@/model/domain';
 import { librarySections } from './library-sections';
-import type { InboxController } from '@/features/library/useInbox';
+import type { InboxController } from '@/features/library/hooks/useInbox';
 import { writeAssetDrag } from '@/shared/asset-drag';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';

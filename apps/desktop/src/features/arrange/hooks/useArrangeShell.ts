@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
-import type { ArrangeSelection } from './hooks/useArrangeEditor';
+import type { ArrangeSelection } from './useArrangeEditor';
 
 export function useArrangeShell(
   api: Pick<ArrangeApi, 'setTrackInstrument' | 'addTrackEffect'>,

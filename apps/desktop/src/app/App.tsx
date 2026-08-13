@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { defaultNativeApi } from '@/native/native';
 import { useAppController } from '@/app/useAppController';
-import { useArrangeShell } from '@/features/arrange/useArrangeShell';
+import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
 import { InspectorPanel } from '@/features/arrange/inspector/InspectorPanel';
 import { WorkspaceAnalyze } from '@/features/design/WorkspaceAnalyze';
