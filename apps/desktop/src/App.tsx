@@ -1,5 +1,4 @@
 import type { NativeApi } from '@/native/native-api';
-import type { PluginEntry } from '@/lib/domain';
 import {
   useEffect,
   useState,
@@ -8,8 +7,8 @@ import {
 } from 'react';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
-import { useApp } from '@/hooks/useApp';
-import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import { useDesktopFeatures } from '@/features/desktop/useDesktopFeatures';
+import { useArrangeShell } from '@/features/arrange/useArrangeShell';
 import { workspaces } from '@/constants';
 import { isEmergencyMuteActive } from '@/lib/audio-safety';
 import { useAudioFeedbackSuspected } from '@/lib/audio-meters';
@@ -94,9 +93,6 @@ function PanelResizeHandle(props: {
 }
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
-  const [arrangeSelection, setArrangeSelection] = useState<ArrangeSelection>({ kind: 'none' });
-  const [arrangeFocusedTrackId, setArrangeFocusedTrackId] = useState<string | null>(null);
-  const [arrangeCanonicalOperationsPending, setArrangeCanonicalOperationsPending] = useState(0);
   const [arrangeLibraryWidth, setArrangeLibraryWidth] = useState(
     PANEL_WIDTH_LIMITS.library.default,
   );
@@ -112,6 +108,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const {
     boot,
     session,
+    viewState,
     audio,
     setAudio,
     focusMode,
@@ -198,14 +195,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     goToStart,
     toggleRecording,
     api: nativeApi,
-  } = useApp(api);
+  } = useDesktopFeatures(api);
+  const arrange = useArrangeShell(nativeApi, session, setSession);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
-  const selectedTrack =
-    session && arrangeSelection.kind === 'track'
-      ? (session.arrangement.tracks.find((track) => track.id === arrangeSelection.trackId) ?? null)
-      : null;
 
-  const isArrange = session?.workspace === 'arrange';
+  const isArrange = viewState.workspace === 'arrange';
 
   useEffect(() => {
     if (!panelResize) return;
@@ -242,30 +236,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     else setArrangeInspectorWidth((width) => adjustPanelWidth(side, width, delta));
   };
 
-  useEffect(() => {
-    if (
-      arrangeFocusedTrackId !== null &&
-      !session?.arrangement.tracks.some((track) => track.id === arrangeFocusedTrackId)
-    ) {
-      setArrangeFocusedTrackId(null);
-    }
-  }, [arrangeFocusedTrackId, session?.arrangement.tracks]);
-
-  const addPluginToSelectedTrack = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
-    if (!selectedTrack) return;
-    setArrangeCanonicalOperationsPending((count) => count + 1);
-    try {
-      const next =
-        target === 'instrument'
-          ? await nativeApi.setTrackInstrument(selectedTrack.id, plugin.path)
-          : await nativeApi.addTrackEffect(selectedTrack.id, plugin.path);
-      setSession(next);
-    } catch (error) {
-      logNativeError('Add plugin to Track')(error);
-    } finally {
-      setArrangeCanonicalOperationsPending((count) => Math.max(0, count - 1));
-    }
-  };
   const refreshAudioDevices = async () => {
     const nextProbe = await nativeApi.probeAudioDevices();
     setDeviceProbe(nextProbe);
@@ -316,6 +286,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     >
       <GlobalBar
         session={session}
+        viewState={viewState}
         audio={audio}
         isMuted={isMuted}
         historyState={historyState}
@@ -435,8 +406,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           plugins={{
             plugins,
             visiblePlugins,
-            selectedTrack,
-            onAddPlugin: (plugin, target) => void addPluginToSelectedTrack(plugin, target),
+            selectedTrack: arrange.selectedTrack,
+            onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
           }}
           recordings={{
             visibleRecordings,
@@ -457,24 +428,24 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       )}
 
       <section className="workspace">
-        {session.workspace === 'arrange' && (
+        {viewState.workspace === 'arrange' && (
           <WorkspaceArrange
             session={session}
             setSession={setSession}
-            selection={arrangeSelection}
-            setSelection={setArrangeSelection}
+            selection={arrange.selection}
+            setSelection={arrange.setSelection}
             api={nativeApi}
             audio={audio}
             plugins={plugins}
-            focusedTrackId={arrangeFocusedTrackId}
-            onFocusTrack={setArrangeFocusedTrackId}
-            canonicalOperationPending={arrangeCanonicalOperationsPending > 0}
+            focusedTrackId={arrange.focusedTrackId}
+            onFocusTrack={arrange.setFocusedTrackId}
+            canonicalOperationPending={arrange.canonicalOperationPending}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}
           />
         )}
-        {session.workspace === 'design' && session.designContext.activeTool === 'sample' && (
+        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'sample' && (
           <>
             <WorkspaceSample
               session={session}
@@ -505,7 +476,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             <MidiMonitor probe={midi} audio={audio} onPanic={() => void stopPreview()} />
           </>
         )}
-        {session.workspace === 'design' && session.designContext.activeTool === 'analyze' && (
+        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'analyze' && (
           <>
             <WorkspaceAnalyze analysis={analysis} />
             <ReferenceSuggestion
@@ -514,6 +485,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               references={referenceAnalyses}
               referenceId={referenceId}
               session={session}
+              designContext={viewState.designContext}
               setSession={setSession}
               api={nativeApi}
               onSelect={(recording) => void selectReference(recording)}
@@ -527,7 +499,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           </>
         )}
-        {session.workspace === 'design' && session.designContext.activeTool === 'separate' && (
+        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'separate' && (
           <WorkspaceSeparate
             recordings={usableRecordings}
             results={separations}
@@ -551,9 +523,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           focusMode={focusMode}
           setFocusMode={setFocusMode}
           session={session}
+          viewState={viewState}
           setSession={setSession}
-          arrangeSelection={arrangeSelection}
-          setArrangeSelection={setArrangeSelection}
+          arrangeSelection={arrange.selection}
+          setArrangeSelection={arrange.setSelection}
           missingDependencies={missingDependencies}
           plugins={plugins}
           onDisableMissingPlugin={disableMissingPluginDevice}
@@ -574,6 +547,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
 
       <TransportBar
         session={session}
+        workspace={viewState.workspace}
         setSession={setSession}
         audio={audio}
         setAudio={setAudio}

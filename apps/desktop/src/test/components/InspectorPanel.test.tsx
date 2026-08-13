@@ -4,11 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InspectorPanel } from '@/components/layout/InspectorPanel';
-import {
-  defaultDesktopSession as defaultSession,
-  toAssetId,
-  type BootstrapState,
-} from '@/lib/domain';
+import { defaultSession, toAssetId, type BootstrapState } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
@@ -18,7 +14,6 @@ function renderPanel(
   initialSession = defaultSession(),
 ) {
   const session = initialSession;
-  session.workspace = 'arrange';
   session.arrangement.tracks.push({
     id: 'track:audio',
     name: 'Audio',
@@ -53,6 +48,7 @@ function renderPanel(
       focusMode={false}
       setFocusMode={() => undefined}
       session={session}
+      viewState={boot.viewState}
       setSession={() => undefined}
       arrangeSelection={selection}
       setArrangeSelection={() => undefined}
@@ -82,7 +78,6 @@ describe('InspectorPanel', () => {
 
   it('limits mixed clip selections to shared clip actions', () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.audioClips.push({
       id: 'clip:audio',
       name: 'Audio Clip',
@@ -122,7 +117,6 @@ describe('InspectorPanel', () => {
 
   it('does not offer Crossfade when a mixed selection contains two Audio Clips', () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     const audioClip = {
       id: 'clip:audio-a',
       name: 'Audio Clip A',

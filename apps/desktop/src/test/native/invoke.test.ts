@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: tauriInvoke,
 }));
 
-import { invoke, invokeLatest, invokeMutation } from '@/native/invoke';
+import { invoke, invokeLatest } from '@/native/invoke';
 
 describe('native invoke bridge', () => {
   beforeEach(() => {
@@ -56,26 +56,5 @@ describe('native invoke bridge', () => {
 
     releaseParameter(undefined);
     await expect(parameter).resolves.toEqual(undefined);
-  });
-
-  it('delivers canonical mutation responses in commit order', async () => {
-    let releaseFirst!: (value: unknown) => void;
-    const firstCompletion = new Promise<unknown>((resolve) => {
-      releaseFirst = resolve;
-    });
-    tauriInvoke.mockImplementation((command: string) => {
-      if (command === 'update_track') return firstCompletion;
-      return Promise.resolve({ command });
-    });
-
-    const first = invokeMutation('update_track', { trackId: 'track:1' });
-    const second = invokeMutation('add_marker', { tick: 0 });
-    await Promise.resolve();
-
-    expect(tauriInvoke).toHaveBeenCalledTimes(1);
-    releaseFirst({ revision: 1 });
-    await expect(first).resolves.toEqual({ revision: 1 });
-    await expect(second).resolves.toEqual({ command: 'add_marker' });
-    expect(tauriInvoke).toHaveBeenNthCalledWith(2, 'add_marker', { tick: 0 });
   });
 });

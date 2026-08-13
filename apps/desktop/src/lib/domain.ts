@@ -129,31 +129,12 @@ export type AnalysisJobStatus = Extract<BackgroundJobStatus, { kind: 'analysis' 
 export type SeparationJobStatus = Extract<BackgroundJobStatus, { kind: 'separation' }>;
 export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
-/**
- * The desktop projection used by components that need both canonical
- * production data and the current host-owned view selection.
- */
-export type DesktopSessionView = CreativeSession & DesktopViewState;
-
 /** Returns the initial desktop-only view selection. */
 export function defaultViewState(): DesktopViewState {
   return {
     workspace: 'arrange',
     designContext: { activeTool: 'sample' },
   };
-}
-
-/** Combines canonical production data with host-owned state for rendering. */
-export function toDesktopSessionView(
-  session: CreativeSession,
-  viewState: DesktopViewState,
-): DesktopSessionView {
-  return { ...session, ...viewState };
-}
-
-/** Creates canonical browser-preview data with the initial desktop view. */
-export function defaultDesktopSession(): DesktopSessionView {
-  return toDesktopSessionView(defaultSession(), defaultViewState());
 }
 
 export interface AnalysisComparison {

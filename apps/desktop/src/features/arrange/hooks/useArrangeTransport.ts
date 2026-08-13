@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase, TransportStatus } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi, NativeEventApi } from '@/native/native-api';
 
-export function useArrangeTransport(api: NativeApi, timebase: ProjectTimebase) {
+export function useArrangeTransport(
+  api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
+  timebase: ProjectTimebase,
+) {
   const [transport, setTransport] = useState<TransportStatus | null>(null);
   const [displayTick, setDisplayTick] = useState(0);
   const displayTickRef = useRef(0);

@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
   AudioStatus,
   AssetId,
-  BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
-  DesktopSessionView,
+  DesktopViewState,
   DesignTool,
-  JobState,
   LibraryAsset,
   MissingDependency,
   MidiProbe,
@@ -20,7 +18,7 @@ import type {
   SeparationResult,
   Workspace,
 } from '@/lib/domain';
-import { defaultViewState, toAssetId, toDesktopSessionView } from '@/lib/domain';
+import { defaultViewState, toAssetId } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { isEditableTypingTarget } from '@/lib/musical-typing';
 import { startingAudioStatus } from '@/lib/audio-defaults';
@@ -31,24 +29,21 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
-import { useRuntimeRestartNotification } from './runtime/useRuntimeRestartNotification';
-import { useTransportController } from './runtime/useTransportController';
-import { useWorkspaceNavigation } from './runtime/useWorkspaceNavigation';
-import { useLibrary } from './useLibrary';
-import { useInbox } from './useInbox';
-import { useSession } from './useSession';
-import { useAudio } from './useAudio';
+import { useRuntimeRestartNotification } from '@/features/runtime/useRuntimeRestartNotification';
+import { useBackgroundJobs } from '@/features/runtime/useBackgroundJobs';
+import { useTransportController } from '@/features/transport/useTransportController';
+import { useWorkspaceNavigation } from '@/features/presentation/useWorkspaceNavigation';
+import { useLibrary } from '@/features/library/useLibrary';
+import { useInbox } from '@/features/library/useInbox';
+import { useProject } from '@/features/project/useProject';
+import { useAudioSettings } from '@/features/settings/useAudioSettings';
 
-const terminalJobStates: readonly JobState[] = ['completed', 'failed', 'cancelled'];
-
-export function useApp(api: NativeApi = defaultNativeApi) {
+export function useDesktopFeatures(api: NativeApi = defaultNativeApi) {
   const {
     bootstrap,
     startAnalysisJob,
     startSeparationJob,
     startScanJob,
-    getBackgroundJob,
-    cancelBackgroundJob,
     listRecordings,
     analyzeAsset,
     probeMidiDevices,
@@ -114,15 +109,14 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const [, setScanMessage] = useState('VST3を検出中…');
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const [runtimeStarted, setRuntimeStarted] = useState(false);
   const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
-  const activeJobId = useRef<string | null>(null);
   const startupScanStarted = useRef(false);
   const startupRuntimeRecoveryAttempted = useRef(false);
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
-  const sessionRef = useRef<DesktopSessionView | null>(null);
+  const sessionRef = useRef<CreativeSession | null>(null);
+  const viewStateRef = useRef<DesktopViewState>(viewState);
   const pendingPluginChanges = useRef(
     new Map<
       string,
@@ -134,6 +128,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       }
     >(),
   );
+  const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(api);
 
   const library = useLibrary(api, { setAudio, setPreviewPadId });
   const reloadRecordings = useCallback(async () => {
@@ -157,7 +152,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     importMidi,
   } = library;
 
-  const sessionHook = useSession(api, { setBoot });
+  const sessionHook = useProject(api, { setBoot });
   const {
     session: canonicalSession,
     setSession: setSessionState,
@@ -174,27 +169,23 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
-  const session = useMemo(
-    () => (canonicalSession ? toDesktopSessionView(canonicalSession, viewState) : null),
-    [canonicalSession, viewState],
-  );
-  sessionRef.current = session;
+  const session = canonicalSession;
+  sessionRef.current = canonicalSession;
+  viewStateRef.current = viewState;
   const setSessionFromChildOperation = useCallback(
     (nextSession: CreativeSession) => {
-      const current = sessionRef.current;
-      const nextViewState = current
-        ? { workspace: current.workspace, designContext: current.designContext }
-        : viewState;
-      sessionRef.current = toDesktopSessionView(nextSession, nextViewState);
+      sessionRef.current = nextSession;
       setSessionState(nextSession);
     },
-    [setSessionState, viewState],
+    [setSessionState],
   );
   const setSession = setSessionFromChildOperation;
   const setNavigationWorkspace = useCallback((workspace: Workspace) => {
-    setViewState((current) => ({ ...current, workspace }));
-    const current = sessionRef.current;
-    if (current) sessionRef.current = { ...current, workspace };
+    setViewState((current) => {
+      const next = { ...current, workspace };
+      viewStateRef.current = next;
+      return next;
+    });
   }, []);
   // UI helper for applying a Rust Session Operation and surfacing a rejected
   // intent. Production state is never assembled or flushed from React here.
@@ -215,16 +206,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setScanMessage,
   });
 
-  const {
-    transportPlaying,
-    nextTransportSequence,
-    cancelPendingPlay,
-    playTransport,
-    stopTransport,
-    goToStart,
-  } = useTransportController({
+  const { transportPlaying, playTransport, stopTransport, goToStart } = useTransportController({
     api,
     sessionRef,
+    playbackMode: viewState.workspace === 'arrange' ? 'timeline' : 'preview',
     renderResult,
     setRenderResult,
     setAudio,
@@ -233,12 +218,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const switchWorkspace = useWorkspaceNavigation({
     api,
-    sessionRef,
+    viewStateRef,
     setNavigationWorkspace,
     runSessionOp,
     setAutosaveError,
-    nextTransportSequence,
-    cancelPendingPlay,
   });
   const openAssetInDesign = useCallback(
     async (assetId: AssetId, tool: DesignTool): Promise<void> => {
@@ -248,14 +231,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       );
       if (next) {
         setViewState(next);
-        const current = sessionRef.current;
-        if (current) {
-          sessionRef.current = {
-            ...current,
-            workspace: next.workspace,
-            designContext: next.designContext,
-          };
-        }
+        viewStateRef.current = next;
       }
     },
     [openAssetInDesignApi, runSessionOp],
@@ -281,7 +257,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     onRelocate: clearRelocatedMissingDependencies,
   });
 
-  const audioHook = useAudio(api, {
+  const audioHook = useAudioSettings(api, {
     audio,
     setAudio,
     session,
@@ -302,68 +278,6 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     startRecordingNow,
     toggleRecording,
   } = audioHook;
-
-  const runBackgroundJob = useCallback(
-    async <J extends BackgroundJobStatus>(
-      start: () => Promise<J>,
-      onCompleted: (result: NonNullable<J['result']>) => void,
-      onFailed: (message: string) => void,
-    ): Promise<boolean> => {
-      if (activeJobId.current) return false;
-      let started: J;
-      try {
-        started = await start();
-      } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
-        return false;
-      }
-      activeJobId.current = started.id;
-      setBackgroundJob(started);
-      let latest: J = started;
-      try {
-        while (!terminalJobStates.includes(latest.state)) {
-          await new Promise((resolve) => window.setTimeout(resolve, 75));
-          const next = await getBackgroundJob(started.id);
-          if (!next) {
-            onFailed('Background job disappeared before it reported a result.');
-            return false;
-          }
-          // The job id encodes its kind, so the polled status is the same
-          // variant as `started`. Cast once here so callers receive a typed
-          // result without re-asserting at every use site.
-          latest = next as J;
-          setBackgroundJob(next);
-        }
-        if (latest.state !== 'completed') {
-          onFailed(latest.message);
-          return false;
-        }
-        if (latest.result == null) {
-          onFailed('Background job completed without a result.');
-          return false;
-        }
-        onCompleted(latest.result);
-        return true;
-      } catch (error) {
-        onFailed(error instanceof Error ? error.message : String(error));
-        return false;
-      } finally {
-        activeJobId.current = null;
-        window.setTimeout(
-          () => setBackgroundJob((current) => (current?.id === started.id ? null : current)),
-          500,
-        );
-      }
-    },
-    [getBackgroundJob],
-  );
-
-  const cancelActiveJob = useCallback(async () => {
-    const id = activeJobId.current;
-    if (!id) return;
-    const status = await cancelBackgroundJob(id);
-    if (status) setBackgroundJob(status);
-  }, [cancelBackgroundJob]);
 
   const applyScanReport = useCallback((report: ScanReport) => {
     setPlugins(report.plugins);
@@ -431,7 +345,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   );
 
   const previewReferencePair = useCallback(async () => {
-    const targetAssetId = session?.designContext.targetAssetId;
+    const targetAssetId = viewState.designContext.targetAssetId;
     if (!analysis || !targetAssetId || !referenceId) return;
     const reference = recordings.find((recording) => recording.id === referenceId);
     if (!reference) return;

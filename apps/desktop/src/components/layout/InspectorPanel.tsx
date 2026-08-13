@@ -2,7 +2,7 @@ import type {
   AudioStatus,
   BootstrapState,
   CreativeSession,
-  DesktopSessionView,
+  DesktopViewState,
   MissingDependency,
   PluginEntry,
 } from '@/lib/domain';
@@ -12,7 +12,7 @@ import { MultiClipInspector } from '../arrange/MultiClipInspector';
 import { MidiClipInspector } from '../arrange/MidiClipInspector';
 import { TrackInspector } from '../arrange/TrackInspector';
 import { TakeInspector } from '../arrange/TakeInspector';
-import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { Icon } from '../shared/ui';
 import styles from './InspectorPanel.module.css';
 
@@ -21,7 +21,8 @@ interface InspectorPanelProps {
   boot: BootstrapState;
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
-  session: DesktopSessionView;
+  session: CreativeSession;
+  viewState: DesktopViewState;
   setSession: (session: CreativeSession) => void;
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
@@ -53,7 +54,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const setSelectedClipIds = (clipIds: string[]) =>
     props.setArrangeSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
   const title = getInspectorTitle(
-    props.session.workspace,
+    props.viewState.workspace,
     Boolean(selectedTrack),
     selectedAudioClipCount,
     selectedMidiClipCount,
@@ -64,7 +65,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
         <span>{title}</span>
       </div>
       <div className={styles.body}>
-        {props.session.workspace === 'arrange' ? (
+        {props.viewState.workspace === 'arrange' ? (
           selectedTrack ? (
             <>
               <TrackInspector
@@ -142,11 +143,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <>
             <div className={styles.designIdentity}>
               <span className={styles.designArt}>
-                {props.session.designContext.activeTool.slice(0, 2).toUpperCase()}
+                {props.viewState.designContext.activeTool.slice(0, 2).toUpperCase()}
               </span>
               <div>
                 <span className="eyebrow">DESIGN</span>
-                <h3>{props.session.designContext.activeTool}</h3>
+                <h3>{props.viewState.designContext.activeTool}</h3>
                 <small>Always preserved</small>
               </div>
             </div>
@@ -171,7 +172,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 }
 
 function getInspectorTitle(
-  workspace: DesktopSessionView['workspace'],
+  workspace: DesktopViewState['workspace'],
   hasSelectedTrack: boolean,
   audioClipCount: number,
   midiClipCount: number,

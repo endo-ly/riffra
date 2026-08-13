@@ -50,9 +50,9 @@ import {
 } from '@/lib/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/lib/arrange-drag';
 import { isEditableTarget } from '@/lib/interaction';
-import { useArrangeEditor, type ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
-import { useArrangeTransport } from '@/hooks/arrange/useArrangeTransport';
-import { useWaveformAnalyses } from '@/hooks/arrange/useWaveformAnalyses';
+import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
+import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {

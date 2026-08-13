@@ -1,49 +1,16 @@
+import type { AudioMeters } from '@/lib/audio-meters';
 import type {
-  AudioAnalysis,
-  AudioDeviceProbe,
-  AudioDriverConfig,
   AudioStatus,
-  AnalysisJobStatus,
-  AssetId,
-  AssetPreviewOptions,
-  AudioClip,
-  AudioClipMove,
-  AudioClipPatch,
-  AudioTakeVariant,
-  AutomationParameter,
-  AutomationPoint,
-  MidiClipMove,
-  MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
-  HistoryState,
-  DeviceChannels,
-  JobKind,
-  LibraryAsset,
+  DesktopViewState,
   MissingDependency,
-  MidiExportResult,
-  MidiProbe,
-  ProjectExport,
   RecordingAsset,
   RecordingStatus,
-  RenderOptions,
   RenderResult,
   RuntimeProjectionStatus,
-  ScanJobStatus,
   ScanReport,
-  CreativeSession,
-  DesktopViewState,
-  SeparationJobStatus,
   SeparationResult,
-  RackInstance,
-  RackDevice,
-  DesignTool,
-  SessionAudioPair,
-  MonitoringState,
-  MidiInputRoute,
-  TrackKind,
-  Track,
-  Workspace,
   TransportStatus,
 } from '@/lib/domain';
 import { defaultSession, defaultViewState, toAssetId } from '@/lib/domain';
@@ -53,9 +20,19 @@ import type {
   TrackPluginParameterChange,
   TrackPluginStateChange,
 } from './native-api';
-import type { AudioMeters } from '@/lib/audio-meters';
 
-const defaultVst3Root = 'C:\\Program Files\\Common Files\\VST3';
+type ResponseValue = unknown | ((...arguments_: unknown[]) => unknown);
+
+export interface FakeNativeApiOptions {
+  bootstrapState?: Partial<BootstrapState>;
+  audio?: AudioStatus;
+  recordings?: RecordingAsset[];
+  plugins?: ScanReport['plugins'];
+  separations?: SeparationResult[];
+  missingDependencies?: MissingDependency[];
+  responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
+  failures?: Partial<Record<keyof NativeApi, Error>>;
+}
 
 export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   const recording: RecordingStatus = {
@@ -80,8 +57,8 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     processedDropoutStartSample: null,
     processedDropoutEndSample: null,
     recoveryStatus: 'clean',
+    cancelled: false,
     ...overrides.recording,
-    cancelled: overrides.recording?.cancelled ?? false,
   };
   return {
     state: 'ready',
@@ -115,59 +92,40 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
   };
 }
 
-export interface FakeNativeApiOptions {
-  bootstrapState?: Partial<BootstrapState>;
-  audio?: AudioStatus;
-  recordings?: RecordingAsset[];
-  plugins?: ScanReport['plugins'];
-  separations?: SeparationResult[];
-  /** Samples written when a recording is stopped. */
-  recordingSamples?: number;
-  /** Missing files/plugins the open session references (PRJ-004). */
-  missingDependencies?: MissingDependency[];
-  /** Deterministic audio-content keys used by duplicate detection tests. */
-  duplicateContent?: Record<string, string>;
-  missingAssetIds?: AssetId[];
-  persistenceFailure?: boolean;
-  rollbackFailure?: boolean;
-}
-
-/**
- * FakeNativeApi reproduces the responses the production runtime can actually
- * emit, with mutable state so a test can drive scenarios (mute, device
- * disconnect, recording integrity, plugin failure). Methods are arrow fields so
- * they keep their `this` binding when destructured by the App, matching how the
- * production NativeApi is consumed. It mirrors the production command
- * invariants instead of fabricating success paths that the product never yields.
- */
-export class FakeNativeApi implements NativeApi {
+class FakeNativeApiDouble {
   readonly calls: string[] = [];
   readonly emergencyMuteRequests: boolean[] = [];
-  readonly savedSessions: CreativeSession[] = [];
-  private undoHistory: CreativeSession[] = [];
-  private redoHistory: CreativeSession[] = [];
   audio: AudioStatus;
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
   separations: SeparationResult[];
   bootstrapState: BootstrapState;
-  recordingSamples: number;
   missing: MissingDependency[];
-  private duplicateContent: Record<string, string>;
-  private missingAssetIds: Set<AssetId>;
-  private persistenceFailure: boolean;
-  private rollbackFailure: boolean;
-  private recordingCounter = 0;
-  private renderCounter = 0;
-  private jobCounter = 0;
-  private jobs = new Map<string, BackgroundJobStatus>();
-  private runtimeStartupFinishedListeners = new Set<(event: RuntimeStartupFinishedEvent) => void>();
-  private runtimeRestartListeners = new Set<(generation: number) => void>();
-  private transportStatusListeners = new Set<(status: TransportStatus) => void>();
+
+  private readonly responses = new Map<keyof NativeApi, ResponseValue>();
+  private readonly failures = new Map<keyof NativeApi, Error>();
+  private readonly runtimeStartupListeners = new Set<
+    (event: RuntimeStartupFinishedEvent) => void
+  >();
+  private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
+  private readonly transportListeners = new Set<(status: TransportStatus) => void>();
+  private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
+  private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
+  private readonly pluginStateListeners = new Set<(change: TrackPluginStateChange) => void>();
+  private readonly pluginParameterListeners = new Set<
+    (change: TrackPluginParameterChange) => void
+  >();
+  private readonly jobs = new Map<string, BackgroundJobStatus>();
+  private jobSequence = 0;
 
   constructor(options: FakeNativeApiOptions = {}) {
     this.audio = options.audio ?? fakeAudioStatus();
+    this.recordings = options.recordings ?? [];
+    this.plugins = options.plugins ?? [];
+    this.separations = options.separations ?? [];
+    this.missing = options.missingDependencies ?? [];
+    this.bootstrapState = mergeBootstrap(options.bootstrapState);
     this.runtimeProjection = {
       state: 'idle',
       operationId: 0,
@@ -185,319 +143,56 @@ export class FakeNativeApi implements NativeApi {
       discardedPreparationCount: 0,
       lastError: null,
     };
-    this.recordings = options.recordings ?? [];
-    this.plugins = options.plugins ?? [];
-    this.separations = options.separations ?? [];
-    this.recordingSamples = options.recordingSamples ?? 22_050;
-    this.missing = options.missingDependencies ?? [];
-    this.duplicateContent = options.duplicateContent ?? {};
-    this.missingAssetIds = new Set(options.missingAssetIds ?? []);
-    this.persistenceFailure = options.persistenceFailure ?? false;
-    this.rollbackFailure = options.rollbackFailure ?? false;
-    this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    for (const [name, response] of Object.entries(options.responses ?? {})) {
+      this.responses.set(name as keyof NativeApi, response);
+    }
+    for (const [name, error] of Object.entries(options.failures ?? {})) {
+      if (error) this.failures.set(name as keyof NativeApi, error);
+    }
+    return new Proxy(this, {
+      get: (target, property, receiver) => {
+        if (Reflect.has(target, property)) return Reflect.get(target, property, receiver);
+        if (typeof property !== 'string') return undefined;
+        return (...arguments_: unknown[]) => target.invoke(property as keyof NativeApi, arguments_);
+      },
+      getOwnPropertyDescriptor: (target, property) => {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
+        if (descriptor || typeof property !== 'string') return descriptor;
+        return {
+          configurable: true,
+          enumerable: false,
+          writable: true,
+          value: (...arguments_: unknown[]) =>
+            target.invoke(property as keyof NativeApi, arguments_),
+        };
+      },
+    });
   }
 
-  setAudioState = (state: AudioStatus['state'], extra: Partial<AudioStatus> = {}): void => {
+  setResponse<K extends keyof NativeApi>(name: K, response: ResponseValue): void {
+    this.responses.set(name, response);
+  }
+
+  setFailure<K extends keyof NativeApi>(name: K, error: Error | null): void {
+    if (error) this.failures.set(name, error);
+    else this.failures.delete(name);
+  }
+
+  setAudioState(state: AudioStatus['state'], extra: Partial<AudioStatus> = {}): void {
     this.audio = { ...this.audio, state, ...extra };
-  };
+  }
 
-  bootstrap = async (): Promise<BootstrapState> => {
-    this.calls.push('bootstrap');
-    return this.bootstrapState;
-  };
-
-  onRuntimeStartupFinished = async (
-    callback: (event: RuntimeStartupFinishedEvent) => void,
-  ): Promise<() => void> => {
-    this.calls.push('onRuntimeStartupFinished');
-    this.runtimeStartupFinishedListeners.add(callback);
-    return () => this.runtimeStartupFinishedListeners.delete(callback);
-  };
-
-  emitRuntimeStartupFinished = (succeeded = this.bootstrapState.runtimeStarted): void => {
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      runtimeStartupFinished: true,
-      runtimeStarted: succeeded,
-    };
+  emitRuntimeStartupFinished(succeeded = this.bootstrapState.runtimeStarted): void {
     const event = { succeeded };
-    this.runtimeStartupFinishedListeners.forEach((callback) => callback(event));
-  };
+    this.runtimeStartupListeners.forEach((listener) => listener(event));
+  }
 
-  undoSession = async (): Promise<CreativeSession> => {
-    this.calls.push('undoSession');
-    this.assertPersistence();
-    const previous = this.undoHistory.pop();
-    if (!previous) throw new Error('History is empty.');
-    this.redoHistory.push(this.bootstrapState.session);
-    this.bootstrapState = { ...this.bootstrapState, session: previous };
-    this.savedSessions.push(previous);
-    return previous;
-  };
+  emitRuntimeRestarted(generation = 2): void {
+    this.runtimeRestartListeners.forEach((listener) => listener(generation));
+  }
 
-  redoSession = async (): Promise<CreativeSession> => {
-    this.calls.push('redoSession');
-    this.assertPersistence();
-    const next = this.redoHistory.pop();
-    if (!next) throw new Error('History is empty.');
-    this.undoHistory.push(this.bootstrapState.session);
-    this.commitCanonicalSession(next);
-    this.savedSessions.push(next);
-    return next;
-  };
-
-  getHistoryState = async (): Promise<HistoryState> => {
-    this.calls.push('getHistoryState');
-    return { canUndo: this.undoHistory.length > 0, canRedo: this.redoHistory.length > 0 };
-  };
-
-  restoreRecoveryGeneration = async (fileName: string): Promise<CreativeSession | null> => {
-    this.calls.push('restoreRecoveryGeneration');
-    return { ...this.bootstrapState.session, projectName: `Restored ${fileName}` };
-  };
-
-  exportSession = async (): Promise<ProjectExport | null> => {
-    this.calls.push('exportSession');
-    return {
-      path: 'fake://export.json',
-      sessionId: this.bootstrapState.session.sessionId,
-      exportedAtMs: 1,
-      assetCount: 1,
-    };
-  };
-
-  importSession = async (path: string): Promise<CreativeSession | null> => {
-    this.calls.push('importSession');
-    return { ...this.bootstrapState.session, projectName: `Imported ${path}` };
-  };
-
-  importMidiFile = async (_path: string, _name?: string): Promise<AssetId | null> => {
-    this.calls.push('importMidiFile');
-    return null;
-  };
-
-  importMidiBytes = async (_name: string, _bytes: number[]): Promise<AssetId | null> => {
-    this.calls.push('importMidiBytes');
-    return null;
-  };
-
-  scanVst3Folder = async (path?: string): Promise<ScanReport> => {
-    this.calls.push('scanVst3Folder');
-    const root = path ?? defaultVst3Root;
-    return { root, startedAtMs: 1, finishedAtMs: 2, plugins: this.plugins, issues: [] };
-  };
-
-  startAnalysisJob = async (assetId: AssetId): Promise<AnalysisJobStatus> => {
-    this.calls.push('startAnalysisJob');
-    return this.completeFakeJob('analysis', await this.analyzeAsset(assetId));
-  };
-
-  startSeparationJob = async (assetId: AssetId): Promise<SeparationJobStatus> => {
-    this.calls.push('startSeparationJob');
-    const result: SeparationResult = {
-      id: `sep:${++this.renderCounter}`,
-      sourceAssetId: assetId,
-      leftAssetId: toAssetId(`asset:fake-left-${this.renderCounter}`),
-      rightAssetId: toAssetId(`asset:fake-right-${this.renderCounter}`),
-      durationMs: 1_000,
-      state: 'completed',
-      createdAtMs: 1,
-      message: 'Fake split completed.',
-    };
-    this.separations = [result, ...this.separations.filter((item) => item.id !== result.id)];
-    return this.completeFakeJob('separation', result);
-  };
-
-  startScanJob = async (path?: string): Promise<ScanJobStatus> => {
-    this.calls.push('startScanJob');
-    return this.completeFakeJob('scan', await this.scanVst3Folder(path));
-  };
-
-  getBackgroundJob = async (id: string): Promise<BackgroundJobStatus | null> => {
-    this.calls.push('getBackgroundJob');
-    return this.jobs.get(id) ?? null;
-  };
-
-  cancelBackgroundJob = async (id: string): Promise<BackgroundJobStatus | null> => {
-    this.calls.push('cancelBackgroundJob');
-    const job = this.jobs.get(id);
-    if (job && !['completed', 'failed', 'cancelled'].includes(job.state)) {
-      const cancelled = {
-        ...job,
-        state: 'cancelled',
-        message: 'Fake job cancelled.',
-        result: null,
-      } as typeof job;
-      this.jobs.set(id, cancelled);
-      return cancelled;
-    }
-    return job ?? null;
-  };
-
-  listRecordings = async (query?: string): Promise<RecordingAsset[]> => {
-    this.calls.push('listRecordings');
-    return query
-      ? this.recordings.filter((recording) => recording.name.includes(query))
-      : this.recordings.slice();
-  };
-
-  searchLibrary = async (query: string): Promise<LibraryAsset[]> => {
-    this.calls.push('searchLibrary');
-    if (!query.trim()) return [];
-    return [
-      {
-        id: toAssetId('asset:fake'),
-        name: `Fake ${query}`,
-        kind: 'recording',
-        path: null,
-        tag: null,
-        note: null,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-        stability: 'validated',
-      },
-    ];
-  };
-
-  updateLibraryAsset = async (
-    id: string,
-    tag: string | null,
-    note: string | null,
-  ): Promise<LibraryAsset | null> => {
-    this.calls.push('updateLibraryAsset');
-    return {
-      id: toAssetId(id),
-      name: 'Fake asset',
-      kind: 'recording',
-      path: null,
-      tag,
-      note,
-      createdAtMs: 1,
-      updatedAtMs: 2,
-      stability: 'validated',
-    };
-  };
-
-  relatedLibraryAssets = async (_id: string): Promise<LibraryAsset[]> => {
-    this.calls.push('relatedLibraryAssets');
-    return [];
-  };
-
-  renameRecording = async (id: string, name: string): Promise<string> => {
-    this.calls.push('renameRecording');
-    const recording = this.recordings.find((item) => item.id === id);
-    if (!recording) throw new Error('Recording take was not found.');
-    const directory = recording.path.replace(/[\\/][^\\/]+$/, '');
-    const nextPath = `${directory}\\${name}`;
-    const replacePath = (path: string | null) =>
-      path?.startsWith(recording.path) ? `${nextPath}${path.slice(recording.path.length)}` : path;
-    const nextId = `recording:${nextPath}`;
-    this.recordings = this.recordings.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            id: nextId,
-            name,
-            path: nextPath,
-            rawPath: replacePath(item.rawPath),
-            processedPath: replacePath(item.processedPath),
-          }
-        : item,
-    );
-    return nextId;
-  };
-
-  deleteRecording = async (id: string): Promise<void> => {
-    this.calls.push('deleteRecording');
-    if (!this.recordings.some((recording) => recording.id === id))
-      throw new Error('Recording take was not found.');
-    this.recordings = this.recordings.filter((recording) => recording.id !== id);
-  };
-
-  archiveRecording = async (id: string): Promise<string> => {
-    this.calls.push('archiveRecording');
-    const recording = this.recordings.find((item) => item.id === id);
-    if (!recording) throw new Error('Recording take was not found.');
-    this.recordings = this.recordings.filter((recording) => recording.id !== id);
-    return `recording:${recording.path.replace(/([\\/])inbox\1/i, '$1archive$1')}`;
-  };
-
-  promoteRecording = async (id: string): Promise<string> => {
-    this.calls.push('promoteRecording');
-    const recording = this.recordings.find((item) => item.id === id);
-    if (!recording) throw new Error('Recording take was not found.');
-    this.recordings = this.recordings.filter((recording) => recording.id !== id);
-    return `recording:${recording.path.replace(/([\\/])inbox\1/i, '$1library$1')}`;
-  };
-
-  tagRecording = async (
-    id: string,
-    tag: string | null,
-    note: string | null,
-  ): Promise<LibraryAsset | null> => {
-    this.calls.push('tagRecording');
-    const recording = this.recordings.find((item) => item.id === id);
-    if (!recording) throw new Error('Recording take was not found.');
-    return {
-      id: toAssetId(id.startsWith('recording:') ? id : `recording:${id}`),
-      name: recording.name,
-      kind: 'recording',
-      path: recording.processedPath ?? recording.rawPath ?? null,
-      tag,
-      note,
-      createdAtMs: 1,
-      updatedAtMs: 2,
-      stability: 'validated',
-    };
-  };
-
-  detectDuplicateRecordings = async (): Promise<string[][]> => {
-    this.calls.push('detectDuplicateRecordings');
-    const byContent = new Map<string, string[]>();
-    for (const recording of this.recordings) {
-      const content = this.duplicateContent[recording.id];
-      if (content == null) continue;
-      const group = byContent.get(content) ?? [];
-      group.push(recording.id);
-      byContent.set(content, group);
-    }
-    return [...byContent.values()].filter((group) => group.length > 1);
-  };
-
-  onAudioStatus = (_callback: (status: AudioStatus) => void): (() => void) => {
-    this.calls.push('onAudioStatus');
-    return () => undefined;
-  };
-
-  onAudioMeters = (_callback: (meters: AudioMeters) => void): (() => void) => {
-    this.calls.push('onAudioMeters');
-    return () => undefined;
-  };
-
-  onRuntimeRestarted = (callback: (generation: number) => void): (() => void) => {
-    this.calls.push('onRuntimeRestarted');
-    this.runtimeRestartListeners.add(callback);
-    return () => this.runtimeRestartListeners.delete(callback);
-  };
-
-  emitRuntimeRestarted = (generation = this.runtimeProjection.runtimeGeneration): void => {
-    this.audio = {
-      ...this.audio,
-      state: 'muted',
-      outputPeak: 0,
-      message: 'Fake audio runtime restarted; output remains muted until restored.',
-    };
-    this.runtimeRestartListeners.forEach((callback) => callback(generation));
-  };
-
-  onTransportStatus = (callback: (status: TransportStatus) => void): (() => void) => {
-    this.calls.push('onTransportStatus');
-    this.transportStatusListeners.add(callback);
-    return () => this.transportStatusListeners.delete(callback);
-  };
-
-  emitTransportStatus = (overrides: Partial<Omit<TransportStatus, 'type'>> = {}): void => {
-    const status: TransportStatus = {
+  emitTransportStatus(status: Partial<TransportStatus> = {}): void {
+    const next: TransportStatus = {
       type: 'transportStatus',
       state: 'stopped',
       revision: 0,
@@ -515,2273 +210,281 @@ export class FakeNativeApi implements NativeApi {
       discontinuity: 0,
       unavailableClipIds: [],
       missingDeviceIds: [],
-      ...overrides,
+      ...status,
     };
-    this.transportStatusListeners.forEach((callback) => callback(status));
-  };
-
-  analyzeAsset = async (assetId: AssetId): Promise<AudioAnalysis | null> => {
-    this.calls.push('analyzeAsset');
-    this.assertAsset(assetId);
-    return {
-      path: `fake://assets/${assetId}.wav`,
-      sampleRate: 48_000,
-      channels: 2,
-      bitsPerSample: 24,
-      samples: 48_000,
-      durationMs: 1_000,
-      peakDb: -6,
-      truePeakDb: -5.8,
-      rmsDb: -18,
-      clippingSamples: 0,
-      dynamicRangeDb: 12,
-      zeroCrossings: 40,
-      phaseCorrelation: 0.8,
-      spectrumPeakHz: 440,
-      waveform: [0.1, 0.4, 0.2, 0.7],
-    };
-  };
-
-  probeMidiDevices = async (): Promise<MidiProbe> => {
-    this.calls.push('probeMidiDevices');
-    return {
-      inputs: [{ id: 'fake-midi-in', name: 'Fake MIDI In' }],
-      outputs: [{ id: 'fake-midi-out', name: 'Fake MIDI Out' }],
-      refreshedAtMs: 1,
-      message: 'Fake MIDI probe complete.',
-    };
-  };
-
-  probeAudioDevices = async (): Promise<AudioDeviceProbe> => {
-    this.calls.push('probeAudioDevices');
-    return {
-      drivers: [
-        {
-          name: 'Fake Driver',
-          accessMode: 'driverManaged',
-          devicePairing: 'independent',
-          inputs: [{ name: 'Input 1', channels: [{ index: 0, name: 'Input 1' }] }],
-          outputs: [
-            {
-              name: 'Output 1',
-              channels: [
-                { index: 0, name: 'Output 1' },
-                { index: 1, name: 'Output 2' },
-              ],
-            },
-          ],
-        },
-      ],
-      refreshedAtMs: 1,
-      message: 'Fake device probe complete.',
-    };
-  };
-
-  probeDeviceChannels = async (
-    driver: string,
-    inputDevice: string,
-    outputDevice: string,
-  ): Promise<DeviceChannels> => {
-    this.calls.push('probeDeviceChannels');
-    return {
-      driver,
-      inputDevice,
-      inputChannels: [{ index: 0, name: 'Input 1' }],
-      outputDevice,
-      outputChannels: [
-        { index: 0, name: 'Output 1' },
-        { index: 1, name: 'Output 2' },
-      ],
-    };
-  };
-
-  listSeparations = async (): Promise<SeparationResult[]> => {
-    this.calls.push('listSeparations');
-    return this.separations.slice();
-  };
-
-  renderTimeline = async (options: RenderOptions): Promise<RenderResult | null> => {
-    this.calls.push('renderTimeline');
-    const rangeStartMs = options.range.kind === 'timeSelection' ? options.range.startTick : 0;
-    const rangeEndMs = options.range.kind === 'timeSelection' ? options.range.endTick : 1_000;
-    return {
-      assetId: toAssetId(`asset:fake-render-${++this.renderCounter}`),
-      path: 'fake://render.wav',
-      sampleRate: 48_000,
-      frames: 48_000,
-      durationMs: 1_000,
-      clipCount: 1,
-      rangeStartMs,
-      rangeEndMs,
-      normalized: options.normalize,
-      trackId: options.trackId,
-      state: 'completed',
-      message: 'Fake render completed.',
-    };
-  };
-
-  exportMidi = async (): Promise<MidiExportResult | null> => {
-    this.calls.push('exportMidi');
-    return {
-      id: 'midi:fake',
-      path: 'fake://export.mid',
-      noteCount: 1,
-      clipCount: 1,
-      state: 'completed',
-      message: 'Fake MIDI export completed.',
-    };
-  };
-
-  private commitSessionWithAudio = (
-    project: (session: CreativeSession) => CreativeSession,
-  ): SessionAudioPair => {
-    this.assertPersistence();
-    const next = project(this.bootstrapState.session);
-    this.commitCanonicalSession(next);
-    return { session: next, audio: this.audio };
-  };
-
-  private commitCanonicalSession(next: CreativeSession): void {
-    this.undoHistory = [...this.undoHistory, this.bootstrapState.session].slice(-40);
-    this.redoHistory = [];
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
+    this.transportListeners.forEach((listener) => listener(next));
   }
 
-  private assertPersistence(): void {
-    if (!this.persistenceFailure) return;
-    if (this.rollbackFailure) {
-      throw new Error('Persistence failed and the local runtime rollback also failed.');
-    }
-    throw new Error('Persistence failed; the local runtime change was rolled back.');
+  emitAudioStatus(status: AudioStatus): void {
+    this.audio = status;
+    this.audioStatusListeners.forEach((listener) => listener(status));
   }
 
-  private assertAsset(assetId: AssetId): void {
-    if (this.missingAssetIds.has(assetId)) {
-      throw new Error(`Asset is not registered: ${assetId}`);
-    }
+  emitTrackPluginState(change: TrackPluginStateChange): void {
+    this.pluginStateListeners.forEach((listener) => listener(change));
   }
 
-  private assertTrackKind(
-    arrangement: CreativeSession['arrangement'],
-    trackId: string,
-    expected: TrackKind,
-  ): void {
-    const track = arrangement.tracks.find((candidate) => candidate.id === trackId);
-    if (!track) throw new Error(`Track is not registered: ${trackId}`);
-    if (track.kind !== expected) {
-      const label = expected === 'audio' ? 'Audio' : 'Instrument';
-      throw new Error(`Track is not an ${label} Track: ${trackId}`);
-    }
+  emitTrackPluginParameter(change: TrackPluginParameterChange): void {
+    this.pluginParameterListeners.forEach((listener) => listener(change));
   }
 
-  private assertTargetedMidi(trackId: string, bytes?: number[]): Track {
-    if (this.bootstrapState.safeMode) {
-      throw new Error('Safe Mode does not allow targeted MIDI input.');
+  private invoke(name: keyof NativeApi, arguments_: unknown[]): Promise<unknown> | (() => void) {
+    this.calls.push(String(name));
+    const failure = this.failures.get(name);
+    if (failure) return Promise.reject(failure);
+    const configured = this.responses.get(name);
+    if (configured !== undefined) {
+      return Promise.resolve(
+        typeof configured === 'function'
+          ? (configured as (...values: unknown[]) => unknown)(...arguments_)
+          : configured,
+      );
     }
-    if (this.bootstrapState.viewState.workspace !== 'arrange') {
-      throw new Error('Targeted MIDI input is available only in Arrange.');
-    }
-    if (trackId.trim().length === 0) {
-      throw new Error('A target track is required for targeted MIDI.');
-    }
-    const track = this.bootstrapState.session.arrangement.tracks.find(
-      (candidate) => candidate.id === trackId,
-    );
-    if (!track) throw new Error(`The target Track is not registered: ${trackId}`);
-    if (track.kind !== 'instrument') {
-      throw new Error('Targeted MIDI input requires an Instrument Track.');
-    }
-    if (!track.instrument) {
-      throw new Error('The target Instrument Track has no assigned instrument.');
-    }
-    if (bytes) {
-      if (bytes.length === 0 || bytes.length > 3) {
-        throw new Error('MIDI bytes must contain between 1 and 3 bytes.');
+
+    switch (name) {
+      case 'bootstrap':
+        return Promise.resolve(this.bootstrapState);
+      case 'onRuntimeStartupFinished':
+        return Promise.resolve(this.subscribe(this.runtimeStartupListeners, arguments_[0]));
+      case 'onRuntimeRestarted':
+        return this.subscribe(this.runtimeRestartListeners, arguments_[0]);
+      case 'onTransportStatus':
+        return this.subscribe(this.transportListeners, arguments_[0]);
+      case 'onAudioStatus':
+        return this.subscribe(this.audioStatusListeners, arguments_[0]);
+      case 'onAudioMeters':
+        return this.subscribe(this.audioMetersListeners, arguments_[0]);
+      case 'onTrackPluginStateChanged':
+        return this.subscribe(this.pluginStateListeners, arguments_[0]);
+      case 'onTrackPluginParameterChanged':
+        return this.subscribe(this.pluginParameterListeners, arguments_[0]);
+      case 'getHistoryState':
+        return Promise.resolve({ canUndo: false, canRedo: false });
+      case 'listRecordings':
+        return Promise.resolve(this.recordings);
+      case 'listSeparations':
+        return Promise.resolve(this.separations);
+      case 'searchLibrary':
+      case 'relatedLibraryAssets':
+        return Promise.resolve([]);
+      case 'getMissingDependencies':
+        return Promise.resolve(this.missing);
+      case 'probeMidiDevices':
+        return Promise.resolve({ inputs: [], outputs: [], refreshedAtMs: 1, message: 'fake' });
+      case 'probeAudioDevices':
+        return Promise.resolve({ drivers: [], refreshedAtMs: 1, message: 'fake' });
+      case 'probeDeviceChannels':
+        return Promise.resolve({ inputChannels: [], outputChannels: [] });
+      case 'getAudioStatus':
+        return Promise.resolve(this.audio);
+      case 'getRuntimeProjectionStatus':
+      case 'retryRuntimeProjection':
+        return Promise.resolve(this.runtimeProjection);
+      case 'setEmergencyMute':
+        this.emergencyMuteRequests.push(Boolean(arguments_[0]));
+        this.audio = {
+          ...this.audio,
+          state: arguments_[0] ? 'muted' : 'ready',
+        };
+        return Promise.resolve(this.audio);
+      case 'switchWorkspace': {
+        const next = {
+          ...this.bootstrapState.viewState,
+          workspace: arguments_[0],
+        } as DesktopViewState;
+        this.bootstrapState = { ...this.bootstrapState, viewState: next };
+        return Promise.resolve(next);
       }
-      if (bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 0xff)) {
-        throw new Error('MIDI bytes must be integers between 0 and 255.');
-      }
-      if ((bytes[0] ?? 0) < 0x80) {
-        throw new Error('The first MIDI byte must be a status byte.');
-      }
-      if (bytes.slice(1).some((byte) => byte < 0 || byte > 0x7f)) {
-        throw new Error('MIDI data bytes must be below 128.');
-      }
-    }
-    return track;
-  }
-
-  previewAsset = async (assetId: AssetId, _options: AssetPreviewOptions): Promise<AudioStatus> => {
-    this.calls.push('previewAsset');
-    this.assertAsset(assetId);
-    this.audio = { ...this.audio, state: 'ready', message: 'Preview voice is playing.' };
-    return this.audio;
-  };
-
-  stopSamplePreview = async (): Promise<AudioStatus> => {
-    this.calls.push('stopSamplePreview');
-    this.audio = {
-      ...this.audio,
-      state: this.audio.recording.active ? 'ready' : 'muted',
-      message: 'Preview stopped.',
-    };
-    return this.audio;
-  };
-
-  stopSamplePreviewKey = async (_voiceKey: number): Promise<AudioStatus> => {
-    this.calls.push('stopSamplePreviewKey');
-    return this.audio;
-  };
-
-  getAudioStatus = async (): Promise<AudioStatus> => {
-    this.calls.push('getAudioStatus');
-    return this.audio;
-  };
-
-  getRuntimeProjectionStatus = async (): Promise<RuntimeProjectionStatus> => {
-    this.calls.push('getRuntimeProjectionStatus');
-    return this.runtimeProjection;
-  };
-
-  setEmergencyMute = async (muted: boolean): Promise<AudioStatus> => {
-    this.calls.push('setEmergencyMute');
-    this.emergencyMuteRequests.push(muted);
-    if (muted) {
-      this.audio = {
-        ...this.audio,
-        state: 'muted',
-        outputPeak: 0,
-        message: 'Emergency mute engaged; output is forced silent.',
-      };
-    } else if (this.audio.state === 'faulted' || this.audio.state === 'offline') {
-      this.audio = {
-        ...this.audio,
-        message: 'Cannot unmute while the device is faulted or offline.',
-      };
-    } else {
-      this.audio = {
-        ...this.audio,
-        state: 'ready',
-        feedbackSuspected: false,
-        message: 'Emergency mute released; output is live.',
-      };
-    }
-    return this.audio;
-  };
-
-  private beginRecording = async (): Promise<AudioStatus> => {
-    this.audio = {
-      ...this.audio,
-      recording: {
-        active: true,
-        cancelled: false,
-        directory: 'fake://recordings',
-        sampleRate: 48_000,
-        rawChannels: 1,
-        processedChannels: 2,
-        samplesWritten: 0,
-        droppedBlocks: 0,
-        missingSamples: 0,
-        dropoutStartSample: null,
-        dropoutEndSample: null,
-        rawAttemptedSamples: 0,
-        processedAttemptedSamples: 0,
-        rawDroppedBlocks: 0,
-        processedDroppedBlocks: 0,
-        rawMissingSamples: 0,
-        processedMissingSamples: 0,
-        rawDropoutStartSample: null,
-        rawDropoutEndSample: null,
-        processedDropoutStartSample: null,
-        processedDropoutEndSample: null,
-        recoveryStatus: 'clean',
-      },
-      message: 'Recording started; raw and processed takes are being captured.',
-    };
-    return this.audio;
-  };
-
-  startArrangeRecording = async (_recordingSessionId?: string): Promise<AudioStatus> => {
-    this.calls.push('startArrangeRecording');
-    return this.beginRecording();
-  };
-
-  recordAnotherTake = async (recordingSessionId: string): Promise<AudioStatus> => {
-    this.calls.push('recordAnotherTake');
-    if (
-      !this.bootstrapState.session.arrangement.recordingSessions.some(
-        (item) => item.id === recordingSessionId,
-      )
-    ) {
-      throw new Error(`Recording Session is not registered: ${recordingSessionId}`);
-    }
-    return this.beginRecording();
-  };
-
-  private finishRecording = async (): Promise<AudioStatus> => {
-    const samples = this.recordingSamples;
-    this.audio = {
-      ...this.audio,
-      recording: {
-        active: false,
-        cancelled: false,
-        directory: 'fake://recordings',
-        sampleRate: 48_000,
-        rawChannels: 1,
-        processedChannels: 2,
-        samplesWritten: samples,
-        droppedBlocks: 0,
-        missingSamples: 0,
-        dropoutStartSample: null,
-        dropoutEndSample: null,
-        rawAttemptedSamples: 0,
-        processedAttemptedSamples: 0,
-        rawDroppedBlocks: 0,
-        processedDroppedBlocks: 0,
-        rawMissingSamples: 0,
-        processedMissingSamples: 0,
-        rawDropoutStartSample: null,
-        rawDropoutEndSample: null,
-        processedDropoutStartSample: null,
-        processedDropoutEndSample: null,
-        recoveryStatus: 'clean',
-      },
-      message: 'Recording stopped; the take was finalized and preserved.',
-    };
-    this.recordingCounter += 1;
-    const id = `fake-recording-${this.recordingCounter}`;
-    this.recordings = [
-      {
-        id,
-        name: `Fake Take ${this.recordingCounter}`,
-        path: `fake://${id}`,
-        state: 'completed',
-        error: null,
-        startedAt: null,
-        updatedAt: null,
-        rawFile: `${id}-raw.wav`,
-        processedFile: `${id}-processed.wav`,
-        rawPath: `fake://${id}-raw.wav`,
-        processedPath: `fake://${id}-processed.wav`,
-        rawAssetId: toAssetId(`asset:${id}-raw`),
-        processedAssetId: toAssetId(`asset:${id}-processed`),
-        midiAssetId: null,
-        capture: null,
-        midiFile: null,
-        sampleRate: 48_000,
-        samplesWritten: samples,
-        droppedBlocks: 0,
-        missingSamples: 0,
-        dropoutStartSample: null,
-        dropoutEndSample: null,
-        rawAttemptedSamples: 0,
-        processedAttemptedSamples: 0,
-        rawDroppedBlocks: 0,
-        processedDroppedBlocks: 0,
-        rawMissingSamples: 0,
-        processedMissingSamples: 0,
-        rawDropoutStartSample: null,
-        rawDropoutEndSample: null,
-        processedDropoutStartSample: null,
-        processedDropoutEndSample: null,
-        recoveryStatus: 'clean',
-      },
-      ...this.recordings,
-    ];
-    return this.audio;
-  };
-
-  stopArrangeRecording = async (): Promise<AudioStatus> => {
-    this.calls.push('stopArrangeRecording');
-    return this.finishRecording();
-  };
-
-  setMasterGainDb = async (gainDb: number): Promise<SessionAudioPair> => {
-    this.calls.push('setMasterGainDb');
-    const clamped = Math.max(-90, Math.min(0, Number.isFinite(gainDb) ? gainDb : 0));
-    this.audio = { ...this.audio, message: `Master gain set to ${clamped.toFixed(1)} dB.` };
-    return this.commitSessionWithAudio((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      settings: { ...current.settings, masterDb: clamped },
-    }));
-  };
-
-  previewMasterGainDb = async (gainDb: number): Promise<void> => {
-    this.calls.push('previewMasterGainDb');
-    const clamped = Math.max(-90, Math.min(0, gainDb));
-    this.audio = { ...this.audio, message: `Master gain previewed at ${clamped.toFixed(1)} dB.` };
-  };
-
-  recoverAudioDevice = async (): Promise<AudioStatus> => {
-    this.calls.push('recoverAudioDevice');
-    const startupRecovery = !this.bootstrapState.runtimeStarted;
-    this.audio = {
-      ...this.audio,
-      state: 'muted',
-      invalidSamples: 0,
-      message: 'Device recovered; output re-enters emergency mute for safety.',
-    };
-    if (startupRecovery) this.emitRuntimeStartupFinished(true);
-    return this.audio;
-  };
-
-  retryStartupRuntime = async (): Promise<AudioStatus> => {
-    this.calls.push('retryStartupRuntime');
-    this.audio = {
-      ...this.audio,
-      state: 'ready',
-      invalidSamples: 0,
-      message: 'Session runtime restored without reopening the audio device; output is ready.',
-    };
-    if (!this.bootstrapState.runtimeStarted) this.emitRuntimeStartupFinished(true);
-    return this.audio;
-  };
-
-  setAudioDriver = async (config: AudioDriverConfig): Promise<AudioStatus> => {
-    this.calls.push('setAudioDriver');
-    const {
-      driver,
-      inputDevice = null,
-      inputChannel = 0,
-      outputDevice = null,
-      sampleRate = null,
-      bufferSize = null,
-    } = config;
-    this.audio = {
-      ...this.audio,
-      state: 'muted',
-      driver,
-      inputDevice,
-      inputChannel,
-      inputChannels: inputDevice
-        ? [{ index: inputChannel, name: `Input ${inputChannel + 1}` }]
-        : [],
-      outputDevice,
-      outputChannels: outputDevice
-        ? [
-            { index: 0, name: 'Output 1' },
-            { index: 1, name: 'Output 2' },
-          ]
-        : [],
-      sampleRate: sampleRate ?? this.audio.sampleRate,
-      bufferSize: bufferSize ?? this.audio.bufferSize,
-      message: `Driver switched to ${driver}; output re-enters emergency mute for safety.`,
-    };
-    return this.audio;
-  };
-
-  enableMidiListening = async (): Promise<AudioStatus> => {
-    this.calls.push('enableMidiListening');
-    this.audio = {
-      ...this.audio,
-      midiInputActive: true,
-      message: 'MIDI listening enabled; all detected inputs are routed to the rack.',
-    };
-    return this.audio;
-  };
-
-  disableMidiListening = async (): Promise<AudioStatus> => {
-    this.calls.push('disableMidiListening');
-    this.audio = {
-      ...this.audio,
-      midiInputActive: false,
-      message: 'MIDI listening disabled; no external MIDI device is being consumed.',
-    };
-    return this.audio;
-  };
-
-  sendMidiToTrack = async (trackId: string, bytes: number[]): Promise<AudioStatus | null> => {
-    this.calls.push('sendMidiToTrack');
-    const track = this.assertTargetedMidi(trackId, bytes);
-    const status = bytes[0] & 0xf0;
-    const noteOn = status === 0x90 && bytes.length >= 2 && (bytes[2] ?? 1) > 0;
-    const noteOff = status === 0x80 || (status === 0x90 && bytes.length >= 2 && bytes[2] === 0);
-    this.audio = {
-      ...this.audio,
-      lastMidiNote: noteOn || noteOff ? (bytes[1] ?? null) : this.audio.lastMidiNote,
-      midiMessages: this.audio.midiMessages + 1,
-      message: `${noteOn ? 'Note on' : noteOff ? 'Note off' : 'MIDI message'} enqueued for ${track.name}.`,
-    };
-    return null;
-  };
-
-  panicMidiTrack = async (trackId: string): Promise<AudioStatus | null> => {
-    this.calls.push('panicMidiTrack');
-    const track = this.assertTargetedMidi(trackId);
-    this.audio = {
-      ...this.audio,
-      message: `MIDI panic sent to ${track.name}.`,
-    };
-    return null;
-  };
-
-  createSamplePad = async (assetId: AssetId, name: string): Promise<SessionAudioPair> => {
-    this.calls.push('createSamplePad');
-    this.assertAsset(assetId);
-    const session = this.bootstrapState.session;
-    const pads = session.playState.sampleInstrument.pads;
-    if (pads.some((pad) => pad.assetId === assetId)) {
-      throw new Error('This asset is already mapped to a sample pad.');
-    }
-    const midiKey = 36 + pads.length;
-    const nextPads = [
-      ...pads,
-      {
-        id: `pad:${assetId}`,
-        name,
-        assetId,
-        startMs: 0,
-        endMs: 1_000,
-        midiKey,
-        gainDb: 0,
-        loopEnabled: false,
-      },
-    ];
-    if (!this.bootstrapState.safeMode) {
-      this.audio = {
-        ...this.audio,
-        midiPadMappings: nextPads.length,
-        message: `${nextPads.length} sample pad mapping(s) applied.`,
-      };
-    }
-    const result = this.commitSessionWithAudio((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      playState: {
-        ...current.playState,
-        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
-      },
-    }));
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      viewState: {
-        workspace: 'design',
-        designContext: { activeTool: 'sample', targetAssetId: assetId },
-      },
-    };
-    return result;
-  };
-
-  updateSamplePad = async (
-    padId: string,
-    patch: { startMs?: number; endMs?: number; gainDb?: number; loopEnabled?: boolean },
-  ): Promise<SessionAudioPair> => {
-    this.calls.push('updateSamplePad');
-    const session = this.bootstrapState.session;
-    const pads = session.playState.sampleInstrument.pads;
-    if (!pads.some((pad) => pad.id === padId)) {
-      throw new Error(`Sample pad is not registered: ${padId}`);
-    }
-    const nextPads = pads.map((pad) => {
-      if (pad.id !== padId) return pad;
-      const startMs = patch.startMs ?? pad.startMs;
-      const endMs = patch.endMs ?? pad.endMs;
-      const clampedStart = startMs;
-      const clampedEnd = Math.max(endMs, clampedStart + 1);
-      return {
-        ...pad,
-        startMs: clampedStart,
-        endMs: clampedEnd,
-        gainDb:
-          patch.gainDb !== undefined
-            ? Math.max(-90, Math.min(24, Number.isFinite(patch.gainDb) ? patch.gainDb : 0))
-            : pad.gainDb,
-        loopEnabled: patch.loopEnabled ?? pad.loopEnabled,
-      };
-    });
-    if (!this.bootstrapState.safeMode) {
-      this.audio = {
-        ...this.audio,
-        midiPadMappings: nextPads.length,
-        message: `${nextPads.length} sample pad mapping(s) applied.`,
-      };
-    }
-    return this.commitSessionWithAudio((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      playState: {
-        ...current.playState,
-        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
-      },
-    }));
-  };
-
-  removeSamplePad = async (padId: string): Promise<SessionAudioPair> => {
-    this.calls.push('removeSamplePad');
-    const session = this.bootstrapState.session;
-    const pads = session.playState.sampleInstrument.pads;
-    if (!pads.some((pad) => pad.id === padId)) {
-      throw new Error(`Sample pad is not registered: ${padId}`);
-    }
-    const nextPads = pads.filter((pad) => pad.id !== padId);
-    if (!this.bootstrapState.safeMode) {
-      this.audio = {
-        ...this.audio,
-        midiPadMappings: nextPads.length,
-        message: `${nextPads.length} sample pad mapping(s) applied.`,
-      };
-    }
-    return this.commitSessionWithAudio((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      playState: {
-        ...current.playState,
-        sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
-      },
-    }));
-  };
-
-  getMissingDependencies = async (): Promise<MissingDependency[]> => {
-    this.calls.push('getMissingDependencies');
-    return this.missing.slice();
-  };
-
-  relinkMissingDependency = async (
-    assetId: AssetId,
-    _newPath: string,
-  ): Promise<CreativeSession> => {
-    this.calls.push('relinkMissingDependency');
-    const session = this.bootstrapState.session;
-    const replacement = toAssetId(`asset:fake-relinked-${++this.renderCounter}`);
-    const next: CreativeSession = {
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        audioClips: session.arrangement.audioClips.map((clip) =>
-          clip.assetId === assetId ? { ...clip, assetId: replacement } : clip,
-        ),
-      },
-      playState: {
-        ...session.playState,
-        sampleInstrument: {
-          ...session.playState.sampleInstrument,
-          pads: session.playState.sampleInstrument.pads.map((pad) =>
-            pad.assetId === assetId ? { ...pad, assetId: replacement } : pad,
-          ),
-        },
-      },
-    };
-    this.commitCanonicalSession(next);
-    this.missing = this.missing.filter((item) => item.assetId !== assetId);
-    return next;
-  };
-
-  disableMissingPlugin = async (deviceId: string): Promise<CreativeSession> => {
-    this.calls.push('disableMissingPlugin');
-    const session = this.bootstrapState.session;
-    const next: CreativeSession = {
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        revision: session.arrangement.revision + 1,
-        tracks: session.arrangement.tracks.map((track) => ({
-          ...track,
-          instrument:
-            track.instrument?.id === deviceId
-              ? { ...track.instrument, disabledPlaceholder: true }
-              : track.instrument,
-          rack: {
-            ...track.rack,
-            devices: track.rack.devices.map((device) =>
-              device.id === deviceId ? { ...device, disabledPlaceholder: true } : device,
-            ),
-          },
-        })),
-      },
-    };
-    this.commitCanonicalSession(next);
-    // A disabled placeholder is acknowledged, so it leaves the missing list
-    // (mirrors `collect_missing` skipping disabled-placeholder plugins).
-    this.missing = this.missing.filter((item) => item.id !== deviceId);
-    return next;
-  };
-
-  replaceMissingTrackPlugin = async (
-    deviceId: string,
-    newPath: string,
-  ): Promise<CreativeSession> => {
-    this.calls.push('replaceMissingTrackPlugin');
-    const session = this.bootstrapState.session;
-    const name =
-      newPath
-        .split(/[\\/]/)
-        .pop()
-        ?.replace(/\.vst3$/i, '') || 'Plugin';
-    const replace = (device: RackDevice): RackDevice =>
-      device.id === deviceId
-        ? {
-            ...device,
-            name,
-            path: newPath,
-            disabledPlaceholder: false,
-            bypassed: false,
-            parameterValues: [],
-            stateData: undefined,
-          }
-        : device;
-    const next: CreativeSession = {
-      ...session,
-      arrangement: {
-        ...session.arrangement,
-        revision: session.arrangement.revision + 1,
-        tracks: session.arrangement.tracks.map((track) => ({
-          ...track,
-          instrument: track.instrument ? replace(track.instrument) : undefined,
-          rack: {
-            ...track.rack,
-            devices: track.rack.devices.map(replace),
-          },
-        })),
-      },
-    };
-    this.commitCanonicalSession(next);
-    this.missing = this.missing.filter((item) => item.id !== deviceId);
-    return next;
-  };
-
-  addAudioClipToArrangement = async (
-    assetId: AssetId,
-    name: string,
-    startTick?: number,
-    trackId?: string,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('addAudioClipToArrangement');
-    this.assertAsset(assetId);
-    this.assertPersistence();
-    const session = this.bootstrapState.session;
-    const selectedTrack =
-      trackId ?? session.arrangement.tracks.find((track) => track.kind === 'audio')?.id;
-    const targetId = selectedTrack ?? `track:${Date.now()}`;
-    const tracks = selectedTrack
-      ? session.arrangement.tracks
-      : [
-          ...session.arrangement.tracks,
-          {
-            id: targetId,
-            name: 'Audio 1',
-            kind: 'audio' as const,
-            gainDb: 0,
-            pan: 0,
-            muted: false,
-            solo: false,
-            armed: false,
-            monitoring: 'off' as const,
-            midiInput: {},
-            rack: { devices: [], macros: [] },
-          },
-        ];
-    this.assertTrackKind({ ...session.arrangement, tracks }, targetId, 'audio');
-    const appendTick = session.arrangement.audioClips.reduce(
-      (end, clip) =>
-        Math.max(
-          end,
-          clip.startTick +
-            Math.round(
-              ((clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-                session.arrangement.timebase.bpm *
-                session.arrangement.timebase.ppq) /
-                60,
-            ),
-        ),
-      0,
-    );
-    const next: CreativeSession = {
-      ...session,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...session.arrangement,
-        revision: session.arrangement.revision + 1,
-        tracks,
-        audioClips: [
-          ...session.arrangement.audioClips,
-          {
-            id: `clip:${assetId}:${Date.now()}`,
-            name,
-            trackId: targetId,
-            assetId,
-            startTick: startTick ?? appendTick,
-            sourceRange: { start: 0, end: 48_000 },
-            sourceSampleRate: 48_000,
-            timelineDuration: { frames: 48_000, sampleRate: 48_000 },
-            gainDb: 0,
-            pan: 0,
-            fadeIn: { frames: 0, sampleRate: 48_000 },
-            fadeOut: { frames: 0, sampleRate: 48_000 },
-            loopEnabled: false,
-            muted: false,
-            takeVariant: 'raw' as const,
-          },
-        ],
-      },
-    };
-    this.commitCanonicalSession(next);
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      viewState: { ...this.bootstrapState.viewState, workspace: 'arrange' },
-    };
-    return next;
-  };
-
-  addMidiClipToArrangement = async (
-    assetId: AssetId,
-    name: string,
-    startTick?: number,
-    trackId?: string,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('addMidiClipToArrangement');
-    this.assertAsset(assetId);
-    const next = this.commitSession((current) => {
-      const selectedTrack =
-        trackId ?? current.arrangement.tracks.find((track) => track.kind === 'instrument')?.id;
-      const nextTrack = selectedTrack
-        ? current.arrangement.tracks
-        : [
-            ...current.arrangement.tracks,
-            {
-              id: `track:${Date.now()}`,
-              name: 'Instrument 1',
-              kind: 'instrument' as const,
-              gainDb: 0,
-              pan: 0,
-              muted: false,
-              solo: false,
-              armed: false,
-              monitoring: 'off' as const,
-              midiInput: {},
-              rack: { devices: [], macros: [] },
-            },
-          ];
-      const targetId = selectedTrack ?? nextTrack[nextTrack.length - 1].id;
-      this.assertTrackKind({ ...current.arrangement, tracks: nextTrack }, targetId, 'instrument');
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          tracks: nextTrack,
-          midiClips: [
-            ...current.arrangement.midiClips,
-            {
-              id: `midi-clip:${Date.now()}`,
-              name,
-              trackId: targetId,
-              assetId,
-              startTick: startTick ?? 0,
-              durationTicks: 1_920,
-              notes: [],
-              events: [],
-              muted: false,
-              loopEnabled: false,
-            },
-          ],
-        },
-      };
-    });
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      viewState: { ...this.bootstrapState.viewState, workspace: 'arrange' },
-    };
-    return next;
-  };
-
-  /**
-   * Shared helper for the Arrangement editing commands. Mirrors the production
-   * "edit + persist + return updated session" loop without re-implementing the
-   * Rust Domain clamp rules; the fake trusts the caller and records a save.
-   * Returns null when the referenced clip is missing so tests can assert the
-   * not-found path the way the production runtime surfaces it.
-   */
-  private commitArrangementEdit(
-    edit: (clips: AudioClip[]) => AudioClip[] | null,
-  ): CreativeSession | null {
-    this.assertPersistence();
-    const session = this.bootstrapState.session;
-    const next = edit(session.arrangement.audioClips);
-    if (!next) return null;
-    const arrangement = { ...session.arrangement, audioClips: next };
-    for (const clip of next) this.assertTrackKind(arrangement, clip.trackId, 'audio');
-    const updated: CreativeSession = {
-      ...session,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...arrangement,
-        revision: session.arrangement.revision + 1,
-      },
-    };
-    this.commitCanonicalSession(updated);
-    return updated;
-  }
-
-  private replaceClip = (
-    clips: AudioClip[],
-    clipId: string,
-    patch: AudioClipPatch,
-  ): AudioClip[] | null => {
-    const index = clips.findIndex((clip) => clip.id === clipId);
-    if (index < 0) return null;
-    const current = clips[index];
-    const replacement: AudioClip = {
-      id: current.id,
-      name: patch.name ?? current.name,
-      trackId: patch.trackId ?? current.trackId,
-      assetId: current.assetId,
-      startTick: patch.startTick ?? current.startTick,
-      sourceRange: patch.sourceRange ?? current.sourceRange,
-      sourceSampleRate: current.sourceSampleRate,
-      timelineDuration: patch.timelineDuration ?? current.timelineDuration,
-      gainDb: patch.gainDb ?? current.gainDb,
-      pan: patch.pan ?? current.pan,
-      fadeIn: patch.fadeIn ?? current.fadeIn,
-      fadeOut: patch.fadeOut ?? current.fadeOut,
-      loopEnabled: patch.loopEnabled ?? current.loopEnabled,
-      muted: patch.muted ?? current.muted,
-      recordingTakeId: current.recordingTakeId,
-      takeVariant: current.takeVariant,
-    };
-    const next = clips.slice();
-    next.splice(index, 1, replacement);
-    return next;
-  };
-
-  updateAudioClip = async (
-    clipId: string,
-    patch: AudioClipPatch,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('updateAudioClip');
-    return this.commitArrangementEdit((clips) => this.replaceClip(clips, clipId, patch));
-  };
-
-  updateMidiClip = async (
-    clipId: string,
-    patch: MidiClipPatch,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('updateMidiClip');
-    return this.commitSession((current) => {
-      const midiClips = current.arrangement.midiClips.map((clip) =>
-        clip.id === clipId
-          ? {
-              ...clip,
-              name: patch.name ?? clip.name,
-              trackId: patch.trackId ?? clip.trackId,
-              startTick: patch.startTick ?? clip.startTick,
-              durationTicks: patch.durationTicks ?? clip.durationTicks,
-              muted: patch.muted ?? clip.muted,
-              loopEnabled: patch.loopEnabled ?? clip.loopEnabled,
-            }
-          : clip,
-      );
-      const arrangement = { ...current.arrangement, midiClips };
-      for (const clip of midiClips) this.assertTrackKind(arrangement, clip.trackId, 'instrument');
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...arrangement,
-          revision: current.arrangement.revision + 1,
-        },
-      };
-    });
-  };
-
-  removeTimelineClips = async (
-    audioClipIds: string[],
-    midiClipIds: string[],
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('removeTimelineClips');
-    this.assertPersistence();
-    const current = this.bootstrapState.session;
-    if (
-      (!audioClipIds.length && !midiClipIds.length) ||
-      audioClipIds.some((id) => !current.arrangement.audioClips.some((clip) => clip.id === id)) ||
-      midiClipIds.some((id) => !current.arrangement.midiClips.some((clip) => clip.id === id))
-    )
-      return null;
-    return this.commitSession((session) => ({
-      ...session,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...session.arrangement,
-        revision: session.arrangement.revision + 1,
-        audioClips: session.arrangement.audioClips.filter(
-          (clip) => !audioClipIds.includes(clip.id),
-        ),
-        midiClips: session.arrangement.midiClips.filter((clip) => !midiClipIds.includes(clip.id)),
-      },
-    }));
-  };
-
-  trimAudioClip = async (
-    clipId: string,
-    startTick: number,
-    sourceRange: { start: number; end: number },
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('trimAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      const clip = clips.find((candidate) => candidate.id === clipId);
-      if (!clip || sourceRange.end <= sourceRange.start) return null;
-      return this.replaceClip(clips, clipId, {
-        startTick,
-        sourceRange,
-        timelineDuration: {
-          frames: sourceRange.end - sourceRange.start,
-          sampleRate: clip.sourceSampleRate,
-        },
-      });
-    });
-  };
-
-  splitAudioClip = async (clipId: string, splitTick: number): Promise<CreativeSession | null> => {
-    this.calls.push('splitAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      const index = clips.findIndex((clip) => clip.id === clipId);
-      if (index < 0) return null;
-      const clip = clips[index];
-      const timebase = this.bootstrapState.session.arrangement.timebase;
-      const durationTicks =
-        (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-        (timebase.bpm / 60) *
-        timebase.ppq;
-      const ratio = (splitTick - clip.startTick) / durationTicks;
-      if (ratio <= 0 || ratio >= 1) return null;
-      const frameOffset = Math.round(clip.timelineDuration.frames * ratio);
-      const left: AudioClip = {
-        ...clip,
-        sourceRange: { ...clip.sourceRange, end: clip.sourceRange.start + frameOffset },
-        timelineDuration: { ...clip.timelineDuration, frames: frameOffset },
-        fadeOut: { ...clip.fadeOut, frames: 0 },
-      };
-      const right: AudioClip = {
-        ...clip,
-        id: `${clip.id}:split:${clips.length}`,
-        name: `${clip.name} split`,
-        startTick: splitTick,
-        sourceRange: { ...clip.sourceRange, start: clip.sourceRange.start + frameOffset },
-        timelineDuration: {
-          ...clip.timelineDuration,
-          frames: clip.timelineDuration.frames - frameOffset,
-        },
-        fadeIn: { ...clip.fadeIn, frames: 0 },
-      };
-      const next = clips.slice();
-      next.splice(index, 1, left, right);
-      return next;
-    });
-  };
-
-  duplicateAudioClip = async (clipId: string): Promise<CreativeSession | null> => {
-    this.calls.push('duplicateAudioClip');
-    return this.commitArrangementEdit((clips) => {
-      const clip = clips.find((candidate) => candidate.id === clipId);
-      if (!clip) return null;
-      const timebase = this.bootstrapState.session.arrangement.timebase;
-      const durationTicks = Math.round(
-        (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-          (timebase.bpm / 60) *
-          timebase.ppq,
-      );
-      return [
-        ...clips,
-        {
-          ...clip,
-          id: `${clip.id}:copy:${clips.length}`,
-          name: `${clip.name} copy`,
-          startTick: clip.startTick + durationTicks,
-        },
-      ];
-    });
-  };
-
-  moveAudioClips = async (moves: AudioClipMove[]): Promise<CreativeSession | null> => {
-    this.calls.push('moveAudioClips');
-    return this.commitArrangementEdit((clips) => {
-      if (moves.some((move) => !clips.some((clip) => clip.id === move.clipId))) return null;
-      const byId = new Map(moves.map((move) => [move.clipId, move]));
-      return clips.map((clip) => {
-        const move = byId.get(clip.id);
-        return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
-      });
-    });
-  };
-
-  moveMidiClips = async (moves: MidiClipMove[]): Promise<CreativeSession | null> => {
-    this.calls.push('moveMidiClips');
-    return this.commitSession((current) => {
-      const byId = new Map(moves.map((move) => [move.clipId, move]));
-      const midiClips = current.arrangement.midiClips.map((clip) => {
-        const move = byId.get(clip.id);
-        return move ? { ...clip, startTick: move.startTick, trackId: move.trackId } : clip;
-      });
-      const arrangement = { ...current.arrangement, midiClips };
-      for (const clip of midiClips) this.assertTrackKind(arrangement, clip.trackId, 'instrument');
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...arrangement,
-          revision: current.arrangement.revision + 1,
-        },
-      };
-    });
-  };
-
-  trimMidiClip = async (
-    clipId: string,
-    startTick: number,
-    durationTicks: number,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('trimMidiClip');
-    return this.updateMidiClip(clipId, { startTick, durationTicks });
-  };
-
-  splitMidiClip = async (clipId: string, splitTick: number): Promise<CreativeSession | null> => {
-    this.calls.push('splitMidiClip');
-    return this.commitSession((current) => {
-      const clip = current.arrangement.midiClips.find((item) => item.id === clipId);
-      if (!clip) return current;
-      const relative = splitTick - clip.startTick;
-      if (relative <= 0 || relative >= clip.durationTicks) return current;
-      const left = { ...clip, durationTicks: relative };
-      const right = {
-        ...clip,
-        id: `${clip.id}:split:${Date.now()}`,
-        name: `${clip.name} split`,
-        startTick: splitTick,
-        durationTicks: clip.durationTicks - relative,
-        notes: clip.notes
-          .filter((note) => note.startTick >= relative)
-          .map((note) => ({ ...note, startTick: note.startTick - relative })),
-        events: clip.events
-          .filter((event) => event.tick >= relative)
-          .map((event) => ({ ...event, tick: event.tick - relative })),
-      };
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          midiClips: current.arrangement.midiClips.flatMap((item) =>
-            item.id === clipId ? [left, right] : [item],
-          ),
-        },
-      };
-    });
-  };
-
-  duplicateMidiClip = async (clipId: string): Promise<CreativeSession | null> => {
-    this.calls.push('duplicateMidiClip');
-    return this.commitSession((current) => {
-      const clip = current.arrangement.midiClips.find((item) => item.id === clipId);
-      if (!clip) return current;
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          midiClips: [
-            ...current.arrangement.midiClips,
-            {
-              ...clip,
-              id: `${clip.id}:copy:${Date.now()}`,
-              name: `${clip.name} copy`,
-              startTick: clip.startTick + clip.durationTicks,
-            },
-          ],
-        },
-      };
-    });
-  };
-
-  pasteTimelineClips = async (
-    audioClipIds: string[],
-    midiClipIds: string[],
-    startTick: number,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('pasteTimelineClips');
-    const current = this.bootstrapState.session;
-    const audio = audioClipIds
-      .map((id) => current.arrangement.audioClips.find((clip) => clip.id === id))
-      .filter((clip): clip is AudioClip => Boolean(clip));
-    const midi = midiClipIds
-      .map((id) => current.arrangement.midiClips.find((clip) => clip.id === id))
-      .filter((clip): clip is CreativeSession['arrangement']['midiClips'][number] => Boolean(clip));
-    if (
-      audio.length !== audioClipIds.length ||
-      midi.length !== midiClipIds.length ||
-      (!audio.length && !midi.length)
-    )
-      return null;
-    return this.commitSession((session) => {
-      const anchor = Math.min(
-        ...audio.map((clip) => clip.startTick),
-        ...midi.map((clip) => clip.startTick),
-      );
-      return {
-        ...session,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...session.arrangement,
-          revision: session.arrangement.revision + 1,
-          audioClips: [
-            ...session.arrangement.audioClips,
-            ...audio.map((clip, index) => ({
-              ...clip,
-              id: `${clip.id}:paste:${session.arrangement.revision}:${index}`,
-              name: `${clip.name} copy`,
-              startTick: startTick + clip.startTick - anchor,
-            })),
-          ],
-          midiClips: [
-            ...session.arrangement.midiClips,
-            ...midi.map((clip, index) => ({
-              ...clip,
-              id: `${clip.id}:paste:${session.arrangement.revision}:${index}`,
-              name: `${clip.name} copy`,
-              startTick: startTick + clip.startTick - anchor,
-            })),
-          ],
-        },
-      };
-    });
-  };
-
-  crossfadeAudioClips = async (
-    firstId: string,
-    secondId: string,
-  ): Promise<CreativeSession | null> => {
-    this.calls.push('crossfadeAudioClips');
-    return this.commitArrangementEdit((clips) => {
-      const first = clips.find((clip) => clip.id === firstId);
-      const second = clips.find((clip) => clip.id === secondId);
-      if (!first || !second || first.trackId !== second.trackId) return null;
-      const timebase = this.bootstrapState.session.arrangement.timebase;
-      const ticks = (clip: AudioClip) =>
-        Math.round(
-          (clip.timelineDuration.frames / clip.sourceSampleRate) *
-            (timebase.bpm / 60) *
-            timebase.ppq,
-        );
-      const overlap =
-        Math.min(first.startTick + ticks(first), second.startTick + ticks(second)) -
-        Math.max(first.startTick, second.startTick);
-      if (overlap <= 0) return null;
-      const left = first.startTick <= second.startTick ? first : second;
-      const right = left === first ? second : first;
-      return clips.map((clip) => {
-        if (clip.id === left.id) {
-          return {
-            ...clip,
-            fadeOut: {
-              frames: Math.round(
-                (overlap * clip.sourceSampleRate * 60) / (timebase.bpm * timebase.ppq),
-              ),
-              sampleRate: clip.sourceSampleRate,
-            },
-          };
-        }
-        if (clip.id === right.id) {
-          return {
-            ...clip,
-            fadeIn: {
-              frames: Math.round(
-                (overlap * clip.sourceSampleRate * 60) / (timebase.bpm * timebase.ppq),
-              ),
-              sampleRate: clip.sourceSampleRate,
-            },
-          };
-        }
-        return clip;
-      });
-    });
-  };
-
-  retryRuntimeProjection = async (): Promise<RuntimeProjectionStatus> => {
-    this.calls.push('retryRuntimeProjection');
-    const operationId = this.runtimeProjection.operationId + 1;
-    this.runtimeProjection = {
-      ...this.runtimeProjection,
-      state: 'queued',
-      operationId,
-      targetSessionRevision: this.bootstrapState.session.arrangement.revision,
-      queuedAtMs: Date.now(),
-      lastError: null,
-    };
-    return this.runtimeProjection;
-  };
-
-  playTimeline = async (_transportSequence: number): Promise<void> => {
-    this.calls.push('playTimeline');
-    this.emitTransportStatus({ state: 'playing' });
-  };
-
-  stopTimeline = async (_transportSequence: number): Promise<void> => {
-    this.calls.push('stopTimeline');
-    this.emitTransportStatus({ state: 'stopped' });
-  };
-
-  goToStartTimeline = async (_transportSequence: number): Promise<void> => {
-    this.calls.push('goToStartTimeline');
-    this.emitTransportStatus({ state: 'stopped' });
-  };
-
-  seekTimeline = async (_tick: number): Promise<void> => {
-    this.calls.push('seekTimeline');
-  };
-
-  updateArrangementTimebase = async (
-    timebase: CreativeSession['arrangement']['timebase'],
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateArrangementTimebase');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        timebase,
-      },
-    }));
-  };
-
-  updateTimelineLoopRange = async (
-    enabled: boolean,
-    startTick: number,
-    endTick: number,
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateTimelineLoopRange');
-    return this.commitSession((current) => ({
-      ...current,
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        loopRange: { enabled, startTick, endTick },
-      },
-    }));
-  };
-
-  updateTimelinePunchRange = async (
-    enabled: boolean,
-    startTick: number,
-    endTick: number,
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateTimelinePunchRange');
-    return this.commitSession((current) => ({
-      ...current,
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        punchRange: enabled ? { startTick, endTick } : undefined,
-      },
-    }));
-  };
-
-  openAssetInDesign = async (
-    assetId: AssetId,
-    tool: DesignTool,
-  ): Promise<DesktopViewState | null> => {
-    this.calls.push('openAssetInDesign');
-    this.assertAsset(assetId);
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      viewState: {
-        workspace: 'design',
-        designContext: { activeTool: tool, targetAssetId: assetId },
-      },
-    };
-    return this.bootstrapState.viewState;
-  };
-
-  switchWorkspace = async (
-    workspace: Workspace,
-    _transportSequence: number,
-  ): Promise<DesktopViewState | null> => {
-    this.calls.push('switchWorkspace');
-    this.bootstrapState = {
-      ...this.bootstrapState,
-      viewState: { ...this.bootstrapState.viewState, workspace },
-    };
-    return this.bootstrapState.viewState;
-  };
-
-  private commitSession(project: (session: CreativeSession) => CreativeSession): CreativeSession {
-    this.assertPersistence();
-    const next = project(this.bootstrapState.session);
-    this.commitCanonicalSession(next);
-    return next;
-  }
-
-  updateSessionSettings = async (patch: {
-    projectName?: string | null;
-    loopEnabled?: boolean;
-    countInBeats?: number;
-    metronomeEnabled?: boolean;
-    note?: string;
-    aiPermission?: string;
-    aiContext?: string[];
-  }): Promise<CreativeSession> => {
-    this.calls.push('updateSessionSettings');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      projectName: patch.projectName !== undefined ? patch.projectName : current.projectName,
-      settings: {
-        ...current.settings,
-        loopEnabled: patch.loopEnabled ?? current.settings.loopEnabled,
-        countInBeats: patch.countInBeats ?? current.settings.countInBeats,
-        metronomeEnabled: patch.metronomeEnabled ?? current.settings.metronomeEnabled,
-        note: patch.note ?? current.settings.note,
-        aiPermission:
-          patch.aiPermission === 'Explain' ||
-          patch.aiPermission === 'Suggest' ||
-          patch.aiPermission === 'Apply'
-            ? patch.aiPermission
-            : current.settings.aiPermission,
-        aiContext: patch.aiContext ?? current.settings.aiContext,
-      },
-    }));
-  };
-
-  addTrack = async (name: string, kind: TrackKind): Promise<CreativeSession> => {
-    this.calls.push('addTrack');
-    if (!name.trim()) throw new Error('Track name must not be empty.');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        tracks: [
-          ...current.arrangement.tracks,
-          {
-            id: `track:${Date.now()}`,
-            name: name.trim().slice(0, 80),
-            kind,
-            gainDb: 0,
-            pan: 0,
-            muted: false,
-            solo: false,
-            armed: false,
-            monitoring: 'off' as const,
-            midiInput: {},
-            rack: { devices: [], macros: [] },
-          },
-        ],
-      },
-    }));
-  };
-
-  private updateTrackFields(trackId: string, transform: (track: Track) => Track): CreativeSession {
-    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
-      throw new Error(`Track is not registered: ${trackId}`);
-    }
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        tracks: current.arrangement.tracks.map((track) =>
-          track.id === trackId ? transform(track) : track,
-        ),
-      },
-    }));
-  }
-
-  private updateTrackDevice(
-    trackId: string,
-    deviceId: string,
-    transform: (device: RackDevice) => RackDevice,
-  ): CreativeSession {
-    return this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      instrument:
-        track.instrument?.id === deviceId ? transform(track.instrument) : track.instrument,
-      rack: {
-        ...track.rack,
-        devices: track.rack.devices.map((device) =>
-          device.id === deviceId ? transform(device) : device,
-        ),
-      },
-    }));
-  }
-
-  setTrackAudioInput = async (
-    trackId: string,
-    channelIndex: number | null,
-  ): Promise<CreativeSession> =>
-    this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      audioInput: channelIndex === null ? undefined : { channelIndex },
-    }));
-
-  setTrackMidiInput = async (trackId: string, route: MidiInputRoute): Promise<CreativeSession> =>
-    this.updateTrackFields(trackId, (track) => ({ ...track, midiInput: route }));
-
-  setTrackInstrument = async (trackId: string, pluginPath: string): Promise<CreativeSession> => {
-    this.calls.push('setTrackInstrument');
-    const plugin = this.plugins.find((candidate) => candidate.path === pluginPath);
-    return this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      instrument: {
-        id: track.instrument?.id ?? `device:instrument:${Date.now()}`,
-        name: plugin?.name ?? pluginPath.split(/[\\/]/).pop() ?? 'Instrument',
-        kind: 'plugin',
-        path: pluginPath,
-        bypassed: false,
-        gainDb: 0,
-        parameterValues: [],
-        disabledPlaceholder: false,
-      },
-    }));
-  };
-
-  clearTrackInstrument = async (trackId: string): Promise<CreativeSession> =>
-    this.updateTrackFields(trackId, (track) => ({ ...track, instrument: undefined }));
-
-  addTrackEffect = async (trackId: string, pluginPath: string): Promise<CreativeSession> => {
-    this.calls.push('addTrackEffect');
-    const plugin = this.plugins.find((candidate) => candidate.path === pluginPath);
-    return this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      rack: {
-        ...track.rack,
-        devices: [
-          ...track.rack.devices,
-          {
-            id: `device:effect:${Date.now()}`,
-            name: plugin?.name ?? pluginPath.split(/[\\/]/).pop() ?? 'Effect',
-            kind: 'plugin',
-            path: pluginPath,
-            bypassed: false,
-            gainDb: 0,
-            parameterValues: [],
-            disabledPlaceholder: false,
-          },
-        ],
-      },
-    }));
-  };
-
-  removeTrackEffect = async (trackId: string, deviceId: string): Promise<CreativeSession> =>
-    this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      rack: {
-        ...track.rack,
-        devices: track.rack.devices.filter((device) => device.id !== deviceId),
-      },
-    }));
-
-  reorderTrackEffects = async (
-    trackId: string,
-    orderedDeviceIds: string[],
-  ): Promise<CreativeSession> =>
-    this.updateTrackFields(trackId, (track) => ({
-      ...track,
-      rack: {
-        ...track.rack,
-        devices: orderedDeviceIds.map((id) =>
-          track.rack.devices.find((device) => device.id === id)!,
-        ),
-      },
-    }));
-
-  setTrackDeviceBypassed = async (
-    trackId: string,
-    deviceId: string,
-    bypassed: boolean,
-  ): Promise<CreativeSession> =>
-    this.updateTrackDevice(trackId, deviceId, (device) => ({ ...device, bypassed }));
-
-  setTrackDeviceParameter = async (
-    trackId: string,
-    deviceId: string,
-    parameterIndex: number,
-    value: number,
-  ): Promise<CreativeSession> =>
-    this.updateTrackDevice(trackId, deviceId, (device) => {
-      const parameterValues = [...device.parameterValues];
-      while (parameterValues.length <= parameterIndex) parameterValues.push(0);
-      parameterValues[parameterIndex] = Math.max(0, Math.min(1, value));
-      return { ...device, parameterValues };
-    });
-
-  openTrackPluginEditor = async (_trackId: string, _deviceId: string): Promise<void> => {
-    this.calls.push('openTrackPluginEditor');
-  };
-
-  persistTrackPluginState = async (change: TrackPluginStateChange): Promise<CreativeSession> =>
-    this.updateTrackDevice(change.trackId, change.deviceId, (device) => ({
-      ...device,
-      parameterValues: [...change.parameterValues],
-      stateData: change.stateData ?? undefined,
-      bypassed: change.bypassed,
-    }));
-
-  persistTrackPluginParameter = async (
-    change: TrackPluginParameterChange,
-  ): Promise<CreativeSession> =>
-    this.updateTrackDevice(change.trackId, change.deviceId, (device) => {
-      const parameterValues = [...device.parameterValues];
-      while (parameterValues.length <= change.parameterIndex) parameterValues.push(0);
-      parameterValues[change.parameterIndex] = change.value;
-      return { ...device, parameterValues };
-    });
-
-  onTrackPluginStateChanged = (_callback: (change: TrackPluginStateChange) => void) => {
-    return () => undefined;
-  };
-
-  onTrackPluginParameterChanged = (_callback: (change: TrackPluginParameterChange) => void) => {
-    return () => undefined;
-  };
-
-  updateTrack = async (
-    trackId: string,
-    patch: {
-      name?: string;
-      gainDb?: number;
-      pan?: number;
-      muted?: boolean;
-      solo?: boolean;
-      armed?: boolean;
-      monitoring?: MonitoringState;
-      rack?: RackInstance;
-    },
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateTrack');
-    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
-      throw new Error(`Track is not registered: ${trackId}`);
-    }
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        tracks: current.arrangement.tracks.map((track) =>
-          track.id === trackId
-            ? {
-                ...track,
-                name: patch.name?.trim() || track.name,
-                gainDb:
-                  patch.gainDb === undefined
-                    ? track.gainDb
-                    : Math.max(-90, Math.min(24, patch.gainDb)),
-                pan: patch.pan === undefined ? track.pan : Math.max(-1, Math.min(1, patch.pan)),
-                muted: patch.muted ?? track.muted,
-                solo: patch.solo ?? track.solo,
-                armed: patch.armed ?? track.armed,
-                monitoring: patch.monitoring ?? track.monitoring,
-                rack: patch.rack ?? track.rack,
-              }
-            : track,
-        ),
-      },
-    }));
-  };
-
-  setTrackAutomation = async (
-    trackId: string,
-    parameter: AutomationParameter,
-    points: AutomationPoint[],
-  ): Promise<CreativeSession> => {
-    this.calls.push('setTrackAutomation');
-    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
-      throw new Error(`Track is not registered: ${trackId}`);
-    }
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        automationLanes: [
-          ...current.arrangement.automationLanes.filter(
-            (lane) => lane.trackId !== trackId || lane.parameter !== parameter,
-          ),
-          ...(points.length
-            ? [
-                {
-                  id: `automation:${trackId}:${parameter}`,
-                  trackId,
-                  parameter,
-                  points: [...points].sort((left, right) => left.tick - right.tick),
-                },
-              ]
-            : []),
-        ],
-      },
-    }));
-  };
-
-  removeTrack = async (trackId: string): Promise<CreativeSession> => {
-    this.calls.push('removeTrack');
-    if (!this.bootstrapState.session.arrangement.tracks.some((track) => track.id === trackId)) {
-      throw new Error(`Track is not registered: ${trackId}`);
-    }
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        tracks: current.arrangement.tracks.filter((track) => track.id !== trackId),
-        audioClips: current.arrangement.audioClips.filter((clip) => clip.trackId !== trackId),
-        midiClips: current.arrangement.midiClips.filter((clip) => clip.trackId !== trackId),
-        automationLanes: current.arrangement.automationLanes.filter(
-          (lane) => lane.trackId !== trackId,
-        ),
-      },
-    }));
-  };
-
-  duplicateTrack = async (trackId: string): Promise<CreativeSession> => {
-    this.calls.push('duplicateTrack');
-    const sourceIndex = this.bootstrapState.session.arrangement.tracks.findIndex(
-      (track) => track.id === trackId,
-    );
-    if (sourceIndex < 0) throw new Error(`Track is not registered: ${trackId}`);
-    return this.commitSession((current) => {
-      const source = current.arrangement.tracks[sourceIndex];
-      const duplicateId = `track:${Date.now()}`;
-      const tracks = [...current.arrangement.tracks];
-      tracks.splice(sourceIndex + 1, 0, {
-        ...source,
-        id: duplicateId,
-        name: `${source.name} copy`,
-      });
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          tracks,
-          audioClips: [
-            ...current.arrangement.audioClips,
-            ...current.arrangement.audioClips
-              .filter((clip) => clip.trackId === trackId)
-              .map((clip, index) => ({
-                ...clip,
-                id: `clip:${Date.now()}:${index}`,
-                trackId: duplicateId,
-              })),
-          ],
-          midiClips: [
-            ...current.arrangement.midiClips,
-            ...current.arrangement.midiClips
-              .filter((clip) => clip.trackId === trackId)
-              .map((clip, index) => ({
-                ...clip,
-                id: `midi-clip:${Date.now()}:${index}`,
-                trackId: duplicateId,
-              })),
-          ],
-          automationLanes: [
-            ...current.arrangement.automationLanes,
-            ...current.arrangement.automationLanes
-              .filter((lane) => lane.trackId === trackId)
-              .map((lane, laneIndex) => ({
-                ...lane,
-                id: `automation:${duplicateId}:${lane.parameter}`,
-                trackId: duplicateId,
-                points: lane.points.map((point, pointIndex) => ({
-                  ...point,
-                  id: `automation-point:${Date.now()}:${laneIndex}:${pointIndex}`,
-                })),
-              })),
-          ],
-        },
-      };
-    });
-  };
-
-  reorderTrack = async (trackId: string, targetIndex: number): Promise<CreativeSession> => {
-    this.calls.push('reorderTrack');
-    const sourceIndex = this.bootstrapState.session.arrangement.tracks.findIndex(
-      (track) => track.id === trackId,
-    );
-    if (sourceIndex < 0) throw new Error(`Track is not registered: ${trackId}`);
-    return this.commitSession((current) => {
-      const tracks = [...current.arrangement.tracks];
-      const [track] = tracks.splice(sourceIndex, 1);
-      tracks.splice(Math.min(Math.max(0, targetIndex), tracks.length), 0, track);
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          tracks,
-        },
-      };
-    });
-  };
-
-  addMarker = async (tick: number, name: string): Promise<CreativeSession> => {
-    this.calls.push('addMarker');
-    const trimmed = name.trim().slice(0, 80);
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        markers: [
-          ...current.arrangement.markers,
-          {
-            id: `marker:${Date.now()}`,
-            name: trimmed || 'Marker',
-            tick: Math.max(0, Math.round(tick)),
-          },
-        ],
-      },
-    }));
-  };
-
-  updateMarker = async (
-    markerId: string,
-    patch: { name?: string; tick?: number },
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateMarker');
-    if (!this.bootstrapState.session.arrangement.markers.some((m) => m.id === markerId)) {
-      throw new Error(`Marker is not registered: ${markerId}`);
-    }
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        markers: current.arrangement.markers.map((marker) =>
-          marker.id === markerId
-            ? {
-                ...marker,
-                name:
-                  patch.name !== undefined
-                    ? patch.name.trim().slice(0, 80) || marker.name
-                    : marker.name,
-                tick: patch.tick !== undefined ? Math.max(0, Math.round(patch.tick)) : marker.tick,
-              }
-            : marker,
-        ),
-      },
-    }));
-  };
-
-  removeMarker = async (markerId: string): Promise<CreativeSession> => {
-    this.calls.push('removeMarker');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        markers: current.arrangement.markers.filter((marker) => marker.id !== markerId),
-      },
-    }));
-  };
-
-  addMidiNote = async (
-    clipId: string,
-    startTick: number,
-    pitch: number,
-    durationTicks: number,
-    velocity: number,
-    channel: number,
-  ): Promise<CreativeSession> => {
-    this.calls.push('addMidiNote');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: [
-                  ...clip.notes,
-                  {
-                    id: `note:${Date.now()}`,
-                    note: Math.max(0, Math.min(127, pitch)),
-                    startTick: Math.max(0, Math.round(startTick)),
-                    durationTicks: Math.max(1, Math.round(durationTicks)),
-                    velocity: Math.max(0, Math.min(127, velocity)),
-                    channel,
-                  },
-                ],
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  updateMidiNote = async (
-    clipId: string,
-    noteId: string,
-    patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateMidiNote');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: clip.notes.map((note) =>
-                  note.id === noteId
-                    ? {
-                        ...note,
-                        note:
-                          patch.note !== undefined
-                            ? Math.max(0, Math.min(127, patch.note))
-                            : note.note,
-                        startTick:
-                          patch.startTick !== undefined
-                            ? Math.max(0, Math.round(patch.startTick))
-                            : note.startTick,
-                        durationTicks:
-                          patch.durationTicks !== undefined
-                            ? Math.max(1, Math.round(patch.durationTicks))
-                            : note.durationTicks,
-                        velocity:
-                          patch.velocity !== undefined
-                            ? Math.max(0, Math.min(127, patch.velocity))
-                            : note.velocity,
-                      }
-                    : note,
-                ),
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  updateMidiNotes = async (
-    clipId: string,
-    updates: {
-      noteId: string;
-      patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
-    }[],
-  ): Promise<CreativeSession> => {
-    this.calls.push('updateMidiNotes');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: clip.notes.map((note) => {
-                  const patch = updates.find((update) => update.noteId === note.id)?.patch;
-                  return patch
-                    ? {
-                        ...note,
-                        note: patch.note ?? note.note,
-                        startTick: patch.startTick ?? note.startTick,
-                        durationTicks: patch.durationTicks ?? note.durationTicks,
-                        velocity: patch.velocity ?? note.velocity,
-                      }
-                    : note;
-                }),
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  removeMidiNote = async (clipId: string, noteId: string): Promise<CreativeSession> => {
-    this.calls.push('removeMidiNote');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? { ...clip, notes: clip.notes.filter((note) => note.id !== noteId) }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  quantizeMidiNotes = async (
-    clipId: string,
-    noteIds: string[],
-    gridTicks: number,
-  ): Promise<CreativeSession> => {
-    this.calls.push('quantizeMidiNotes');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: clip.notes.map((note) =>
-                  noteIds.includes(note.id)
-                    ? {
-                        ...note,
-                        startTick: Math.min(
-                          clip.durationTicks - 1,
-                          Math.round(note.startTick / gridTicks) * gridTicks,
-                        ),
-                      }
-                    : note,
-                ),
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  duplicateMidiNotes = async (
-    clipId: string,
-    noteIds: string[],
-    offsetTicks: number,
-  ): Promise<CreativeSession> => {
-    this.calls.push('duplicateMidiNotes');
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        revision: current.arrangement.revision + 1,
-        midiClips: current.arrangement.midiClips.map((clip) =>
-          clip.id === clipId
-            ? {
-                ...clip,
-                notes: [
-                  ...clip.notes,
-                  ...clip.notes
-                    .filter((note) => noteIds.includes(note.id))
-                    .map((note, index) => ({
-                      ...note,
-                      id: `${note.id}:copy:${index}`,
-                      startTick: note.startTick + offsetTicks,
-                    }))
-                    .filter((note) => note.startTick < clip.durationTicks),
-                ],
-              }
-            : clip,
-        ),
-      },
-    }));
-  };
-
-  setAudioClipTakeVariant = async (
-    clipId: string,
-    variant: AudioTakeVariant,
-  ): Promise<CreativeSession> => {
-    this.calls.push('setAudioClipTakeVariant');
-    return this.commitSession((current) => {
-      const selectedClip = current.arrangement.audioClips.find((clip) => clip.id === clipId);
-      const take = selectedClip?.recordingTakeId
-        ? current.arrangement.takes.find((item) => item.id === selectedClip.recordingTakeId)
-        : undefined;
-      if (!selectedClip || !take) throw new Error(`Audio Clip has no Recording Take: ${clipId}`);
-      const source = variant === 'raw' ? take.rawAudio : take.processedAudio;
-      if (!source) throw new Error('The requested Take variant is not available.');
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          audioClips: current.arrangement.audioClips.map((clip) =>
-            clip.id === clipId
-              ? {
-                  ...clip,
-                  assetId: source.assetId,
-                  sourceRange: {
-                    start: source.sourceStartSample,
-                    end: source.sourceEndSample,
-                  },
-                  timelineDuration: {
-                    frames: source.sourceEndSample - source.sourceStartSample,
-                    sampleRate: clip.sourceSampleRate,
-                  },
-                  takeVariant: variant,
-                }
-              : clip,
-          ),
-        },
-      };
-    });
-  };
-
-  startTakeComparison = async (_takeId: string): Promise<AudioStatus> => {
-    this.calls.push('startTakeComparison');
-    return this.audio;
-  };
-
-  switchTakeComparisonVariant = async (_variant: AudioTakeVariant): Promise<AudioStatus> => {
-    this.calls.push('switchTakeComparisonVariant');
-    return this.audio;
-  };
-
-  stopTakeComparison = async (): Promise<AudioStatus> => {
-    this.calls.push('stopTakeComparison');
-    return this.audio;
-  };
-
-  activateTake = async (sessionId: string, takeId: string): Promise<CreativeSession> => {
-    this.calls.push('activateTake');
-    return this.commitSession((current) => {
-      const take = current.arrangement.takes.find(
-        (candidate) => candidate.sessionId === sessionId && candidate.id === takeId,
-      );
-      if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
-      return {
-        ...current,
-        updatedAtMs: Date.now(),
-        arrangement: {
-          ...current.arrangement,
-          revision: current.arrangement.revision + 1,
-          recordingSessions: current.arrangement.recordingSessions.map((recording) => ({
-            ...recording,
-            trackSlots: recording.trackSlots.map((slot) =>
-              recording.id === sessionId && slot.trackId === take.trackId
-                ? { ...slot, activeTakeId: takeId }
-                : slot,
-            ),
-          })),
-        },
-      };
-    });
-  };
-
-  placeTakeAsSeparateClip = async (takeId: string): Promise<CreativeSession> => {
-    this.calls.push('placeTakeAsSeparateClip');
-    const take = this.bootstrapState.session.arrangement.takes.find((item) => item.id === takeId);
-    if (!take) throw new Error(`Recording Take is not registered: ${takeId}`);
-    return this.commitSession((current) => {
-      const newClipId = `fake-take-place-${Date.now()}`;
-      const audioClip = current.arrangement.audioClips.find(
-        (clip) => clip.recordingTakeId === take.id,
-      );
-      const midiClip = current.arrangement.midiClips.find(
-        (clip) => clip.recordingTakeId === take.id,
-      );
-      if (audioClip) {
-        return {
-          ...current,
-          updatedAtMs: Date.now(),
-          arrangement: {
-            ...current.arrangement,
-            revision: current.arrangement.revision + 1,
-            audioClips: [
-              ...current.arrangement.audioClips,
-              { ...audioClip, id: newClipId, muted: false },
-            ],
+      case 'openAssetInDesign': {
+        const next: DesktopViewState = {
+          workspace: 'design',
+          designContext: {
+            activeTool: arguments_[1] as DesktopViewState['designContext']['activeTool'],
+            targetAssetId: arguments_[0] as DesktopViewState['designContext']['targetAssetId'],
           },
         };
+        this.bootstrapState = { ...this.bootstrapState, viewState: next };
+        return Promise.resolve(next);
       }
-      if (midiClip) {
-        return {
-          ...current,
-          updatedAtMs: Date.now(),
-          arrangement: {
-            ...current.arrangement,
-            revision: current.arrangement.revision + 1,
-            midiClips: [
-              ...current.arrangement.midiClips,
-              { ...midiClip, id: newClipId, muted: false },
-            ],
-          },
+      case 'startScanJob':
+        return Promise.resolve(this.completedJob('scan', { plugins: this.plugins, issues: [] }));
+      case 'startAnalysisJob':
+        return Promise.resolve(this.completedJob('analysis', null));
+      case 'startSeparationJob':
+        return Promise.resolve(this.completedJob('separation', this.separations[0] ?? null));
+      case 'getBackgroundJob':
+        return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
+      case 'cancelBackgroundJob':
+        return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
+      case 'scanVst3Folder':
+        return Promise.resolve({ plugins: this.plugins, issues: [] });
+      case 'renderTimeline': {
+        const result: RenderResult = {
+          assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
+          path: 'C:\\Riffra\\render.wav',
+          sampleRate: 48_000,
+          frames: 48_000,
+          durationMs: 1_000,
+          clipCount: 0,
+          rangeStartMs: 0,
+          rangeEndMs: 1_000,
+          normalized: false,
+          trackId: null,
+          state: 'completed',
+          message: 'fake render',
         };
+        return Promise.resolve(result);
       }
-      throw new Error(`Recording Take has no Timeline Clip: ${takeId}`);
-    });
-  };
-
-  applyAiSuggestion = async (clipId: string, proposedGainDb: number): Promise<CreativeSession> => {
-    this.calls.push('applyAiSuggestion');
-    const currentClip = this.bootstrapState.session.arrangement.audioClips.find(
-      (clip) => clip.id === clipId,
-    );
-    if (!currentClip) throw new Error(`Audio clip is not registered: ${clipId}`);
-    if (this.bootstrapState.session.settings.aiPermission !== 'Apply') {
-      throw new Error('AI permission must be Apply.');
+      default:
+        break;
     }
-    const safeGain = Math.max(-90, Math.min(24, proposedGainDb));
-    return this.commitSession((current) => ({
-      ...current,
-      updatedAtMs: Date.now(),
-      arrangement: {
-        ...current.arrangement,
-        audioClips: current.arrangement.audioClips.map((clip) =>
-          clip.id === clipId ? { ...clip, gainDb: safeGain } : clip,
-        ),
-      },
-      settings: {
-        ...current.settings,
-        aiHistory: [
-          ...current.settings.aiHistory,
-          {
-            id: `ai:${Date.now()}`,
-            createdAtMs: Date.now(),
-            permission: 'Apply' as const,
-            target: clipId,
-            currentGainDb: currentClip.gainDb,
-            proposedGainDb: safeGain,
-            reason: 'Match the selected reference RMS without changing the source WAV.',
-            expectedEffect:
-              'A closer perceived level while clip position and source remain unchanged.',
-            risk: 'Low · reversible',
-            context: [...current.settings.aiContext],
-            applied: true,
-          },
-        ].slice(-128),
-      },
-    }));
-  };
 
-  private completeFakeJob<K extends JobKind>(
-    kind: K,
-    result: Extract<BackgroundJobStatus, { kind: K }>['result'],
-  ): Extract<BackgroundJobStatus, { kind: K }> {
-    const id = `fake-job:${kind}:${++this.jobCounter}`;
+    if (sessionAudioMethodNames.has(name)) {
+      return Promise.resolve({ session: this.bootstrapState.session, audio: this.audio });
+    }
+    if (sessionMethodNames.has(name)) {
+      return Promise.resolve(this.bootstrapState.session);
+    }
+    if (audioMethodNames.has(name)) return Promise.resolve(this.audio);
+    if (nullableMethodNames.has(name)) return Promise.resolve(null);
+    if (voidMethodNames.has(name)) return Promise.resolve(undefined);
+    return Promise.resolve(null);
+  }
+
+  private subscribe<T>(listeners: Set<(value: T) => void>, callback: unknown): () => void {
+    const listener = callback as (value: T) => void;
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+
+  private completedJob(kind: 'scan' | 'analysis' | 'separation', result: unknown) {
+    const id = `job:${kind}:${++this.jobSequence}`;
     const job = {
-      id,
       kind,
+      id,
       state: 'completed',
-      progress: 1,
-      message: `Fake ${kind} job completed.`,
+      message: 'completed',
       result,
-    } as Extract<BackgroundJobStatus, { kind: K }>;
+    } as BackgroundJobStatus;
     this.jobs.set(id, job);
     return job;
   }
 }
 
-function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
-  const session = overrides?.session ?? defaultSession();
+export type FakeNativeApi = FakeNativeApiDouble & NativeApi;
+
+type FakeNativeApiConstructor = new (options?: FakeNativeApiOptions) => FakeNativeApi;
+
+export const FakeNativeApi = FakeNativeApiDouble as unknown as FakeNativeApiConstructor;
+
+const sessionAudioMethodNames = new Set<keyof NativeApi>([
+  'setMasterGainDb',
+  'createSamplePad',
+  'updateSamplePad',
+  'removeSamplePad',
+]);
+
+const sessionMethodNames = new Set<keyof NativeApi>([
+  'undoSession',
+  'redoSession',
+  'updateSessionSettings',
+  'relinkMissingDependency',
+  'disableMissingPlugin',
+  'replaceMissingTrackPlugin',
+  'addAudioClipToArrangement',
+  'addMidiClipToArrangement',
+  'updateAudioClip',
+  'updateMidiClip',
+  'removeTimelineClips',
+  'trimAudioClip',
+  'splitAudioClip',
+  'duplicateAudioClip',
+  'moveAudioClips',
+  'moveMidiClips',
+  'trimMidiClip',
+  'splitMidiClip',
+  'duplicateMidiClip',
+  'pasteTimelineClips',
+  'crossfadeAudioClips',
+  'addTrack',
+  'updateTrack',
+  'setTrackAutomation',
+  'setTrackAudioInput',
+  'setTrackMidiInput',
+  'setTrackInstrument',
+  'clearTrackInstrument',
+  'addTrackEffect',
+  'removeTrackEffect',
+  'reorderTrackEffects',
+  'setTrackDeviceBypassed',
+  'setTrackDeviceParameter',
+  'persistTrackPluginState',
+  'persistTrackPluginParameter',
+  'removeTrack',
+  'duplicateTrack',
+  'reorderTrack',
+  'addMarker',
+  'updateMarker',
+  'removeMarker',
+  'addMidiNote',
+  'updateMidiNote',
+  'updateMidiNotes',
+  'removeMidiNote',
+  'quantizeMidiNotes',
+  'duplicateMidiNotes',
+  'setAudioClipTakeVariant',
+  'activateTake',
+  'placeTakeAsSeparateClip',
+  'updateArrangementTimebase',
+  'updateTimelineLoopRange',
+  'updateTimelinePunchRange',
+  'applyAiSuggestion',
+]);
+
+const audioMethodNames = new Set<keyof NativeApi>([
+  'previewAsset',
+  'stopSamplePreview',
+  'stopSamplePreviewKey',
+  'recoverAudioDevice',
+  'retryStartupRuntime',
+  'setAudioDriver',
+  'enableMidiListening',
+  'disableMidiListening',
+  'startArrangeRecording',
+  'recordAnotherTake',
+  'stopArrangeRecording',
+  'startTakeComparison',
+  'switchTakeComparisonVariant',
+  'stopTakeComparison',
+]);
+
+const nullableMethodNames = new Set<keyof NativeApi>([
+  'restoreRecoveryGeneration',
+  'exportSession',
+  'importSession',
+  'importMidiFile',
+  'importMidiBytes',
+  'analyzeAsset',
+  'sendMidiToTrack',
+  'panicMidiTrack',
+  'updateLibraryAsset',
+  'tagRecording',
+]);
+
+const voidMethodNames = new Set<keyof NativeApi>([
+  'deleteRecording',
+  'previewMasterGainDb',
+  'openTrackPluginEditor',
+  'playTimeline',
+  'stopTimeline',
+  'goToStartTimeline',
+  'seekTimeline',
+]);
+
+function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState {
   return {
-    session,
-    viewState: overrides?.viewState ?? defaultViewState(),
+    session: defaultSession(),
+    viewState: defaultViewState(),
     pluginCatalog: [],
     runtimeStarted: true,
     runtimeStartupFinished: true,
@@ -2789,8 +492,8 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
     safeMode: false,
     nativeAvailable: true,
     recoveryCandidates: [],
-    dataRoot: 'fake://data-root',
-    vst3Root: defaultVst3Root,
+    dataRoot: 'C:\\Riffra',
+    vst3Root: 'C:\\Program Files\\Common Files\\VST3',
     ...overrides,
   };
 }

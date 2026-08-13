@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CreativeSession, DesktopSessionView } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, Workspace } from '@/lib/domain';
 import clsx from 'clsx';
 import type { NativeApi } from '@/native/native-api';
 import { useAudioMeters } from '@/lib/audio-meters';
@@ -9,7 +9,8 @@ import styles from './TransportBar.module.css';
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
 
 interface TransportBarProps {
-  session: DesktopSessionView;
+  session: CreativeSession;
+  workspace: Workspace;
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
   setAudio: (audio: AudioStatus) => void;
@@ -25,6 +26,7 @@ interface TransportBarProps {
 export function TransportBar(props: TransportBarProps) {
   const {
     session,
+    workspace,
     setSession,
     audio,
     setAudio,
@@ -99,7 +101,7 @@ export function TransportBar(props: TransportBarProps) {
   };
 
   const commitTimebase = (nextSignature = signatureDraft) => {
-    if (session.workspace !== 'arrange') return;
+    if (workspace !== 'arrange') return;
     const bpm = Number(tempoDraft);
     const [numerator, denominator] = nextSignature.split('/').map(Number);
     if (
@@ -145,7 +147,7 @@ export function TransportBar(props: TransportBarProps) {
         <button
           className={
             (
-              session.workspace === 'arrange'
+              workspace === 'arrange'
                 ? session.arrangement.loopRange.enabled
                 : session.settings.loopEnabled
             )
@@ -154,7 +156,7 @@ export function TransportBar(props: TransportBarProps) {
           }
           aria-label="Toggle loop"
           onClick={() => {
-            if (session.workspace === 'arrange') {
+            if (workspace === 'arrange') {
               const range = session.arrangement.loopRange;
               const barTicks =
                 (session.arrangement.timebase.ppq *
@@ -218,18 +220,18 @@ export function TransportBar(props: TransportBarProps) {
         </button>
         <button
           className={clsx(styles.countInButton, session.settings.countInBeats > 0 && 'active')}
-          aria-label={`Count-in: ${describeCountIn(session)}`}
-          title={`Count-in: ${describeCountIn(session)}`}
+          aria-label={`Count-in: ${describeCountIn(session, workspace)}`}
+          title={`Count-in: ${describeCountIn(session, workspace)}`}
           onClick={() =>
             void api
-              .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
+              .updateSessionSettings({ countInBeats: nextCountInBeats(session, workspace) })
               .then(setSession)
           }
         >
-          {describeCountIn(session)}
+          {describeCountIn(session, workspace)}
         </button>
       </div>
-      {session.workspace === 'arrange' && (
+      {workspace === 'arrange' && (
         <div className={styles.timebase} aria-label="Project timebase">
           <label>
             <span>BPM</span>
@@ -316,19 +318,19 @@ export function TransportBar(props: TransportBarProps) {
   );
 }
 
-function describeCountIn(session: DesktopSessionView): string {
+function describeCountIn(session: CreativeSession, workspace: Workspace): string {
   const beats = session.settings.countInBeats;
   if (!beats) return 'Count-in: Off';
   const beatsPerBar =
-    session.workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+    workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
   if (beats >= beatsPerBar * 2) return 'Count-in: 2 Bars';
   if (beats >= beatsPerBar) return 'Count-in: 1 Bar';
   return `Count-in: ${beats}`;
 }
 
-function nextCountInBeats(session: DesktopSessionView): number {
+function nextCountInBeats(session: CreativeSession, workspace: Workspace): number {
   const beatsPerBar =
-    session.workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+    workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
   const current = session.settings.countInBeats;
   if (current === 0) return beatsPerBar;
   if (current < beatsPerBar * 2) return beatsPerBar * 2;

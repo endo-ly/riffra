@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDriverConfig, AudioStatus, CreativeSession, RecordingAsset } from '@/lib/domain';
 import { reconcileAudioSettings } from '@/lib/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/lib/audio-safety';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi, BootstrapApi, LibraryApi, RecordingApi } from '@/native/native-api';
 
 interface UseAudioOptions {
   audio: AudioStatus;
@@ -13,7 +13,10 @@ interface UseAudioOptions {
   setRecordings: (recordings: RecordingAsset[]) => void;
 }
 
-export function useAudio(api: NativeApi, options: UseAudioOptions) {
+export function useAudioSettings(
+  api: AudioApi & BootstrapApi & RecordingApi & Pick<LibraryApi, 'listRecordings'>,
+  options: UseAudioOptions,
+) {
   const {
     recoverAudioDevice,
     bootstrap,

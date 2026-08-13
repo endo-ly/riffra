@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioAnalysis, AudioClip } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { DesignApi } from '@/native/native-api';
 
-export function useWaveformAnalyses(api: NativeApi, clips: AudioClip[]) {
+export function useWaveformAnalyses(api: Pick<DesignApi, 'analyzeAsset'>, clips: AudioClip[]) {
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
   const requestedRef = useRef<Set<string>>(new Set());
 

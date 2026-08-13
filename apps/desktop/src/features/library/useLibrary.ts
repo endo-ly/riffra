@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { AudioStatus, LibraryAsset } from '@/lib/domain';
 import { toAssetId } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi, LibraryApi, ProjectApi } from '@/native/native-api';
 import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
@@ -10,7 +10,10 @@ interface UseLibraryOptions {
   setPreviewPadId: (id: string | null) => void;
 }
 
-export function useLibrary(api: NativeApi, { setAudio, setPreviewPadId }: UseLibraryOptions) {
+export function useLibrary(
+  api: LibraryApi & AudioApi & Pick<ProjectApi, 'importMidiFile'>,
+  { setAudio, setPreviewPadId }: UseLibraryOptions,
+) {
   const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
   const [librarySection, setLibrarySection] = useState('Plugins');
   const [libraryQuery, setLibraryQuery] = useState('');

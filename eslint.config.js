@@ -56,6 +56,27 @@ export default tseslint.config(
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-misused-promises': 'warn',
       '@typescript-eslint/consistent-type-imports': 'warn',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@tauri-apps/api/core',
+              message: 'Import Tauri commands through src/native.',
+            },
+            {
+              name: '@tauri-apps/api/event',
+              message: 'Import Tauri events through src/native.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/native/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
   prettier,

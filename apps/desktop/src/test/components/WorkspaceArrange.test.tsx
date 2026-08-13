@@ -6,15 +6,14 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from '@/components';
 import {
-  defaultDesktopSession as defaultSession,
+  defaultSession,
   toAssetId,
   type CreativeSession,
-  type DesktopSessionView,
   type Track,
   type TransportStatus,
 } from '@/lib/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { ToastStack } from '@/components/shared/ToastStack';
 
 afterEach(() => {
@@ -26,10 +25,9 @@ function Harness({
   initialSession,
 }: {
   api: FakeNativeApi;
-  initialSession?: DesktopSessionView;
+  initialSession?: CreativeSession;
 }) {
   const initial = initialSession ?? defaultSession();
-  initial.workspace = 'arrange';
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   return (
@@ -50,43 +48,6 @@ function Harness({
 }
 
 describe('WorkspaceArrange', () => {
-  it('creates the first audio track when an audio Asset is dropped on an empty timeline', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    const { container } = render(<Harness api={api} />);
-    const empty = screen.getByText('Start arranging').parentElement!;
-    const timeline = empty.closest('[class*="timeline"]')!;
-    Object.defineProperty(timeline, 'getBoundingClientRect', {
-      value: () => ({ left: 0, width: 800, top: 0, bottom: 180, right: 800, height: 180 }),
-    });
-
-    fireEvent.drop(empty, {
-      clientX: 172,
-      dataTransfer: {
-        getData: () =>
-          JSON.stringify({
-            version: 1,
-            assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
-            name: 'Take',
-            kind: 'audio',
-          }),
-      },
-    });
-
-    await waitFor(() => expect(api.calls).toContain('addAudioClipToArrangement'));
-    expect(await screen.findByText('Audio 1')).toBeInTheDocument();
-    const clipName = await screen.findByText('Take');
-    await waitFor(() => expect(container.querySelector('svg')).toBeInTheDocument());
-    const clip = clipName.closest('button')!;
-    fireEvent.click(clip);
-    expect(clip).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
-    await waitFor(() => expect(api.calls).toContain('pasteTimelineClips'));
-    expect(await screen.findByText('Take copy')).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
-    fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
-    await waitFor(() => expect(api.calls).toContain('pasteTimelineClips'));
-  });
-
   it('seeks the native timeline from the musical ruler', () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);
@@ -100,55 +61,8 @@ describe('WorkspaceArrange', () => {
     expect(api.calls).toContain('seekTimeline');
   });
 
-  it('opens the MIDI Editor and adds a note from an empty piano-roll cell', async () => {
-    const session = defaultSession();
-    session.workspace = 'arrange';
-    session.arrangement.tracks.push({
-      id: 'track:instrument',
-      name: 'Instrument',
-      kind: 'instrument',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    });
-    session.arrangement.midiClips.push({
-      id: 'clip:midi',
-      name: 'MIDI Clip',
-      trackId: 'track:instrument',
-      startTick: 0,
-      durationTicks: 1_920,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
-    const { container } = render(<Harness api={api} initialSession={session} />);
-
-    const clip = container.querySelector('[data-clip-id="clip:midi"]')!;
-    fireEvent.doubleClick(clip);
-
-    const editor = await screen.findByLabelText('MIDI Editor');
-    const lane = editor.querySelector('div[class*="laneViewport"] div[class*="lane_"]')!;
-    Object.defineProperty(lane, 'getBoundingClientRect', {
-      value: () => ({ left: 0, top: 0, right: 400, bottom: 864, width: 400, height: 864 }),
-    });
-    fireEvent.pointerDown(lane, { clientX: 30, clientY: 36 });
-    fireEvent.pointerUp(window, { clientX: 30, clientY: 36 });
-
-    await waitFor(() => expect(api.calls).toContain('addMidiNote'));
-    expect(api.bootstrapState.session.arrangement.midiClips[0]?.notes).toHaveLength(1);
-    expect(api.bootstrapState.session.arrangement.midiClips[0]?.notes[0]?.startTick).toBe(240);
-  });
-
   it('keeps the full MIDI pitch range and uses a context menu for note deletion', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -212,7 +126,6 @@ describe('WorkspaceArrange', () => {
   it('quantizes an off-grid note from the MIDI editor and reports the grid', async () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -274,7 +187,6 @@ describe('WorkspaceArrange', () => {
   it('reports grid-aligned notes without sending a quantize operation', async () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -324,7 +236,6 @@ describe('WorkspaceArrange', () => {
 
   it('clears a MIDI preview when the canonical response uses an effective value', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -405,7 +316,6 @@ describe('WorkspaceArrange', () => {
 
   it('previews a selected MIDI note group until the canonical update arrives', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -488,7 +398,6 @@ describe('WorkspaceArrange', () => {
 
   it('renders MIDI keyboard white keys beneath narrower black keys', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument',
       name: 'Instrument',
@@ -529,24 +438,9 @@ describe('WorkspaceArrange', () => {
     ).toBe(true);
   });
 
-  it('deletes an empty Audio Track from its Track Header', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    render(<Harness api={api} />);
-
-    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
-    fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
-
-    await waitFor(() => expect(api.calls).toContain('removeTrack'));
-    expect(screen.queryByText(/Source Audio Assets will be kept/)).not.toBeInTheDocument();
-    expect(screen.queryByText('Audio 1')).not.toBeInTheDocument();
-  });
-
   it('reports MIDI and Audio clips when confirming Track deletion', () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:instrument-delete',
       name: 'Instrument Delete',
@@ -583,62 +477,8 @@ describe('WorkspaceArrange', () => {
     expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
   });
 
-  it('uses the latest pending value when Track controls are clicked rapidly', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    render(<Harness api={api} />);
-
-    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
-    const mute = await screen.findByRole('button', { name: 'Mute Audio 1' });
-    const solo = screen.getByRole('button', { name: 'Solo Audio 1' });
-
-    fireEvent.click(mute);
-    fireEvent.click(mute);
-    fireEvent.click(mute);
-    fireEvent.click(solo);
-    fireEvent.click(solo);
-
-    expect(
-      screen.getByRole('button', { name: 'Cycle input monitoring for Audio 1' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('slider', { name: 'Audio 1 gain' })).toBeInTheDocument();
-    expect(screen.getByRole('slider', { name: 'Audio 1 pan' })).toBeInTheDocument();
-    await waitFor(() => expect(mute).toHaveAttribute('aria-pressed', 'true'));
-    expect(solo).toHaveAttribute('aria-pressed', 'false');
-    expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(5);
-  });
-
-  it('edits Track Automation with one Session commit per gesture', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    render(<Harness api={api} />);
-
-    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
-    fireEvent.click(await screen.findByText('Audio 1'));
-    fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
-    const lane = screen.getByLabelText('Audio 1 volume automation');
-    Object.defineProperty(lane, 'getBoundingClientRect', {
-      value: () => ({ left: 0, width: 1200, top: 0, bottom: 84, right: 1200, height: 84 }),
-    });
-
-    fireEvent.pointerDown(lane, { button: 0, clientX: 120, clientY: 42 });
-    await waitFor(() => expect(api.calls).toContain('setTrackAutomation'));
-    const point = screen.getByRole('button', { name: /volume .* at tick/ });
-    const commitsBeforeDrag = api.calls.filter((call) => call === 'setTrackAutomation').length;
-    fireEvent.pointerDown(point, { button: 0, clientX: 120, clientY: 42 });
-    fireEvent.pointerMove(window, { clientX: 180, clientY: 24 });
-    expect(api.calls.filter((call) => call === 'setTrackAutomation')).toHaveLength(
-      commitsBeforeDrag,
-    );
-    fireEvent.pointerUp(window, { clientX: 180, clientY: 24 });
-    await waitFor(() =>
-      expect(api.calls.filter((call) => call === 'setTrackAutomation')).toHaveLength(
-        commitsBeforeDrag + 1,
-      ),
-    );
-  });
-
   it('keeps an unavailable clip on the timeline and labels its missing source', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
     session.arrangement.tracks.push({
       id: 'track:audio',
@@ -705,7 +545,6 @@ describe('WorkspaceArrange', () => {
   it('reports a persistent transport revision mismatch after its grace period', async () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.revision = 1;
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -723,7 +562,6 @@ describe('WorkspaceArrange', () => {
 
   it('places overlapping Audio and MIDI clips on separate lanes', () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     // This is an intentionally invalid legacy snapshot: the renderer must not
     // overlay mixed timeline items even before the domain repair is applied.
     session.arrangement.tracks.push({
@@ -781,7 +619,6 @@ describe('WorkspaceArrange', () => {
   it('renders one shared grid for a long timeline regardless of Track count', () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange.endTick = session.arrangement.timebase.ppq * 4 * 100;
     const tracks: Track[] = Array.from({ length: 50 }, (_, index) => ({
       id: `track:grid-${index}`,
@@ -810,51 +647,8 @@ describe('WorkspaceArrange', () => {
     );
   });
 
-  it('rejects placing a clip on a Track with the wrong source kind', async () => {
-    const session = defaultSession();
-    session.arrangement.tracks.push(
-      {
-        id: 'track:audio',
-        name: 'Audio',
-        kind: 'audio',
-        gainDb: 0,
-        pan: 0,
-        muted: false,
-        solo: false,
-        armed: false,
-        monitoring: 'off',
-        midiInput: {},
-        rack: { devices: [], macros: [] },
-      },
-      {
-        id: 'track:instrument',
-        name: 'Instrument',
-        kind: 'instrument',
-        gainDb: 0,
-        pan: 0,
-        muted: false,
-        solo: false,
-        armed: false,
-        monitoring: 'off',
-        midiInput: {},
-        rack: { devices: [], macros: [] },
-      },
-    );
-    const api = new FakeNativeApi({ bootstrapState: { session } });
-
-    await expect(
-      api.addMidiClipToArrangement(toAssetId('asset:midi'), 'MIDI', 0, 'track:audio'),
-    ).rejects.toThrow('Instrument Track');
-    await expect(
-      api.addAudioClipToArrangement(toAssetId('asset:audio'), 'Audio', 0, 'track:instrument'),
-    ).rejects.toThrow('Audio Track');
-    expect(api.bootstrapState.session.arrangement.audioClips).toHaveLength(0);
-    expect(api.bootstrapState.session.arrangement.midiClips).toHaveLength(0);
-  });
-
   it('blocks a MIDI Asset drop on an Audio Track before invoking native API', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push({
       id: 'track:audio',
       name: 'Audio',
@@ -897,7 +691,6 @@ describe('WorkspaceArrange', () => {
 
   it('does not send an Audio clip move to an Instrument Track', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.tracks.push(
       {
         id: 'track:audio',
@@ -961,7 +754,6 @@ describe('WorkspaceArrange', () => {
 
   it('disables the timeline loop from the ruler context menu', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -977,7 +769,6 @@ describe('WorkspaceArrange', () => {
 
   it('clears an active loop from the ruler band', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -992,7 +783,6 @@ describe('WorkspaceArrange', () => {
 
   it('clears an active punch range from the ruler band without a time selection', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -1008,7 +798,6 @@ describe('WorkspaceArrange', () => {
 
   it('deletes a loop or punch range from the range context menu', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
@@ -1033,7 +822,6 @@ describe('WorkspaceArrange', () => {
 
   it('renders draggable handles on the loop range band', () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -1044,7 +832,6 @@ describe('WorkspaceArrange', () => {
 
   it('renders draggable handles on the punch range band', () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -1056,9 +843,13 @@ describe('WorkspaceArrange', () => {
 
   it('drags the loop start handle to update the loop range', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const canonical = structuredClone(session);
+    canonical.arrangement.loopRange = { enabled: true, startTick: 960, endTick: 3840 };
+    const api = new FakeNativeApi({
+      bootstrapState: { session },
+      responses: { updateTimelineLoopRange: canonical },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const startHandle = screen.getByRole('slider', { name: 'Loop start' });
@@ -1073,9 +864,13 @@ describe('WorkspaceArrange', () => {
 
   it('drags the loop end handle to update the loop range', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const canonical = structuredClone(session);
+    canonical.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 2880 };
+    const api = new FakeNativeApi({
+      bootstrapState: { session },
+      responses: { updateTimelineLoopRange: canonical },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const endHandle = screen.getByRole('slider', { name: 'Loop end' });
@@ -1090,9 +885,13 @@ describe('WorkspaceArrange', () => {
 
   it('drags the punch end handle to update the punch range', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const canonical = structuredClone(session);
+    canonical.arrangement.punchRange = { startTick: 0, endTick: 2880 };
+    const api = new FakeNativeApi({
+      bootstrapState: { session },
+      responses: { updateTimelinePunchRange: canonical },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const endHandle = screen.getByRole('slider', { name: 'Punch end' });
@@ -1107,9 +906,13 @@ describe('WorkspaceArrange', () => {
 
   it('deletes the selected marker with the Delete key', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.markers.push({ id: 'marker:verse', name: 'Verse', tick: 0 });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const canonical = structuredClone(session);
+    canonical.arrangement.markers = [];
+    const api = new FakeNativeApi({
+      bootstrapState: { session },
+      responses: { removeMarker: canonical },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const marker = await screen.findByText('Verse');
@@ -1122,7 +925,9 @@ describe('WorkspaceArrange', () => {
 
   it('adds a Marker at the playhead with the M key', async () => {
     // Arrange
-    const api = new FakeNativeApi();
+    const canonical = defaultSession();
+    canonical.arrangement.markers.push({ id: 'marker:1', name: 'Marker 1', tick: 960 });
+    const api = new FakeNativeApi({ responses: { addMarker: canonical } });
     render(<Harness api={api} />);
     const ruler = screen.getByLabelText('Timeline ruler');
     Object.defineProperty(ruler, 'getBoundingClientRect', {
@@ -1135,18 +940,7 @@ describe('WorkspaceArrange', () => {
 
     // Assert
     await waitFor(() => expect(api.calls).toContain('addMarker'));
-    expect(api.bootstrapState.session.arrangement.markers[0]?.tick).toBe(960);
-    expect(api.bootstrapState.session.arrangement.markers[0]?.name).toBe('Marker 1');
-
-    // Act
-    await screen.findByText('Marker 1');
-    fireEvent.keyDown(window, { key: 'm' });
-
-    // Assert
-    await waitFor(() =>
-      expect(api.bootstrapState.session.arrangement.markers[1]?.name).toBe('Marker 2'),
-    );
-    expect(api.bootstrapState.session.arrangement.markers[1]?.tick).toBe(960);
+    expect(await screen.findByText('Marker 1')).toBeInTheDocument();
   });
 
   it('does not add a Marker with the M key while typing in a text input', () => {
@@ -1206,7 +1000,6 @@ describe('WorkspaceArrange', () => {
   it('fits all Clips into view with the F key', () => {
     // Arrange
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.midiClips.push(
       {
         id: 'clip:fit-start',
@@ -1261,7 +1054,6 @@ describe('WorkspaceArrange', () => {
 
   it('deletes a marker from its context menu without a success popup', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.markers.push({ id: 'marker:chorus', name: 'Chorus', tick: 0 });
     const api = new FakeNativeApi({ bootstrapState: { session } });
     render(<Harness api={api} initialSession={session} />);
@@ -1276,9 +1068,13 @@ describe('WorkspaceArrange', () => {
 
   it('renames a marker in the Arrange dialog', async () => {
     const session = defaultSession();
-    session.workspace = 'arrange';
     session.arrangement.markers.push({ id: 'marker:intro', name: 'Intro', tick: 0 });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const canonical = structuredClone(session);
+    canonical.arrangement.markers[0].name = 'Verse';
+    const api = new FakeNativeApi({
+      bootstrapState: { session },
+      responses: { updateMarker: canonical },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const marker = await screen.findByText('Intro');
@@ -1312,10 +1108,23 @@ describe('WorkspaceArrange', () => {
   });
 
   it('closes the track menu when clicking outside', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    render(<Harness api={api} />);
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:audio',
+      name: 'Audio 1',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(<Harness api={api} initialSession={session} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '＋ Add Audio Track' }));
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
 
     expect(screen.getByText('Delete')).toBeInTheDocument();

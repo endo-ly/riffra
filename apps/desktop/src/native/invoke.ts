@@ -9,22 +9,6 @@ export function invoke<T>(command: string, args: Record<string, unknown> = {}): 
   return tauriInvoke<T>(command, args);
 }
 
-let mutationTail: Promise<void> = Promise.resolve();
-
-/**
- * Serializes canonical production mutations at the native Adapter boundary.
- * Each caller receives the result of its own operation, in commit order, so
- * Presentation code never compares Session timestamps or merges snapshots.
- */
-export function invokeMutation<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = mutationTail.then(() => invoke<T>(command, args));
-  mutationTail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
-
 interface LatestWaiter<T> {
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
@@ -97,7 +81,7 @@ async function drainLatestQueue<T>(
       queue.pendingArgs = null;
       const waiters = queue.waiters.splice(0);
       try {
-        const result = await invokeMutation<T>(command, args);
+        const result = await invoke<T>(command, args);
         waiters.forEach(({ resolve }) => resolve(result));
       } catch (error) {
         waiters.forEach(({ reject }) => reject(error));
@@ -127,16 +111,6 @@ export async function invokeOrFallback<T>(
 ): Promise<T> {
   if (!isNativeRuntime()) return fallback;
   return invoke<T>(command, args);
-}
-
-/** Serializes a canonical mutation while retaining browser-preview fallback. */
-export function invokeMutationOrFallback<T>(
-  command: string,
-  args: Record<string, unknown>,
-  fallback: T,
-): Promise<T> {
-  if (!isNativeRuntime()) return Promise.resolve(fallback);
-  return invokeMutation<T>(command, args);
 }
 
 /**

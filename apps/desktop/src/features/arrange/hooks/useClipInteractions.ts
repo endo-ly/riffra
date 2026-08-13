@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { AudioAnalysis, AudioClip, CreativeSession, MidiClip, TrackKind } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ClipCommands } from './useArrangeCommands';
 import {
   clipDurationTicks,
   framesToTicks,
@@ -17,7 +17,7 @@ interface ClipInteractionOptions {
   session: CreativeSession;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: NativeApi;
+  commands: ClipCommands;
   tool: ArrangeTool;
   pixelsPerTick: number;
   analyses: Record<string, AudioAnalysis | null>;
@@ -41,7 +41,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Click inside the selected clip to split it.');
         return;
       }
-      const next = await options.commit(options.api.splitAudioClip(clip.id, target));
+      const next = await options.commit(options.commands.splitAudioClip(clip.id, target));
       if (next) {
         options.setSelectedClipIds([
           next.arrangement.audioClips.find((item) => item.startTick === target)?.id ?? clip.id,
@@ -59,7 +59,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Click inside the selected MIDI clip to split it.');
         return;
       }
-      await options.commit(options.api.splitMidiClip(clip.id, target));
+      await options.commit(options.commands.splitMidiClip(clip.id, target));
     },
     [options],
   );
@@ -119,7 +119,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       const deltaTick = pendingTick - originTick;
       if (duplicate) {
         const anchor = Math.min(...selected.map((item) => item.startTick)) + deltaTick;
-        void options.commit(options.api.pasteTimelineClips(movingIds, [], anchor));
+        void options.commit(options.commands.pasteTimelineClips(movingIds, [], anchor));
         return;
       }
       const tracks = arrangement.tracks.map((track) => track.id);
@@ -136,7 +136,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         options.setMessage('Audio Clips can only be placed on an Audio Track.');
         return;
       }
-      void options.commit(options.api.moveAudioClips(targetMoves));
+      void options.commit(options.commands.moveAudioClips(targetMoves));
     };
     element.addEventListener('pointermove', move);
     element.addEventListener('pointerup', finish);
@@ -210,11 +210,11 @@ export function useClipInteractions(options: ClipInteractionOptions) {
           ] ?? item.trackId,
       }));
       if (duplicate) {
-        void options.commit(options.api.pasteTimelineClips([], movingIds, pendingTick));
+        void options.commit(options.commands.pasteTimelineClips([], movingIds, pendingTick));
       } else if (targetMoves.some((move) => !trackAcceptsKind(move.trackId, 'instrument'))) {
         options.setMessage('MIDI Clips can only be placed on an Instrument Track.');
       } else {
-        void options.commit(options.api.moveMidiClips(targetMoves));
+        void options.commit(options.commands.moveMidiClips(targetMoves));
       }
     };
     element.addEventListener('pointermove', move);
@@ -257,7 +257,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       handle.removeEventListener('pointerup', finish);
       options.setSnapGuide(null);
       if (startTick === originStart && durationTicks === originDuration) return;
-      void options.commit(options.api.trimMidiClip(clip.id, startTick, durationTicks));
+      void options.commit(options.commands.trimMidiClip(clip.id, startTick, durationTicks));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', finish);
@@ -330,12 +330,12 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       options.setSnapGuide(null);
       if (clip.loopEnabled && duration !== clip.timelineDuration.frames) {
         void options.commit(
-          options.api.updateAudioClip(clip.id, {
+          options.commands.updateAudioClip(clip.id, {
             timelineDuration: { frames: duration, sampleRate: clip.sourceSampleRate },
           }),
         );
       } else if (startTick !== originStart || range !== originRange) {
-        void options.commit(options.api.trimAudioClip(clip.id, startTick, range));
+        void options.commit(options.commands.trimAudioClip(clip.id, startTick, range));
       }
     };
     handle.addEventListener('pointermove', move);
@@ -363,10 +363,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         sampleRate: clip.sourceSampleRate,
       };
       const updated = await options.commit(
-        options.api.updateAudioClip(clip.id, { sourceRange, timelineDuration }),
+        options.commands.updateAudioClip(clip.id, { sourceRange, timelineDuration }),
       );
       if (updated) {
-        await options.commit(options.api.removeTimelineClips([next.id], []));
+        await options.commit(options.commands.removeTimelineClips([next.id], []));
       }
     },
     [arrangement.audioClips, options, timebase],
@@ -395,10 +395,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }));
       const events = [...clip.events, ...shiftedEvents];
       const updated = await options.commit(
-        options.api.updateMidiClip(clip.id, { durationTicks, notes, events }),
+        options.commands.updateMidiClip(clip.id, { durationTicks, notes, events }),
       );
       if (updated) {
-        await options.commit(options.api.removeTimelineClips([], [next.id]));
+        await options.commit(options.commands.removeTimelineClips([], [next.id]));
       }
     },
     [arrangement.midiClips, options],
@@ -424,10 +424,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
         sampleRate: clip.sourceSampleRate,
       };
       const updated = await options.commit(
-        options.api.updateAudioClip(prev.id, { sourceRange, timelineDuration }),
+        options.commands.updateAudioClip(prev.id, { sourceRange, timelineDuration }),
       );
       if (updated) {
-        await options.commit(options.api.removeTimelineClips([clip.id], []));
+        await options.commit(options.commands.removeTimelineClips([clip.id], []));
       }
     },
     [arrangement.audioClips, options, timebase],
@@ -458,10 +458,10 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       }));
       const events = [...prev.events, ...shiftedEvents];
       const updated = await options.commit(
-        options.api.updateMidiClip(prev.id, { durationTicks, notes, events }),
+        options.commands.updateMidiClip(prev.id, { durationTicks, notes, events }),
       );
       if (updated) {
-        await options.commit(options.api.removeTimelineClips([], [clip.id]));
+        await options.commit(options.commands.removeTimelineClips([], [clip.id]));
       }
     },
     [arrangement.midiClips, options],
@@ -495,7 +495,7 @@ export function useClipInteractions(options: ClipInteractionOptions) {
       handle.removeEventListener('pointerup', finish);
       const value = { frames, sampleRate: clip.sourceSampleRate };
       void options.commit(
-        options.api.updateAudioClip(
+        options.commands.updateAudioClip(
           clip.id,
           side === 'in' ? { fadeIn: value } : { fadeOut: value },
         ),

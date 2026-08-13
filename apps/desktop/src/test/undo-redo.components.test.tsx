@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import App from '@/App';
+import { defaultSession } from '@/lib/domain';
 
 afterEach(cleanup);
 
@@ -20,7 +21,24 @@ async function waitForAppShell() {
 describe('Undo/Redo (PRJ-003)', () => {
   it('undoes and redoes a session rename through the global bar', async () => {
     window.prompt = vi.fn(() => 'My Project');
-    const fake = new FakeNativeApi();
+    const original = defaultSession();
+    const renamed = { ...original, projectName: 'My Project' };
+    const fake = new FakeNativeApi({
+      bootstrapState: { session: original },
+      responses: {
+        updateSessionSettings: renamed,
+        undoSession: original,
+        redoSession: renamed,
+        getHistoryState: () => {
+          const lastOperation = [...fake.calls]
+            .reverse()
+            .find((call) => ['updateSessionSettings', 'undoSession', 'redoSession'].includes(call));
+          if (lastOperation === 'undoSession') return { canUndo: false, canRedo: true };
+          if (lastOperation) return { canUndo: true, canRedo: false };
+          return { canUndo: false, canRedo: false };
+        },
+      },
+    });
     renderApp(fake);
     await waitForAppShell();
 

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, DesktopSessionView, RenderResult } from '@/lib/domain';
+import type { AudioStatus, CreativeSession, RenderResult } from '@/lib/domain';
 import { logNativeError } from '@/native/invoke';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi, DesignApi, NativeEventApi, TransportApi } from '@/native/native-api';
 
 interface TransportControllerOptions {
   api: Pick<
-    NativeApi,
+    AudioApi & DesignApi & NativeEventApi & TransportApi,
     | 'onTransportStatus'
     | 'playTimeline'
     | 'stopTimeline'
@@ -15,12 +15,15 @@ interface TransportControllerOptions {
     | 'previewAsset'
     | 'stopSamplePreview'
   >;
-  sessionRef: { current: DesktopSessionView | null };
+  sessionRef: { current: CreativeSession | null };
+  playbackMode: PlaybackMode;
   renderResult: RenderResult | null;
   setRenderResult: Dispatch<SetStateAction<RenderResult | null>>;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
   setRenderPreviewing: Dispatch<SetStateAction<boolean>>;
 }
+
+export type PlaybackMode = 'timeline' | 'preview';
 
 /**
  * Owns transport intent sequencing and operation cancellation. The actual
@@ -31,6 +34,7 @@ interface TransportControllerOptions {
 export function useTransportController({
   api,
   sessionRef,
+  playbackMode,
   renderResult,
   setRenderResult,
   setAudio,
@@ -83,9 +87,9 @@ export function useTransportController({
     return runPlayOperation(async () => {
       const currentSession = sessionRef.current;
       if (!currentSession) return;
-      const requestedWorkspace = currentSession.workspace;
+      const requestedMode = playbackMode;
       const isCurrentIntent = () => sequenceRef.current === transportSequence;
-      if (requestedWorkspace === 'arrange') {
+      if (requestedMode === 'timeline') {
         if (!isCurrentIntent()) return;
         await api.playTimeline(transportSequence);
         return;
@@ -109,13 +113,13 @@ export function useTransportController({
         await api.stopSamplePreview();
         return;
       }
-      if (sessionRef.current?.workspace !== requestedWorkspace) return;
       setAudio(nextAudio);
       setPreviewPlaying(true);
     });
   }, [
     api,
     nextTransportSequence,
+    playbackMode,
     renderResult,
     sessionRef,
     setAudio,
@@ -127,7 +131,7 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      if (sessionRef.current?.workspace === 'arrange') {
+      if (playbackMode === 'timeline') {
         await api.stopTimeline(transportSequence);
         return;
       }
@@ -139,7 +143,7 @@ export function useTransportController({
     api,
     cancelPendingPlay,
     nextTransportSequence,
-    sessionRef,
+    playbackMode,
     setAudio,
     setRenderPreviewing,
     runImmediateTransportOperation,
@@ -149,7 +153,7 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      if (sessionRef.current?.workspace === 'arrange') {
+      if (playbackMode === 'timeline') {
         await api.goToStartTimeline(transportSequence);
         return;
       }
@@ -161,7 +165,7 @@ export function useTransportController({
     api,
     cancelPendingPlay,
     nextTransportSequence,
-    sessionRef,
+    playbackMode,
     setAudio,
     setRenderPreviewing,
     runImmediateTransportOperation,
@@ -175,8 +179,6 @@ export function useTransportController({
 
   return {
     transportPlaying: timelinePlaying || previewPlaying,
-    nextTransportSequence,
-    cancelPendingPlay,
     playTransport,
     stopTransport,
     goToStart,

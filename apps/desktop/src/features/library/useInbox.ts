@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { LibraryAsset, RecordingAsset } from '@/lib/domain';
 import { audioCommandSucceeded } from '@/lib/audio-safety';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi, LibraryApi } from '@/native/native-api';
 
 interface UseInboxOptions {
   reload: () => void | Promise<void>;
@@ -15,7 +15,7 @@ interface UseInboxOptions {
  * the inbox list through `reload` so the UI always reflects the filesystem.
  */
 export function useInbox(
-  api: NativeApi,
+  api: LibraryApi & AudioApi,
   recordings: RecordingAsset[],
   { reload, onRelocate }: UseInboxOptions,
 ) {

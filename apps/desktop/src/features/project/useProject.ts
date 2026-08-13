@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BootstrapState, CreativeSession, HistoryState } from '@/lib/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
 
 interface UseSessionOptions {
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
 }
 
-export function useSession(api: NativeApi, options: UseSessionOptions) {
+export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSessionOptions) {
   const {
     undoSession,
     redoSession,

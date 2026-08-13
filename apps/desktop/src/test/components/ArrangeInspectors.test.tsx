@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArrangeClipInspector } from '@/components/arrange/ArrangeClipInspector';
 import { TakeInspector } from '@/components/arrange/TakeInspector';
 import { TrackInspector } from '@/components/arrange/TrackInspector';
-import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { defaultSession, toAssetId, type CreativeSession } from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
@@ -131,7 +131,12 @@ describe('Arrange Inspectors', () => {
 
   it('changes Raw/Processed source only on the selected Clip', async () => {
     const initial = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { session: initial } });
+    const canonical = structuredClone(initial);
+    canonical.arrangement.audioClips[0].takeVariant = 'processed';
+    const api = new FakeNativeApi({
+      bootstrapState: { session: initial },
+      responses: { setAudioClipTakeVariant: canonical },
+    });
     function Harness() {
       const [session, setSession] = useState(initial);
       return (

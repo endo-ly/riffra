@@ -1,11 +1,18 @@
-import type { AudioStatus, DesktopSessionView, HistoryState, Workspace } from '@/lib/domain';
+import type {
+  AudioStatus,
+  CreativeSession,
+  DesktopViewState,
+  HistoryState,
+  Workspace,
+} from '@/lib/domain';
 import clsx from 'clsx';
 import { workspaces } from '@/constants';
 import { Icon } from '../shared/ui';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
-  session: DesktopSessionView;
+  session: CreativeSession;
+  viewState: DesktopViewState;
   audio: AudioStatus;
   isMuted: boolean;
   historyState: HistoryState;
@@ -22,6 +29,7 @@ interface GlobalBarProps {
 export function GlobalBar(props: GlobalBarProps) {
   const {
     session,
+    viewState,
     audio,
     isMuted,
     historyState,
@@ -72,7 +80,7 @@ export function GlobalBar(props: GlobalBarProps) {
         {workspaces.map((item) => (
           <button
             key={item.id}
-            className={session.workspace === item.id ? 'active' : ''}
+            className={viewState.workspace === item.id ? 'active' : ''}
             onClick={() => onSwitchWorkspace(item.id)}
           >
             {item.label}

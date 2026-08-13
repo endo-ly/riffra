@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
-import type { NativeApi } from '@/native/native-api';
+import type { NativeEventApi } from '@/native/native-api';
 
 interface RuntimeRestartNotificationOptions {
-  api: Pick<NativeApi, 'onRuntimeRestarted'>;
+  api: Pick<NativeEventApi, 'onRuntimeRestarted'>;
   setScanMessage: (message: string) => void;
 }
 

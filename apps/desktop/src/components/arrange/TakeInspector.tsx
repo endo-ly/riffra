@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CreativeSession, RecordingTakeRecord } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
-import type { ArrangeSelection } from '@/hooks/arrange/useArrangeEditor';
+import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './TakeInspector.module.css';
 

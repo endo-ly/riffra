@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/lib/domain';
 import type { Track } from '@/lib/domain';
 import { librarySections } from '@/constants';
-import type { InboxController } from '@/hooks/useInbox';
+import type { InboxController } from '@/features/library/useInbox';
 import { writeAssetDrag } from '@/lib/arrange-drag';
 import { Icon } from '../shared/ui';
 import styles from './LibraryPanel.module.css';

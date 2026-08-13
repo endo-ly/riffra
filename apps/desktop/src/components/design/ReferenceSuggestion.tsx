@@ -1,10 +1,5 @@
 import { useEffect, useState } from 'react';
-import type {
-  AudioAnalysis,
-  CreativeSession,
-  DesktopSessionView,
-  RecordingAsset,
-} from '@/lib/domain';
+import type { AudioAnalysis, CreativeSession, DesignContext, RecordingAsset } from '@/lib/domain';
 import { compareAnalyses } from '@/lib/domain';
 import type { NativeApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
@@ -15,6 +10,7 @@ export function ReferenceSuggestion({
   references,
   referenceId,
   session,
+  designContext,
   setSession,
   api,
   onSelect,
@@ -30,7 +26,8 @@ export function ReferenceSuggestion({
   recordings: RecordingAsset[];
   references: Record<string, AudioAnalysis>;
   referenceId: string | null;
-  session: DesktopSessionView;
+  session: CreativeSession;
+  designContext: DesignContext;
   setSession: (value: CreativeSession) => void;
   api: NativeApi;
   onSelect: (recording: RecordingAsset) => void;
@@ -52,7 +49,7 @@ export function ReferenceSuggestion({
       : null;
   const targetClip = analysis
     ? (session.arrangement.audioClips.find(
-        (clip) => clip.assetId === session.designContext.targetAssetId,
+        (clip) => clip.assetId === designContext.targetAssetId,
       ) ?? session.arrangement.audioClips[0])
     : null;
   const [selected, setSelected] = useState(true);
@@ -140,7 +137,7 @@ export function ReferenceSuggestion({
         recordings={recordings}
         references={references}
         referenceId={referenceId}
-        targetAssetId={session.designContext.targetAssetId ?? null}
+        targetAssetId={designContext.targetAssetId ?? null}
         onSelect={onSelect}
         onPreview={onPreview}
         onStop={onStop}
