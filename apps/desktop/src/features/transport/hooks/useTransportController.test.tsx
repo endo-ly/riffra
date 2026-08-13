@@ -43,7 +43,7 @@ function Harness({
           if (session) {
             sessionRef.current = {
               ...session,
-              arrangement: { ...session.arrangement, revision: session.arrangement.revision + 1 },
+              settings: { ...session.settings, masterDb: session.settings.masterDb + 1 },
             };
           }
         }}
@@ -154,25 +154,7 @@ describe('useTransportController', () => {
     stop.resolve();
   });
 
-  it('does not reuse a render result after the arrangement revision changes', async () => {
-    const api = new FakeNativeApi({
-      bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
-    });
-    render(<Harness api={api} startWorkspace="design" />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-    await waitFor(() => expect(api.calls).toContain('renderTimeline'));
-    expect(api.calls).toContain('previewAsset');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Mutate session' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-    await waitFor(() =>
-      expect(api.calls.filter((call) => call === 'renderTimeline')).toHaveLength(2),
-    );
-    expect(api.calls).toContain('previewAsset');
-  });
-
-  it('reuses a render result while the arrangement revision is unchanged', async () => {
+  it('renders every preview play request', async () => {
     const api = new FakeNativeApi({
       bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
     });
@@ -180,10 +162,34 @@ describe('useTransportController', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() => expect(api.calls).toContain('previewAsset'));
+    fireEvent.click(screen.getByRole('button', { name: 'Mutate session' }));
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() =>
       expect(api.calls.filter((call) => call === 'previewAsset')).toHaveLength(2),
     );
-    expect(api.calls.filter((call) => call === 'renderTimeline')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'renderTimeline')).toHaveLength(2);
+  });
+
+  it('does not preview a render after the session changes while rendering', async () => {
+    const api = new FakeNativeApi({
+      bootstrapState: { viewState: { ...defaultViewState(), workspace: 'design' } },
+    });
+    let finishRender: ((result: unknown) => void) | undefined;
+    api.setResponse(
+      'renderTimeline',
+      () =>
+        new Promise((resolve) => {
+          finishRender = resolve;
+        }),
+    );
+    render(<Harness api={api} startWorkspace="design" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('renderTimeline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Mutate session' }));
+    finishRender?.({});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(api.calls).not.toContain('previewAsset');
   });
 });

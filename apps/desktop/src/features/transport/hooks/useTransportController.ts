@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, RenderResult } from '@/model/domain';
+import type { AudioStatus, CreativeSession } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
 import type { AudioApi, NativeEventApi, RenderApi, TransportApi } from '@/native/native-api';
 
@@ -38,8 +38,6 @@ export function useTransportController({
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
-  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-  const [renderedRevision, setRenderedRevision] = useState<number | null>(null);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   const playbackSourceRef = useRef<PlaybackSource | null>(null);
   const sequenceRef = useRef(0);
@@ -95,18 +93,12 @@ export function useTransportController({
         return;
       }
 
-      let result = renderedRevision === currentSession.arrangement.revision ? renderResult : null;
-      if (!result) {
-        result = await api.renderTimeline({
-          range: { kind: 'entireArrangement' },
-          normalize: false,
-          trackId: null,
-        });
-        if (!result || !isCurrentIntent()) return;
-        setRenderResult(result);
-        setRenderedRevision(currentSession.arrangement.revision);
-      }
-      if (!isCurrentIntent()) return;
+      const result = await api.renderTimeline({
+        range: { kind: 'entireArrangement' },
+        normalize: false,
+        trackId: null,
+      });
+      if (!result || !isCurrentIntent() || sessionRef.current !== currentSession) return;
       const nextAudio = await api.previewAsset(result.assetId, {
         looped: currentSession.settings.loopEnabled,
       });
@@ -117,16 +109,7 @@ export function useTransportController({
       setAudio(nextAudio);
       setPreviewPlaying(true);
     });
-  }, [
-    api,
-    nextTransportSequence,
-    playbackMode,
-    renderResult,
-    renderedRevision,
-    sessionRef,
-    setAudio,
-    runPlayOperation,
-  ]);
+  }, [api, nextTransportSequence, playbackMode, sessionRef, setAudio, runPlayOperation]);
 
   const stopTransport = useCallback(() => {
     const transportSequence = nextTransportSequence();

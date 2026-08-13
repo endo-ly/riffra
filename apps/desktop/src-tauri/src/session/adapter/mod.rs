@@ -3,8 +3,8 @@
 //! The operations use three consistency policies:
 //!
 //! - Sample-pad operations ([`create_sample_pad`], [`update_sample_pad`],
-//!   [`remove_sample_pad`]) touch play state, view state, the Asset
-//!   registry (existence check), and the Audio Runtime (pad configuration).
+//!   [`remove_sample_pad`]) touch play state, the Asset registry (existence
+//!   check), and the Audio Runtime (pad configuration).
 //!   Because the runtime and the persisted session must agree, each operation
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
@@ -16,9 +16,6 @@
 //!
 //! - Pure-session operations ([`import_session`] and [`restore_generation`])
 //!   mutate the session and persist it without waiting for VST lifecycle work.
-//!   Design navigation and workspace navigation are view state: they are
-//!   returned as in-memory snapshots and send only a nonblocking desired
-//!   runtime mode, so navigation never enters the durable Session commit path.
 //!
 //! Core owns editing rules, canonical state, history, and conflict decisions.
 //! This layer resolves files and plugins, invokes native services, delegates

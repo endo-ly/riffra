@@ -4,8 +4,7 @@ use super::*;
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
 /// asset existence + duplicate rules, pad id / MIDI key assignment, slice
-/// validation, runtime configuration, session update, and persistence. The
-/// design context is aimed at the new pad's asset.
+/// validation, runtime configuration, session update, and persistence.
 ///
 /// Runtime configuration happens inside the operation; the caller applies the
 /// returned session and audio status and does not sync the runtime separately.
@@ -186,9 +185,3 @@ pub fn remove_sample_pad(
         })
     })
 }
-
-// Session commit, Arrangement, and Design/Workspace operations.
-//
-// These mutate the canonical CreativeSession and persist it without touching
-// the Audio Runtime. They share the Core Application commit boundary so the
-// save path lives in one place.

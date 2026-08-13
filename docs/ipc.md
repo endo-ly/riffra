@@ -10,6 +10,7 @@
 - Tauri命令のカタログ（領域ごとの分類と責務、実行モード）
 - NativeApi TS契約とTauri命令との対応規則
 - サイドカー JSON Lines プロトコルの構造と規則（音声・レンダー・プローブ）
+- CLI JSON Lines プロトコルの現在の境界
 - 境界ごとのエラー・状態遷移の契約
 - 権限・ケイパビリティ設定
 
@@ -52,8 +53,9 @@
 | C    | Rust ↔ riffra-audio          | 子プロセスの stdin/stdout（JSON Lines） | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
 | D    | Rust → riffra-render-worker  | 子プロセスの stdin/stdout（JSON 1行）   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe） | 子プロセスの stdout（JSON 1行）/ 引数   | デバイス・チャンネル列挙、VST3スキャン                   |
+| F    | Host ↔ riffra-cli            | stdin/stdout（JSON Lines、対話モード）  | セッションの最小操作を外部Hostから実行                   |
 
-使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、それ以外のすべては A。
+使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、GUIを持たない外部Hostからの最小セッション操作は F、それ以外のデスクトップ操作は A。
 
 ---
 
@@ -61,7 +63,7 @@
 
 ### 3.1 実行モード
 
-命令は責務に応じて4つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
+命令は責務に応じて3つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
 | モード                              | 挙動                                                                                                | 使う命令                                           |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -91,7 +93,7 @@
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ワークスペース     | `switch_workspace`、`retry_runtime_projection`、`go_to_start_timeline`                                                                                                                                                                                                                                                                                                              |
+| ワークスペース     | `switch_workspace`                                                                                                                                                                                                                                                                                                                                                                  |
 | タイムラインレンジ | `update_timeline_loop_range`、`update_timeline_punch_range`、`update_arrangement_timebase`                                                                                                                                                                                                                                                                                          |
 | トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`set_track_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                                                                       |
 | クリップ           | `add_audio_clip_to_arrangement`、`add_midi_clip_to_arrangement`、`update_audio_clip`、`update_midi_clip`、`move_audio_clips`、`move_midi_clips`、`trim_audio_clip`、`trim_midi_clip`、`split_audio_clip`、`split_midi_clip`、`crossfade_audio_clips`、`duplicate_audio_clip`、`duplicate_midi_clip`、`remove_timeline_clips`、`paste_timeline_clips`、`set_audio_clip_take_variant` |
@@ -124,7 +126,9 @@
 | サンプルパッド | `create_sample_pad`、`update_sample_pad`、`remove_sample_pad`、`restore_sample_pads`       |
 | AI             | `apply_ai_suggestion`                                                                      |
 
-**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
+**ランタイム回復**: `retry_runtime_projection`
+
+**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
 
 ### 3.3 エラー規約
 
@@ -225,7 +229,40 @@
 
 ---
 
-## 8. 権限・ケイパビリティ（`src-tauri/capabilities/default.json`）
+## 8. 境界 F: CLI JSON Lines（`riffra-cli`）
+
+`riffra-cli` の対話モードは、GUIを持たないHostからセッションの最小操作を実行するための境界である。CLIは `riffra-core::AppCore` とセッションファイルを直接利用し、デスクトップのTauri命令、音声サイドカー、レンダーワーカーは経由しない。
+
+### 8.1 フレーミング
+
+- 起動: `riffra-cli --interactive --session <path>`
+- 送受信: stdinの1行を1要求として読み、stdoutへ1行の応答を書く
+- 相関: 要求の `requestId` を応答へそのまま返す
+- 応答: 成功は `ok: true` と `result`、失敗は `ok: false` と `error`
+- 対話モードでは空行を無視し、要求ごとに応答をflushする
+
+要求は `type` とコマンド固有のフィールドを同じ階層に置く。現在のCLIは `params` オブジェクトやイベントストリームを持たない。
+
+```json
+{"requestId":"1","type":"addTrack","name":"Bass","kind":"instrument"}
+{"requestId":"2","type":"listTracks"}
+{"requestId":"3","type":"updateSessionSettings","loopEnabled":true}
+```
+
+### 8.2 コマンドと応答
+
+現在のコマンドは `getSession`、`listTracks`、`addTrack`、`removeTrack`、`updateSessionSettings`、`undo`、`redo` である。`undo` と `redo` は履歴がプロセス内に保持されるため、対話モードでのみ利用できる。
+
+```json
+{"requestId":"1","ok":true,"result":{}}
+{"requestId":"4","ok":false,"error":{"code":"commandFailed","message":"..."}}
+```
+
+不正なJSONや未知のコマンドは `invalidRequest` または `commandFailed` として返す。イベント、ジョブ進捗、`protocolVersion`、共通Diagnostics形式は現在のCLI契約に含まれない。ワンショットモードはJSON Linesではなく、コマンドライン引数で1つの操作を実行してJSON結果を出力する。
+
+---
+
+## 9. 権限・ケイパビリティ（`src-tauri/capabilities/default.json`）
 
 メインウィンドウは最小ケイパビリティで構成する。
 
@@ -238,7 +275,7 @@
 
 ---
 
-## 9. NativeApi と境界の対応規則
+## 10. NativeApi と境界の対応規則
 
 `src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
 
