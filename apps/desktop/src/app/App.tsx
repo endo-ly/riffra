@@ -1,4 +1,5 @@
 import type { NativeApi } from '@/native/native-api';
+import clsx from 'clsx';
 import {
   useEffect,
   useState,
@@ -21,6 +22,7 @@ import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
 import { TransportBar } from '@/features/transport/TransportBar';
 import { Icon } from '@/shared/ui/primitives';
+import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalBar } from './layout/GlobalBar';
 import { workspaces } from '@/app/workspaces';
@@ -28,6 +30,7 @@ import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import styles from './App.module.css';
+import shellStyles from './AppShell.module.css';
 
 type ArrangePanelSide = 'library' | 'inspector';
 
@@ -60,7 +63,13 @@ function PanelResizeHandle(props: {
   const limits = PANEL_WIDTH_LIMITS[props.side];
   return (
     <div
-      className={`panel-resize-handle panel-resize-handle-${props.side}${props.width === 0 ? ' is-collapsed' : ''}`}
+      className={clsx(
+        shellStyles.panelResizeHandle,
+        props.side === 'library'
+          ? shellStyles.panelResizeHandleLibrary
+          : shellStyles.panelResizeHandleInspector,
+        props.width === 0 && shellStyles.collapsed,
+      )}
       role="separator"
       aria-label={`Resize or collapse ${props.side} panel`}
       aria-orientation="vertical"
@@ -260,7 +269,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
-        <span className="logo-mark">R</span>
+        <span className={shellStyles.logoMark}>R</span>
         <strong>Riffra</strong>
         <small>Recovering your creative memory…</small>
       </div>
@@ -274,7 +283,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   } as CSSProperties;
   return (
     <main
-      className={`app-shell ${focusMode ? 'focus-mode' : ''} ${isMuted ? 'is-muted' : ''} ${panelResize ? 'is-panel-resizing' : ''}`}
+      className={clsx(
+        shellStyles.appShell,
+        focusMode && shellStyles.focusMode,
+        panelResize && shellStyles.isPanelResizing,
+      )}
       style={shellStyle}
     >
       <GlobalBar
@@ -327,7 +340,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           <div className={styles.recoveryActions}>
             {boot.recoveryCandidates.slice(0, 5).map((candidate) => (
               <button
-                className="text-button"
+                className={surface.textButton}
                 key={candidate.fileName}
                 onClick={() => void restoreRecovery(candidate.fileName)}
               >
@@ -335,7 +348,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
               </button>
             ))}
-            <button className="text-button" onClick={dismissRecovery}>
+            <button className={surface.textButton} onClick={dismissRecovery}>
               Keep recovered session
             </button>
           </div>
@@ -360,7 +373,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           </strong>
           <span>{backgroundJob.message}</span>
           {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
-            <button className="text-button" onClick={() => void cancelActiveJob()}>
+            <button className={surface.textButton} onClick={() => void cancelActiveJob()}>
               Cancel
             </button>
           )}
@@ -420,7 +433,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      <section className="workspace">
+      <section className={shellStyles.workspace}>
         {viewState.workspace === 'arrange' && (
           <WorkspaceArrange
             session={session}
@@ -567,7 +580,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               <Icon name="command" />
               <input autoFocus placeholder="Search actions, assets, settings…" />
             </label>
-            <span className="eyebrow">WORKSPACES</span>
+            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>WORKSPACES</span>
             {workspaces.map((item) => (
               <button
                 key={item.id}
@@ -581,7 +594,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 <kbd>{item.key}</kbd>
               </button>
             ))}
-            <span className="eyebrow">PROJECT</span>
+            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>PROJECT</span>
             <button
               onClick={() => {
                 setCommandOpen(false);
@@ -600,7 +613,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               <span>Export Project</span>
               <small>Write a collected project manifest</small>
             </button>
-            <span className="eyebrow">SETTINGS</span>
+            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>SETTINGS</span>
             <button
               onClick={() => {
                 setCommandOpen(false);

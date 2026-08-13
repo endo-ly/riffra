@@ -1,4 +1,5 @@
 import type { CreativeSession } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './SampleWorkspace.module.css';
 
 export function SamplePadEditor({
@@ -30,10 +31,10 @@ export function SamplePadEditor({
     });
   const removePad = (id: string) => void removeSamplePad(id);
   return (
-    <section className={`section-card ${styles.sampleEditor}`}>
+    <section className={`${surface.sectionCard} ${styles.sampleEditor}`}>
       <header>
         <div>
-          <span className="eyebrow">SLICE RANGES</span>
+          <span className={surface.eyebrow}>SLICE RANGES</span>
           <h2>Non-destructive pad regions</h2>
         </div>
         <small>Source files remain untouched</small>
@@ -77,10 +78,13 @@ export function SamplePadEditor({
               onChange={(event) => updatePadValue(pad.id, 'gainDb', Number(event.target.value))}
             />
           </label>
-          <button className="text-button" onClick={() => togglePadLoop(pad.id)}>
+          <button className={surface.textButton} onClick={() => togglePadLoop(pad.id)}>
             {pad.loopEnabled ? 'Loop on' : 'Loop'}
           </button>
-          <button className="text-button danger" onClick={() => removePad(pad.id)}>
+          <button
+            className={`${surface.textButton} ${surface.textButtonDanger}`}
+            onClick={() => removePad(pad.id)}
+          >
             Remove
           </button>
         </div>

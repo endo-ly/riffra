@@ -6,6 +6,7 @@ import { librarySections } from './library-sections';
 import type { InboxController } from '@/features/library/useInbox';
 import { writeAssetDrag } from '@/shared/asset-drag';
 import { Icon } from '@/shared/ui/primitives';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './LibraryPanel.module.css';
 import { InboxOperations } from './InboxOperations';
 
@@ -47,8 +48,8 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
   };
 
   return (
-    <aside className="library-panel">
-      <div className="panel-heading">
+    <aside className={styles.libraryPanel} data-library-panel>
+      <div className={styles.panelHeading}>
         <span>LIBRARY</span>
       </div>
       <label className={styles.panelSearch}>
@@ -61,28 +62,32 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
         />
       </label>
       <div className={styles.libraryActions}>
-        <button type="button" className="text-button" onClick={() => void library.onImportMidi()}>
+        <button
+          type="button"
+          className={surface.textButton}
+          onClick={() => void library.onImportMidi()}
+        >
           Import MIDI…
         </button>
       </div>
-      <nav>
+      <nav className={styles.nav}>
         {librarySections.map((section) => (
           <button
             key={section}
-            className={library.section === section ? 'active' : ''}
+            className={clsx(styles.navButton, library.section === section && styles.active)}
             onClick={() => library.setSection(section)}
           >
-            <span className={`nav-glyph glyph-${section.toLowerCase()}`} />
+            <span className={styles.navGlyph} />
             {section}
             <small>{section === 'Plugins' ? plugins.plugins.length : ''}</small>
           </button>
         ))}
       </nav>
       <div className={styles.libraryContent}>
-        <span className="eyebrow">{library.section.toUpperCase()}</span>
+        <span className={surface.eyebrow}>{library.section.toUpperCase()}</span>
         {library.searchQuery && (
           <section className={styles.librarySearchResults}>
-            <span className="eyebrow">CROSS-ASSET SEARCH · {library.results.length}</span>
+            <span className={surface.eyebrow}>CROSS-ASSET SEARCH · {library.results.length}</span>
             {library.results.slice(0, 8).map((asset) => (
               <div
                 className={styles.librarySearchRow}
@@ -102,7 +107,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                 }}
                 onClick={() => void library.onSelectAsset(asset)}
               >
-                <span className="nav-glyph" />
+                <span className={styles.navGlyph} />
                 <div>
                   <strong>{asset.name}</strong>
                   <small>
@@ -119,23 +124,26 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
               <div className={styles.libraryAssetDetail}>
                 <header>
                   <div>
-                    <span className="eyebrow">ASSET MEMORY</span>
+                    <span className={surface.eyebrow}>ASSET MEMORY</span>
                     <strong>{library.selectedAsset.name}</strong>
                   </div>
                   <div>
                     <button
-                      className="text-button"
+                      className={surface.textButton}
                       disabled={library.selectedAsset.kind !== 'audio'}
                       onClick={() => void library.onPreviewAsset()}
                     >
                       Preview
                     </button>
-                    <button className="text-button" onClick={() => void library.onEditAsset()}>
+                    <button
+                      className={surface.textButton}
+                      onClick={() => void library.onEditAsset()}
+                    >
                       Edit
                     </button>
                     {library.selectedAsset.kind === 'audio' && (
                       <button
-                        className="text-button"
+                        className={surface.textButton}
                         onClick={() => void library.onOpenInDesign(library.selectedAsset!)}
                       >
                         Analyze in Design
@@ -147,7 +155,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                 <p>{library.selectedAsset.note ?? 'No note yet.'}</p>
                 {library.relatedAssets.length > 0 && (
                   <div>
-                    <span className="eyebrow">RELATED</span>
+                    <span className={surface.eyebrow}>RELATED</span>
                     {library.relatedAssets.slice(0, 4).map((asset) => (
                       <small className={styles.relatedAsset} key={asset.id}>
                         {asset.kind} · {asset.name}
@@ -227,7 +235,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
         ) : library.section === 'Recordings' ? (
           <>
             <button
-              className="text-button"
+              className={surface.textButton}
               aria-label="Find duplicates"
               onClick={() => showHandledError(inbox.detectDuplicates())}
             >

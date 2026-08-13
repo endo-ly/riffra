@@ -1,0 +1,20 @@
+.meter {
+  position: relative;
+  display: inline-block;
+  height: 3px;
+  min-width: 45px;
+  overflow: hidden;
+  background: #242b32;
+  border-radius: 3px;
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #48c9ad, #7de0c7);
+  border-radius: inherit;
+}
+
+.danger i {
+  background: var(--red);
+}

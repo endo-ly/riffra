@@ -144,7 +144,7 @@ export function TransportBar(props: TransportBarProps) {
 
   const statusDotState = audio.recording.active ? 'recording' : audio.state;
   return (
-    <footer className="transport">
+    <footer className={styles.transport}>
       <div className={styles.transportLeft}>
         <button
           className={
@@ -272,9 +272,17 @@ export function TransportBar(props: TransportBarProps) {
       )}
       <div className={styles.transportMeter}>
         <span>IN</span>
-        <Meter value={meters.inputPeak * 100} danger={meters.inputPeak >= 0.98} />
+        <Meter
+          value={meters.inputPeak * 100}
+          danger={meters.inputPeak >= 0.98}
+          className={styles.meter}
+        />
         <span>OUT</span>
-        <Meter value={meters.outputPeak * 100} danger={meters.outputPeak >= 0.98} />
+        <Meter
+          value={meters.outputPeak * 100}
+          danger={meters.outputPeak >= 0.98}
+          className={styles.meter}
+        />
       </div>
       <div className={styles.master}>
         <span>MASTER</span>
@@ -310,7 +318,7 @@ export function TransportBar(props: TransportBarProps) {
           }}
         />
       </div>
-      <div className="status-line">
+      <div className={styles.statusLine}>
         <span className={clsx(styles.statusDot, styles[statusDotState])} />
         {audio.recording.active
           ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`

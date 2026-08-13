@@ -1,3 +1,5 @@
+import styles from './Meter.module.css';
+
 export function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
     search:
@@ -24,9 +26,17 @@ export function Icon({ name }: { name: string }) {
   );
 }
 
-export function Meter({ value, danger = false }: { value: number; danger?: boolean }) {
+export function Meter({
+  value,
+  danger = false,
+  className,
+}: {
+  value: number;
+  danger?: boolean;
+  className?: string;
+}) {
   return (
-    <span className={`meter ${danger ? 'meter-danger' : ''}`}>
+    <span className={`${styles.meter} ${className ?? ''} ${danger ? styles.danger : ''}`}>
       <i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
     </span>
   );

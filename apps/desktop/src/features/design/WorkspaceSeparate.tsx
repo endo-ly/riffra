@@ -1,4 +1,6 @@
 import type { AssetId, RecordingAsset, SeparationResult } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
+import styles from './DesignWorkspace.module.css';
 
 export function WorkspaceSeparate({
   recordings,
@@ -22,30 +24,30 @@ export function WorkspaceSeparate({
   onAddToTimeline: (assetId: AssetId, name: string, durationMs: number) => void;
 }) {
   return (
-    <div className="workspace-scroll separate-view">
-      <section className="workspace-header">
+    <div className={styles.workspaceScroll}>
+      <section className={styles.workspaceHeader}>
         <div>
-          <span className="eyebrow">SEPARATE WORKSPACE</span>
+          <span className={surface.eyebrow}>SEPARATE WORKSPACE</span>
           <h1>Preserve the source, derive channel assets</h1>
         </div>
       </section>
-      <section className="section-card separate-card">
+      <section className={`${surface.sectionCard} ${styles.separateCard}`}>
         <header>
           <div>
-            <span className="eyebrow">OFFLINE JOB</span>
+            <span className={surface.eyebrow}>OFFLINE JOB</span>
             <h2>Stereo channel split</h2>
           </div>
           <small>Creates immutable Left / Right WAV assets</small>
         </header>
-        <p className="inspector-copy">
+        <p className={surface.inspectorCopy}>
           This local fallback separates stereo channels without claiming vocal or instrument stems.
           The original WAV is never overwritten.
         </p>
         {recordings.length === 0 ? (
-          <p className="inspector-copy">Inboxに録音がありません。</p>
+          <p className={surface.inspectorCopy}>Inboxに録音がありません。</p>
         ) : (
           recordings.slice(0, 12).map((recording) => (
-            <div className="source-row" key={recording.id}>
+            <div className={styles.sourceRow} key={recording.id}>
               <div>
                 <strong>{recording.name}</strong>
                 <small>
@@ -53,7 +55,7 @@ export function WorkspaceSeparate({
                 </small>
               </div>
               <button
-                className="text-button"
+                className={surface.textButton}
                 disabled={busyId === recording.id}
                 onClick={() => onSeparate(recording)}
               >
@@ -62,18 +64,18 @@ export function WorkspaceSeparate({
             </div>
           ))
         )}
-        <small className="separate-message">{message}</small>
+        <small className={styles.separateMessage}>{message}</small>
       </section>
-      <section className="section-card separate-results">
+      <section className={`${surface.sectionCard} ${styles.separateResults}`}>
         <header>
           <div>
-            <span className="eyebrow">DERIVED ASSETS</span>
+            <span className={surface.eyebrow}>DERIVED ASSETS</span>
             <h2>{results.length} completed jobs</h2>
           </div>
           <small>Manifest-backed provenance</small>
         </header>
         {results.length === 0 ? (
-          <p className="inspector-copy">No separation result has been created yet.</p>
+          <p className={surface.inspectorCopy}>No separation result has been created yet.</p>
         ) : (
           results.slice(0, 8).map((result) => {
             const sourceName =
@@ -83,18 +85,18 @@ export function WorkspaceSeparate({
                   recording.processedAssetId === result.sourceAssetId,
               )?.name ?? result.sourceAssetId;
             return (
-              <article className="separation-result" key={result.id}>
+              <article className={styles.separationResult} key={result.id}>
                 <div>
                   <strong>{sourceName}</strong>
                   <small>
                     {new Date(result.createdAtMs).toLocaleString('ja-JP')} · {result.state}
                   </small>
                 </div>
-                <div className="separation-paths">
+                <div className={styles.separationPaths}>
                   <span>
                     LEFT <code>{result.leftAssetId}</code>
                     <button
-                      className="text-button"
+                      className={surface.textButton}
                       onClick={() =>
                         previewingAssetId === result.leftAssetId
                           ? onStop()
@@ -104,7 +106,7 @@ export function WorkspaceSeparate({
                       {previewingAssetId === result.leftAssetId ? 'Stop' : 'Preview'}
                     </button>
                     <button
-                      className="text-button"
+                      className={surface.textButton}
                       onClick={() =>
                         onAddToTimeline(
                           result.leftAssetId,
@@ -119,7 +121,7 @@ export function WorkspaceSeparate({
                   <span>
                     RIGHT <code>{result.rightAssetId}</code>
                     <button
-                      className="text-button"
+                      className={surface.textButton}
                       onClick={() =>
                         previewingAssetId === result.rightAssetId
                           ? onStop()
@@ -129,7 +131,7 @@ export function WorkspaceSeparate({
                       {previewingAssetId === result.rightAssetId ? 'Stop' : 'Preview'}
                     </button>
                     <button
-                      className="text-button"
+                      className={surface.textButton}
                       onClick={() =>
                         onAddToTimeline(
                           result.rightAssetId,

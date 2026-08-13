@@ -1,4 +1,5 @@
 import type { CreativeSession } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './SampleWorkspace.module.css';
 
 export function SamplePreviewControls({
@@ -14,13 +15,13 @@ export function SamplePreviewControls({
 }) {
   if (!session.playState.sampleInstrument.pads.length) return null;
   return (
-    <section className={`section-card ${styles.samplePreview}`}>
+    <section className={`${surface.sectionCard} ${styles.samplePreview}`}>
       <header>
         <div>
-          <span className="eyebrow">PREVIEW BUS</span>
+          <span className={surface.eyebrow}>PREVIEW BUS</span>
           <h2>Audition mapped regions</h2>
         </div>
-        <button className="text-button" disabled={!playingId} onClick={onStop}>
+        <button className={surface.textButton} disabled={!playingId} onClick={onStop}>
           Stop
         </button>
       </header>
@@ -33,7 +34,7 @@ export function SamplePreviewControls({
             </small>
           </div>
           <button
-            className={`text-button ${playingId === pad.id ? styles.active : ''}`}
+            className={`${surface.textButton} ${playingId === pad.id ? styles.active : ''}`}
             onClick={() => onPreview(pad)}
           >
             {playingId === pad.id ? 'Playing' : 'Preview'}

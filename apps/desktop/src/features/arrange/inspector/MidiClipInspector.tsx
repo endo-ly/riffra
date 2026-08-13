@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './ArrangeClipInspector.module.css';
 
 interface MidiClipInspectorProps {
@@ -43,7 +44,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
       <section className={styles.identity}>
         <span className={styles.art}>♪</span>
         <div>
-          <span className="eyebrow">MIDI CLIP</span>
+          <span className={surface.eyebrow}>MIDI CLIP</span>
           <input
             aria-label="MIDI clip name"
             value={name}

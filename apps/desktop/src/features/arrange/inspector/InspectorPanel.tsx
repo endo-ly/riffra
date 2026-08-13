@@ -14,6 +14,7 @@ import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { Icon } from '@/shared/ui/primitives';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './InspectorPanel.module.css';
 
 interface InspectorPanelProps {
@@ -146,7 +147,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 {props.viewState.designContext.activeTool.slice(0, 2).toUpperCase()}
               </span>
               <div>
-                <span className="eyebrow">DESIGN</span>
+                <span className={surface.eyebrow}>DESIGN</span>
                 <h3>{props.viewState.designContext.activeTool}</h3>
                 <small>Always preserved</small>
               </div>

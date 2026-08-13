@@ -1,4 +1,5 @@
 import type { RecordingAsset } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './InboxOperations.module.css';
 
 interface InboxOperationsProps {
@@ -29,25 +30,29 @@ export function InboxOperations({
         <small>{recording.state}</small>
       </header>
       <div className={styles.inboxActions}>
-        <button className="text-button" aria-label="Preview" onClick={onPreview}>
+        <button className={surface.textButton} aria-label="Preview" onClick={onPreview}>
           Preview
         </button>
-        <button className="text-button" aria-label="Analyze" onClick={onAnalyze}>
+        <button className={surface.textButton} aria-label="Analyze" onClick={onAnalyze}>
           Analyze
         </button>
-        <button className="text-button" aria-label="Rename" onClick={onRename}>
+        <button className={surface.textButton} aria-label="Rename" onClick={onRename}>
           Rename
         </button>
-        <button className="text-button" aria-label="Tag" onClick={onTag}>
+        <button className={surface.textButton} aria-label="Tag" onClick={onTag}>
           Tag
         </button>
-        <button className="text-button" aria-label="Promote" onClick={onPromote}>
+        <button className={surface.textButton} aria-label="Promote" onClick={onPromote}>
           Promote
         </button>
-        <button className="text-button" aria-label="Archive" onClick={onArchive}>
+        <button className={surface.textButton} aria-label="Archive" onClick={onArchive}>
           Archive
         </button>
-        <button className="text-button danger" aria-label="Delete" onClick={onDelete}>
+        <button
+          className={`${surface.textButton} ${surface.textButtonDanger}`}
+          aria-label="Delete"
+          onClick={onDelete}
+        >
           Delete
         </button>
       </div>

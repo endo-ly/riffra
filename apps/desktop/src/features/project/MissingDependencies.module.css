@@ -73,7 +73,7 @@
   border: 1px solid var(--border);
   border-radius: 4px;
 }
-.missingActions :global(.text-button) {
+.missingActions button {
   height: 28px;
   white-space: nowrap;
 }

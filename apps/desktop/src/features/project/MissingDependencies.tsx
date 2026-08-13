@@ -2,6 +2,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import type { MissingDependency } from '@/model/domain';
 import { Icon } from '@/shared/ui/primitives';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './MissingDependencies.module.css';
 
 interface MissingDependenciesProps {
@@ -32,7 +33,7 @@ export function MissingDependencies({
   return (
     <section className={styles.missingDependencies} aria-label="Missing dependencies">
       <header>
-        <span className="eyebrow">MISSING DEPENDENCIES · {missing.length}</span>
+        <span className={surface.eyebrow}>MISSING DEPENDENCIES · {missing.length}</span>
         <p>
           The project opened despite missing references. Relink, replace, or ignore each one, or
           keep a missing plugin as a disabled placeholder.
@@ -60,7 +61,7 @@ export function MissingDependencies({
                   }
                 />
                 <button
-                  className="text-button"
+                  className={surface.textButton}
                   disabled={!newPath.trim()}
                   onClick={() =>
                     item.kind === 'plugin'
@@ -71,11 +72,11 @@ export function MissingDependencies({
                   <Icon name="link" /> {item.kind === 'plugin' ? 'Replace' : 'Relink'}
                 </button>
                 {item.kind === 'plugin' && (
-                  <button className="text-button" onClick={() => onDisablePlugin(item.id)}>
+                  <button className={surface.textButton} onClick={() => onDisablePlugin(item.id)}>
                     Disable placeholder
                   </button>
                 )}
-                <button className="text-button" onClick={() => onIgnore(item)}>
+                <button className={surface.textButton} onClick={() => onIgnore(item)}>
                   Ignore
                 </button>
               </div>

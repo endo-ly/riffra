@@ -169,7 +169,7 @@
   border: 0;
   outline: 0;
 }
-.commandPalette > :global(.eyebrow) {
+.commandEyebrow {
   margin: 14px 15px 6px;
 }
 .commandPalette > button {

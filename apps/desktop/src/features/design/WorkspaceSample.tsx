@@ -1,4 +1,6 @@
 import type { CreativeSession, RecordingAsset } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
+import designStyles from './DesignWorkspace.module.css';
 import styles from './sample/SampleWorkspace.module.css';
 
 export function WorkspaceSample({
@@ -17,18 +19,18 @@ export function WorkspaceSample({
     (_, index) => session.playState.sampleInstrument.pads[index] ?? null,
   );
   return (
-    <div className="workspace-scroll sample-view">
-      <section className="workspace-header">
+    <div className={designStyles.workspaceScroll}>
+      <section className={designStyles.workspaceHeader}>
         <div>
-          <span className="eyebrow">SAMPLE INSTRUMENT</span>
+          <span className={surface.eyebrow}>SAMPLE INSTRUMENT</span>
           <h1>Audio → Pad / Keyboard</h1>
         </div>
-        <span className="status-tag">SOURCE MAPPING</span>
+        <span className={surface.statusTag}>SOURCE MAPPING</span>
       </section>
-      <section className={`section-card ${styles.padCard}`}>
+      <section className={`${surface.sectionCard} ${styles.padCard}`}>
         <header>
           <div>
-            <span className="eyebrow">PADS</span>
+            <span className={surface.eyebrow}>PADS</span>
             <h2>{session.playState.sampleInstrument.pads.length} mapped</h2>
           </div>
           <small>Playback engine follows this mapping gate</small>
@@ -47,26 +49,26 @@ export function WorkspaceSample({
           ))}
         </div>
       </section>
-      <section className={`section-card ${styles.sampleSources}`}>
+      <section className={`${surface.sectionCard} ${styles.sampleSources}`}>
         <header>
           <div>
-            <span className="eyebrow">SOURCES</span>
+            <span className={surface.eyebrow}>SOURCES</span>
             <h2>録音をPadへ割り当てる</h2>
           </div>
           <small>元ファイルは変更されません</small>
         </header>
         {recordings.length === 0 ? (
-          <p className="inspector-copy">Inboxに録音がありません。</p>
+          <p className={surface.inspectorCopy}>Inboxに録音がありません。</p>
         ) : (
           recordings.slice(0, 12).map((recording) => (
-            <div className="source-row" key={recording.id}>
+            <div className={designStyles.sourceRow} key={recording.id}>
               <div>
                 <strong>{recording.name}</strong>
                 <small>
                   {recording.state} · {recording.samplesWritten.toLocaleString()} samples
                 </small>
               </div>
-              <button className="text-button" onClick={() => onCreateSamplePad(recording)}>
+              <button className={surface.textButton} onClick={() => onCreateSamplePad(recording)}>
                 Map to Pad
               </button>
             </div>

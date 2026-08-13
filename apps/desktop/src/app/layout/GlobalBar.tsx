@@ -8,6 +8,7 @@ import type {
 import clsx from 'clsx';
 import { workspaces } from '@/app/workspaces';
 import { Icon } from '@/shared/ui/primitives';
+import shellStyles from '../AppShell.module.css';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
@@ -43,9 +44,9 @@ export function GlobalBar(props: GlobalBarProps) {
     audioSettingsOpen,
   } = props;
   return (
-    <header className="global-bar">
+    <header className={styles.globalBar}>
       <div className={styles.brand}>
-        <span className="logo-mark">R</span>
+        <span className={shellStyles.logoMark}>R</span>
         <strong>RIFFRA</strong>
       </div>
       <button
@@ -53,7 +54,7 @@ export function GlobalBar(props: GlobalBarProps) {
         onClick={onRenameSession}
         title="Rename Scratch Session"
       >
-        <span className="save-light" />
+        <span className={styles.saveLight} />
         {session.projectName ?? 'Untitled Scratch'}
         <small>Auto-saved</small>
         <Icon name="chevron" />
@@ -76,11 +77,11 @@ export function GlobalBar(props: GlobalBarProps) {
           ↷
         </button>
       </div>
-      <nav className="workspace-tabs" aria-label="Workspace">
+      <nav className={styles.workspaceTabs} aria-label="Workspace">
         {workspaces.map((item) => (
           <button
             key={item.id}
-            className={viewState.workspace === item.id ? 'active' : ''}
+            className={clsx(styles.tab, viewState.workspace === item.id && styles.active)}
             onClick={() => onSwitchWorkspace(item.id)}
           >
             {item.label}
@@ -88,12 +89,12 @@ export function GlobalBar(props: GlobalBarProps) {
           </button>
         ))}
       </nav>
-      <button className="command-trigger" onClick={onOpenCommand}>
+      <button className={styles.commandTrigger} onClick={onOpenCommand}>
         <Icon name="search" />
         Search or command<kbd>Ctrl K</kbd>
       </button>
       <button
-        className={`engine-pill ${audio.state} ${audioSettingsOpen ? 'is-open' : ''}`}
+        className={clsx(styles.enginePill, styles[audio.state], audioSettingsOpen && styles.open)}
         onClick={onOpenAudioSettings}
         aria-label="Open Audio Settings"
         aria-haspopup="dialog"

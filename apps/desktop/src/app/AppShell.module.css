@@ -1,0 +1,107 @@
+.logoMark {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-content: center;
+  border-radius: 7px;
+  color: #071015;
+  font-weight: 800;
+  font-size: 15px;
+  background: linear-gradient(145deg, #9ff6ed, #49b8dd 65%, #477ce1);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.55),
+    0 0 28px rgba(85, 217, 232, 0.18);
+}
+
+.appShell {
+  width: 100%;
+  height: 100%;
+  min-width: 1000px;
+  display: grid;
+  position: relative;
+  grid-template-columns: var(--library-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-rows: var(--global-height) minmax(0, 1fr) var(--transport-height);
+  grid-template-areas: 'global global global' 'library workspace inspector' 'transport transport transport';
+  background: var(--base);
+}
+
+.workspace {
+  grid-area: workspace;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), #0b0e12;
+}
+
+.panelResizeHandle {
+  position: absolute;
+  z-index: 8;
+  top: var(--global-height);
+  bottom: var(--transport-height);
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panelResizeHandle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+
+.panelResizeHandle:hover::after,
+.panelResizeHandle:focus-visible::after,
+.isPanelResizing .panelResizeHandle::after {
+  background: var(--cyan);
+}
+
+.panelResizeHandleLibrary {
+  left: var(--library-width);
+}
+
+.panelResizeHandleInspector {
+  right: var(--inspector-width);
+  transform: translateX(50%);
+}
+
+.panelResizeHandleLibrary.collapsed {
+  transform: translateX(0);
+}
+
+.panelResizeHandleInspector.collapsed {
+  transform: translateX(-100%);
+}
+
+.isPanelResizing,
+.isPanelResizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.focusMode {
+  grid-template-columns: 0 minmax(520px, 1fr) 0;
+}
+
+.focusMode .panelResizeHandle {
+  display: none;
+}
+
+.focusMode [data-library-panel],
+.focusMode [data-inspector-panel] {
+  visibility: hidden;
+}
+
+@media (max-width: 1280px) {
+  .appShell {
+    grid-template-columns: var(--library-width) minmax(0, 1fr) var(--inspector-width);
+  }
+}

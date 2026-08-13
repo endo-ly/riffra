@@ -17,6 +17,7 @@ import {
   selectDriverForDraft,
 } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
+import surface from '@/shared/ui/Surface.module.css';
 import styles from './AudioSettingsDialog.module.css';
 
 interface AudioSettingsDialogProps {
@@ -266,7 +267,7 @@ export function AudioSettingsDialog({
       >
         <header className={styles.header}>
           <div>
-            <span className="eyebrow">SETTINGS</span>
+            <span className={surface.eyebrow}>SETTINGS</span>
             <h2 id="audio-settings-title">Audio Settings</h2>
           </div>
           <button
@@ -478,12 +479,12 @@ export function AudioSettingsDialog({
 
         <footer className={styles.footer}>
           <div className={styles.footerLeft}>
-            <button className="text-button" onClick={() => void refresh()} disabled={busy}>
+            <button className={surface.textButton} onClick={() => void refresh()} disabled={busy}>
               {refreshing ? 'Refreshing…' : 'Refresh devices'}
             </button>
             {(audio.state === 'faulted' || audio.state === 'offline') && (
               <button
-                className="text-button"
+                className={surface.textButton}
                 onClick={() => void recover()}
                 disabled={busy || safeMode}
               >
@@ -492,10 +493,14 @@ export function AudioSettingsDialog({
             )}
           </div>
           <div className={styles.footerRight}>
-            <button className="quiet" onClick={close} disabled={applying}>
+            <button className={surface.quiet} onClick={close} disabled={applying}>
               Cancel
             </button>
-            <button className="primary" onClick={() => void apply()} disabled={applyDisabled}>
+            <button
+              className={surface.primary}
+              onClick={() => void apply()}
+              disabled={applyDisabled}
+            >
               {applying ? 'Applying…' : 'Apply'}
             </button>
           </div>

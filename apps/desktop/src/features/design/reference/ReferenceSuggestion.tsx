@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { AudioAnalysis, CreativeSession, DesignContext, RecordingAsset } from '@/model/domain';
+import surface from '@/shared/ui/Surface.module.css';
 import { compareAnalyses } from './analysis-comparison';
 import type { DesignApi, ProjectSettingsApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
+import styles from '../DesignWorkspace.module.css';
 
 export function ReferenceSuggestion({
   analysis,
@@ -93,13 +95,13 @@ export function ReferenceSuggestion({
   };
   return (
     <>
-      <section className="section-card ai-context-card">
+      <section className={`${surface.sectionCard} ${styles.aiContextCard}`}>
         <header>
           <div>
-            <span className="eyebrow">AI CONTEXT CONTROL</span>
+            <span className={surface.eyebrow}>AI CONTEXT CONTROL</span>
             <h2>Reversible collaborator</h2>
           </div>
-          <label className="ai-permission">
+          <label className={styles.aiPermission}>
             <span>Permission</span>
             <select
               value={session.settings.aiPermission}
@@ -115,11 +117,11 @@ export function ReferenceSuggestion({
             </select>
           </label>
         </header>
-        <p className="inspector-copy">
+        <p className={surface.inspectorCopy}>
           Only the checked local context is eligible for this offline suggestion. Nothing is sent to
           an external provider.
         </p>
-        <div className="ai-context-list">
+        <div className={styles.aiContextList}>
           {contextOptions.map((item) => (
             <label key={item.id}>
               <input
@@ -148,18 +150,18 @@ export function ReferenceSuggestion({
         loopPreview={loopPreview}
       />
       {(!contextAllowsAnalysis || !contextAllowsSelectedClip) && (
-        <section className="section-card ai-context-warning">
-          <p className="inspector-copy">
+        <section className={`${surface.sectionCard} ${styles.aiContextWarning}`}>
+          <p className={surface.inspectorCopy}>
             The suggestion is paused until both Analysis result and Selected clip are included in
             the local context.
           </p>
         </section>
       )}
       {comparison && (
-        <section className="section-card suggestion-card">
+        <section className={`${surface.sectionCard} ${styles.suggestionCard}`}>
           <header>
             <div>
-              <span className="eyebrow">
+              <span className={surface.eyebrow}>
                 AI CHANGESET · {session.settings.aiPermission.toUpperCase()}
               </span>
               <h2>
@@ -168,36 +170,36 @@ export function ReferenceSuggestion({
                   : 'Place a clip before applying'}
               </h2>
             </div>
-            <span className={`status-tag ${applied ? 'success' : ''}`}>
+            <span className={`${surface.statusTag} ${applied ? surface.statusSuccess : ''}`}>
               {applied ? 'APPLIED' : 'PREVIEW'}
             </span>
           </header>
           {targetClip && proposedGain != null ? (
             <>
-              <div className="changeset-grid">
+              <div className={styles.changesetGrid}>
                 <div>
-                  <span className="eyebrow">TARGET</span>
+                  <span className={surface.eyebrow}>TARGET</span>
                   <strong>{targetClip.name} · Gain dB</strong>
                 </div>
                 <div>
-                  <span className="eyebrow">CURRENT</span>
+                  <span className={surface.eyebrow}>CURRENT</span>
                   <strong>{targetClip.gainDb.toFixed(1)} dB</strong>
                 </div>
                 <div>
-                  <span className="eyebrow">PROPOSED</span>
+                  <span className={surface.eyebrow}>PROPOSED</span>
                   <strong>{proposedGain.toFixed(1)} dB</strong>
                 </div>
                 <div>
-                  <span className="eyebrow">RISK</span>
+                  <span className={surface.eyebrow}>RISK</span>
                   <strong>Low · reversible</strong>
                 </div>
               </div>
-              <p className="inspector-copy">
+              <p className={surface.inspectorCopy}>
                 Reason: match the selected reference RMS without changing the source WAV. Expected
                 audible effect: a closer perceived level while clip position and source remain
                 unchanged.
               </p>
-              <div className="changeset-actions">
+              <div className={styles.changesetActions}>
                 <label>
                   <input
                     type="checkbox"
@@ -206,18 +208,21 @@ export function ReferenceSuggestion({
                   />{' '}
                   Apply selected change
                 </label>
-                <button className="text-button" onClick={() => setPreviewing((value) => !value)}>
+                <button
+                  className={surface.textButton}
+                  onClick={() => setPreviewing((value) => !value)}
+                >
                   {previewing ? 'Previewing' : 'Preview'}
                 </button>
                 <button
-                  className="text-button"
+                  className={surface.textButton}
                   disabled={!selected || applied || session.settings.aiPermission !== 'Apply'}
                   onClick={() => void applySuggestion()}
                 >
                   Apply selected
                 </button>
                 <button
-                  className="text-button danger"
+                  className={`${surface.textButton} ${surface.textButtonDanger}`}
                   disabled={applied}
                   onClick={() => {
                     setSelected(false);
@@ -228,13 +233,13 @@ export function ReferenceSuggestion({
                 </button>
               </div>
               {session.settings.aiPermission !== 'Apply' && (
-                <small className="changeset-preview">
+                <small className={styles.changesetPreview}>
                   Applying is locked in {session.settings.aiPermission} mode. Select Apply only
                   after reviewing this ChangeSet.
                 </small>
               )}
               {previewing && (
-                <small className="changeset-preview">
+                <small className={styles.changesetPreview}>
                   Preview only: {comparison.loudnessMatchGainDb >= 0 ? '+' : ''}
                   {comparison.loudnessMatchGainDb.toFixed(1)} dB would be applied. No session state
                   changed.
@@ -242,17 +247,17 @@ export function ReferenceSuggestion({
               )}
             </>
           ) : (
-            <p className="inspector-copy">
+            <p className={surface.inspectorCopy}>
               Place this recording on Arrange to create an explicit, reversible change target.
             </p>
           )}
         </section>
       )}
       {session.settings.aiHistory.length > 0 && (
-        <section className="section-card ai-history-card">
+        <section className={`${surface.sectionCard} ${styles.aiHistoryCard}`}>
           <header>
             <div>
-              <span className="eyebrow">AI HISTORY</span>
+              <span className={surface.eyebrow}>AI HISTORY</span>
               <h2>Applied ChangeSets</h2>
             </div>
             <small>{session.settings.aiHistory.length} persisted</small>
@@ -261,7 +266,7 @@ export function ReferenceSuggestion({
             .slice(-8)
             .reverse()
             .map((item) => (
-              <article className="ai-history-row" key={item.id}>
+              <article className={styles.aiHistoryRow} key={item.id}>
                 <div>
                   <strong>{item.target}</strong>
                   <small>
@@ -269,7 +274,9 @@ export function ReferenceSuggestion({
                     {item.context.join(', ') || 'no context'}
                   </small>
                 </div>
-                <span className="status-tag success">{item.applied ? 'APPLIED' : 'PREVIEW'}</span>
+                <span className={`${surface.statusTag} ${surface.statusSuccess}`}>
+                  {item.applied ? 'APPLIED' : 'PREVIEW'}
+                </span>
                 <p>
                   {item.currentGainDb.toFixed(1)} dB → {item.proposedGainDb.toFixed(1)} dB ·{' '}
                   {item.reason}
