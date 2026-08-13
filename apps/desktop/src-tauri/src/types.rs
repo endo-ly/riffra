@@ -7,7 +7,6 @@
 //! from the freshly generated output, so the two sides cannot drift.
 
 use crate::analysis::AudioAnalysis;
-use crate::asset::AssetId;
 use crate::audio_preferences::AudioDriverConfig;
 use crate::jobs::{BackgroundJobStatus, JobKind, JobState};
 use crate::library::LibraryAsset;
@@ -21,21 +20,20 @@ use crate::model::{
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::presentation::{DesignContext, DesignTool, DesktopViewState, Workspace};
 use crate::projects::ProjectExport;
-use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use crate::recording::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
 use crate::render::{RenderOptions, RenderRange, RenderResult};
 use crate::separation::SeparationResult;
-use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
+use riffra_core::{
+    AiChangeSet, AiPermission, Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch,
     AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, FrameDuration, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch,
-    MidiInputRoute, MidiNote, MonitoringState, PlayState, ProjectTimebase, RecordingPassRecord,
+    CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
+    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
+    ProjectTimebase, RackDevice, RackInstance, RackMacro, RecordingPassRecord,
     RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState,
     SamplePad, SessionSettings, TimelineLoopRange, Track, TrackKind,
 };
-use riffra_core::HistoryState;
 use ts_rs::{Config, TS};
 
 #[test]

@@ -27,7 +27,7 @@ where
         name: impl Into<String>,
         kind: TrackKind,
     ) -> Result<CreativeSession, ApplicationError> {
-        let name = name.into();
+        let name = normalize_track_name(name.into())?;
         self.commit_arrangement(|arrangement| {
             let id = next_id("track");
             arrangement.tracks.push(match kind {
@@ -191,20 +191,65 @@ where
         })
     }
 
-    /// Adds an Audio Clip and creates its Audio Track when the caller supplied
-    /// a new track id.
-    pub fn add_audio_clip_with_track(
+    /// Adds an Audio Asset to the timeline, selecting an existing Audio Track
+    /// or creating one when no target was supplied or available.
+    ///
+    /// # Errors
+    /// Returns an error when the target Track or Asset is invalid, or when the
+    /// resulting session cannot be persisted.
+    pub fn add_audio_asset_clip(
         &self,
-        clip: AudioClip,
-        track_name: Option<String>,
+        placement: AudioAssetClipPlacement,
         asset_exists: impl Fn(&crate::domain::asset::AssetId) -> bool,
     ) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
-            if let Some(track_name) = track_name {
+            let requested_track_id = placement.track_id.filter(|id| !id.trim().is_empty());
+            let track_id = if let Some(track_id) = requested_track_id {
+                let track = arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.clone()))?;
+                if track.kind != TrackKind::Audio {
+                    return Err(ApplicationError::InvalidCommand(
+                        "audio clips can only be added to audio tracks".into(),
+                    ));
+                }
+                track_id
+            } else if let Some(track) = arrangement
+                .tracks
+                .iter()
+                .find(|track| track.kind == TrackKind::Audio)
+            {
+                track.id.clone()
+            } else {
+                let track_id = next_id("track");
                 arrangement
                     .tracks
-                    .push(Track::audio(clip.track_id.clone(), track_name));
-            }
+                    .push(Track::audio(track_id.clone(), "Audio 1".into()));
+                track_id
+            };
+            let append_tick = arrangement
+                .audio_clips
+                .iter()
+                .map(|clip| {
+                    let duration = arrangement.timebase.milliseconds_to_ticks(
+                        clip.timeline_duration.frames as f64 * 1000.0
+                            / f64::from(clip.timeline_duration.sample_rate),
+                    );
+                    clip.start_tick.0.saturating_add(duration.0)
+                })
+                .max()
+                .unwrap_or(0);
+            let clip = AudioClip::full_source(
+                next_id("clip"),
+                placement.name,
+                track_id,
+                placement.asset_id,
+                placement.start_tick.unwrap_or(TimelineTick(append_tick)),
+                placement.sample_rate,
+                placement.source_frames,
+            );
             arrangement
                 .add_audio_clip(clip, asset_exists)
                 .map_err(Into::into)
@@ -216,19 +261,64 @@ where
         self.commit_arrangement(|arrangement| arrangement.add_midi_clip(clip).map_err(Into::into))
     }
 
-    /// Adds a MIDI Clip and creates its Instrument Track when the caller
-    /// supplied a new track id.
-    pub fn add_midi_clip_with_track(
+    /// Adds parsed MIDI Asset content to the timeline with Core-owned
+    /// identities, creating an Instrument Track when necessary.
+    ///
+    /// # Errors
+    /// Returns an error when the target Track or MIDI content is invalid, or
+    /// when the resulting session cannot be persisted.
+    pub fn add_midi_asset_clip(
         &self,
-        clip: MidiClip,
-        track_name: Option<String>,
+        placement: MidiAssetClipPlacement,
     ) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
-            if let Some(track_name) = track_name {
+            let requested_track_id = placement.track_id.filter(|id| !id.trim().is_empty());
+            let track_id = if let Some(track_id) = requested_track_id {
+                let track = arrangement
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.clone()))?;
+                if track.kind != TrackKind::Instrument {
+                    return Err(ApplicationError::InvalidCommand(
+                        "midi clips can only be added to instrument tracks".into(),
+                    ));
+                }
+                track_id
+            } else if let Some(track) = arrangement
+                .tracks
+                .iter()
+                .find(|track| track.kind == TrackKind::Instrument)
+            {
+                track.id.clone()
+            } else {
+                let track_id = next_id("track");
                 arrangement
                     .tracks
-                    .push(Track::instrument(clip.track_id.clone(), track_name));
+                    .push(Track::instrument(track_id.clone(), "Instrument 1".into()));
+                track_id
+            };
+            let mut notes = placement.notes;
+            for note in &mut notes {
+                note.id = next_id("note");
             }
+            let mut events = placement.events;
+            for event in &mut events {
+                event.id = next_id("event");
+            }
+            let clip = MidiClip {
+                id: next_id("midi-clip"),
+                name: placement.name,
+                track_id,
+                asset_id: Some(placement.asset_id),
+                start_tick: placement.start_tick.unwrap_or(TimelineTick(0)),
+                duration_ticks: placement.duration_ticks,
+                notes,
+                events,
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            };
             arrangement.add_midi_clip(clip).map_err(Into::into)
         })
     }
@@ -330,15 +420,20 @@ where
         })
     }
 
-    /// Duplicates selected Clips at one timeline anchor with host-provided ids.
+    /// Duplicates selected Clips at one timeline anchor.
     pub fn paste_timeline_clips(
         &self,
         audio_clip_ids: Vec<String>,
         midi_clip_ids: Vec<String>,
-        audio_ids: Vec<String>,
-        midi_ids: Vec<String>,
         start_tick: TimelineTick,
     ) -> Result<CreativeSession, ApplicationError> {
+        let operation_id = next_id("paste");
+        let audio_ids = (0..audio_clip_ids.len())
+            .map(|index| format!("clip:{operation_id}:{index}"))
+            .collect::<Vec<_>>();
+        let midi_ids = (0..midi_clip_ids.len())
+            .map(|index| format!("midi-clip:{operation_id}:{index}"))
+            .collect::<Vec<_>>();
         self.commit_arrangement(|arrangement| {
             arrangement
                 .paste_timeline_clips(
@@ -372,8 +467,8 @@ where
         &self,
         clip_id: &str,
         split_tick: TimelineTick,
-        right_id: String,
     ) -> Result<CreativeSession, ApplicationError> {
+        let right_id = next_id("clip:split");
         self.commit_arrangement(|arrangement| {
             arrangement
                 .split_audio_clip(clip_id, split_tick, right_id)
@@ -381,12 +476,9 @@ where
         })
     }
 
-    /// Duplicates an Audio Clip with a caller-provided canonical id.
-    pub fn duplicate_audio_clip(
-        &self,
-        clip_id: &str,
-        duplicate_id: String,
-    ) -> Result<CreativeSession, ApplicationError> {
+    /// Duplicates an Audio Clip with a Core-owned identity.
+    pub fn duplicate_audio_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+        let duplicate_id = next_id("clip:duplicate");
         self.commit_arrangement(|arrangement| {
             arrangement
                 .duplicate_audio_clip(clip_id, duplicate_id)
@@ -413,8 +505,8 @@ where
         &self,
         clip_id: &str,
         split_tick: TimelineTick,
-        right_id: String,
     ) -> Result<CreativeSession, ApplicationError> {
+        let right_id = next_id("midi-clip:split");
         self.commit_arrangement(|arrangement| {
             arrangement
                 .split_midi_clip(clip_id, split_tick, right_id)
@@ -422,12 +514,9 @@ where
         })
     }
 
-    /// Duplicates a MIDI Clip with a caller-provided canonical id.
-    pub fn duplicate_midi_clip(
-        &self,
-        clip_id: &str,
-        duplicate_id: String,
-    ) -> Result<CreativeSession, ApplicationError> {
+    /// Duplicates a MIDI Clip with a Core-owned identity.
+    pub fn duplicate_midi_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+        let duplicate_id = next_id("midi-clip:duplicate");
         self.commit_arrangement(|arrangement| {
             arrangement
                 .duplicate_midi_clip(clip_id, duplicate_id)

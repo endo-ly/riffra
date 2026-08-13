@@ -1,5 +1,5 @@
-use crate::{asset, session::CreativeSession};
-use riffra_core::{OfflineRenderRequest, RenderRuntime};
+use crate::asset;
+use riffra_core::{AssetId, CreativeSession, OfflineRenderRequest, RenderRuntime};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -46,7 +46,7 @@ pub struct RenderOptions {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
-    pub asset_id: asset::AssetId,
+    pub asset_id: AssetId,
     pub path: String,
     pub sample_rate: u32,
     pub frames: u64,
@@ -66,7 +66,7 @@ struct RenderPlan {
     end_tick: u64,
     sample_rate: u32,
     clip_count: usize,
-    source_ids: Vec<asset::AssetId>,
+    source_ids: Vec<AssetId>,
     output_path: PathBuf,
 }
 
@@ -138,7 +138,7 @@ pub fn render_timeline_with_options(
         // Register the WAV without inventing a false source relationship.
         asset::register(
             data_root,
-            crate::asset::AssetKind::Audio,
+            riffra_core::AssetKind::Audio,
             "Timeline render",
             &plan.output_path.to_string_lossy(),
             None,
@@ -147,10 +147,10 @@ pub fn render_timeline_with_options(
         asset::register_derived(
             data_root,
             &plan.source_ids,
-            crate::asset::AssetKind::Audio,
+            riffra_core::AssetKind::Audio,
             "Timeline render",
             &plan.output_path.to_string_lossy(),
-            crate::asset::ProvenanceOperation::Rendered,
+            riffra_core::ProvenanceOperation::Rendered,
             provenance_parameters,
         )?
     };
@@ -398,7 +398,7 @@ fn tick_to_frames(tick: u64, bpm: f64, ppq: u32, sample_rate: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{MidiClip, TimelineLoopRange, TimelineTick, Track};
+    use riffra_core::{MidiClip, TimelineLoopRange, TimelineTick, Track};
 
     fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);

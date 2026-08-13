@@ -1,7 +1,5 @@
 use crate::asset;
-use crate::asset::AssetId;
-use crate::rack::{DeviceKind, RackDevice};
-use crate::session::CreativeSession;
+use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice};
 use serde::Serialize;
 use std::path::Path;
 use ts_rs::TS;
@@ -131,10 +129,10 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::AssetId;
-    use crate::rack::{DeviceKind, RackDevice};
-    use crate::session::{AudioClip, CreativeSession};
     use crate::storage::now_ms;
+    use riffra_core::{
+        AssetId, AudioClip, CreativeSession, DeviceKind, RackDevice, TimelineTick, Track,
+    };
 
     fn root() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -145,9 +143,9 @@ mod tests {
     }
 
     fn session_with_missing_asset(data_root: &Path) -> (CreativeSession, AssetId) {
-        let asset_id = asset::mint_asset_id();
+        let asset_id = riffra_core::mint_asset_id();
         let mut session = CreativeSession::new(now_ms());
-        let mut track = crate::session::Track::audio("main".into(), "Main".into());
+        let mut track = Track::audio("main".into(), "Main".into());
         track.rack.devices.push(RackDevice {
             id: "plugin:gone".into(),
             name: "Lost".into(),
@@ -165,7 +163,7 @@ mod tests {
             "lost".into(),
             "main".into(),
             asset_id.clone(),
-            crate::session::TimelineTick(0),
+            TimelineTick(0),
             48_000,
             48_000,
         ));
@@ -211,7 +209,7 @@ mod tests {
     fn track_devices_remain_in_place_as_actionable_placeholders() {
         let data_root = root();
         let mut session = CreativeSession::new(now_ms());
-        let mut track = crate::session::Track::instrument("synth".into(), "Synth".into());
+        let mut track = Track::instrument("synth".into(), "Synth".into());
         let missing_device = |id: &str, name: &str| RackDevice {
             id: id.into(),
             name: name.into(),

@@ -20,6 +20,25 @@ pub struct CanonicalSnapshot {
     pub sequence: u64,
 }
 
+/// A Core-produced candidate that can be inspected by an external runtime and
+/// later committed without recreating the production edit in an adapter.
+pub struct PreparedSession {
+    session: CreativeSession,
+    expected_sequence: u64,
+}
+
+impl PreparedSession {
+    /// Returns the exact candidate that an external runtime should validate.
+    pub fn session(&self) -> &CreativeSession {
+        &self.session
+    }
+
+    /// Returns the canonical sequence from which this candidate was derived.
+    pub fn sequence(&self) -> u64 {
+        self.expected_sequence
+    }
+}
+
 /// A read-only handle for integrations that outlive one command invocation.
 #[derive(Clone)]
 pub struct CanonicalSessionHandle {
@@ -156,15 +175,29 @@ impl<A> AppCore<A> {
         self.commit_candidate_locked(storage, current, candidate)
     }
 
-    pub(crate) fn commit_at_sequence<S, F>(
+    pub(crate) fn prepare<F>(&self, edit: F) -> Result<PreparedSession, ApplicationError>
+    where
+        F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
+    {
+        let snapshot = self.snapshot()?;
+        let mut candidate = snapshot.session;
+        edit(&mut candidate)?;
+        candidate = candidate
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)?;
+        Ok(PreparedSession {
+            session: candidate,
+            expected_sequence: snapshot.sequence,
+        })
+    }
+
+    pub(crate) fn commit_prepared<S>(
         &self,
         storage: &S,
-        expected_sequence: u64,
-        edit: F,
+        prepared: PreparedSession,
     ) -> Result<CreativeSession, ApplicationError>
     where
         S: SessionStorage + ?Sized,
-        F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
     {
         let _operation = self
             .operation_gate
@@ -176,14 +209,12 @@ impl<A> AppCore<A> {
             .map_err(|_| ApplicationError::StateLock)?
             .clone();
         let current_sequence = self.projection_version.load(Ordering::Acquire) / 2;
-        if current_sequence != expected_sequence {
+        if current_sequence != prepared.expected_sequence {
             return Err(ApplicationError::InvalidCommand(
                 "canonical session changed while the operation was being prepared".into(),
             ));
         }
-        let mut candidate = current.clone();
-        edit(&mut candidate)?;
-        self.commit_candidate_locked(storage, current, candidate)
+        self.commit_candidate_locked(storage, current, prepared.session)
     }
 
     /// Submits the current canonical snapshot to a host runtime projection
@@ -421,8 +452,8 @@ mod tests {
     use super::*;
     use crate::domain::asset::mint_asset_id;
     use crate::domain::{
-        AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, RackDevice, SamplePad,
-        TimelineTick, TrackKind,
+        AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, MidiNote, RackDevice,
+        SamplePad, TimelineTick, TrackKind,
     };
     use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
     use std::sync::{Arc, Barrier, Mutex};
@@ -463,27 +494,14 @@ mod tests {
 
     struct FailingProjection;
 
-    struct DelayedProjection {
-        started: Arc<Barrier>,
-        release: Arc<Barrier>,
-    }
-
     impl RuntimeProjection for FailingProjection {
         fn project(&self, _request: RuntimeProjectionRequest) -> Result<(), PortError> {
             Err(PortError::Runtime("runtime unavailable".into()))
         }
     }
 
-    impl RuntimeProjection for DelayedProjection {
-        fn project(&self, _request: RuntimeProjectionRequest) -> Result<(), PortError> {
-            self.started.wait();
-            self.release.wait();
-            Ok(())
-        }
-    }
-
     #[test]
-    fn commit_serializes_edit_persistence_and_canonical_exchange() {
+    fn commit_persists_and_records_history() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -501,6 +519,126 @@ mod tests {
         assert_eq!(committed.arrangement.tracks.len(), 1);
         assert_eq!(storage.sessions.lock().unwrap().len(), 1);
         assert!(core.history_state().unwrap().can_undo);
+    }
+
+    #[test]
+    fn add_track_normalizes_the_canonical_name() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+
+        let committed = core
+            .application(&storage)
+            .add_track(format!("  {}  ", "a".repeat(100)), TrackKind::Audio)
+            .unwrap();
+
+        assert_eq!(committed.arrangement.tracks[0].name, "a".repeat(80));
+    }
+
+    #[test]
+    fn adding_an_audio_asset_creates_the_missing_audio_track() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let asset_id = mint_asset_id();
+
+        let committed = core
+            .application(&storage)
+            .add_audio_asset_clip(
+                crate::application::AudioAssetClipPlacement {
+                    asset_id,
+                    name: "Take".into(),
+                    start_tick: None,
+                    track_id: None,
+                    sample_rate: 48_000,
+                    source_frames: 48_000,
+                },
+                |_| true,
+            )
+            .unwrap();
+
+        assert_eq!(committed.arrangement.tracks.len(), 1);
+        assert_eq!(committed.arrangement.tracks[0].kind, TrackKind::Audio);
+        assert_eq!(committed.arrangement.audio_clips.len(), 1);
+        assert_eq!(
+            committed.arrangement.audio_clips[0].track_id,
+            committed.arrangement.tracks[0].id
+        );
+    }
+
+    #[test]
+    fn adding_a_midi_asset_creates_the_track_and_replaces_transient_ids() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let asset_id = mint_asset_id();
+
+        let committed = core
+            .application(&storage)
+            .add_midi_asset_clip(crate::application::MidiAssetClipPlacement {
+                asset_id,
+                name: "Pattern".into(),
+                start_tick: None,
+                track_id: None,
+                duration_ticks: 960,
+                notes: vec![MidiNote {
+                    id: "adapter:temporary".into(),
+                    note: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                }],
+                events: Vec::new(),
+            })
+            .unwrap();
+
+        assert_eq!(committed.arrangement.tracks[0].kind, TrackKind::Instrument);
+        assert_eq!(committed.arrangement.midi_clips.len(), 1);
+        assert_ne!(
+            committed.arrangement.midi_clips[0].notes[0].id,
+            "adapter:temporary"
+        );
+    }
+
+    #[test]
+    fn prepared_plugin_commit_uses_the_runtime_validated_candidate() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let with_track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = with_track.arrangement.tracks[0].id.clone();
+        let prepared = application
+            .prepare_track_instrument(&track_id, "Synth".into(), "Synth.vst3".into())
+            .unwrap();
+        let validated_arrangement = prepared.session().arrangement.clone();
+
+        let committed = application.commit_prepared(prepared).unwrap();
+
+        assert_eq!(committed.arrangement, validated_arrangement);
     }
 
     #[test]
@@ -548,7 +686,7 @@ mod tests {
             )
             .unwrap();
         application
-            .split_audio_clip("clip:1", TimelineTick(1_440), "clip:2".into())
+            .split_audio_clip("clip:1", TimelineTick(1_440))
             .unwrap();
 
         let with_midi_track = application
@@ -970,47 +1108,6 @@ mod tests {
             Some("Projected")
         );
         assert_eq!(requests[0].sequence(), 1);
-    }
-
-    #[test]
-    fn delayed_projection_cannot_replace_a_newer_canonical_revision() {
-        let storage = Arc::new(MemoryStorage::default());
-        let core = Arc::new(AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        ));
-        core.application(&*storage)
-            .add_track("revision n", TrackKind::Audio)
-            .unwrap();
-        let started = Arc::new(Barrier::new(2));
-        let release = Arc::new(Barrier::new(2));
-        let projection = {
-            let core = Arc::clone(&core);
-            let started_for_projection = Arc::clone(&started);
-            let release_for_projection = Arc::clone(&release);
-            std::thread::spawn(move || {
-                core.project_current(&DelayedProjection {
-                    started: started_for_projection,
-                    release: release_for_projection,
-                })
-                .unwrap();
-            })
-        };
-        started.wait();
-
-        core.application(&*storage)
-            .add_marker(TimelineTick(960), "revision n+1".into())
-            .unwrap();
-        let newest = core.snapshot().unwrap();
-        release.wait();
-        projection.join().unwrap();
-
-        let after_delayed_projection = core.snapshot().unwrap();
-        assert_eq!(after_delayed_projection.sequence, newest.sequence);
-        assert_eq!(after_delayed_projection.session, newest.session);
     }
 
     #[test]

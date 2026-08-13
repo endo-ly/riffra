@@ -2,7 +2,7 @@ use crate::native_audio::AudioSupervisor;
 use crate::presentation::DesktopViewState;
 use crate::runtime::RuntimeReconciler;
 use crate::runtime::ports::RuntimeDriver;
-use riffra_core::AppCore;
+use riffra_core::{AppCore, CreativeSession};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -20,7 +20,7 @@ pub struct SessionContext<'a, D: RuntimeDriver = AudioSupervisor> {
 
 pub(crate) fn current_session<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
-) -> Result<crate::session::CreativeSession, String> {
+) -> Result<CreativeSession, String> {
     context
         .core
         .snapshot()

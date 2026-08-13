@@ -26,24 +26,16 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 /// canonical Session, and a persistence failure repairs the previous graph.
 pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
-    candidate: CreativeSession,
-    base_sequence: u64,
-    operation: impl FnOnce() -> Result<CreativeSession, String>,
+    prepared: riffra_core::PreparedSession,
 ) -> Result<CreativeSession, String> {
-    let candidate = candidate.validate_and_normalize()?;
-    if let Err(error) = prepare_arrangement_candidate(context, &candidate, base_sequence) {
+    if let Err(error) =
+        prepare_arrangement_candidate(context, prepared.session(), prepared.sequence())
+    {
         return Err(repair_previous_arrangement(context, error));
     }
-    let current = context.core.snapshot().map_err(|error| error.to_string())?;
-    if current.sequence != base_sequence
-        || current.session.arrangement.revision.saturating_add(1) != candidate.arrangement.revision
-    {
-        return Err(repair_previous_arrangement(
-            context,
-            "Canonical Session changed while the VST candidate was being prepared.".into(),
-        ));
-    }
-    let committed = match operation() {
+    let committed = match commit_core_application(context, |core, store| {
+        core.application(store).commit_prepared(prepared)
+    }) {
         Ok(committed) => committed,
         Err(error) => {
             return Err(repair_previous_arrangement(context, error));
@@ -51,45 +43,6 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
     };
     let _ = sync_arrangement(context)?;
     Ok(committed)
-}
-
-fn track_device_mut<'a>(track: &'a mut Track, device_id: &str) -> Option<&'a mut RackDevice> {
-    if track
-        .instrument
-        .as_ref()
-        .is_some_and(|device| device.id == device_id)
-    {
-        return track.instrument.as_mut();
-    }
-    track
-        .rack
-        .devices
-        .iter_mut()
-        .find(|device| device.id == device_id)
-}
-
-fn plugin_device(path: &str, id: String) -> Result<RackDevice, String> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Err("VST3 path must not be empty.".into());
-    }
-    let name = Path::new(path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned();
-    Ok(RackDevice {
-        id,
-        name,
-        kind: DeviceKind::Plugin,
-        path: Some(path.to_owned()),
-        bypassed: false,
-        gain_db: 0.0,
-        parameter_values: Vec::new(),
-        state_data: None,
-        disabled_placeholder: false,
-    })
 }
 
 pub fn set_track_audio_input(
@@ -128,43 +81,17 @@ pub fn set_track_instrument(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let previous = context.core.snapshot().map_err(|error| error.to_string())?;
-    let revision = previous.session.arrangement.revision;
-    let track = previous
-        .session
-        .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
-    if track.kind != TrackKind::Instrument {
-        return Err("Only Instrument Tracks can host an Instrument.".into());
-    }
-    let id = track
-        .instrument
-        .as_ref()
-        .map(|device| device.id.clone())
-        .unwrap_or_else(|| format!("device:instrument:{}:{}", now_ms(), revision));
-    let mut device = plugin_device(&validated_path.to_string_lossy(), id)?;
-    device.name = name;
-    let mut candidate = previous.session.clone();
-    candidate
-        .arrangement
-        .tracks
-        .iter_mut()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| format!("Track is not registered: {track_id}"))?
-        .instrument = Some(device.clone());
-    candidate.arrangement.revision = revision.saturating_add(1);
-    commit_plugin_arrangement(context, candidate, previous.sequence, || {
-        commit_core_application(context, |core, store| {
-            core.application(store).set_track_instrument_at_sequence(
-                track_id,
-                Some(device),
-                previous.sequence,
-            )
-        })
-    })
+    let store = SessionStore::new(context.data_root);
+    let prepared = context
+        .core
+        .application(&store)
+        .prepare_track_instrument(
+            track_id,
+            name,
+            validated_path.to_string_lossy().into_owned(),
+        )
+        .map_err(|error| error.to_string())?;
+    commit_plugin_arrangement(context, prepared)
 }
 
 pub fn clear_track_instrument(
@@ -191,38 +118,17 @@ pub fn add_track_effect(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let previous = context.core.snapshot().map_err(|error| error.to_string())?;
-    let revision = previous.session.arrangement.revision;
-    previous
-        .session
-        .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
-    let id = format!("device:effect:{}:{}", now_ms(), revision);
-    let mut device = plugin_device(&validated_path.to_string_lossy(), id)?;
-    device.name = name;
-    let mut candidate = previous.session.clone();
-    candidate
-        .arrangement
-        .tracks
-        .iter_mut()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| format!("Track is not registered: {track_id}"))?
-        .rack
-        .devices
-        .push(device.clone());
-    candidate.arrangement.revision = revision.saturating_add(1);
-    commit_plugin_arrangement(context, candidate, previous.sequence, || {
-        commit_core_application(context, |core, store| {
-            core.application(store).add_track_effect_at_sequence(
-                track_id,
-                device,
-                previous.sequence,
-            )
-        })
-    })
+    let store = SessionStore::new(context.data_root);
+    let prepared = context
+        .core
+        .application(&store)
+        .prepare_track_effect(
+            track_id,
+            name,
+            validated_path.to_string_lossy().into_owned(),
+        )
+        .map_err(|error| error.to_string())?;
+    commit_plugin_arrangement(context, prepared)
 }
 
 pub fn remove_track_effect(
@@ -466,7 +372,7 @@ pub fn relink_missing_dependency(
         AssetKind::Audio,
         name,
         new_path,
-        Some(crate::asset::Provenance::imported()),
+        Some(riffra_core::Provenance::imported()),
     )?;
     commit_core_application(context, |core, store| {
         core.application(store)
@@ -499,37 +405,17 @@ pub fn replace_missing_track_plugin(
     if !path.exists() {
         return Err("Replacement VST3 path does not exist.".into());
     }
-    let previous = context.core.snapshot().map_err(|error| error.to_string())?;
-    if !previous.session.arrangement.tracks.iter().any(|track| {
-        track
-            .instrument
-            .as_ref()
-            .is_some_and(|device| device.id == device_id)
-            || track
-                .rack
-                .devices
-                .iter()
-                .any(|device| device.id == device_id)
-    }) {
-        return Err(format!("Track Device is not registered: {device_id}"));
-    }
-    let replacement = plugin_device(&path.to_string_lossy(), device_id.to_owned())?;
-    let mut candidate = previous.session.clone();
-    *candidate
-        .arrangement
-        .tracks
-        .iter_mut()
-        .find_map(|track| track_device_mut(track, device_id))
-        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))? =
-        replacement.clone();
-    candidate.arrangement.revision = previous.session.arrangement.revision.saturating_add(1);
-    commit_plugin_arrangement(context, candidate, previous.sequence, || {
-        commit_core_application(context, |core, store| {
-            core.application(store).replace_track_plugin_at_sequence(
-                device_id,
-                replacement,
-                previous.sequence,
-            )
-        })
-    })
+    let name = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Plugin")
+        .to_owned();
+    let store = SessionStore::new(context.data_root);
+    let prepared = context
+        .core
+        .application(&store)
+        .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
+        .map_err(|error| error.to_string())?;
+    commit_plugin_arrangement(context, prepared)
 }

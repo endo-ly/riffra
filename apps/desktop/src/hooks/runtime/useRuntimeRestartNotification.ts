@@ -1,13 +1,16 @@
 import { useEffect } from 'react';
 import type { NativeApi } from '@/native/native-api';
 
-interface RuntimeSynchronizationOptions {
+interface RuntimeRestartNotificationOptions {
   api: Pick<NativeApi, 'onRuntimeRestarted'>;
   setScanMessage: (message: string) => void;
 }
 
-/** Subscribes to runtime recovery notifications owned by the native host. */
-export function useRuntimeSynchronization({ api, setScanMessage }: RuntimeSynchronizationOptions) {
+/** Reports native runtime recovery without owning synchronization decisions. */
+export function useRuntimeRestartNotification({
+  api,
+  setScanMessage,
+}: RuntimeRestartNotificationOptions) {
   useEffect(() => {
     let disposed = false;
     const unlisten = api.onRuntimeRestarted(() => {

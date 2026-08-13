@@ -1,15 +1,16 @@
-//! Session-to-Runtime Transport application operations.
+//! Desktop adapters from Core session and transport decisions to the runtime.
 
 use crate::asset;
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::NativeSamplePad;
 use crate::presentation::{DesktopViewState, Workspace};
-use crate::rack::DeviceKind;
 use crate::runtime::RuntimeReconciler;
 use crate::runtime::ports::RuntimeDriver;
 use crate::session::context::{SessionContext, lock_error};
-use crate::session::{CreativeSession, SamplePad, TimelineTick};
-use riffra_core::{PortError, RuntimeProjection, RuntimeProjectionRequest};
+use riffra_core::{
+    CreativeSession, DeviceKind, PortError, RuntimeProjection, RuntimeProjectionRequest, SamplePad,
+    TimelineTick,
+};
 use std::path::Path;
 use std::time::Duration;
 
@@ -192,7 +193,7 @@ struct DesktopRuntimeProjection<'a, D: RuntimeDriver> {
 
 impl<D: RuntimeDriver> RuntimeProjection for DesktopRuntimeProjection<'_, D> {
     fn project(&self, request: RuntimeProjectionRequest) -> Result<(), PortError> {
-        let key = crate::runtime::model::ProjectionKey {
+        let key = riffra_core::ProjectionKey {
             sequence: request.sequence(),
             session_revision: request.session().arrangement.revision,
         };
@@ -263,7 +264,7 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
         .runtime
         .apply_candidate_and_wait(
             runtime_timeline_snapshot(context.data_root, candidate),
-            crate::runtime::model::ProjectionKey {
+            riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
             },
@@ -349,7 +350,7 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
     let played = context.runtime.apply_and_play_if(
         transport_sequence,
         runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime::model::ProjectionKey {
+        riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
         },
@@ -440,8 +441,7 @@ fn workspace_processing_mode(workspace: Workspace) -> &'static str {
 mod tests {
     use super::*;
     use crate::model::RecordingStatus;
-    use crate::rack::RackDevice;
-    use crate::session::Track;
+    use riffra_core::{RackDevice, Track};
     use std::sync::{Arc, Mutex};
 
     #[test]

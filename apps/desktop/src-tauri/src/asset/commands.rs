@@ -3,9 +3,9 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::AppState;
-use crate::asset::AssetId;
 use crate::asset::application::{self, AssetPreviewContext, AssetPreviewOptions};
 use crate::model::AudioStatus;
+use riffra_core::AssetId;
 
 async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
 where

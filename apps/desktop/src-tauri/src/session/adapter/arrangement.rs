@@ -19,19 +19,9 @@ pub fn split_audio_clip(
     clip_id: &str,
     split_tick: TimelineTick,
 ) -> Result<CreativeSession, String> {
-    let revision = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session
-        .arrangement
-        .revision;
     let committed = commit_core_application(context, |core, store| {
-        core.application(store).split_audio_clip(
-            clip_id,
-            split_tick,
-            format!("clip:split:{}:{}", now_ms(), revision.saturating_add(1)),
-        )
+        core.application(store)
+            .split_audio_clip(clip_id, split_tick)
     })?;
     sync_arrangement(context)?;
     Ok(committed)
@@ -41,18 +31,8 @@ pub fn duplicate_audio_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
 ) -> Result<CreativeSession, String> {
-    let revision = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session
-        .arrangement
-        .revision;
     let committed = commit_core_application(context, |core, store| {
-        core.application(store).duplicate_audio_clip(
-            clip_id,
-            format!("clip:duplicate:{}:{}", now_ms(), revision.saturating_add(1)),
-        )
+        core.application(store).duplicate_audio_clip(clip_id)
     })?;
     sync_arrangement(context)?;
     Ok(committed)
@@ -111,23 +91,8 @@ pub fn split_midi_clip(
     clip_id: &str,
     split_tick: TimelineTick,
 ) -> Result<CreativeSession, String> {
-    let revision = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session
-        .arrangement
-        .revision;
     let committed = commit_core_application(context, |core, store| {
-        core.application(store).split_midi_clip(
-            clip_id,
-            split_tick,
-            format!(
-                "midi-clip:split:{}:{}",
-                now_ms(),
-                revision.saturating_add(1)
-            ),
-        )
+        core.application(store).split_midi_clip(clip_id, split_tick)
     })?;
     sync_arrangement(context)?;
     Ok(committed)
@@ -137,22 +102,8 @@ pub fn duplicate_midi_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
 ) -> Result<CreativeSession, String> {
-    let revision = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session
-        .arrangement
-        .revision;
     let committed = commit_core_application(context, |core, store| {
-        core.application(store).duplicate_midi_clip(
-            clip_id,
-            format!(
-                "midi-clip:duplicate:{}:{}",
-                now_ms(),
-                revision.saturating_add(1)
-            ),
-        )
+        core.application(store).duplicate_midi_clip(clip_id)
     })?;
     sync_arrangement(context)?;
     Ok(committed)
@@ -229,31 +180,10 @@ pub fn paste_timeline_clips(
     midi_clip_ids: &[String],
     start_tick: TimelineTick,
 ) -> Result<CreativeSession, String> {
-    let stamp = now_ms();
-    let revision = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session
-        .arrangement
-        .revision
-        .saturating_add(1);
-    let audio_ids = audio_clip_ids
-        .iter()
-        .enumerate()
-        .map(|(index, _)| format!("clip:paste:{stamp}:{revision}:{index}"))
-        .collect::<Vec<_>>();
-    let midi_ids = midi_clip_ids
-        .iter()
-        .enumerate()
-        .map(|(index, _)| format!("midi-clip:paste:{stamp}:{revision}:{index}"))
-        .collect::<Vec<_>>();
     let committed = commit_core_application(context, |core, store| {
         core.application(store).paste_timeline_clips(
             audio_clip_ids.to_owned(),
             midi_clip_ids.to_owned(),
-            audio_ids,
-            midi_ids,
             start_tick,
         )
     })?;
@@ -265,7 +195,7 @@ pub fn trim_audio_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
     start_tick: TimelineTick,
-    source_range: crate::session::FrameRange,
+    source_range: riffra_core::FrameRange,
 ) -> Result<CreativeSession, String> {
     let session = context
         .core
@@ -328,63 +258,18 @@ pub fn add_audio_clip(
     if source_frames == 0 {
         return Err("Audio Asset has no usable frames.".into());
     }
-    let session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
-    let mut create_track = None;
-    let track_id = track_id
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            session
-                .arrangement
-                .tracks
-                .iter()
-                .find(|track| track.kind == crate::session::TrackKind::Audio)
-                .map(|track| track.id.clone())
-        })
-        .unwrap_or_else(|| {
-            let id = format!("track:{}", now_ms());
-            create_track = Some("Audio 1".to_owned());
-            id
-        });
-    let target_track = session
-        .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| format!("Track is not registered: {track_id}"))?;
-    if target_track.kind != crate::session::TrackKind::Audio {
-        return Err(format!("Track is not an Audio Track: {track_id}"));
-    }
-    let append_tick = session
-        .arrangement
-        .audio_clips
-        .iter()
-        .map(|clip| {
-            let duration = session.arrangement.timebase.milliseconds_to_ticks(
-                clip.timeline_duration.frames as f64 * 1000.0
-                    / f64::from(clip.timeline_duration.sample_rate),
-            );
-            clip.start_tick.0.saturating_add(duration.0)
-        })
-        .max()
-        .unwrap_or(0);
-    let clip = crate::session::AudioClip::full_source(
-        format!("clip:{}:{}", asset_id.as_str(), now_ms()),
-        name,
-        track_id,
-        asset_id,
-        start_tick.unwrap_or(TimelineTick(append_tick)),
-        wav.sample_rate,
-        source_frames,
-    );
     let committed = commit_core_application(context, |core, store| {
-        core.application(store)
-            .add_audio_clip_with_track(clip, create_track, |id| {
-                asset::load(context.data_root, id).is_some()
-            })
+        core.application(store).add_audio_asset_clip(
+            AudioAssetClipPlacement {
+                asset_id,
+                name,
+                start_tick,
+                track_id,
+                sample_rate: wav.sample_rate,
+                source_frames,
+            },
+            |id| asset::load(context.data_root, id).is_some(),
+        )
     })?;
     context.view_state.lock().map_err(lock_error)?.workspace = Workspace::Arrange;
     sync_arrangement(context)?;
@@ -410,10 +295,6 @@ pub fn add_track(
     name: String,
     kind: TrackKind,
 ) -> Result<CreativeSession, String> {
-    let name = name.trim().chars().take(80).collect::<String>();
-    if name.is_empty() {
-        return Err("Track name must not be empty.".into());
-    }
     let committed = commit_core_application(context, |core, store| {
         core.application(store).add_track(name, kind)
     })?;

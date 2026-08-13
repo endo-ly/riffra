@@ -7,10 +7,11 @@
 use tauri::State;
 
 use crate::AppState;
-use crate::asset::{self, AssetId};
+use crate::asset;
 use crate::jobs::{self, BackgroundJobStatus, JobKind};
 use crate::separation::{self, SeparationResult};
 use crate::storage::now_ms;
+use riffra_core::AssetId;
 
 #[tauri::command]
 pub async fn start_separation_job(

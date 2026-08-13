@@ -3,7 +3,7 @@ use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::{AudioDeviceReopenOutcome, MuteCause};
 use crate::model::AudioStatus;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
-use crate::session::AudioTakeVariant;
+use riffra_core::AudioTakeVariant;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -11,7 +11,7 @@ use tauri::{AppHandle, Runtime};
 
 /// Sample-pad payload exchanged with the native audio sidecar. The sidecar
 /// consumes resolved filesystem paths, not Asset ids, so this is a distinct
-/// type from the domain [`crate::session::SamplePad`].
+/// type from the domain [`riffra_core::SamplePad`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeSamplePad {

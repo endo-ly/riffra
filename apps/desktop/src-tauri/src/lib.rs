@@ -24,7 +24,6 @@ mod analysis;
 mod asset;
 mod audio_preferences;
 mod diagnostics;
-mod errors;
 mod jobs;
 mod library;
 mod missing;
@@ -35,7 +34,6 @@ mod plugin_validation;
 mod plugins;
 mod presentation;
 mod projects;
-mod rack;
 mod recording;
 mod render;
 mod runtime;
@@ -51,10 +49,9 @@ use model::{
     RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
-use riffra_core::AppCore;
+use riffra_core::{AppCore, CreativeSession};
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
-use session::CreativeSession;
 use session::adapter as session_adapter;
 use std::{
     collections::HashMap,
@@ -1075,8 +1072,8 @@ pub fn run() {
 mod tests {
     use super::{bootstrap_recovery_candidates, parse_stdout, safe_mode_from_args};
     use crate::model::DeviceChannels;
-    use crate::session::CreativeSession;
     use crate::storage::SessionStore;
+    use riffra_core::CreativeSession;
 
     #[test]
     fn parses_audio_probe_with_unicode_device_names() {

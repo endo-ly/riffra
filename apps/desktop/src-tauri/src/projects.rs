@@ -1,6 +1,5 @@
 use crate::asset;
-use crate::asset::{AssetId, AssetKind, Provenance};
-use crate::session::CreativeSession;
+use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -182,7 +181,7 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
         .ok_or_else(|| "Project manifest has no Session.".to_string())?;
     let session_payload = serde_json::to_vec(&session_value)
         .map_err(|error| format!("Project Session is invalid: {error}"))?;
-    let migrated_session = crate::session::deserialize_session(&session_payload)
+    let migrated_session = riffra_core::deserialize_session(&session_payload)
         .map_err(|error| format!("Project Session is invalid: {error}"))?;
     manifest_value["session"] = serde_json::to_value(migrated_session)
         .map_err(|error| format!("Project Session is invalid: {error}"))?;
@@ -368,9 +367,9 @@ fn hash_file(path: &Path) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetId, AssetKind};
-    use crate::session::{AudioClip, CreativeSession};
     use crate::storage::now_ms;
+    use riffra_core::{AssetId, AssetKind};
+    use riffra_core::{AudioClip, CreativeSession, TimelineTick, Track};
 
     fn register(root: &Path, name: &str, content: &[u8]) -> AssetId {
         let path = root.join(name);
@@ -385,13 +384,13 @@ mod tests {
         session
             .arrangement
             .tracks
-            .push(crate::session::Track::audio("main".into(), "Main".into()));
+            .push(Track::audio("main".into(), "Main".into()));
         session.arrangement.audio_clips.push(AudioClip::full_source(
             "clip:1".into(),
             "take".into(),
             "main".into(),
             asset_id,
-            crate::session::TimelineTick(0),
+            TimelineTick(0),
             48_000,
             4_800,
         ));

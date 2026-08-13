@@ -31,7 +31,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
-import { useRuntimeSynchronization } from './runtime/useRuntimeSynchronization';
+import { useRuntimeRestartNotification } from './runtime/useRuntimeRestartNotification';
 import { useTransportController } from './runtime/useTransportController';
 import { useWorkspaceNavigation } from './runtime/useWorkspaceNavigation';
 import { useLibrary } from './useLibrary';
@@ -210,7 +210,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  useRuntimeSynchronization({
+  useRuntimeRestartNotification({
     api,
     setScanMessage,
   });

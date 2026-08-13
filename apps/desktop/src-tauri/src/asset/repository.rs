@@ -15,9 +15,9 @@
 //! [`AssetId`]. A failure at any step leaves already-written metadata and files
 //! intact.
 
-use crate::asset::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
-use crate::session::CreativeSession;
 use crate::storage::now_ms;
+use riffra_core::CreativeSession;
+use riffra_core::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
@@ -598,8 +598,8 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{ProvenanceOperation, mint_asset_id};
-    use crate::session::{AudioClip, SamplePad};
+    use riffra_core::{AudioClip, SamplePad, TimelineTick, Track};
+    use riffra_core::{ProvenanceOperation, mint_asset_id};
 
     fn root(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -701,13 +701,13 @@ mod tests {
         session
             .arrangement
             .tracks
-            .push(crate::session::Track::audio("main".into(), "Main".into()));
+            .push(Track::audio("main".into(), "Main".into()));
         session.arrangement.audio_clips.push(AudioClip::full_source(
             "clip:unknown".into(),
             "unknown".into(),
             "main".into(),
             asset_id,
-            crate::session::TimelineTick(0),
+            TimelineTick(0),
             48_000,
             4_800,
         ));

@@ -2,10 +2,9 @@
 
 use crate::native_audio::AudioSupervisor;
 use crate::runtime::ports::RuntimeDriver;
-use crate::session::CreativeSession;
 use crate::session::context::SessionContext;
 use crate::storage::SessionStore;
-use riffra_core::{AppCore, ApplicationError};
+use riffra_core::{AppCore, ApplicationError, CreativeSession};
 use std::path::Path;
 
 /// Runs a Core application operation and updates the Desktop library index

@@ -11,18 +11,19 @@
 use tauri::{AppHandle, Manager};
 
 use crate::AppState;
-use crate::asset::AssetId;
 use crate::missing::MissingDependency;
 use crate::model::{RuntimeProjectionStatus, SessionAudioPair};
 use crate::presentation::{DesignTool, DesktopViewState, Workspace};
 use crate::session::adapter::{self, SessionContext};
-use crate::session::{
-    AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
-    CreativeSession, FrameRange, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
-    TimelineTick, TrackKind,
-};
 use crate::storage::SessionStore;
-use riffra_core::HistoryState;
+use riffra_core::application::{
+    MidiNotePatch, MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
+};
+use riffra_core::{
+    AssetId, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
+    CreativeSession, FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute,
+    ProjectTimebase, TimelineTick, TrackKind,
+};
 
 async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
 where
@@ -256,7 +257,7 @@ pub async fn create_sample_pad(
 #[tauri::command]
 pub async fn update_sample_pad(
     pad_id: String,
-    patch: adapter::SamplePadPatch,
+    patch: SamplePadPatch,
     app: AppHandle,
 ) -> Result<SessionAudioPair, String> {
     run_blocking(app, move |state| {
@@ -582,7 +583,7 @@ pub async fn switch_workspace(
 
 #[tauri::command]
 pub async fn update_session_settings(
-    patch: adapter::SessionSettingsPatch,
+    patch: SessionSettingsPatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
@@ -606,7 +607,7 @@ pub async fn add_track(
 #[tauri::command]
 pub async fn update_track(
     track_id: String,
-    patch: adapter::TrackPatch,
+    patch: riffra_core::TrackPatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
@@ -892,7 +893,7 @@ pub async fn add_midi_note(
 pub async fn update_midi_note(
     clip_id: String,
     note_id: String,
-    patch: adapter::MidiNotePatch,
+    patch: MidiNotePatch,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
@@ -904,7 +905,7 @@ pub async fn update_midi_note(
 #[tauri::command]
 pub async fn update_midi_notes(
     clip_id: String,
-    updates: Vec<adapter::MidiNoteUpdate>,
+    updates: Vec<MidiNoteUpdate>,
     app: AppHandle,
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {

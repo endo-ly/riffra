@@ -47,18 +47,17 @@ use rack::commit_plugin_arrangement;
 use std::collections::HashMap;
 use std::{fs, path::Path};
 
-use crate::asset::{self, AssetId, AssetKind};
+use crate::asset;
 use crate::model::{AudioStatus, SessionAudioPair};
 use crate::plugin_catalog;
 use crate::presentation::{DesignTool, DesktopViewState, Workspace};
-use crate::rack::{DeviceKind, RackDevice};
 use crate::runtime::ports::RuntimeDriver;
-use crate::session::{
-    AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
-    CreativeSession, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind,
-    MidiInputRoute, MidiNote, ProjectTimebase, SamplePad, TimelineTick, Track, TrackKind,
+use crate::storage::SessionStore;
+use riffra_core::{
+    AssetId, AssetKind, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter,
+    AutomationPoint, CreativeSession, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind,
+    MidiInputRoute, MidiNote, ProjectTimebase, SamplePad, TimelineTick, TrackKind,
 };
-use crate::storage::{SessionStore, now_ms};
 
 pub(crate) use crate::session::commit::{
     commit_core_application, commit_recording_session, import_session, restore_generation,
@@ -70,14 +69,18 @@ pub(crate) use crate::session::transport::{
     runtime_snapshot_for_recording, seek_timeline, stop_timeline, switch_workspace,
     sync_arrangement, sync_arrangement_runtime,
 };
-pub use riffra_core::application::{
-    MarkerPatch, MidiNotePatch, MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
+use riffra_core::application::{
+    AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNotePatch, MidiNoteUpdate,
+    SamplePadPatch, SessionSettingsPatch,
 };
-pub use riffra_core::domain::TrackPatch;
+use riffra_core::domain::TrackPatch;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{AudioClip, RecordingPassRecord, RecordingTakeRecord, TakeAudioSource};
+    use riffra_core::{
+        AudioClip, DeviceKind, RackDevice, RecordingPassRecord, RecordingTakeRecord,
+        TakeAudioSource, Track,
+    };
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Barrier, Mutex, OnceLock, mpsc};
@@ -246,23 +249,13 @@ mod tests {
         }
     }
 
-    fn plugin_candidate_session() -> CreativeSession {
-        let mut candidate = CreativeSession::new(1);
-        let mut track = Track::audio("track:plugin".into(), "Plugin Track".into());
-        track.rack.devices.push(RackDevice {
-            id: "device:candidate".into(),
-            name: "Candidate".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\plugins\Candidate.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
-        candidate.arrangement.tracks.push(track);
-        candidate.arrangement.revision = 1;
-        candidate
+    fn plugin_base_session() -> CreativeSession {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:plugin".into(), "Plugin Track".into()));
+        session
     }
 
     fn test_view_state() -> &'static Mutex<crate::presentation::DesktopViewState> {
@@ -286,13 +279,19 @@ mod tests {
         }
     }
 
-    fn persist_candidate<D: RuntimeDriver>(
+    fn prepared_plugin_candidate<D: RuntimeDriver>(
         context: &SessionContext<'_, D>,
-        candidate: CreativeSession,
-    ) -> Result<CreativeSession, String> {
-        commit_core_application(context, |core, store| {
-            core.application(store).import_project(candidate)
-        })
+    ) -> riffra_core::PreparedSession {
+        let store = SessionStore::new(context.data_root);
+        context
+            .core
+            .application(&store)
+            .prepare_track_effect(
+                "track:plugin",
+                "Candidate".into(),
+                r"C:\plugins\Candidate.vst3".into(),
+            )
+            .unwrap()
     }
 
     fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
@@ -316,7 +315,7 @@ mod tests {
             crate::storage::now_ms()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let session = CreativeSession::new(1);
+        let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(true));
         let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         let audio = crate::native_audio::AudioSupervisor::offline("test");
@@ -324,19 +323,15 @@ mod tests {
         let context = candidate_context(&root, &runtime, &audio, &core);
 
         // Act
-        let candidate = plugin_candidate_session();
-        let result = commit_plugin_arrangement(&context, candidate.clone(), 0, || {
-            persist_candidate(&context, candidate)
-        });
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
 
         // Assert
         assert!(result.is_err());
         assert!(
-            core.snapshot()
-                .unwrap()
-                .session
-                .arrangement
-                .tracks
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .rack
+                .devices
                 .is_empty()
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), [0]);
@@ -351,19 +346,14 @@ mod tests {
             crate::storage::now_ms()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let session = CreativeSession::new(1);
+        let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(true));
         let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         let audio = crate::native_audio::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
         let context = candidate_context(&root, &runtime, &audio, &core);
-        let candidate = plugin_candidate_session();
-        assert!(
-            commit_plugin_arrangement(&context, candidate.clone(), 0, || {
-                persist_candidate(&context, candidate)
-            })
-            .is_err()
-        );
+        let candidate = prepared_plugin_candidate(&context);
+        assert!(commit_plugin_arrangement(&context, candidate).is_err());
         let loaded_before_restart = driver.loaded.lock().unwrap().len();
         driver.generation.store(2, Ordering::Release);
 
@@ -388,7 +378,7 @@ mod tests {
             crate::storage::now_ms()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let session = CreativeSession::new(1);
+        let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
         let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         let audio = crate::native_audio::AudioSupervisor::offline("test");
@@ -411,16 +401,14 @@ mod tests {
         let context = candidate_context(&root, &runtime, &audio, core.as_ref());
 
         // Act
-        let candidate = plugin_candidate_session();
-        let result = commit_plugin_arrangement(&context, candidate.clone(), 0, || {
-            persist_candidate(&context, candidate)
-        });
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
 
         // Assert
         assert!(result.is_err());
         let current = core.snapshot().unwrap().session;
         assert_eq!(current.arrangement.revision, 1);
-        assert!(current.arrangement.tracks.is_empty());
+        assert!(current.arrangement.tracks[0].rack.devices.is_empty());
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -433,7 +421,7 @@ mod tests {
             crate::storage::now_ms()
         ));
         std::fs::write(&root, b"not a directory").unwrap();
-        let session = CreativeSession::new(1);
+        let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
         let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
         let audio = crate::native_audio::AudioSupervisor::offline("test");
@@ -441,19 +429,15 @@ mod tests {
         let context = candidate_context(&root, &runtime, &audio, &core);
 
         // Act
-        let candidate = plugin_candidate_session();
-        let result = commit_plugin_arrangement(&context, candidate.clone(), 0, || {
-            persist_candidate(&context, candidate)
-        });
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
 
         // Assert
         assert!(result.is_err());
         assert!(
-            core.snapshot()
-                .unwrap()
-                .session
-                .arrangement
-                .tracks
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .rack
+                .devices
                 .is_empty()
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1, 0]);
@@ -592,7 +576,7 @@ mod tests {
             )
             .unwrap();
         let restored =
-            crate::session::deserialize_session(&serde_json::to_vec(&saved).unwrap()).unwrap();
+            riffra_core::deserialize_session(&serde_json::to_vec(&saved).unwrap()).unwrap();
         let device = &restored.arrangement.tracks[0].rack.devices[0];
         assert_eq!(device.parameter_values, [0.25, 0.75]);
         assert_eq!(device.state_data.as_deref(), Some("opaque-state"));
@@ -602,8 +586,8 @@ mod tests {
 
     #[test]
     fn take_variant_is_applied_only_to_the_selected_clip() {
-        let raw_id = asset::mint_asset_id();
-        let processed_id = asset::mint_asset_id();
+        let raw_id = riffra_core::mint_asset_id();
+        let processed_id = riffra_core::mint_asset_id();
         let mut session = CreativeSession::new(1);
         session
             .arrangement
@@ -663,10 +647,10 @@ mod tests {
         session
             .arrangement
             .recording_sessions
-            .push(crate::session::RecordingSessionRecord {
+            .push(riffra_core::RecordingSessionRecord {
                 id: "recording:1".into(),
                 start_tick: TimelineTick(0),
-                track_slots: vec![crate::session::RecordingSessionTrackSlot {
+                track_slots: vec![riffra_core::RecordingSessionTrackSlot {
                     track_id: "track:audio".into(),
                     active_take_id: "take:1".into(),
                     timeline_clip_id: "clip:a".into(),
@@ -694,7 +678,7 @@ mod tests {
         assert_eq!(selected.asset_id, processed_id);
         assert_eq!(
             selected.source_range,
-            crate::session::FrameRange {
+            riffra_core::FrameRange {
                 start: 128,
                 end: 1_128
             }

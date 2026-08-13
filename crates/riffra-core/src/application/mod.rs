@@ -7,15 +7,16 @@ mod recording;
 mod session;
 pub mod transport;
 
+use crate::PreparedSession;
 use crate::app::AppCore;
 use crate::domain::asset::AssetId;
 use crate::domain::rack::RackDevice;
 use crate::domain::{
     AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
     AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute,
-    MidiNote, ProjectTimebase, SamplePad, TakeAudioSource, TimelineTick, Track, TrackKind,
-    TrackPatch,
+    CreativeSession, DeviceKind, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch,
+    MidiEvent, MidiInputRoute, MidiNote, ProjectTimebase, SamplePad, TakeAudioSource, TimelineTick,
+    Track, TrackKind, TrackPatch,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
@@ -73,6 +74,40 @@ pub struct MarkerPatch {
     pub tick: Option<TimelineTick>,
 }
 
+/// Host-resolved audio metadata required to place one Asset on the timeline.
+pub struct AudioAssetClipPlacement {
+    /// Canonical Audio Asset identity.
+    pub asset_id: AssetId,
+    /// User-facing Clip name.
+    pub name: String,
+    /// Explicit timeline position, or the end of current Audio Clips.
+    pub start_tick: Option<TimelineTick>,
+    /// Requested Audio Track, or automatic Track selection.
+    pub track_id: Option<String>,
+    /// Source sample rate read by the host adapter.
+    pub sample_rate: u32,
+    /// Source frame count read by the host adapter.
+    pub source_frames: u64,
+}
+
+/// Parsed MIDI content required to place one Asset on the timeline.
+pub struct MidiAssetClipPlacement {
+    /// Canonical MIDI Asset identity.
+    pub asset_id: AssetId,
+    /// User-facing Clip name.
+    pub name: String,
+    /// Explicit timeline position, or the arrangement origin.
+    pub start_tick: Option<TimelineTick>,
+    /// Requested Instrument Track, or automatic Track selection.
+    pub track_id: Option<String>,
+    /// Parsed Clip duration in project ticks.
+    pub duration_ticks: u64,
+    /// Parsed notes whose transient identities Core replaces.
+    pub notes: Vec<MidiNote>,
+    /// Parsed events whose transient identities Core replaces.
+    pub events: Vec<MidiEvent>,
+}
+
 /// Core application facade bound to one host-provided persistence Port.
 pub struct Application<'a, A, S: ?Sized> {
     core: &'a AppCore<A>,
@@ -93,6 +128,18 @@ where
     {
         self.core
             .commit(self.storage, |session| edit(&mut session.arrangement))
+    }
+
+    /// Commits the exact Core-produced candidate previously validated by a
+    /// host runtime, provided its canonical base is still current.
+    ///
+    /// # Errors
+    /// Returns an error when the canonical base changed or persistence fails.
+    pub fn commit_prepared(
+        &self,
+        prepared: PreparedSession,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.core.commit_prepared(self.storage, prepared)
     }
 }
 
@@ -291,6 +338,16 @@ fn find_any_track_device_mut<'a>(
 
 fn next_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::now_v7())
+}
+
+fn normalize_track_name(name: String) -> Result<String, ApplicationError> {
+    let name = name.trim().chars().take(80).collect::<String>();
+    if name.is_empty() {
+        return Err(ApplicationError::InvalidCommand(
+            "track name must not be empty".into(),
+        ));
+    }
+    Ok(name)
 }
 
 fn apply_audio_clip_take_variant(

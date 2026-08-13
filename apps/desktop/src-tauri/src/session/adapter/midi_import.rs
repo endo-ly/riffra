@@ -231,54 +231,17 @@ pub fn add_midi_clip(
     let bytes = fs::read(&source_asset.content_location)
         .map_err(|error| format!("MIDI Asset could not be read: {error}"))?;
     let (duration_ticks, notes, events) = parse_midi_asset(&bytes)?;
-    let session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
-    let mut create_track = None;
-    let target_track_id = track_id
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            session
-                .arrangement
-                .tracks
-                .iter()
-                .find(|track| track.kind == TrackKind::Instrument)
-                .map(|track| track.id.clone())
-        })
-        .unwrap_or_else(|| {
-            let id = format!("track:{}", now_ms());
-            create_track = Some("Instrument 1".to_owned());
-            id
-        });
-    let target_track = session
-        .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == target_track_id)
-        .ok_or_else(|| format!("Track is not registered: {target_track_id}"))?;
-    if target_track.kind != TrackKind::Instrument {
-        return Err(format!(
-            "Track is not an Instrument Track: {target_track_id}"
-        ));
-    }
-    let clip = MidiClip {
-        id: format!("midi-clip:{}:{}", asset_id.as_str(), now_ms()),
-        name,
-        track_id: target_track_id,
-        asset_id: Some(asset_id),
-        start_tick: start_tick.unwrap_or(TimelineTick(0)),
-        duration_ticks,
-        notes,
-        events,
-        muted: false,
-        loop_enabled: false,
-        recording_take_id: None,
-    };
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
-            .add_midi_clip_with_track(clip, create_track)
+            .add_midi_asset_clip(MidiAssetClipPlacement {
+                asset_id,
+                name,
+                start_tick,
+                track_id,
+                duration_ticks,
+                notes,
+                events,
+            })
     })?;
     context.view_state.lock().map_err(lock_error)?.workspace = Workspace::Arrange;
     sync_arrangement(context)?;

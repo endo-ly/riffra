@@ -1,8 +1,9 @@
 use crate::{
-    asset::{self, AssetId},
+    asset,
     recording::{DropoutInformation, RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };
+use riffra_core::AssetId;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -793,7 +794,8 @@ pub fn detect_duplicates(data_root: &Path) -> Result<Vec<Vec<String>>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{self, AssetKind, Provenance};
+    use crate::asset;
+    use riffra_core::{AssetKind, Provenance};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 

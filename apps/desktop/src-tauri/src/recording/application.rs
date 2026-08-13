@@ -27,20 +27,21 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::asset::{self, AssetKind, Provenance, ProvenanceOperation};
+use crate::asset;
 use crate::library;
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::presentation::{DesktopViewState, Workspace};
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
-use crate::session::{
-    AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
-    RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
-    TakeAudioSource, TimelineTick, TrackKind,
-};
 use crate::storage::now_ms;
 use riffra_core::AppCore;
+use riffra_core::{
+    AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent,
+    MidiEventKind, MidiNote, Provenance, ProvenanceOperation, RecordingPassRecord,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, TakeAudioSource,
+    TimelineTick, TrackKind,
+};
 
 /// Concrete dependencies a Recording Application Operation needs. Bundling them
 /// keeps the operation signatures small without pulling in `tauri::State`.
@@ -112,7 +113,7 @@ fn start_recording_in_session(
         .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
         crate::session::adapter::runtime_snapshot_for_recording(context.data_root, &session),
-        crate::runtime::model::ProjectionKey {
+        riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
         },
@@ -304,9 +305,9 @@ struct NativeArrangeManifest {
 struct RegisteredTrackOutput {
     track_id: String,
     kind: String,
-    raw_asset_id: Option<crate::asset::AssetId>,
-    processed_asset_id: Option<crate::asset::AssetId>,
-    midi_asset_id: Option<crate::asset::AssetId>,
+    raw_asset_id: Option<AssetId>,
+    processed_asset_id: Option<AssetId>,
+    midi_asset_id: Option<AssetId>,
     raw_frames: u64,
     raw_sample_rate: u32,
     processed_frames: u64,
@@ -876,7 +877,7 @@ fn finalize_arrange_recording(
 }
 
 fn next_recording_pass_ordinal(
-    arrangement: &crate::session::Arrangement,
+    arrangement: &riffra_core::Arrangement,
     recording_session_id: &str,
 ) -> u32 {
     arrangement
@@ -911,7 +912,7 @@ fn validate_capture_segments(segments: &[NativeCaptureSegment]) -> Result<(), St
 }
 
 fn attach_take_to_pass(
-    arrangement: &mut crate::session::Arrangement,
+    arrangement: &mut riffra_core::Arrangement,
     pass_id: &str,
     take_id: String,
 ) -> Result<(), String> {
@@ -928,11 +929,7 @@ fn attach_take_to_pass(
 /// Registers each recording product (raw / processed / MIDI) as a canonical
 /// Asset, then stores the Asset IDs back into the take manifest so the
 /// RecordingCapture is the authoritative reference.
-type RecordingOutputs = (
-    Option<crate::asset::AssetId>,
-    Option<crate::asset::AssetId>,
-    Option<crate::asset::AssetId>,
-);
+type RecordingOutputs = (Option<AssetId>, Option<AssetId>, Option<AssetId>);
 
 fn register_recording_outputs(
     data_root: &Path,
@@ -1029,7 +1026,7 @@ fn parse_recorded_midi(
     path: &Path,
     track_id: &str,
     start_tick: TimelineTick,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
 ) -> Result<MidiClip, String> {
     let file = load_recorded_midi(path)?;
     Ok(midi_clip_from_recorded_file(
@@ -1041,7 +1038,7 @@ fn midi_clip_from_recorded_file(
     file: &RecordedMidiFile,
     track_id: &str,
     start_tick: TimelineTick,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
 ) -> MidiClip {
     let mut notes = Vec::new();
     let mut events = Vec::new();
@@ -1152,7 +1149,7 @@ fn recording_segments(
     start_tick: TimelineTick,
     duration_ticks: u64,
     loop_recording: bool,
-    loop_range: crate::session::TimelineLoopRange,
+    loop_range: riffra_core::TimelineLoopRange,
 ) -> Vec<RecordingSegment> {
     if !loop_recording || !loop_range.enabled || loop_range.end_tick.0 <= loop_range.start_tick.0 {
         return vec![RecordingSegment {
@@ -1188,7 +1185,7 @@ fn slice_recorded_midi(
     source: &MidiClip,
     track_id: &str,
     segment: RecordingSegment,
-    asset_id: Option<crate::asset::AssetId>,
+    asset_id: Option<AssetId>,
     clip_id: String,
 ) -> MidiClip {
     let notes = source
@@ -1242,7 +1239,7 @@ fn slice_recorded_midi(
 pub(crate) fn midi_clip_for_take(
     data_root: &Path,
     take: &RecordingTakeRecord,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
     clip_id: String,
 ) -> Result<MidiClip, String> {
     let asset_id = take
@@ -1284,11 +1281,7 @@ pub(crate) fn midi_clip_for_take(
 fn place_recording_on_timeline(
     context: &RecordingContext<'_>,
     directory: &Path,
-    outputs: (
-        Option<crate::asset::AssetId>,
-        Option<crate::asset::AssetId>,
-        Option<crate::asset::AssetId>,
-    ),
+    outputs: (Option<AssetId>, Option<AssetId>, Option<AssetId>),
 ) -> Result<(), String> {
     let (raw_asset_id, processed_asset_id, midi_asset_id) = outputs;
     let listed = crate::recording::list(context.data_root, None)?
@@ -1459,11 +1452,11 @@ fn place_recording_on_timeline(
                     sample_rate,
                     source_end - source_start,
                 );
-                clip.source_range = crate::session::FrameRange {
+                clip.source_range = riffra_core::FrameRange {
                     start: source_start,
                     end: source_end,
                 };
-                clip.timeline_duration = crate::session::FrameDuration {
+                clip.timeline_duration = riffra_core::FrameDuration {
                     frames: source_end - source_start,
                     sample_rate,
                 };
@@ -1700,7 +1693,7 @@ mod tests {
     use super::*;
     use crate::native_audio::AudioSupervisor;
     use crate::runtime::RuntimeReconciler;
-    use crate::session::CreativeSession;
+    use riffra_core::CreativeSession;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1865,7 +1858,7 @@ mod tests {
             TimelineTick(0),
             2_400,
             true,
-            crate::session::TimelineLoopRange {
+            riffra_core::TimelineLoopRange {
                 enabled: true,
                 start_tick: TimelineTick(0),
                 end_tick: TimelineTick(960),
@@ -1880,7 +1873,7 @@ mod tests {
 
     #[test]
     fn record_another_take_continues_pass_ordinals_only_within_its_session() {
-        let mut arrangement = crate::session::Arrangement::default();
+        let mut arrangement = riffra_core::Arrangement::default();
         for ordinal in 1..=3 {
             arrangement.recording_passes.push(RecordingPassRecord {
                 id: format!("pass:a:{ordinal}"),
@@ -1914,7 +1907,7 @@ mod tests {
 
     #[test]
     fn repeated_record_another_take_attaches_audio_and_midi_to_the_new_pass() {
-        let mut arrangement = crate::session::Arrangement::default();
+        let mut arrangement = riffra_core::Arrangement::default();
         arrangement.recording_passes.push(RecordingPassRecord {
             id: "pass:old".into(),
             session_id: "recording:shared".into(),
@@ -2095,7 +2088,7 @@ mod tests {
         let clip = midi_clip_for_take(
             &root,
             &take,
-            crate::session::ProjectTimebase::default(),
+            riffra_core::ProjectTimebase::default(),
             "midi-clip:slot".into(),
         )
         .unwrap();

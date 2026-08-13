@@ -213,7 +213,7 @@ pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json
 }
 
 impl CreativeSession {
-    /// Creates a fresh session with an empty arrangement and safe (muted)
+    /// Creates a fresh session with an empty arrangement and neutral playback
     /// settings.
     pub fn new(now_ms: u64) -> Self {
         Self {

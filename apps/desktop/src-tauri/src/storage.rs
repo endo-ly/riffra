@@ -1,5 +1,4 @@
-use crate::session::CreativeSession;
-use riffra_core::{PortError, SessionStorage};
+use riffra_core::{CreativeSession, PortError, SessionStorage};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -110,7 +109,7 @@ impl SessionStore {
     /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let session = crate::session::deserialize_session(&payload)
+        let session = riffra_core::deserialize_session(&payload)
             .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
         let session = session
             .validate_and_normalize()
@@ -133,7 +132,7 @@ impl SessionStore {
     /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        let session = crate::session::deserialize_session(&payload)?;
+        let session = riffra_core::deserialize_session(&payload)?;
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;
@@ -384,8 +383,7 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetKind, mint_asset_id};
-    use crate::session::AudioClip;
+    use riffra_core::{AssetId, AssetKind, AudioClip, TimelineTick, Track, mint_asset_id};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -396,24 +394,19 @@ mod tests {
         std::fs::write(path, b"RIFF\0\0\0\0WAVE").unwrap();
     }
 
-    fn push_audio_clip(
-        session: &mut CreativeSession,
-        id: &str,
-        name: &str,
-        asset_id: crate::asset::AssetId,
-    ) {
+    fn push_audio_clip(session: &mut CreativeSession, id: &str, name: &str, asset_id: AssetId) {
         if session.arrangement.tracks.is_empty() {
             session
                 .arrangement
                 .tracks
-                .push(crate::session::Track::audio("main".into(), "Main".into()));
+                .push(Track::audio("main".into(), "Main".into()));
         }
         session.arrangement.audio_clips.push(AudioClip::full_source(
             id.into(),
             name.into(),
             "main".into(),
             asset_id,
-            crate::session::TimelineTick(0),
+            TimelineTick(0),
             48_000,
             4_800,
         ));

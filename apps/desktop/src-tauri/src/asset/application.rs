@@ -9,11 +9,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::asset::{AssetId, AssetKind, Provenance, load, resolve_content_location};
+use crate::asset::{load, resolve_content_location};
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
 use crate::projects::unique_import_destination_with_ext;
 use crate::session::adapter::parse_midi_asset;
+use riffra_core::{AssetId, AssetKind, Provenance};
 
 /// Concrete dependencies an Asset Application Operation needs.
 pub struct AssetPreviewContext<'a> {
@@ -171,7 +172,8 @@ pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<A
 #[cfg(test)]
 mod tests {
     use super::{import_midi_asset, import_midi_bytes};
-    use crate::asset::{AssetKind, ProvenanceOperation, load};
+    use crate::asset::load;
+    use riffra_core::{AssetKind, ProvenanceOperation};
     use std::path::PathBuf;
 
     fn test_root(label: &str) -> PathBuf {

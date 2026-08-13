@@ -87,31 +87,38 @@ where
         })
     }
 
-    /// Commits an instrument assignment only if the prepared Core snapshot is
-    /// still current.
-    pub fn set_track_instrument_at_sequence(
+    /// Builds an Instrument Track plugin assignment for host runtime
+    /// validation without changing canonical state.
+    ///
+    /// # Errors
+    /// Returns an error when the Track or plugin descriptor is invalid.
+    pub fn prepare_track_instrument(
         &self,
         track_id: &str,
-        instrument: Option<RackDevice>,
-        expected_sequence: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core
-            .commit_at_sequence(self.storage, expected_sequence, |session| {
-                let track = session
-                    .arrangement
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.id == track_id)
-                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-                if track.kind != TrackKind::Instrument {
-                    return Err(ApplicationError::InvalidCommand(
-                        "only instrument tracks can host an instrument".into(),
-                    ));
-                }
-                track.instrument = instrument;
-                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-                Ok(())
-            })
+        name: String,
+        path: String,
+    ) -> Result<crate::PreparedSession, ApplicationError> {
+        self.core.prepare(|session| {
+            let track = session
+                .arrangement
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            if track.kind != TrackKind::Instrument {
+                return Err(ApplicationError::InvalidCommand(
+                    "only instrument tracks can host an instrument".into(),
+                ));
+            }
+            let id = track
+                .instrument
+                .as_ref()
+                .map(|device| device.id.clone())
+                .unwrap_or_else(|| next_id("device:instrument"));
+            track.instrument = Some(plugin_device(id, name, path)?);
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
     }
 
     /// Appends an effect device to a Track rack.
@@ -133,26 +140,31 @@ where
         })
     }
 
-    /// Commits an effect insertion only if the prepared Core snapshot is still
-    /// current.
-    pub fn add_track_effect_at_sequence(
+    /// Builds a Track effect insertion for host runtime validation without
+    /// changing canonical state.
+    ///
+    /// # Errors
+    /// Returns an error when the Track or plugin descriptor is invalid.
+    pub fn prepare_track_effect(
         &self,
         track_id: &str,
-        device: RackDevice,
-        expected_sequence: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core
-            .commit_at_sequence(self.storage, expected_sequence, |session| {
-                let track = session
-                    .arrangement
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.id == track_id)
-                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-                track.rack.devices.push(device);
-                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-                Ok(())
-            })
+        name: String,
+        path: String,
+    ) -> Result<crate::PreparedSession, ApplicationError> {
+        self.core.prepare(|session| {
+            let track = session
+                .arrangement
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            track
+                .rack
+                .devices
+                .push(plugin_device(next_id("device:effect"), name, path)?);
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
     }
 
     /// Removes one effect device from a Track rack.
@@ -494,24 +506,43 @@ where
         })
     }
 
-    /// Replaces a plugin only if the prepared Core snapshot is still current.
-    pub fn replace_track_plugin_at_sequence(
+    /// Builds a plugin replacement for host runtime validation while
+    /// preserving the existing rack slot identity.
+    ///
+    /// # Errors
+    /// Returns an error when the device or plugin descriptor is invalid.
+    pub fn prepare_track_plugin_replacement(
         &self,
         device_id: &str,
-        device: RackDevice,
-        expected_sequence: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        if device.id != device_id {
-            return Err(ApplicationError::InvalidCommand(
-                "replacement track device id must match the existing device".into(),
-            ));
-        }
-        self.core
-            .commit_at_sequence(self.storage, expected_sequence, |session| {
-                let current = find_any_track_device_mut(session, device_id)?;
-                *current = device;
-                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-                Ok(())
-            })
+        name: String,
+        path: String,
+    ) -> Result<crate::PreparedSession, ApplicationError> {
+        self.core.prepare(|session| {
+            let current = find_any_track_device_mut(session, device_id)?;
+            *current = plugin_device(device_id.to_owned(), name, path)?;
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
     }
+}
+
+fn plugin_device(id: String, name: String, path: String) -> Result<RackDevice, ApplicationError> {
+    let name = name.trim().to_owned();
+    let path = path.trim().to_owned();
+    if name.is_empty() || path.is_empty() {
+        return Err(ApplicationError::InvalidCommand(
+            "plugin name and path must not be empty".into(),
+        ));
+    }
+    Ok(RackDevice {
+        id,
+        name,
+        kind: DeviceKind::Plugin,
+        path: Some(path),
+        bypassed: false,
+        gain_db: 0.0,
+        parameter_values: Vec::new(),
+        state_data: None,
+        disabled_placeholder: false,
+    })
 }
