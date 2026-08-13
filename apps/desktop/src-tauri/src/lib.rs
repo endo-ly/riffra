@@ -24,7 +24,6 @@ mod analysis;
 mod asset;
 mod audio_preferences;
 mod diagnostics;
-mod errors;
 mod jobs;
 mod library;
 mod missing;
@@ -33,8 +32,8 @@ mod native_audio;
 mod plugin_catalog;
 mod plugin_validation;
 mod plugins;
+mod presentation;
 mod projects;
-mod rack;
 mod recording;
 mod render;
 mod runtime;
@@ -50,11 +49,10 @@ use model::{
     RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
-use riffra_core::AppCore;
+use riffra_core::{AppCore, CreativeSession};
 use riffra_render_worker::RenderWorker;
 use serde::Deserialize;
-use session::CreativeSession;
-use session::application as session_application;
+use session::adapter as session_adapter;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -73,7 +71,8 @@ static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
-    session_actor: session::actor::SessionActor,
+    view_state: Mutex<presentation::DesktopViewState>,
+    command_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
     /// Keeps a workspace's stop intent and processing-mode update together so
     /// concurrent navigation commands cannot interleave the two writes.
@@ -280,7 +279,12 @@ async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
         };
         let recovered_from_generation = state.core.recovered_from_generation();
         Ok(BootstrapState {
-            session: state.core.session().lock().map_err(lock_error)?.clone(),
+            session: state
+                .core
+                .snapshot()
+                .map_err(|error| error.to_string())?
+                .session,
+            view_state: state.view_state.lock().map_err(lock_error)?.clone(),
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),
             runtime_startup_finished: state.core.audio().startup_finished(),
@@ -301,7 +305,11 @@ async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
 #[tauri::command]
 async fn export_scratch_session(app: AppHandle) -> Result<projects::ProjectExport, String> {
     run_blocking(app, |state| {
-        let session = state.core.session().lock().map_err(lock_error)?.clone();
+        let session = state
+            .core
+            .snapshot()
+            .map_err(|error| error.to_string())?
+            .session;
         projects::export(state.core.data_root(), &session, storage::now_ms())
     })
     .await
@@ -662,13 +670,13 @@ async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
         if let AudioDeviceReopenOutcome::SidecarRestarted(status) = reopen_outcome {
             return Ok(status);
         }
-        session_application::reconcile_runtime_after_audio_device_change(
+        session_adapter::reconcile_runtime_after_audio_device_change(
             &session::context::SessionContext {
+                core: &state.core,
+                view_state: &state.view_state,
                 audio: state.core.audio(),
                 runtime: state.runtime.as_ref(),
-                session_actor: &state.session_actor,
                 data_root: state.core.data_root(),
-                session: state.core.session(),
                 safe_mode: false,
             },
         )
@@ -867,19 +875,19 @@ pub fn run() {
             let recovery_data_root = data_root.clone();
             audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
                 let pads = recovery_session
-                    .lock()
+                    .snapshot()
                     .map_err(|error| {
                         format!("Canonical Session could not be read during Runtime recovery: {error}")
                     })
                     .and_then(|session| {
-                        session_application::resolve_native_pads(
+                        session_adapter::resolve_native_pads(
                             &recovery_data_root,
                             &session.play_state.sample_instrument.pads,
                         )
                     });
                 match pads {
                     Ok(pads) => match runtime_audio.configure_sample_pads(&pads) {
-                        Ok(status) if session_application::audio_command_succeeded(&status) => {}
+                        Ok(status) if session_adapter::audio_command_succeeded(&status) => {}
                         Ok(status) => tracing::warn!(
                             generation,
                             message = %status.message,
@@ -914,7 +922,8 @@ pub fn run() {
             let startup_session = session.clone();
             app.manage(AppState {
                 core,
-                session_actor: session::actor::SessionActor::default(),
+                view_state: Mutex::new(presentation::DesktopViewState::default()),
+                command_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
                 workspace_runtime_gate: Mutex::new(()),
                 runtime,
@@ -951,7 +960,9 @@ pub fn run() {
             stop_preview,
             stop_preview_for_key,
             // Session Application Operations.
-            session::commands::save_scratch_session,
+            session::commands::undo_session,
+            session::commands::redo_session,
+            session::commands::get_history_state,
             session::commands::restore_recovery_generation,
             session::commands::import_scratch_session,
             session::commands::create_sample_pad,
@@ -972,7 +983,7 @@ pub fn run() {
             session::commands::duplicate_midi_clip,
             session::commands::paste_timeline_clips,
             session::commands::crossfade_audio_clips,
-            session::commands::sync_arrangement_runtime,
+            session::commands::retry_runtime_projection,
             session::commands::restore_sample_pads,
             session::commands::play_timeline,
             session::commands::stop_timeline,
@@ -1061,8 +1072,8 @@ pub fn run() {
 mod tests {
     use super::{bootstrap_recovery_candidates, parse_stdout, safe_mode_from_args};
     use crate::model::DeviceChannels;
-    use crate::session::CreativeSession;
     use crate::storage::SessionStore;
+    use riffra_core::CreativeSession;
 
     #[test]
     fn parses_audio_probe_with_unicode_device_names() {

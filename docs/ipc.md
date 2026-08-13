@@ -30,10 +30,10 @@
 │ React（src/native/native-api.ts）                                    │
 └────┬───────────────────────┬───────────────────────┬───────────────┘
      │ A: Tauri 命令          │ B: イベント購読        │
-     │ invoke / invokeLatest  │ listen(7種)           │
+     │ invoke 系             │ listen(7種)           │
 ┌────▼───────────────────────▼───────────────────────▼───────────────┐
 │ Rust バックエンド（src-tauri）                                          │
-│ 命令層 → Application層 → Session Actor / RuntimeReconciler / 永続化    │
+│ 命令層 → Desktop Adapter → riffra-core / RuntimeReconciler / 永続化    │
 └────┬───────────────┬───────────────┬────────────────┬───────────────┘
      │ C: JSON Lines  │ D: JSON 1行   │ E: JSON 1行     │
      │ stdin/stdout   │ stdin/stdout  │ stdout         │
@@ -63,12 +63,12 @@
 
 命令は責務に応じて4つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
-| モード                               | 挙動                                                                                                                  | 使う命令                                            |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `run_blocking`                       | Session Actor の操作ゲートを取得してから実行（正準セッション操作と保存を直列化）                                      | 楽曲編集・ライブラリ操作・素材操作の大半            |
-| `run_blocking_without_session_actor` | ゲートなしで blocking 実行。セッションを変えない読み取り専用・独立業務                                                | プローブ、スキャン、録音一覧、回復候補など          |
-| `run_runtime_control`                | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                                       | play / stop / seek、MIDI送信、プレビュー、ミュート  |
-| `run_workspace_control`              | ワークスペース遷移専用の短期トランザクション（stop 意図 + 処理モード更新を合成し、`workspace_runtime_gate` で直列化） | `switch_workspace`、`sync_arrangement_runtime` など |
+| モード                              | 挙動                                                                                                                  | 使う命令                                            |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `run_blocking`                      | Desktop command gate を取得してから実行（正準セッション操作と保存を直列化）                                           | 楽曲編集・ライブラリ操作・素材操作の大半            |
+| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                   | プローブ、スキャン、録音一覧、プラグイン接続など    |
+| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                                       | play / stop / seek、MIDI送信、プレビュー、ミュート  |
+| `run_workspace_control`             | ワークスペース遷移専用の短期トランザクション（stop 意図 + 処理モード更新を合成し、`workspace_runtime_gate` で直列化） | `switch_workspace`、`retry_runtime_projection` など |
 
 ### 3.2 命令カタログ
 
@@ -76,21 +76,21 @@
 
 **起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
 
-| 命令                                                                   | 責務                                                         |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `get_bootstrap_state`                                                  | セッション・セーフモード・回復候補・欠落依存の初期状態を返す |
-| `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                           |
-| `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` | デバイス・チャンネル列挙（境界E経由）                        |
-| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                     |
-| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                           |
-| `restore_recovery_generation`                                          | 世代からの回復                                               |
-| `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ                     |
+| 命令                                                                   | 責務                                                                      |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `get_bootstrap_state`                                                  | CreativeSession・DesktopViewState・セーフモード・回復候補の初期状態を返す |
+| `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                                        |
+| `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` | デバイス・チャンネル列挙（境界E経由）                                     |
+| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                  |
+| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                        |
+| `restore_recovery_generation`                                          | 世代からの回復                                                            |
+| `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ                                  |
 
 **セッション・アレンジ（session/commands.rs）**
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ワークスペース     | `switch_workspace`、`sync_arrangement_runtime`、`go_to_start_timeline`                                                                                                                                                                                                                                                                                                              |
+| ワークスペース     | `switch_workspace`、`retry_runtime_projection`、`go_to_start_timeline`                                                                                                                                                                                                                                                                                                              |
 | タイムラインレンジ | `update_timeline_loop_range`、`update_timeline_punch_range`、`update_arrangement_timebase`                                                                                                                                                                                                                                                                                          |
 | トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`set_track_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                                                                       |
 | クリップ           | `add_audio_clip_to_arrangement`、`add_midi_clip_to_arrangement`、`update_audio_clip`、`update_midi_clip`、`move_audio_clips`、`move_midi_clips`、`trim_audio_clip`、`trim_midi_clip`、`split_audio_clip`、`split_midi_clip`、`crossfade_audio_clips`、`duplicate_audio_clip`、`duplicate_midi_clip`、`remove_timeline_clips`、`paste_timeline_clips`、`set_audio_clip_take_variant` |
@@ -98,7 +98,8 @@
 | オートメーション   | `set_track_automation`                                                                                                                                                                                                                                                                                                                                                              |
 | マーカー           | `add_marker`、`update_marker`、`remove_marker`                                                                                                                                                                                                                                                                                                                                      |
 | 設定               | `update_session_settings`                                                                                                                                                                                                                                                                                                                                                           |
-| セッション入出力   | `save_scratch_session`、`export_scratch_session`、`import_scratch_session`、`import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                 |
+| 履歴               | `undo_session`、`redo_session`、`get_history_state`                                                                                                                                                                                                                                                                                                                                 |
+| セッション入出力   | `export_scratch_session`、`import_scratch_session`、`import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                         |
 | 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                   |
 
 **プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`、`persist_track_plugin_state`、`persist_track_plugin_parameter`
@@ -107,7 +108,7 @@
 
 | 領域           | 命令                                                                                                                                                |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 録音制御       | `start_arrange_recording`、`stop_arrange_recording`、`record_another_take`                                                                                           |
+| 録音制御       | `start_arrange_recording`、`stop_arrange_recording`、`record_another_take`                                                                          |
 | テイク         | `activate_take`、`place_take_as_separate_clip`、`start_take_comparison`、`switch_take_comparison_variant`、`stop_take_comparison`                   |
 | キャプチャ管理 | `list_recordings`、`rename_recording`、`archive_recording`、`promote_recording`、`tag_recording`、`delete_recording`、`detect_duplicate_recordings` |
 
@@ -128,11 +129,13 @@
 
 - 全命令は `Result<T, String>` を返す。失敗は人間可読な説明文字列となり、`dataSafe` 相当の保証（音声・保存データは安全）はメッセージに含める
 - セーフモード中の音声系・プラグイン系命令は明示エラーを返す（`architecture.md §7`）
-- 編集系命令が返す CreativeSession は「その操作を含む最新の正準セッション」であり、UI はそれでローカル状態を差し替える
+- 制作状態を変更する命令が返す CreativeSession は「その操作を含む最新の正準セッション」であり、UI はそれを表示状態へ反映する。`open_asset_in_design` と `switch_workspace` は制作状態を変更しないため、DesktopViewState を返す
 
-### 3.4 高頻度制御の集約
+### 3.4 UI呼び出しの順序
 
-`src/native/invoke.ts` の `invokeLatest` は、同一キーのバースト更新（ミュート連打など）を16msで集約し、最後の引数のみを送る。すべての待機者は同じ正準応答を受け取る。順序が必要な操作は Rust 側の Session Actor が保証するため、この集約はUI起因の不要な永続化・ランタイム作業を減らす手段に留まる。
+制作状態を変更する命令は、フロントエンドの共通呼び出し境界で直列化する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の時刻比較やセッション全体のマージは必要ない。
+
+連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
 
 `invokeOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）でフォールバック値を返す。ネイティブ実行時は実害のないフォールバックをせず、失敗はそのまま reject する。
 
@@ -146,7 +149,7 @@
 | `audio-status`                   | `AudioStatus`                         | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知） |
 | `audio-meters`                   | `AudioMeters`                         | 入力・出力ピーク、無効サンプル数（高頻度）                                                       |
 | `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                     |
-| `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。UIは投影の再同期を行う                                             |
+| `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                       |
 | `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                         |
 | `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                       |
 
@@ -169,7 +172,7 @@
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | 状態照会            | `status`、`meterStatus`                                                                     |
 | 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`              |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（arrange / passive）   |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（arrange / passive）    |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setMasterGainDb`               |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す） |
@@ -186,14 +189,14 @@
 
 ### 5.4 サイドカー → Rust イベント
 
-| type                                                      | 内容                                                                                           |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・MIDI の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）         |
-| `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知                                         |
-| `transportStatus`                                         | トランスポート状態の変化                                                                       |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                       |
-| `keepAlive`                                               | 生存確認（Rustは無視）                                                                         |
-| `error`                                                   | scope 付き失敗通知                                                                             |
+| type                                                      | 内容                                                                               |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
+| `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知                             |
+| `transportStatus`                                         | トランスポート状態の変化                                                           |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                           |
+| `keepAlive`                                               | 生存確認（Rustは無視）                                                             |
+| `error`                                                   | scope 付き失敗通知                                                                 |
 
 フィードバック検知（`feedbackSuspected`）は緊急ミュートと連動し、原因表示のために Rust 側の `MuteCause` と突き合わせられる。
 
@@ -239,6 +242,7 @@
 
 `src/native/native-api.ts` の NativeApi は、すべての Tauri 命令をドメイン用語の Promise メソッドに写像する。React コンポーネントは NativeApi のみに依存し、`invoke` の文字列コマンド名・引数名を直接知らない。
 
-- 編集系メソッドは戻り値の CreativeSession を返し、呼び出し元フックが `setSession` へ適用する
+- 制作状態を変更するメソッドはCreativeSessionを返す。表示状態だけを変更するメソッドはDesktopViewStateを返す
+- 起動時はCreativeSessionとDesktopViewStateを別々に受け取り、履歴操作の可否はCoreのHistoryStateを参照する
 - 音声系メソッドは `AudioStatus` を返し、`useAudio` が状態遷移と再試行を担う
 - テストでは `native-api-fake.ts` を注入し、境界A・Bをモックする。境界C〜Eの互換性は `scripts/test-ipc.ps1` と Rust 側の解析テスト（`protocol.rs` の fixture テスト）が担う

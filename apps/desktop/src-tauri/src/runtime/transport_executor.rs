@@ -1,7 +1,7 @@
 use crate::runtime::error::RuntimeError;
-use crate::runtime::model::ProjectionKey;
 use crate::runtime::ports::TransportDriver;
-use crate::runtime::transport_controller::{
+use riffra_core::ProjectionKey;
+use riffra_core::application::transport::{
     PlayDecision, StopDecision, TransportController, TransportSequence,
 };
 use std::sync::{Arc, Condvar, Mutex};

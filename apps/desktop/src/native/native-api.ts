@@ -10,6 +10,7 @@ import type {
   AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
+  HistoryState,
   AssetId,
   AssetPreviewOptions,
   DeviceChannels,
@@ -25,6 +26,7 @@ import type {
   SeparationJobStatus,
   SeparationResult,
   CreativeSession,
+  DesktopViewState,
   ProjectTimebase,
   RuntimeProjectionStatus,
   DesignTool,
@@ -77,7 +79,9 @@ export interface NativeApi {
   onRuntimeStartupFinished(
     callback: (event: RuntimeStartupFinishedEvent) => void,
   ): Promise<() => void>;
-  saveSession(session: CreativeSession): Promise<CreativeSession>;
+  undoSession(): Promise<CreativeSession>;
+  redoSession(): Promise<CreativeSession>;
+  getHistoryState(): Promise<HistoryState>;
   restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
   exportSession(): Promise<ProjectExport | null>;
   importSession(path: string): Promise<CreativeSession | null>;
@@ -309,7 +313,7 @@ export interface NativeApi {
   stopTakeComparison(): Promise<AudioStatus>;
   activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
   placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
-  syncArrangementRuntime(): Promise<RuntimeProjectionStatus>;
+  retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
   playTimeline(transportSequence: number): Promise<void>;
   stopTimeline(transportSequence: number): Promise<void>;
   goToStartTimeline(transportSequence: number): Promise<void>;
@@ -331,13 +335,16 @@ export interface NativeApi {
    * workspace and target asset together in Rust instead of React assembling
    * the DesignContext itself.
    */
-  openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<CreativeSession | null>;
+  openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<DesktopViewState | null>;
   /**
    * Switches the visible workspace and asks Rust to update the desired audio
    * processing mode. Workspace navigation is UI state; production Session
    * persistence happens on the next real edit rather than on every tab click.
    */
-  switchWorkspace(workspace: Workspace, transportSequence: number): Promise<CreativeSession | null>;
+  switchWorkspace(
+    workspace: Workspace,
+    transportSequence: number,
+  ): Promise<DesktopViewState | null>;
   updateSessionSettings(patch: {
     projectName?: string | null;
     loopEnabled?: boolean;

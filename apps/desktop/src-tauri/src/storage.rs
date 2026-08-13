@@ -1,4 +1,4 @@
-use crate::session::CreativeSession;
+use riffra_core::{CreativeSession, PortError, SessionStorage};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -42,6 +42,12 @@ pub struct SessionStore {
     data_root: PathBuf,
     scratch_dir: PathBuf,
     generations_dir: PathBuf,
+}
+
+impl SessionStorage for SessionStore {
+    fn save(&self, session: &CreativeSession) -> Result<(), PortError> {
+        SessionStore::save(self, session).map_err(|error| PortError::Storage(error.to_string()))
+    }
 }
 
 impl SessionStore {
@@ -103,10 +109,8 @@ impl SessionStore {
     /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let mut session = crate::session::deserialize_session(&payload)
+        let session = riffra_core::deserialize_session(&payload)
             .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
-        hydrate_legacy_take_sample_rates(&self.data_root, &mut session)
-            .map_err(|error| corrupt_io_error(&error))?;
         let session = session
             .validate_and_normalize()
             .map_err(|error| corrupt_io_error(&error))?;
@@ -128,8 +132,7 @@ impl SessionStore {
     /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        let mut session = crate::session::deserialize_session(&payload)?;
-        hydrate_legacy_take_sample_rates(&self.data_root, &mut session).map_err(invalid_data)?;
+        let session = riffra_core::deserialize_session(&payload)?;
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;
@@ -240,40 +243,6 @@ impl SessionStore {
         }
         Ok(())
     }
-}
-
-/// v1/v2 recording Takes did not persist the source rate. Resolve it from the
-/// authoritative registered WAV instead of guessing from the active device.
-/// A missing or invalid asset remains an explicit load error.
-fn hydrate_legacy_take_sample_rates(
-    data_root: &Path,
-    session: &mut CreativeSession,
-) -> Result<(), String> {
-    for take in &mut session.arrangement.takes {
-        for source in [take.raw_audio.as_mut(), take.processed_audio.as_mut()]
-            .into_iter()
-            .flatten()
-        {
-            if source.sample_rate != 0 {
-                continue;
-            }
-            let asset = crate::asset::load(data_root, &source.asset_id).ok_or_else(|| {
-                format!(
-                    "Legacy Recording Take source is missing: {}",
-                    source.asset_id
-                )
-            })?;
-            let bytes = fs::read(&asset.content_location).map_err(|error| {
-                format!("Legacy Recording Take audio could not be read: {error}")
-            })?;
-            let wav = crate::analysis::parse_wav(&bytes)?;
-            if wav.sample_rate == 0 {
-                return Err("Legacy Recording Take audio has no sample rate.".into());
-            }
-            source.sample_rate = wav.sample_rate;
-        }
-    }
-    Ok(())
 }
 
 /// Extracts recovery-listing metadata from a session payload without a full
@@ -414,8 +383,7 @@ pub struct RecoveryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetKind, mint_asset_id};
-    use crate::session::AudioClip;
+    use riffra_core::{AssetId, AssetKind, AudioClip, TimelineTick, Track, mint_asset_id};
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
@@ -426,24 +394,19 @@ mod tests {
         std::fs::write(path, b"RIFF\0\0\0\0WAVE").unwrap();
     }
 
-    fn push_audio_clip(
-        session: &mut CreativeSession,
-        id: &str,
-        name: &str,
-        asset_id: crate::asset::AssetId,
-    ) {
+    fn push_audio_clip(session: &mut CreativeSession, id: &str, name: &str, asset_id: AssetId) {
         if session.arrangement.tracks.is_empty() {
             session
                 .arrangement
                 .tracks
-                .push(crate::session::Track::audio("main".into(), "Main".into()));
+                .push(Track::audio("main".into(), "Main".into()));
         }
         session.arrangement.audio_clips.push(AudioClip::full_source(
             id.into(),
             name.into(),
             "main".into(),
             asset_id,
-            crate::session::TimelineTick(0),
+            TimelineTick(0),
             48_000,
             4_800,
         ));
@@ -496,10 +459,8 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
-        session.workspace = crate::session::Workspace::Arrange;
         store.save(&session).unwrap();
         let loaded = store.load_or_create().unwrap();
-        assert_eq!(loaded.session.workspace, crate::session::Workspace::Arrange);
         assert_eq!(loaded.session.project_name.as_deref(), Some("Clean"));
         let _ = fs::remove_dir_all(root);
     }

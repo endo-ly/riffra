@@ -2,7 +2,7 @@
 
 ## 1. スコープ
 
-本書はRiffraのドメインエンティティを正準化し、TypeScript / Rust / C++ の3言語での定義場所と対応関係を示す。3言語で同じエンティティを別々に定義するため、ズレを検知するための単一の参照元として機能する。
+本書はRiffraのドメインエンティティと、RustからTypeScript・C++へ渡す際の対応関係を示す。正準定義はRustに置き、各境界で必要な投影がどのモデルに由来するかを確認できるようにする。
 
 ### 書くこと
 
@@ -27,9 +27,9 @@
 
 | エンティティ群                                  | 正準定義（Rust）                                                         | TypeScript                                          | C++ ミラー                                              |
 | ----------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------- |
-| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/session.rs`                                      | `apps/desktop/src/lib/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
-| 素材（Asset / Provenance）                      | `crates/riffra-core/src/asset.rs`                                        | 同上                                                | —                                                       |
-| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/rack.rs`                                         | 同上                                                | `native/audio-engine`（グラフ構築）                     |
+| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                         | `apps/desktop/src/lib/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
+| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                   | 同上                                                | —                                                       |
+| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                    | 同上                                                | `native/audio-engine`（グラフ構築）                     |
 | 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                          | 同上                                                | `native/audio-engine`（録音制御）                       |
 | 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`） | 同上                                                | —                                                       |
 | バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                     | 同上                                                | —                                                       |
@@ -56,12 +56,13 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ### 4.1 セッションと設定
 
-| エンティティ      | 役割                                                                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CreativeSession` | すべての制作状態の単一の正準モデル。session_id（`scratch-<ms>`）、更新トークン updated_at_ms、workspace、design_context、play_state、arrangement、settings を保持 |
-| `Workspace`       | `arrange` / `design` の固定二領域。`Sample` / `Analyze` / `Separate` は領域ではなく Design から到達するツール                                          |
-| `DesignContext`   | Design 領域が現在対象としているツールと素材（active_tool, target_asset_id）                                                                            |
-| `SessionSettings` | マスターゲイン、ループ、カウントイン、メトロノーム、ノート、AI権限・履歴など、構造ではないセッション全体の設定                                         |
+| エンティティ       | 役割                                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `CreativeSession`  | 永続化される制作状態の単一の正準モデル                                                                         |
+| `DesktopViewState` | Desktopで表示中の領域とDesign対象を保持するPresentation State。永続的な制作状態には含めない                    |
+| `Workspace`        | `arrange` / `design` の固定二領域。`Sample` / `Analyze` / `Separate` は領域ではなく Design から到達するツール  |
+| `DesignContext`    | Design 領域が現在対象としているツールと素材（active_tool, target_asset_id）                                    |
+| `SessionSettings`  | マスターゲイン、ループ、カウントイン、メトロノーム、ノート、AI権限・履歴など、構造ではないセッション全体の設定 |
 
 ### 4.2 アレンジ（時間軸）
 
@@ -81,15 +82,15 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ### 4.3 録音
 
-| エンティティ             | 役割                                                                                                                                                                                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RecordingSessionRecord` | 録音の試行グループ。track_slots（トラックごとのアクティブテイクとタイムラインクリップ）と pass_ids を持つ                                                                                                                                               |
-| `RecordingPassRecord`    | 録音範囲を1回通ったパス。ordinal、位置・長さ、部分開始/終了フラグ、そのパスのテイクID列                                                                                                                                                                 |
-| `RecordingTakeRecord`    | 1パスが生んだトラック単位の成果物。`raw_audio` / `processed_audio`（`TakeAudioSource`：asset_id + サンプル範囲 + テール + サンプルレート）、`midi_asset_id`。v1 の raw_audio_asset_id 等はインポート時に移行され新規セッションでは書かれない            |
-| `AudioTakeVariant`       | `raw` / `processed`。AudioClip がどちらの音源を使うか。片方が欠けていれば `preferred_audio_source` がフォールバック                                                                                                                                     |
+| エンティティ             | 役割                                                                                                                                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RecordingSessionRecord` | 録音の試行グループ。track_slots（トラックごとのアクティブテイクとタイムラインクリップ）と pass_ids を持つ                                                                                                                       |
+| `RecordingPassRecord`    | 録音範囲を1回通ったパス。ordinal、位置・長さ、部分開始/終了フラグ、そのパスのテイクID列                                                                                                                                         |
+| `RecordingTakeRecord`    | 1パスが生んだトラック単位の成果物。`raw_audio` / `processed_audio`（`TakeAudioSource`：asset_id + サンプル範囲 + テール + サンプルレート）と`midi_asset_id`を持つ                                                               |
+| `AudioTakeVariant`       | `raw` / `processed`。AudioClip がどちらの音源を使うか。片方が欠けていれば `preferred_audio_source` がフォールバック                                                                                                             |
 | `RecordingCapture`       | 録音イベントそのもの（工程）。状態遷移 `recording → completing → completed \| recoverable \| failed` を唯一の遷移行列で定義。開始時点のセッション文脈（デバイス・マスター・アーム済みトラック）を保存。生成物は Asset ID で参照 |
-| `DropoutInformation`     | 録音中のドロップアウト診断（書き込みサンプル数、欠落ブロック、欠落サンプル、ドロップアウト区間。raw/processed 別）                                                                                                                                      |
-| `RecordingAsset`         | UI 用 read model。`recordings/inbox` のマニフェストから組み立て、回復（recoverable）時の表示・復旧操作を担う。永続ドメインとしては使用しない                                                                                                            |
+| `DropoutInformation`     | 録音中のドロップアウト診断（書き込みサンプル数、欠落ブロック、欠落サンプル、ドロップアウト区間。raw/processed 別）                                                                                                              |
+| `RecordingAsset`         | UI 用 read model。`recordings/inbox` のマニフェストから組み立て、回復（recoverable）時の表示・復旧操作を担う。永続ドメインとしては使用しない                                                                                    |
 
 ディスク上の構成は `recordings/inbox|archive|library/<take>/`（manifest.json + raw/processed WAV + midi.json）。再生・編集に使うのはキャプチャから登録された正準 Asset であり、テイクディレクトリはリカバリ用の記録に留まる。
 
@@ -185,15 +186,14 @@ flowchart TD
 | 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                |
 | 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                    |
 | 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                |
-| 更新順序       | `updated_at_ms` は単調増加に補正され、UI 境界の順序トークンになる                                                                    |
+| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                               |
 
 ---
 
 ## 7. スキーマ進化の方針
 
-| 方針           | 内容                                                                                                                                                                            |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 後方互換の是認 | 旧フィールドは「読めるが書かない」。読み込み時に現行形へ移行し、シリアライズ時には旧フィールドを出力しない（例: `raw_audio_asset_id` → `raw_audio` への移行）                   |
-| 移行は境界で   | 旧録音テイク形状の変換、テイクのパス再構成、レガシーテイクのサンプルレート補完は `deserialize_session` / ロード境界のみで行い、ドメインは現行形だけを扱う |
-| 世代回復の前提 | 読み込めない世代はスキップされるため、新スキーマは常に「旧セッションを読み込める」必要がある（保存は現行形で行う）                                                              |
-| 言語間の同期   | 型定義は Rust が唯一の真実源。TS は再生成、C++ は投影プロトコルの検証テスト（`scripts/test-ipc.ps1` ほか）で整合を保つ                                                          |
+| 方針         | 内容                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------- |
+| 現行スキーマ | `deserialize_session` は現行のCreativeSessionだけを受け入れる。対応しない形のデータは正準状態へ取り込まない |
+| 世代回復     | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む            |
+| 言語間の同期 | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                 |

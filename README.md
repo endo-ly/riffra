@@ -10,7 +10,7 @@
 ┌───────────────────────────────────────────────┐
 │  Tauri シェル（1プロセス）                      │
 │  React フロントエンド ── Tauri IPC ── Rust      │
-│  バックエンド（riffra-core ドメイン）          │
+│  バックエンド（Core / Desktop Adapter）          │
 └──────┬──────────────────────┬─────────────────┘
        │ JSON Lines (stdin/stdout)
 ┌──────▼──────────┐   ┌───────▼─────────┐  ┌──────▼────────┐
@@ -30,7 +30,7 @@
 | パス                           | 内容                                                                             |
 | ------------------------------ | -------------------------------------------------------------------------------- |
 | `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
-| `crates/riffra-core/`          | ドメイン層（Session / Asset / Rack / 保存 / ライブラリ）                         |
+| `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
 | `scripts/`                     | 型生成（`gen-barrel.js`）、検証（`verify.mjs`）などの開発スクリプト              |

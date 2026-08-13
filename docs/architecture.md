@@ -28,7 +28,7 @@ Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成�
 │ Tauri シェル                                                     │
 │ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
 │ │ WebView (React)      │   │ Rust バックエンド                │ │
-│ │ 表示・操作・楽曲編集  │◀──▶│ コマンド受付 / Session Actor /  │ │
+│ │ 表示・操作・表示状態  │◀──▶│ Core / Desktop Adapter /       │ │
 │ │ NativeApi 経由で指令 │   │ ランタイム調整 / 永続化 / Jobs   │ │
 │ └──────────────────────┘   └──────────────────────────────────┘ │
 └──────┬──────────────────────────┬───────────────────────────────┘
@@ -43,12 +43,12 @@ Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成�
 └───────────────────────┘
 ```
 
-| プロセス             | 役割                                                         | 所有状態                                             |
-| -------------------- | ------------------------------------------------------------ | ---------------------------------------------------- |
-| Tauri シェル         | アプリ全体の監督。UI、セッション正準状態、永続化、ジョブ管理 | CreativeSession（正準）、SQLite ライブラリ索引、設定 |
-| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視     | ランタイムグラフ（投影される一時状態のみ）           |
-| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）   | なし                                                 |
-| riffra-render-worker | タイムラインのオフラインレンダリング                         | なし                                                 |
+| プロセス             | 役割                                                       | 所有状態                                                      |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
+| Tauri シェル         | アプリ全体の監督。UI、Core接続、永続化、ジョブ管理         | CreativeSession（Core内）、DesktopViewState、SQLite索引、設定 |
+| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視   | ランタイムグラフ（投影される一時状態のみ）                    |
+| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード） | なし                                                          |
+| riffra-render-worker | タイムラインのオフラインレンダリング                       | なし                                                          |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -60,21 +60,25 @@ Tauriシェルはセーフモード（§7）で起動するとサイドカーの
 
 ```text
 React フロントエンド
-  ├─ 状態: 保持しない。CreativeSession を表示・編集するだけ
-  ├─ 編集: NativeApi 経由で Tauri 命令を呼ぶ（フロントエンドは楽曲を直接変えない）
+  ├─ 状態: CreativeSession と DesktopViewState を表示用に合成する
+  ├─ 編集: NativeApi 経由で Tauri 命令を呼ぶ（正準状態は保持しない）
   └─ 型: src/lib/generated（Rust の ts-rs 出力を gen-barrel.js で束ねたもの）
 
 Tauri 命令層 (src-tauri/src/**/commands.rs)
-  ├─ 受け取った命令を Application 層へ委譲
+  ├─ 受け取った命令を Desktop Adapter へ委譲
   └─ 実行モード: run_blocking（重い操作は spawn_blocking）で async ワーカーを塞がない
 
-Application 層 (src-tauri/src/session, asset, recording, analysis, separation, render, plugins)
-  ├─ 衝突検知付きで 正準 CreativeSession へ操作を適用
-  └─ SessionContext（audio / runtime / session_actor / data_root / session / safe_mode）を介して依存を注入
+Desktop Adapter (apps/desktop/src-tauri/src)
+  ├─ SessionStore / AudioSupervisor / RuntimeReconciler を Core の Port に接続
+  ├─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
+  └─ 表示状態（DesktopViewState）を保持し、Coreの正準状態と分離する
 
-riffra-core（crates/riffra-core）: プラットフォーム非依存のドメイン
-  ├─ CreativeSession / Asset / Track Rack / AppCore / AudioRuntime(port)
-  ├─ validate_and_normalize（ロード・保存前に正準化）
+riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
+  ├─ domain: CreativeSession / Arrangement / Recording / Asset / Rack
+  ├─ application: Session / Arrangement / Recording / Rack / Transport / History
+  ├─ ports: SessionStorage / RuntimeProjection / RenderRuntime
+  ├─ AppCore: 正準状態、コミット順序、履歴、投影sequence
+  ├─ validate_and_normalize（コミット前に正準化）
   └─ Tauri・WebView・OS統合を含まない
 
 永続化・外部境界
@@ -83,34 +87,33 @@ riffra-core（crates/riffra-core）: プラットフォーム非依存のドメ�
   └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
 ```
 
-フロントエンドは「編集の瞬間に戻った CreativeSession を受け取って差し替える」方式のみで状態を変更する。直接的な楽曲構造の書き換えや、バックエンドを経ない永続化は行わない。
+制作状態を変更する命令はCoreのApplication層を通り、確定したCreativeSessionが同じ順序でフロントエンドへ返る。ワークスペースやDesign対象などの表示状態はDesktopViewStateとして分離し、Desktop Adapterが保持する。
 
 ---
 
-## 4. セッション正準化
+## 4. 制作状態とコミット
 
 ### 4.1 単一の正準状態
 
-CreativeSession（`src-tauri/src/session` + `riffra-core`）が、楽曲の全ての編集可能な状態（アレンジ、クリップ、テイク、トラック、ラック、設定、スナップショット）の単一の正準状態である。WebView・サイドカーはすべて投影であり、正準状態は Rust プロセス内の `Mutex<CreativeSession>` にのみ存在する。
+CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。フロントエンドと音声サイドカーはその投影を扱い、DesktopViewStateは制作内容に影響しない表示状態を扱う。
 
-### 4.2 Session Actor
+### 4.2 Core操作境界
 
-`session/actor.rs` は正準状態への操作順序と投影の整合を担う。
-
-- **operation_gate（Mutex）**: 正準セッション操作（コマンド）を直列化する。VST準備などの遅い処理はガードの外で行われるため、遅いプラグインがセッション操作を長時間ブロックしない
-- **projection_version（AtomicU64 による seqlock）**: 偶数値が「安定した投影バージョン（sequence × 2）」、奇数値が「コミット境界での一時状態」。`capture_projection` はセッションと sequence のペアを一貫したまま非ブロッキングで取得し、コミット境界の短い交換を挟んで再試行する
+`AppCore` は主要な制作操作の入口であり、正準状態、操作順序、Undo/Redo履歴、ランタイム投影の順序を一体として管理する。ホストはPortを実装して永続化や音声ランタイムへ接続するが、正準状態の採否は決めない。これにより、Desktopと将来のCLIは同じ編集規則と履歴を共有できる。
 
 ### 4.3 コミットパイプライン
 
-`session/commit.rs` が正準操作の保存境界を定める。
+`AppCore` と `riffra-core::application` が正準操作の保存境界を定める。
 
-1. `validate_and_normalize()` — ドメイン不変条件の検証と正準化
-2. `updatedAtMs` を単調増加に補正（`next_session_update_timestamp`）
-3. `SessionStore::save()` — 世代保存 + アトミック置換（§6）
-4. `publish_session()` — Actor の `begin_commit` / セッション交換 / `mark_committed` の間で、in-memory と投影の順序を一貫させる。保存中にユーザーがワークスペースを切り替えていた場合は最新の workspace が勝つ
-5. `queue_session_index()` — ライブラリ索引への同期を非ブロッキングで投入（§8）
+1. Application操作が現在の正準状態から更新候補を作る
+2. Domainが不変条件を検証し、正準化する
+3. SessionStorage Portを通じて更新候補を永続化する
+4. 保存成功後に正準状態を交換し、履歴と投影順序を更新する
+5. Desktop Adapterがライブラリ索引の更新と音声ランタイムへの投影を要求する
 
-長時間ジョブ（録音の後処理など）は `commit_merged_session()` を使い、ベース時点から最新セッションへの**操作所有部分のみのマージ**をコミット境界で行う。これにより、ジョブ実行中にユーザーが行った無関係な編集が上書きされない。
+検証または永続化に失敗した更新候補は正準状態にも履歴にも反映されない。
+
+録音の後処理など、開始から確定まで時間が空く操作は、自身が所有する変更だけを最新の正準状態へ適用する。処理中に確定した別の編集は維持される。
 
 ---
 
@@ -120,7 +123,7 @@ CreativeSession（`src-tauri/src/session` + `riffra-core`）が、楽曲の全�
 
 ### 5.1 投影プロトコル
 
-`runtime/ports.rs` が 3 つのプリミティブを定める。実装は `native_audio/` の AudioSupervisor がサイドカーへのコマンドとして担う。
+Coreの `RuntimeProjection` Portは、正準スナップショットとその確定順序をホストの音声ランタイムへ渡す契約を定める。Desktopでは `RuntimeReconciler` がサイドカーとの接続を担う。
 
 | 操作                                  | 意味                                                                              |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -128,18 +131,13 @@ CreativeSession（`src-tauri/src/session` + `riffra-core`）が、楽曲の全�
 | `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                  |
 | `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                              |
 
-### 5.2 Projection Coordinator
+### 5.2 投影の整合性
 
-`runtime/projection_coordinator.rs` は専用ワーカースレッド（`riffra-runtime-projection`）を持ち、投影要求を**最新優先（latest-wins）**で直列化する。
-
-- 要求は `ProjectionKey`（更新時刻・世代）を持ち、古いキーの要求は `Superseded` として棄却される
-- 準備失敗・タイムアウト時は再試行し、サイドカー再起動が必要な場合は recovery フックで次の世代を走らせる
-- 準備中は既存の現役グラフが演奏を続けるため、編集中の音が途切れない
-- コミット成功時に `on_activated` フックがトランスポート再開（再生中の継続再生）を試みる
+各投影要求にはCoreが採番した確定順序と、診断に使うセッションrevisionが付く。Desktopは投影要求を直列に処理し、より新しい要求が到着した場合は古い準備結果を有効化しない。準備中は現在のグラフを維持し、準備と有効化が完了した投影だけを再生に使う。失敗時の再試行やサイドカー再起動も最新の正準スナップショットを起点に行う。
 
 ### 5.3 トランスポート
 
-`runtime/transport_controller.rs` / `transport_executor.rs` が Play / Stop の決定と実行を担う。トランスポート操作は投影操作とは別のポート（`TransportDriver`）に分離されており、トランスポートが投影の状態を誤って操作できない構造になっている。投影失敗時は結果に応じて再生を抑制・停止し、UI には「同期待ち」として遷移状態が通知される。
+Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が有効かどうかを判断する。Desktop Adapterは決定済みの要求を音声ランタイムへ伝える。古い要求や古い投影完了は現在の再生状態を上書きせず、投影が準備できていない場合は再生を待機または停止する。
 
 ---
 
@@ -234,39 +232,21 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 | 素材コンテンツ | 生成済み素材のコンテンツは**不変**。内容変更は新しい Asset を mint する。変更できるのは管理メタデータ（name / tag / note）のみ              |
 | 参照整合       | セッションが参照する AssetId は必ず登録済みでなければならない（§6.4）                                                                       |
 | セッション     | ロード・保存前に `validate_and_normalize` を必ず通過。master gain などの安全限界は正準化でクランプされる                                    |
-| 更新順序       | updatedAtMs は単調増加に補正され、UI 境界での順序トークンとして機能する                                                                     |
+| 更新順序       | Coreが制作状態の更新と投影を同じ確定順序で管理し、Desktop Adapterがその順序を保ってUIとランタイムへ渡す                                     |
 | ランタイム     | 現役の投影グラフはセッションに保存されない。投影はいつでも破棄・再構築できる一時状態                                                        |
 | 安全           | サイドカーは緊急ミュート、起動時低ゲイン、非有限値拒否、DCブロック、音響フィードバック検知を安全チェーンとして持つ（`native/audio-engine`） |
 
 ---
 
-## 11. フロントエンドの構造
+## 11. Presentationの責務
 
-```text
-apps/desktop/src/
-├─ App.tsx               # ルート。bootstrap 後にワークスペース切替・パネル幅を管理
-├─ native/
-│  ├─ native-api.ts      # NativeApi: Tauri 命令の Promise 型インターフェース
-│  ├─ native-api-fake.ts # テスト用フェイク実装
-│  └─ invoke.ts          # invoke の共通ラッパ（イベント購読含む）
-├─ lib/
-│  ├─ generated/         # ts-rs 生成型（gen:types で再生成）
-│  ├─ domain.ts          # 生成型のバレル再エクスポート
-│  └─ audio-*.ts, arrange-*.ts  # 純粋ヘルパ（安全ロジック・ドラッグ・タイムライン変換）
-├─ hooks/
-│  ├─ useApp.ts          # bootstrap / セッション購読 / 編集の実行と戻り値の適用
-│  ├─ useSession.ts      # セッションのローカル保持と setSession の差し替え
-│  ├─ useAudio.ts        # AudioStatus の購読と状態遷移の再試行
-│  ├─ arrange/           # 楽曲編集（useArrangeEditor / useClipInteractions ほか）
-│  └─ runtime/           # useRuntimeSynchronization / useTransportController / useWorkspaceNavigation
-└─ components/           # 画面コンポーネント
-```
+フロントエンドはCreativeSessionを描画し、ユーザー操作をNativeApiの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決や部分マージを行わない。
 
-UI はセッションをローカル状態（`setSession`）で保持し、操作のたびに Rust の正準操作を呼び、返却された CreativeSession で置き換える。ランタイム投影との整合（revision / runtimeStatus の不一致検知、再試行）は `useApp` / `useRuntimeSynchronization` などの購読フックが担う。
+選択、パネル幅、ズーム、ダイアログ、ワークスペース、Design対象はPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。
 
 ## 12. 検証
 
-- Rust 単体・結合: `cargo test`（各 crate。Session Actor / Storage / アプリ操作の回復・不変条件テストを含む）
+- Rust 単体・結合: `cargo test`（各 crate。Core Application / Storage / ランタイム投影 / 不変条件テストを含む）
 - フロントエンド: Vitest + Testing Library
 - ネイティブ: CMake + CTest
 - 一括: `npm run verify`（`--native` でネイティブビルドを含む）

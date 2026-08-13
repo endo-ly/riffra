@@ -1,9 +1,9 @@
 use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use crate::runtime::error::RuntimeError;
-use crate::runtime::model::ProjectionKey;
 use crate::runtime::ports::ProjectionDriver;
 use crate::storage::now_ms;
+use riffra_core::ProjectionKey;
 use serde_json::Value;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};

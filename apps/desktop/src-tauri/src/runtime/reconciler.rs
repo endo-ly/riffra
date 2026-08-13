@@ -6,11 +6,11 @@
 
 use crate::model::RuntimeProjectionStatus;
 use crate::runtime::error::RuntimeError;
-use crate::runtime::model::ProjectionKey;
 use crate::runtime::ports::RuntimeDriver;
 use crate::runtime::projection_coordinator::{ProjectionCoordinator, RuntimeRecovery};
-use crate::runtime::transport_controller::{PlayDecision, StopDecision, TransportSequence};
 use crate::runtime::transport_executor::TransportExecutor;
+use riffra_core::ProjectionKey;
+use riffra_core::application::transport::{PlayDecision, StopDecision, TransportSequence};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

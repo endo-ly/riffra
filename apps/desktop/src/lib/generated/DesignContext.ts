@@ -3,6 +3,14 @@ import type { AssetId } from "./AssetId";
 import type { DesignTool } from "./DesignTool";
 
 /**
- * What the Design workspace is currently aimed at.
+ * The currently visible design target.
  */
-export type DesignContext = { activeTool: DesignTool, targetAssetId?: AssetId, };
+export type DesignContext = { 
+/**
+ * Active design surface.
+ */
+activeTool: DesignTool, 
+/**
+ * Asset currently shown by the design surface.
+ */
+targetAssetId?: AssetId, };

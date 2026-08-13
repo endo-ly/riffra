@@ -1,4 +1,4 @@
-use riffra_core::{AudioRuntime, OfflineRenderRequest};
+use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use riffra_render_worker::RenderWorker;
 
 #[test]

@@ -4,7 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InspectorPanel } from '@/components/layout/InspectorPanel';
-import { defaultSession, toAssetId, type BootstrapState } from '@/lib/domain';
+import {
+  defaultDesktopSession as defaultSession,
+  toAssetId,
+  type BootstrapState,
+} from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
@@ -31,6 +35,7 @@ function renderPanel(
   const api = new FakeNativeApi({ bootstrapState: { session } });
   const boot: BootstrapState = {
     session,
+    viewState: { workspace: 'arrange', designContext: { activeTool: 'sample' } },
     pluginCatalog: [],
     runtimeStarted: true,
     runtimeStartupFinished: true,

@@ -77,10 +77,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       try {
         const next = await operation;
         if (next) {
-          // Every canonical response is an undo boundary. Rendering work must
-          // be optimized in the Arrange tree, not by dropping committed
-          // Session snapshots here; otherwise rapid edits lose undo history and
-          // an out-of-order response can become the visible state.
           setSession(next);
           setRuntimeOutOfSync(false);
         }
@@ -99,7 +95,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const retryRuntimeSync = useCallback(async () => {
     try {
-      await api.syncArrangementRuntime();
+      await api.retryRuntimeProjection();
       setRuntimeOutOfSync(false);
       setMessageState('');
     } catch (error) {

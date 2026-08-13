@@ -1,7 +1,5 @@
-use crate::{
-    asset, asset::AssetId, plugins::PluginEntry, recording::RecordingAsset,
-    session::CreativeSession, storage::now_ms,
-};
+use crate::{asset, plugins::PluginEntry, recording::RecordingAsset, storage::now_ms};
+use riffra_core::{AssetId, CreativeSession};
 use rusqlite::{Connection, Row, params};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -429,9 +427,9 @@ fn row_to_asset(row: &Row<'_>) -> rusqlite::Result<LibraryAsset> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{AssetKind, Provenance};
+    use riffra_core::{AssetKind, Provenance};
 
-    use crate::session::CreativeSession;
+    use riffra_core::CreativeSession;
 
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-library-{name}-{}", now_ms()))
@@ -456,7 +454,7 @@ mod tests {
         fs::write(&wav, b"RIFF\0\0\0\0WAVE").unwrap();
         let source_id = crate::asset::register(
             &directory,
-            crate::asset::AssetKind::Audio,
+            AssetKind::Audio,
             "Source Take",
             &wav.to_string_lossy(),
             None,
@@ -466,12 +464,12 @@ mod tests {
         fs::write(&derived_wav, b"RIFF\0\0\0\0WAVE").unwrap();
         let _derived_id = crate::asset::register(
             &directory,
-            crate::asset::AssetKind::Audio,
+            AssetKind::Audio,
             "Derived Take",
             &derived_wav.to_string_lossy(),
-            Some(crate::asset::Provenance {
+            Some(riffra_core::Provenance {
                 source_asset_ids: vec![source_id.clone()],
-                operation: crate::asset::ProvenanceOperation::Processed,
+                operation: riffra_core::ProvenanceOperation::Processed,
                 parameters: serde_json::Map::new(),
             }),
         )

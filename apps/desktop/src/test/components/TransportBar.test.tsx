@@ -5,7 +5,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TransportBar } from '@/components/layout/TransportBar';
-import { defaultSession, type CreativeSession } from '@/lib/domain';
+import {
+  defaultDesktopSession as defaultSession,
+  toDesktopSessionView,
+  type CreativeSession,
+  type DesktopSessionView,
+} from '@/lib/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
@@ -13,11 +18,11 @@ afterEach(cleanup);
 function Harness({ api }: { api: FakeNativeApi }) {
   const initial = defaultSession();
   initial.workspace = 'arrange';
-  const [session, setSession] = useState<CreativeSession>(initial);
+  const [session, setSession] = useState<DesktopSessionView>(initial);
   return (
     <TransportBar
       session={session}
-      setSession={setSession}
+      setSession={(next: CreativeSession) => setSession(toDesktopSessionView(next, session))}
       audio={api.audio}
       setAudio={() => undefined}
       transportPlaying={false}

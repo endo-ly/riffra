@@ -16,6 +16,7 @@ import type {
   MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
+  HistoryState,
   DeviceChannels,
   JobKind,
   LibraryAsset,
@@ -31,6 +32,7 @@ import type {
   ScanJobStatus,
   ScanReport,
   CreativeSession,
+  DesktopViewState,
   SeparationJobStatus,
   SeparationResult,
   RackInstance,
@@ -44,7 +46,7 @@ import type {
   Workspace,
   TransportStatus,
 } from '@/lib/domain';
-import { defaultSession, toAssetId } from '@/lib/domain';
+import { defaultSession, defaultViewState, toAssetId } from '@/lib/domain';
 import type {
   NativeApi,
   RuntimeStartupFinishedEvent,
@@ -142,6 +144,8 @@ export class FakeNativeApi implements NativeApi {
   readonly calls: string[] = [];
   readonly emergencyMuteRequests: boolean[] = [];
   readonly savedSessions: CreativeSession[] = [];
+  private undoHistory: CreativeSession[] = [];
+  private redoHistory: CreativeSession[] = [];
   audio: AudioStatus;
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
@@ -220,12 +224,31 @@ export class FakeNativeApi implements NativeApi {
     this.runtimeStartupFinishedListeners.forEach((callback) => callback(event));
   };
 
-  saveSession = async (session: CreativeSession): Promise<CreativeSession> => {
-    this.calls.push('saveSession');
+  undoSession = async (): Promise<CreativeSession> => {
+    this.calls.push('undoSession');
     this.assertPersistence();
-    this.bootstrapState = { ...this.bootstrapState, session };
-    this.savedSessions.push(session);
-    return session;
+    const previous = this.undoHistory.pop();
+    if (!previous) throw new Error('History is empty.');
+    this.redoHistory.push(this.bootstrapState.session);
+    this.bootstrapState = { ...this.bootstrapState, session: previous };
+    this.savedSessions.push(previous);
+    return previous;
+  };
+
+  redoSession = async (): Promise<CreativeSession> => {
+    this.calls.push('redoSession');
+    this.assertPersistence();
+    const next = this.redoHistory.pop();
+    if (!next) throw new Error('History is empty.');
+    this.undoHistory.push(this.bootstrapState.session);
+    this.commitCanonicalSession(next);
+    this.savedSessions.push(next);
+    return next;
+  };
+
+  getHistoryState = async (): Promise<HistoryState> => {
+    this.calls.push('getHistoryState');
+    return { canUndo: this.undoHistory.length > 0, canRedo: this.redoHistory.length > 0 };
   };
 
   restoreRecoveryGeneration = async (fileName: string): Promise<CreativeSession | null> => {
@@ -614,10 +637,16 @@ export class FakeNativeApi implements NativeApi {
   ): SessionAudioPair => {
     this.assertPersistence();
     const next = project(this.bootstrapState.session);
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
+    this.commitCanonicalSession(next);
     return { session: next, audio: this.audio };
   };
+
+  private commitCanonicalSession(next: CreativeSession): void {
+    this.undoHistory = [...this.undoHistory, this.bootstrapState.session].slice(-40);
+    this.redoHistory = [];
+    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.savedSessions.push(next);
+  }
 
   private assertPersistence(): void {
     if (!this.persistenceFailure) return;
@@ -650,7 +679,7 @@ export class FakeNativeApi implements NativeApi {
     if (this.bootstrapState.safeMode) {
       throw new Error('Safe Mode does not allow targeted MIDI input.');
     }
-    if (this.bootstrapState.session.workspace !== 'arrange') {
+    if (this.bootstrapState.viewState.workspace !== 'arrange') {
       throw new Error('Targeted MIDI input is available only in Arrange.');
     }
     if (trackId.trim().length === 0) {
@@ -1017,16 +1046,22 @@ export class FakeNativeApi implements NativeApi {
         message: `${nextPads.length} sample pad mapping(s) applied.`,
       };
     }
-    return this.commitSessionWithAudio((current) => ({
+    const result = this.commitSessionWithAudio((current) => ({
       ...current,
       updatedAtMs: Date.now(),
-      workspace: 'design',
-      designContext: { activeTool: 'sample', targetAssetId: assetId },
       playState: {
         ...current.playState,
         sampleInstrument: { ...current.playState.sampleInstrument, pads: nextPads },
       },
     }));
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      viewState: {
+        workspace: 'design',
+        designContext: { activeTool: 'sample', targetAssetId: assetId },
+      },
+    };
+    return result;
   };
 
   updateSamplePad = async (
@@ -1128,7 +1163,7 @@ export class FakeNativeApi implements NativeApi {
         },
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.commitCanonicalSession(next);
     this.missing = this.missing.filter((item) => item.assetId !== assetId);
     return next;
   };
@@ -1156,7 +1191,7 @@ export class FakeNativeApi implements NativeApi {
         })),
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.commitCanonicalSession(next);
     // A disabled placeholder is acknowledged, so it leaves the missing list
     // (mirrors `collect_missing` skipping disabled-placeholder plugins).
     this.missing = this.missing.filter((item) => item.id !== deviceId);
@@ -1201,7 +1236,7 @@ export class FakeNativeApi implements NativeApi {
         })),
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
+    this.commitCanonicalSession(next);
     this.missing = this.missing.filter((item) => item.id !== deviceId);
     return next;
   };
@@ -1254,7 +1289,6 @@ export class FakeNativeApi implements NativeApi {
     );
     const next: CreativeSession = {
       ...session,
-      workspace: 'arrange',
       updatedAtMs: Date.now(),
       arrangement: {
         ...session.arrangement,
@@ -1282,8 +1316,11 @@ export class FakeNativeApi implements NativeApi {
         ],
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
+    this.commitCanonicalSession(next);
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      viewState: { ...this.bootstrapState.viewState, workspace: 'arrange' },
+    };
     return next;
   };
 
@@ -1295,7 +1332,7 @@ export class FakeNativeApi implements NativeApi {
   ): Promise<CreativeSession | null> => {
     this.calls.push('addMidiClipToArrangement');
     this.assertAsset(assetId);
-    return this.commitSession((current) => {
+    const next = this.commitSession((current) => {
       const selectedTrack =
         trackId ?? current.arrangement.tracks.find((track) => track.kind === 'instrument')?.id;
       const nextTrack = selectedTrack
@@ -1320,7 +1357,6 @@ export class FakeNativeApi implements NativeApi {
       this.assertTrackKind({ ...current.arrangement, tracks: nextTrack }, targetId, 'instrument');
       return {
         ...current,
-        workspace: 'arrange',
         updatedAtMs: Date.now(),
         arrangement: {
           ...current.arrangement,
@@ -1344,6 +1380,11 @@ export class FakeNativeApi implements NativeApi {
         },
       };
     });
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      viewState: { ...this.bootstrapState.viewState, workspace: 'arrange' },
+    };
+    return next;
   };
 
   /**
@@ -1370,8 +1411,7 @@ export class FakeNativeApi implements NativeApi {
         revision: session.arrangement.revision + 1,
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: updated };
-    this.savedSessions.push(updated);
+    this.commitCanonicalSession(updated);
     return updated;
   }
 
@@ -1759,8 +1799,8 @@ export class FakeNativeApi implements NativeApi {
     });
   };
 
-  syncArrangementRuntime = async (): Promise<RuntimeProjectionStatus> => {
-    this.calls.push('syncArrangementRuntime');
+  retryRuntimeProjection = async (): Promise<RuntimeProjectionStatus> => {
+    this.calls.push('retryRuntimeProjection');
     const operationId = this.runtimeProjection.operationId + 1;
     this.runtimeProjection = {
       ...this.runtimeProjection,
@@ -1842,45 +1882,35 @@ export class FakeNativeApi implements NativeApi {
   openAssetInDesign = async (
     assetId: AssetId,
     tool: DesignTool,
-  ): Promise<CreativeSession | null> => {
+  ): Promise<DesktopViewState | null> => {
     this.calls.push('openAssetInDesign');
     this.assertAsset(assetId);
-    this.assertPersistence();
-    const next: CreativeSession = {
-      ...this.bootstrapState.session,
-      updatedAtMs: Date.now(),
-      workspace: 'design',
-      designContext: {
-        activeTool: tool,
-        targetAssetId: assetId,
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      viewState: {
+        workspace: 'design',
+        designContext: { activeTool: tool, targetAssetId: assetId },
       },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
-    return next;
+    return this.bootstrapState.viewState;
   };
 
   switchWorkspace = async (
     workspace: Workspace,
     _transportSequence: number,
-  ): Promise<CreativeSession | null> => {
+  ): Promise<DesktopViewState | null> => {
     this.calls.push('switchWorkspace');
-    this.assertPersistence();
-    const next: CreativeSession = {
-      ...this.bootstrapState.session,
-      updatedAtMs: Date.now(),
-      workspace,
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      viewState: { ...this.bootstrapState.viewState, workspace },
     };
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
-    return next;
+    return this.bootstrapState.viewState;
   };
 
   private commitSession(project: (session: CreativeSession) => CreativeSession): CreativeSession {
     this.assertPersistence();
     const next = project(this.bootstrapState.session);
-    this.bootstrapState = { ...this.bootstrapState, session: next };
-    this.savedSessions.push(next);
+    this.commitCanonicalSession(next);
     return next;
   }
 
@@ -2751,6 +2781,7 @@ function mergeBootstrap(overrides?: Partial<BootstrapState>): BootstrapState {
   const session = overrides?.session ?? defaultSession();
   return {
     session,
+    viewState: overrides?.viewState ?? defaultViewState(),
     pluginCatalog: [],
     runtimeStarted: true,
     runtimeStartupFinished: true,

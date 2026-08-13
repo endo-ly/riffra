@@ -11,7 +11,7 @@ use ts_rs::TS;
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAudioPair {
-    pub session: crate::session::CreativeSession,
+    pub session: riffra_core::CreativeSession,
     pub audio: AudioStatus,
 }
 
@@ -63,7 +63,8 @@ pub struct RecoveryCandidate {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
-    pub session: crate::session::CreativeSession,
+    pub session: riffra_core::CreativeSession,
+    pub view_state: crate::presentation::DesktopViewState,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,

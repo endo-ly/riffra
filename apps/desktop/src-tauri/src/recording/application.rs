@@ -27,96 +27,31 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::asset::{self, AssetKind, Provenance, ProvenanceOperation};
+use crate::asset;
 use crate::library;
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
+use crate::presentation::{DesktopViewState, Workspace};
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
-use crate::session::actor::SessionActor;
-use crate::session::{
-    AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote,
-    RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
-    TakeAudioSource, TimelineTick, TrackKind,
-};
 use crate::storage::now_ms;
+use riffra_core::AppCore;
+use riffra_core::{
+    AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent,
+    MidiEventKind, MidiNote, Provenance, ProvenanceOperation, RecordingPassRecord,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, TakeAudioSource,
+    TimelineTick, TrackKind,
+};
 
 /// Concrete dependencies a Recording Application Operation needs. Bundling them
 /// keeps the operation signatures small without pulling in `tauri::State`.
 pub struct RecordingContext<'a> {
+    pub core: &'a AppCore<AudioSupervisor>,
+    pub view_state: &'a Mutex<DesktopViewState>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
-    pub session_actor: &'a SessionActor,
     pub data_root: &'a Path,
-    pub session: &'a Mutex<CreativeSession>,
     pub safe_mode: bool,
-}
-
-fn merge_recording_vector<T: Clone + PartialEq>(
-    current: &[T],
-    base: &[T],
-    candidate: &[T],
-    key: impl Fn(&T) -> String,
-) -> Vec<T> {
-    let mut merged = current.to_vec();
-    for item in candidate {
-        let item_key = key(item);
-        let changed = base
-            .iter()
-            .find(|previous| key(previous) == item_key)
-            .is_none_or(|previous| previous != item);
-        if !changed {
-            continue;
-        }
-        if let Some(index) = merged.iter().position(|existing| key(existing) == item_key) {
-            merged[index] = item.clone();
-        } else {
-            merged.push(item.clone());
-        }
-    }
-    merged
-}
-
-fn merge_recording_session(
-    current: &CreativeSession,
-    _base: &CreativeSession,
-    candidate: CreativeSession,
-) -> CreativeSession {
-    let mut merged = current.clone();
-    let mut arrangement = current.arrangement.clone();
-    arrangement.midi_clips = merge_recording_vector(
-        &current.arrangement.midi_clips,
-        &_base.arrangement.midi_clips,
-        &candidate.arrangement.midi_clips,
-        |clip| clip.id.clone(),
-    );
-    arrangement.audio_clips = merge_recording_vector(
-        &current.arrangement.audio_clips,
-        &_base.arrangement.audio_clips,
-        &candidate.arrangement.audio_clips,
-        |clip| clip.id.clone(),
-    );
-    arrangement.recording_passes = merge_recording_vector(
-        &current.arrangement.recording_passes,
-        &_base.arrangement.recording_passes,
-        &candidate.arrangement.recording_passes,
-        |pass| pass.id.clone(),
-    );
-    arrangement.takes = merge_recording_vector(
-        &current.arrangement.takes,
-        &_base.arrangement.takes,
-        &candidate.arrangement.takes,
-        |take| take.id.clone(),
-    );
-    arrangement.recording_sessions = merge_recording_vector(
-        &current.arrangement.recording_sessions,
-        &_base.arrangement.recording_sessions,
-        &candidate.arrangement.recording_sessions,
-        |recording| recording.id.clone(),
-    );
-    arrangement.revision = current.arrangement.revision.saturating_add(1);
-    merged.arrangement = arrangement;
-    merged
 }
 
 /// Starts a new hardware recording. The Audio Runtime begins writing into a
@@ -151,7 +86,7 @@ fn start_recording_in_session(
         format!("Recording Inbox could not be created; no audio was started: {error}")
     })?;
     let directory = inbox.join(format!("take-{}", now_ms()));
-    let projection = context.session_actor.capture_projection(context.session)?;
+    let projection = context.core.snapshot().map_err(|error| error.to_string())?;
     let session = projection.session;
     let armed_tracks = session
         .arrangement
@@ -177,8 +112,8 @@ fn start_recording_in_session(
         .iter()
         .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
-        crate::session::application::runtime_snapshot_for_recording(context.data_root, &session),
-        crate::runtime::model::ProjectionKey {
+        crate::session::adapter::runtime_snapshot_for_recording(context.data_root, &session),
+        riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
         },
@@ -196,6 +131,11 @@ fn start_recording_in_session(
         &directory,
         &session,
         &status,
+        context
+            .view_state
+            .lock()
+            .map_err(|error| format!("View state lock was poisoned: {error}"))?
+            .workspace,
         recording_session_id,
     ));
     if let Some(capture) = capture
@@ -217,6 +157,7 @@ fn build_startup_capture(
     directory: &Path,
     session: &CreativeSession,
     status: &AudioStatus,
+    workspace: Workspace,
     recording_session_id: Option<&str>,
 ) -> RecordingCapture {
     let mut capture = RecordingCapture::start(
@@ -236,7 +177,7 @@ fn build_startup_capture(
             .map(|channel| channel.name.clone())
     });
     capture.buffer_size = status.buffer_size;
-    capture.workspace = Some(format!("{:?}", session.workspace).to_lowercase());
+    capture.workspace = Some(format!("{workspace:?}").to_lowercase());
     capture.master_db = Some(session.settings.master_db);
     capture.count_in_beats = Some(session.settings.count_in_beats);
     let latency_ticks = status
@@ -364,9 +305,9 @@ struct NativeArrangeManifest {
 struct RegisteredTrackOutput {
     track_id: String,
     kind: String,
-    raw_asset_id: Option<crate::asset::AssetId>,
-    processed_asset_id: Option<crate::asset::AssetId>,
-    midi_asset_id: Option<crate::asset::AssetId>,
+    raw_asset_id: Option<AssetId>,
+    processed_asset_id: Option<AssetId>,
+    midi_asset_id: Option<AssetId>,
     raw_frames: u64,
     raw_sample_rate: u32,
     processed_frames: u64,
@@ -531,19 +472,19 @@ fn finalize_arrange_recording(
         return Err("Arrange recording manifest contains an invalid Native Clock range.".into());
     }
     let outputs = register_track_outputs(context.data_root, directory, &manifest)?;
-    let session_context = crate::session::application::SessionContext {
+    let session_context = crate::session::adapter::SessionContext {
+        core: context.core,
+        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
-        session_actor: context.session_actor,
         data_root: context.data_root,
-        session: context.session,
         safe_mode: context.safe_mode,
     };
     let mut session = context
-        .session
-        .lock()
+        .core
+        .snapshot()
         .map_err(|error| error.to_string())?
-        .clone();
+        .session;
     let base_session = session.clone();
     let timebase = session.arrangement.timebase;
     let sample_to_ticks = |samples: u64| {
@@ -681,8 +622,6 @@ fn finalize_arrange_recording(
                     source_end_sample: segment.file_end_sample,
                     raw_audio: None,
                     processed_audio: None,
-                    raw_audio_asset_id: None,
-                    processed_audio_asset_id: None,
                     midi_asset_id: Some(midi_asset_id.clone()),
                 });
                 attach_take_to_pass(&mut session.arrangement, &pass_ids[index], take_id.clone())?;
@@ -830,8 +769,6 @@ fn finalize_arrange_recording(
                 source_end_sample: source_end,
                 raw_audio,
                 processed_audio,
-                raw_audio_asset_id: None,
-                processed_audio_asset_id: None,
                 midi_asset_id: output.midi_asset_id.clone(),
             };
             session.arrangement.takes.push(take);
@@ -933,21 +870,14 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::application::commit_merged_session(
-        context.session_actor,
-        context.data_root,
-        context.session,
-        &base_session,
-        session,
-        merge_recording_session,
-    )?;
-    crate::session::application::sync_arrangement_runtime(&session_context)
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
+    crate::session::adapter::sync_arrangement_runtime(&session_context)
         .map(|_| ())
         .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
 }
 
 fn next_recording_pass_ordinal(
-    arrangement: &crate::session::Arrangement,
+    arrangement: &riffra_core::Arrangement,
     recording_session_id: &str,
 ) -> u32 {
     arrangement
@@ -982,7 +912,7 @@ fn validate_capture_segments(segments: &[NativeCaptureSegment]) -> Result<(), St
 }
 
 fn attach_take_to_pass(
-    arrangement: &mut crate::session::Arrangement,
+    arrangement: &mut riffra_core::Arrangement,
     pass_id: &str,
     take_id: String,
 ) -> Result<(), String> {
@@ -999,11 +929,7 @@ fn attach_take_to_pass(
 /// Registers each recording product (raw / processed / MIDI) as a canonical
 /// Asset, then stores the Asset IDs back into the take manifest so the
 /// RecordingCapture is the authoritative reference.
-type RecordingOutputs = (
-    Option<crate::asset::AssetId>,
-    Option<crate::asset::AssetId>,
-    Option<crate::asset::AssetId>,
-);
+type RecordingOutputs = (Option<AssetId>, Option<AssetId>, Option<AssetId>);
 
 fn register_recording_outputs(
     data_root: &Path,
@@ -1100,7 +1026,7 @@ fn parse_recorded_midi(
     path: &Path,
     track_id: &str,
     start_tick: TimelineTick,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
 ) -> Result<MidiClip, String> {
     let file = load_recorded_midi(path)?;
     Ok(midi_clip_from_recorded_file(
@@ -1112,7 +1038,7 @@ fn midi_clip_from_recorded_file(
     file: &RecordedMidiFile,
     track_id: &str,
     start_tick: TimelineTick,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
 ) -> MidiClip {
     let mut notes = Vec::new();
     let mut events = Vec::new();
@@ -1223,7 +1149,7 @@ fn recording_segments(
     start_tick: TimelineTick,
     duration_ticks: u64,
     loop_recording: bool,
-    loop_range: crate::session::TimelineLoopRange,
+    loop_range: riffra_core::TimelineLoopRange,
 ) -> Vec<RecordingSegment> {
     if !loop_recording || !loop_range.enabled || loop_range.end_tick.0 <= loop_range.start_tick.0 {
         return vec![RecordingSegment {
@@ -1259,7 +1185,7 @@ fn slice_recorded_midi(
     source: &MidiClip,
     track_id: &str,
     segment: RecordingSegment,
-    asset_id: Option<crate::asset::AssetId>,
+    asset_id: Option<AssetId>,
     clip_id: String,
 ) -> MidiClip {
     let notes = source
@@ -1313,7 +1239,7 @@ fn slice_recorded_midi(
 pub(crate) fn midi_clip_for_take(
     data_root: &Path,
     take: &RecordingTakeRecord,
-    timebase: crate::session::ProjectTimebase,
+    timebase: riffra_core::ProjectTimebase,
     clip_id: String,
 ) -> Result<MidiClip, String> {
     let asset_id = take
@@ -1355,11 +1281,7 @@ pub(crate) fn midi_clip_for_take(
 fn place_recording_on_timeline(
     context: &RecordingContext<'_>,
     directory: &Path,
-    outputs: (
-        Option<crate::asset::AssetId>,
-        Option<crate::asset::AssetId>,
-        Option<crate::asset::AssetId>,
-    ),
+    outputs: (Option<AssetId>, Option<AssetId>, Option<AssetId>),
 ) -> Result<(), String> {
     let (raw_asset_id, processed_asset_id, midi_asset_id) = outputs;
     let listed = crate::recording::list(context.data_root, None)?
@@ -1373,19 +1295,19 @@ fn place_recording_on_timeline(
     if armed_track_ids.is_empty() {
         return Ok(());
     }
-    let session_context = crate::session::application::SessionContext {
+    let session_context = crate::session::adapter::SessionContext {
+        core: context.core,
+        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
-        session_actor: context.session_actor,
         data_root: context.data_root,
-        session: context.session,
         safe_mode: context.safe_mode,
     };
     let mut session = context
-        .session
-        .lock()
+        .core
+        .snapshot()
         .map_err(|error| error.to_string())?
-        .clone();
+        .session;
     let base_session = session.clone();
     let start_tick = listed
         .as_ref()
@@ -1530,11 +1452,11 @@ fn place_recording_on_timeline(
                     sample_rate,
                     source_end - source_start,
                 );
-                clip.source_range = crate::session::FrameRange {
+                clip.source_range = riffra_core::FrameRange {
                     start: source_start,
                     end: source_end,
                 };
-                clip.timeline_duration = crate::session::FrameDuration {
+                clip.timeline_duration = riffra_core::FrameDuration {
                     frames: source_end - source_start,
                     sample_rate,
                 };
@@ -1594,8 +1516,6 @@ fn place_recording_on_timeline(
                             .unwrap_or(0),
                     })
                 }),
-                raw_audio_asset_id: None,
-                processed_audio_asset_id: None,
                 midi_asset_id: midi_asset_id.clone(),
             });
             attach_take_to_pass(&mut session.arrangement, &pass_id, take_id)?;
@@ -1679,15 +1599,8 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::application::commit_merged_session(
-        context.session_actor,
-        context.data_root,
-        context.session,
-        &base_session,
-        session,
-        merge_recording_session,
-    )?;
-    crate::session::application::sync_arrangement_runtime(&session_context).map_err(|error| {
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
+    crate::session::adapter::sync_arrangement_runtime(&session_context).map_err(|error| {
         format!("Recorded Timeline clip was saved but runtime sync failed: {error}")
     })?;
     Ok(())
@@ -1780,7 +1693,7 @@ mod tests {
     use super::*;
     use crate::native_audio::AudioSupervisor;
     use crate::runtime::RuntimeReconciler;
-    use crate::session::CreativeSession;
+    use riffra_core::CreativeSession;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1815,28 +1728,36 @@ mod tests {
 
     fn context_for<'a>(
         data_root: &'a Path,
-        session: &'a Mutex<CreativeSession>,
         audio: &'a AudioSupervisor,
         runtime: &'a RuntimeReconciler<AudioSupervisor>,
         safe_mode: bool,
     ) -> RecordingContext<'a> {
-        static TEST_SESSION_ACTOR: OnceLock<SessionActor> = OnceLock::new();
+        static TEST_CORE: OnceLock<AppCore<AudioSupervisor>> = OnceLock::new();
+        static TEST_VIEW_STATE: OnceLock<Mutex<DesktopViewState>> = OnceLock::new();
         RecordingContext {
+            core: TEST_CORE.get_or_init(|| {
+                AppCore::new(
+                    PathBuf::new(),
+                    CreativeSession::new(0),
+                    AudioSupervisor::offline("test"),
+                    false,
+                    false,
+                )
+            }),
+            view_state: TEST_VIEW_STATE.get_or_init(Default::default),
             audio,
             runtime,
-            session_actor: TEST_SESSION_ACTOR.get_or_init(SessionActor::default),
             data_root,
-            session,
             safe_mode,
         }
     }
 
     #[test]
     fn recording_merge_preserves_unrelated_session_edits() {
+        let root = temp_root("recording-merge");
+        let storage = crate::storage::SessionStore::new(&root);
+        storage.ensure_layout().unwrap();
         let base = CreativeSession::new(1);
-        let mut current = base.clone();
-        current.settings.note = "edited while recording was processing".into();
-
         let mut candidate = base.clone();
         candidate
             .arrangement
@@ -1847,8 +1768,23 @@ mod tests {
                 track_slots: Vec::new(),
                 pass_ids: Vec::new(),
             });
-
-        let merged = merge_recording_session(&current, &base, candidate);
+        let core = AppCore::new(
+            root.clone(),
+            base.clone(),
+            AudioSupervisor::offline("test"),
+            false,
+            true,
+        );
+        core.application(&storage)
+            .update_session_settings(riffra_core::application::SessionSettingsPatch {
+                note: Some("edited while recording was processing".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let merged = core
+            .application(&storage)
+            .commit_recording(&base, candidate)
+            .unwrap();
         assert_eq!(
             merged.settings.note,
             "edited while recording was processing"
@@ -1860,19 +1796,19 @@ mod tests {
                 .iter()
                 .any(|recording| recording.id == "recording-session:new")
         );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn rename_relocates_take_and_updates_library_and_asset() {
         let root = temp_root("rename");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
         // Relocation requires the Library Read Model row to already exist, so
         // sync the Inbox before any rename/archive/promote just like production.
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &session, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, &runtime, false);
         let new_id = rename_recording(&ctx, &id, "renamed").unwrap();
         assert!(new_id.ends_with("renamed"));
         assert!(root.join("recordings/inbox/renamed").is_dir());
@@ -1883,11 +1819,10 @@ mod tests {
     #[test]
     fn delete_removes_take_and_library_rows() {
         let root = temp_root("delete");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &session, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, &runtime, false);
         delete_recording(&ctx, &id).unwrap();
         assert!(!root.join("recordings/inbox/take-a").exists());
         let _ = fs::remove_dir_all(root);
@@ -1896,12 +1831,11 @@ mod tests {
     #[test]
     fn archive_and_promote_relocate_out_of_inbox() {
         let root = temp_root("relocate");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let archive_id = seed_take(&root, "take-archive", b"a");
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &session, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, &runtime, false);
         let _ = archive_recording(&ctx, &archive_id).unwrap();
         assert!(root.join("recordings/archive/take-archive").is_dir());
         let _ = fs::remove_dir_all(root);
@@ -1910,10 +1844,9 @@ mod tests {
     #[test]
     fn safe_mode_blocks_start_recording() {
         let root = temp_root("safe");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
-        let ctx = context_for(&root, &session, &audio, &runtime, true);
+        let ctx = context_for(&root, &audio, &runtime, true);
         let error = start_recording(&ctx).unwrap_err();
         assert!(error.contains("Safe Mode"));
         let _ = fs::remove_dir_all(root);
@@ -1925,7 +1858,7 @@ mod tests {
             TimelineTick(0),
             2_400,
             true,
-            crate::session::TimelineLoopRange {
+            riffra_core::TimelineLoopRange {
                 enabled: true,
                 start_tick: TimelineTick(0),
                 end_tick: TimelineTick(960),
@@ -1940,7 +1873,7 @@ mod tests {
 
     #[test]
     fn record_another_take_continues_pass_ordinals_only_within_its_session() {
-        let mut arrangement = crate::session::Arrangement::default();
+        let mut arrangement = riffra_core::Arrangement::default();
         for ordinal in 1..=3 {
             arrangement.recording_passes.push(RecordingPassRecord {
                 id: format!("pass:a:{ordinal}"),
@@ -1974,7 +1907,7 @@ mod tests {
 
     #[test]
     fn repeated_record_another_take_attaches_audio_and_midi_to_the_new_pass() {
-        let mut arrangement = crate::session::Arrangement::default();
+        let mut arrangement = riffra_core::Arrangement::default();
         arrangement.recording_passes.push(RecordingPassRecord {
             id: "pass:old".into(),
             session_id: "recording:shared".into(),
@@ -2011,8 +1944,6 @@ mod tests {
                     source_end_sample: 48_000,
                     raw_audio: None,
                     processed_audio: None,
-                    raw_audio_asset_id: None,
-                    processed_audio_asset_id: None,
                     midi_asset_id: None,
                 });
                 attach_take_to_pass(&mut arrangement, &pass_id, take_id).unwrap();
@@ -2151,15 +2082,13 @@ mod tests {
             source_end_sample: 48_000,
             raw_audio: None,
             processed_audio: None,
-            raw_audio_asset_id: None,
-            processed_audio_asset_id: None,
             midi_asset_id: Some(asset_id),
         };
 
         let clip = midi_clip_for_take(
             &root,
             &take,
-            crate::session::ProjectTimebase::default(),
+            riffra_core::ProjectTimebase::default(),
             "midi-clip:slot".into(),
         )
         .unwrap();
@@ -2175,11 +2104,10 @@ mod tests {
     #[test]
     fn list_syncs_library_read_model() {
         let root = temp_root("list");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &session, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, &runtime, false);
         let recordings = list_recordings(&ctx, None).unwrap();
         assert_eq!(recordings.len(), 1);
         let _ = fs::remove_dir_all(root);
@@ -2188,13 +2116,12 @@ mod tests {
     #[test]
     fn detect_duplicates_returns_groups() {
         let root = temp_root("dupes");
-        let session = Mutex::new(CreativeSession::new(now_ms()));
         let audio = AudioSupervisor::offline("test");
         let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"identical");
         let _ = seed_take(&root, "take-b", b"identical");
         let _ = seed_take(&root, "take-c", b"different");
-        let ctx = context_for(&root, &session, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, &runtime, false);
         let groups = detect_duplicate_recordings(&ctx).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);

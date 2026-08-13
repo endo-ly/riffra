@@ -1,5 +1,6 @@
 use crate::analysis::{decode_sample, parse_wav};
-use crate::asset::{self, AssetId, AssetKind, ProvenanceOperation};
+use crate::asset;
+use riffra_core::{AssetId, AssetKind, ProvenanceOperation};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -277,7 +278,7 @@ mod tests {
             AssetKind::Audio,
             "Stereo",
             &source.to_string_lossy(),
-            Some(crate::asset::Provenance::imported()),
+            Some(riffra_core::Provenance::imported()),
         )
         .unwrap();
         let result = separate_asset_with_cancel(&root, &source_asset_id, 42, None).unwrap();

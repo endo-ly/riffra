@@ -6,9 +6,10 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from '@/components';
 import {
-  defaultSession,
+  defaultDesktopSession as defaultSession,
   toAssetId,
   type CreativeSession,
+  type DesktopSessionView,
   type Track,
   type TransportStatus,
 } from '@/lib/domain';
@@ -25,7 +26,7 @@ function Harness({
   initialSession,
 }: {
   api: FakeNativeApi;
-  initialSession?: CreativeSession;
+  initialSession?: DesktopSessionView;
 }) {
   const initial = initialSession ?? defaultSession();
   initial.workspace = 'arrange';

@@ -1,8 +1,9 @@
 use crate::{
-    asset::{self, AssetId},
+    asset,
     recording::{DropoutInformation, RecordingCapture, RecordingCaptureStatus},
     storage::now_ms,
 };
+use riffra_core::AssetId;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -592,8 +593,8 @@ pub fn save_asset_ids(
 }
 
 /// Persists the capture identity and session snapshot at recording start. The
-/// native writer remains responsible for the audio files and legacy manifest
-/// fields; this nested capture is the canonical recording-event representation.
+/// native writer remains responsible for the audio files and transport
+/// manifest fields; this nested capture is the canonical recording-event representation.
 pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::io::Result<()> {
     let manifest_path = directory.join("manifest.json");
     let payload = fs::read(&manifest_path)?;
@@ -793,7 +794,8 @@ pub fn detect_duplicates(data_root: &Path) -> Result<Vec<Vec<String>>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::{self, AssetKind, Provenance};
+    use crate::asset;
+    use riffra_core::{AssetKind, Provenance};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1173,8 +1175,8 @@ mod tests {
             take.join("manifest.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "state": "completed",
-                "rawFile": "legacy-raw.wav",
-                "processedFile": "legacy-processed.wav",
+                "rawFile": "raw.wav",
+                "processedFile": "processed.wav",
                 "sampleRate": 44_100,
                 "samplesWritten": 44_100,
                 "capture": capture,
@@ -1190,24 +1192,6 @@ mod tests {
         assert_eq!(results[0].raw_asset_id, Some(raw_id));
         assert_eq!(results[0].processed_asset_id, Some(processed_id));
         assert_eq!(results[0].processed_path, Some(expected_processed_path));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn ignores_a_legacy_provenance_json_sidecar() {
-        let root = temp_root();
-        let take = root.join("recordings/inbox/take-provenance");
-        fs::create_dir_all(&take).unwrap();
-        fs::write(take.join("manifest.json"), br#"{"state":"completed"}"#).unwrap();
-        fs::write(
-            take.join("provenance.json"),
-            br#"{"recordedAtMs":42,"sessionId":"scratch-42","workspace":"arrange","masterDb":-18.0,"countInBeats":0,"source":"raw DI"}"#,
-        )
-        .unwrap();
-        // A manifest with no canonical capture is not a current-format take, so
-        // it must not be indexed through provenance.json (which no longer exists).
-        let results = list(&root, Some("scratch-42")).unwrap();
-        assert!(results.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

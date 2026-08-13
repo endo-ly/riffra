@@ -5,12 +5,25 @@
 //! process-management, audio-device, or operating-system integration.
 
 mod app;
-pub mod asset;
+pub mod application;
+pub mod domain;
 mod errors;
-pub mod rack;
-mod runtime;
-pub mod session;
+pub mod ports;
 
-pub use app::AppCore;
-pub use errors::DomainError;
-pub use runtime::{AudioRuntime, OfflineRenderRequest};
+pub use app::{AppCore, CanonicalSessionHandle, CanonicalSnapshot, HistoryState, PreparedSession};
+pub use domain::*;
+pub use errors::{ApplicationError, DomainError};
+pub use ports::{
+    OfflineRenderRequest, PortError, ProjectionKey, RenderRuntime, RuntimeProjection,
+    RuntimeProjectionRequest, SessionStorage,
+};
+
+impl<A> AppCore<A> {
+    /// Creates an application facade over the canonical Core state.
+    pub fn application<'a, S: SessionStorage + ?Sized>(
+        &'a self,
+        storage: &'a S,
+    ) -> application::Application<'a, A, S> {
+        application::Application::new(self, storage)
+    }
+}

@@ -27,7 +27,7 @@ Riffra は現在 Windows 向けの Tauri + React + C++/JUCE sidecar 構成。AI 
 
 ### Rust 側の分離
 
-Rust のアプリケーションロジックを `riffra-core` に切り出して、デスクトップ版と CLI 版で共有する。デスクトップ版では Tauri と React を使う。ヘッドレス CLI ではこれらを使わない。
+制作状態、編集規則、履歴、外部境界の契約は`riffra-core`に置き、デスクトップ版とCLI版で共有する。デスクトップ版はTauri AdapterとReactを組み合わせ、ヘッドレスCLIは同じApplication入口を別のAdapterから利用する。
 
 ```text
 Cargo.toml                     # Rust workspace
@@ -42,7 +42,7 @@ native/
   audio-engine/                # CMake / C++
 ```
 
-`riffra-core`はAsset、Rack、`CreativeSession`の正準モデルと`AppCore<A>`を持つ。オフラインレンダー要求は`AudioRuntime` portで定義し、`riffra-render-worker`が独立workerのprocess adapterとして実装する。
+`riffra-core`はDomain、Application、Portsで構成する。`AppCore`がCreativeSessionと履歴を所有し、ホストはStorage、Runtime Projection、Renderの各Portを実装する。オフラインレンダーは`riffra-render-worker`をプロセスAdapterとして利用する。
 
 デスクトップホストとCLIホストは同じ`RenderWorker`を利用する。リアルタイム音声の`AudioSupervisor`、オーディオ設定、バックグラウンドジョブはデスクトップホスト側に置く。
 
@@ -149,18 +149,18 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 まず実装するコマンド例です。プロトコルの詳細は「プロトコル設計」を参照してください。
 
-| カテゴリ     | 書き込み                                                                                  | 読み出し                                 |
-| ------------ | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
-| プロジェクト | `createProject`, `loadProject`, `saveProject`                                             | `getSession`                             |
-| トラック     | `addTrack`, `removeTrack`, `updateTrack`                                                  | `listTracks`, `getTrack`, `getRackChain` |
-| クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip`                       | `listClips`, `getClip`                   |
-| 音符         | `updateNote`（ピッチ、ベロシティ、CC、タイミング）                                        | `getNotes`                               |
-| 再生         | `play`, `stop`, `seek`                                                                    | `getTransportStatus`                     |
-| 録音         | `startArrangeRecording`, `stopArrangeRecording`                                             | —                                        |
-| 音源         | `loadInstrument`, `setInstrumentParameter`                                                | `listInstruments`, `getInstrument`       |
-| 書き出し     | `render`, `cancelJob`                                                                     | `getJobs`, `getJob`                      |
-| 状態         | —                                                                                         | `getStatus`                              |
-| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`                                    | —                                        |
+| カテゴリ     | 書き込み                                                            | 読み出し                                 |
+| ------------ | ------------------------------------------------------------------- | ---------------------------------------- |
+| プロジェクト | `createProject`, `loadProject`, `saveProject`                       | `getSession`                             |
+| トラック     | `addTrack`, `removeTrack`, `updateTrack`                            | `listTracks`, `getTrack`, `getRackChain` |
+| クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip` | `listClips`, `getClip`                   |
+| 音符         | `updateNote`（ピッチ、ベロシティ、CC、タイミング）                  | `getNotes`                               |
+| 再生         | `play`, `stop`, `seek`                                              | `getTransportStatus`                     |
+| 録音         | `startArrangeRecording`, `stopArrangeRecording`                     | —                                        |
+| 音源         | `loadInstrument`, `setInstrumentParameter`                          | `listInstruments`, `getInstrument`       |
+| 書き出し     | `render`, `cancelJob`                                               | `getJobs`, `getJob`                      |
+| 状態         | —                                                                   | `getStatus`                              |
+| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`           | —                                        |
 
 ---
 
@@ -203,12 +203,12 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 ### 編集の安全
 
-| 機能             | コマンド                                        | 内容                                             |
-| ---------------- | ----------------------------------------------- | ------------------------------------------------ |
-| 原子性           | 全コマンド                                      | 1コマンドは1つの原子操作。失敗時に状態が壊れない |
-| 取り消し         | `undo`, `redo`                                  | セッションの操作履歴を戻す、やり直す             |
-| トランザクション | `beginEdit`, `commitEdit`, `rollbackEdit`       | 複数コマンドの編集をまとめて適用または破棄する   |
-| 冪等性           | リクエスト側                                    | 処理済み`requestId`の再送は無視する。再送に安全  |
+| 機能             | コマンド                                  | 内容                                             |
+| ---------------- | ----------------------------------------- | ------------------------------------------------ |
+| 原子性           | 全コマンド                                | 1コマンドは1つの原子操作。失敗時に状態が壊れない |
+| 取り消し         | `undo`, `redo`                            | セッションの操作履歴を戻す、やり直す             |
+| トランザクション | `beginEdit`, `commitEdit`, `rollbackEdit` | 複数コマンドの編集をまとめて適用または破棄する   |
+| 冪等性           | リクエスト側                              | 処理済み`requestId`の再送は無視する。再送に安全  |
 
 ### 外部エンジンとの境界
 

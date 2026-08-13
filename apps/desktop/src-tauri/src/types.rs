@@ -7,7 +7,6 @@
 //! from the freshly generated output, so the two sides cannot drift.
 
 use crate::analysis::AudioAnalysis;
-use crate::asset::AssetId;
 use crate::audio_preferences::AudioDriverConfig;
 use crate::jobs::{BackgroundJobStatus, JobKind, JobState};
 use crate::library::LibraryAsset;
@@ -19,21 +18,21 @@ use crate::model::{
     SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
+use crate::presentation::{DesignContext, DesignTool, DesktopViewState, Workspace};
 use crate::projects::ProjectExport;
-use crate::rack::{DeviceKind, RackDevice, RackInstance, RackMacro};
 use crate::recording::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
 use crate::render::{RenderOptions, RenderRange, RenderResult};
 use crate::separation::SeparationResult;
-use crate::session::{
-    AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
+use riffra_core::{
+    AiChangeSet, AiPermission, Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch,
     AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, DesignContext, DesignTool, FrameDuration, FrameRange, Marker, MidiClip,
+    CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
     MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
-    ProjectTimebase, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
-    RecordingTakeRecord, SampleInstrumentState, SamplePad, SessionSettings, TimelineLoopRange,
-    Track, TrackKind, Workspace,
+    ProjectTimebase, RackDevice, RackInstance, RackMacro, RecordingPassRecord,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState,
+    SamplePad, SessionSettings, TimelineLoopRange, Track, TrackKind,
 };
 use ts_rs::{Config, TS};
 
@@ -59,6 +58,7 @@ fn export_types() {
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
     DesignContext::export_all(&cfg).expect("DesignContext bindings");
+    DesktopViewState::export_all(&cfg).expect("DesktopViewState bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
@@ -86,6 +86,7 @@ fn export_types() {
     AiChangeSet::export_all(&cfg).expect("AiChangeSet bindings");
     SessionSettings::export_all(&cfg).expect("SessionSettings bindings");
     CreativeSession::export_all(&cfg).expect("CreativeSession bindings");
+    HistoryState::export_all(&cfg).expect("HistoryState bindings");
     AudioState::export_all(&cfg).expect("AudioState bindings");
     AudioAccessMode::export_all(&cfg).expect("AudioAccessMode bindings");
     AudioDevicePairing::export_all(&cfg).expect("AudioDevicePairing bindings");

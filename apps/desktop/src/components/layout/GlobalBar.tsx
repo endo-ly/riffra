@@ -1,15 +1,14 @@
-import type { AudioStatus, CreativeSession, Workspace } from '@/lib/domain';
+import type { AudioStatus, DesktopSessionView, HistoryState, Workspace } from '@/lib/domain';
 import clsx from 'clsx';
 import { workspaces } from '@/constants';
 import { Icon } from '../shared/ui';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
-  session: CreativeSession;
+  session: DesktopSessionView;
   audio: AudioStatus;
   isMuted: boolean;
-  undoStack: unknown[];
-  redoStack: unknown[];
+  historyState: HistoryState;
   onUndo: () => void;
   onRedo: () => void;
   onSwitchWorkspace: (workspace: Workspace) => void;
@@ -25,8 +24,7 @@ export function GlobalBar(props: GlobalBarProps) {
     session,
     audio,
     isMuted,
-    undoStack,
-    redoStack,
+    historyState,
     onUndo,
     onRedo,
     onSwitchWorkspace,
@@ -56,7 +54,7 @@ export function GlobalBar(props: GlobalBarProps) {
         <button
           aria-label="Undo"
           title="Undo (Ctrl+Z)"
-          disabled={undoStack.length === 0}
+          disabled={!historyState.canUndo}
           onClick={onUndo}
         >
           ↶
@@ -64,7 +62,7 @@ export function GlobalBar(props: GlobalBarProps) {
         <button
           aria-label="Redo"
           title="Redo (Ctrl+Y)"
-          disabled={redoStack.length === 0}
+          disabled={!historyState.canRedo}
           onClick={onRedo}
         >
           ↷

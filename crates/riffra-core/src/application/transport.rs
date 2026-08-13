@@ -1,16 +1,16 @@
-use crate::runtime::model::ProjectionKey;
+use crate::ports::ProjectionKey;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct TransportSequence(u64);
+pub struct TransportSequence(u64);
 
 impl TransportSequence {
-    pub(crate) const fn new(value: u64) -> Self {
+    pub const fn new(value: u64) -> Self {
         Self(value)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TransportIntent {
+pub enum TransportIntent {
     Stopped,
     PlayRequested {
         sequence: TransportSequence,
@@ -19,19 +19,19 @@ pub(crate) enum TransportIntent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PlayDecision {
+pub enum PlayDecision {
     Accepted { sequence: TransportSequence },
     Rejected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StopDecision {
+pub enum StopDecision {
     Accepted,
     Rejected,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct TransportController {
+pub struct TransportController {
     sequence: TransportSequence,
     intent: TransportIntent,
 }
@@ -46,7 +46,7 @@ impl Default for TransportController {
 }
 
 impl TransportController {
-    pub(crate) fn request_play(
+    pub fn request_play(
         &mut self,
         sequence: u64,
         required_projection: Option<ProjectionKey>,
@@ -63,7 +63,7 @@ impl TransportController {
         PlayDecision::Accepted { sequence }
     }
 
-    pub(crate) fn request_stop(&mut self, sequence: u64) -> StopDecision {
+    pub fn request_stop(&mut self, sequence: u64) -> StopDecision {
         let sequence = TransportSequence::new(sequence);
         if sequence < self.sequence {
             return StopDecision::Rejected;
@@ -73,10 +73,7 @@ impl TransportController {
         StopDecision::Accepted
     }
 
-    pub(crate) fn projection_activated(
-        &self,
-        projection: ProjectionKey,
-    ) -> Option<TransportSequence> {
+    pub fn projection_activated(&self, projection: ProjectionKey) -> Option<TransportSequence> {
         match self.intent {
             TransportIntent::PlayRequested {
                 sequence,
@@ -88,7 +85,7 @@ impl TransportController {
         }
     }
 
-    pub(crate) fn can_execute_play(
+    pub fn can_execute_play(
         &self,
         sequence: TransportSequence,
         active_projection: Option<ProjectionKey>,
@@ -105,7 +102,7 @@ impl TransportController {
             && required_projection.is_none_or(|required| active_projection == Some(required))
     }
 
-    pub(crate) fn record_play_failure(&mut self, sequence: TransportSequence) -> bool {
+    pub fn record_play_failure(&mut self, sequence: TransportSequence) -> bool {
         if self.sequence != sequence
             || !matches!(
                 self.intent,
@@ -121,7 +118,7 @@ impl TransportController {
         true
     }
 
-    pub(crate) fn is_play_requested(&self, sequence: TransportSequence) -> bool {
+    pub fn is_play_requested(&self, sequence: TransportSequence) -> bool {
         matches!(
             self.intent,
             TransportIntent::PlayRequested {

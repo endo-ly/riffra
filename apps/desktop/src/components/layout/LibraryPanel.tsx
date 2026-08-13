@@ -200,14 +200,14 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                     disabled={plugin.scanState !== 'validated'}
                     title={
                       plugin.scanState === 'validated'
-                          ? plugins.selectedTrack
-                            ? `${
-                                plugins.selectedTrack.kind === 'instrument' &&
-                                plugins.selectedTrack.instrument
-                                  ? 'Replace instrument with'
-                                  : 'Add'
-                              } ${plugin.name} on ${plugins.selectedTrack.name}`
-                            : `Select a Track before adding ${plugin.name}`
+                        ? plugins.selectedTrack
+                          ? `${
+                              plugins.selectedTrack.kind === 'instrument' &&
+                              plugins.selectedTrack.instrument
+                                ? 'Replace instrument with'
+                                : 'Add'
+                            } ${plugin.name} on ${plugins.selectedTrack.name}`
+                          : `Select a Track before adding ${plugin.name}`
                         : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
                     }
                   >

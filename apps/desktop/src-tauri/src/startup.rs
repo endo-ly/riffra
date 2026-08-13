@@ -3,9 +3,9 @@ use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::{
     AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
 };
-use crate::session::Workspace;
-use crate::session::actor::CanonicalProjection;
-use crate::session::application::{self as session_application, SessionContext};
+use crate::presentation::Workspace;
+use crate::session::adapter::{self as session_adapter, SessionContext};
+use riffra_core::CanonicalSnapshot;
 use std::time::{Duration, Instant};
 
 const STARTUP_SAFETY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -144,8 +144,8 @@ impl StartupAudioPort for AudioSupervisor {
 /// separate Runtime projection and may remain passive when a plugin fails.
 pub(crate) fn initialize_audio_safety(state: &AppState) -> Result<AudioStatus, String> {
     let master_gain_db = state
-        .session_actor
-        .capture_projection(state.core.session())
+        .core
+        .snapshot()
         .map_err(|error| format!("canonical session could not be captured: {error}"))?
         .session
         .settings
@@ -364,27 +364,22 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         ));
     }
 
-    let target = state
-        .session_actor
-        .capture_projection(state.core.session())
-        .map_err(|error| {
-            StartupRuntimeError::Feature(format!(
-                "canonical session could not be captured: {error}"
-            ))
-        })?;
+    let target = state.core.snapshot().map_err(|error| {
+        StartupRuntimeError::Feature(format!("canonical session could not be captured: {error}"))
+    })?;
     let mut failures = Vec::new();
 
     let session_context = SessionContext {
+        core: &state.core,
+        view_state: &state.view_state,
         audio: state.core.audio(),
         runtime: &state.runtime,
-        session_actor: &state.session_actor,
         data_root: state.core.data_root(),
-        session: state.core.session(),
         safe_mode: false,
     };
-    match session_application::restore_sample_pads(&session_context) {
-        Ok(session_application::SamplePadRestoreOutcome::Restored(_)) => {}
-        Ok(session_application::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
+    match session_adapter::restore_sample_pads(&session_context) {
+        Ok(session_adapter::SamplePadRestoreOutcome::Restored(_)) => {}
+        Ok(session_adapter::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
             tracing::warn!(%warning, "Sample Pads were disabled during startup restoration");
         }
         Err(error) => failures.push(format!("sample pad restoration failed: {error}")),
@@ -399,9 +394,16 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         return Err(StartupRuntimeError::TargetChanged);
     }
 
-    match target.session.workspace {
+    let workspace = state
+        .view_state
+        .lock()
+        .map_err(|error| {
+            StartupRuntimeError::Feature(format!("view state lock was poisoned: {error}"))
+        })?
+        .workspace;
+    match workspace {
         Workspace::Arrange => {
-            if let Err(error) = session_application::sync_arrangement_runtime(&session_context) {
+            if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
                 failures.push(format!("arrange runtime restoration failed: {error}"));
             }
         }
@@ -441,23 +443,29 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
 fn apply_startup_processing_mode(
     state: &AppState,
     generation: u64,
-    target: &CanonicalProjection,
+    target: &CanonicalSnapshot,
     fallback_to_passive: bool,
 ) -> Result<(), StartupRuntimeError> {
     let _workspace_runtime_gate = state.workspace_runtime_gate.lock().map_err(|error| {
         StartupRuntimeError::Feature(format!("workspace runtime gate was poisoned: {error}"))
     })?;
     let current = state
-        .session_actor
-        .capture_projection(state.core.session())
-        .map_err(StartupRuntimeError::Feature)?;
-    if current.sequence != target.sequence || current.session.workspace != target.session.workspace
-    {
+        .core
+        .snapshot()
+        .map_err(|error| StartupRuntimeError::Feature(error.to_string()))?;
+    if current.sequence != target.sequence {
         return Err(StartupRuntimeError::TargetChanged);
     }
 
     let mode = if fallback_to_passive {
-        workspace_processing_mode(current.session.workspace)
+        let workspace = state
+            .view_state
+            .lock()
+            .map_err(|error| {
+                StartupRuntimeError::Feature(format!("view state lock was poisoned: {error}"))
+            })?
+            .workspace;
+        workspace_processing_mode(workspace)
     } else {
         "passive"
     };
@@ -544,14 +552,11 @@ fn sidecar_transitioned(state: &AppState, generation: u64) -> bool {
         || state.core.audio().sidecar_terminated(generation)
 }
 
-fn startup_target_is_current(state: &AppState, target: &CanonicalProjection) -> bool {
+fn startup_target_is_current(state: &AppState, target: &CanonicalSnapshot) -> bool {
     state
-        .session_actor
-        .capture_projection(state.core.session())
-        .map(|current| {
-            current.sequence == target.sequence
-                && current.session.workspace == target.session.workspace
-        })
+        .core
+        .snapshot()
+        .map(|current| current.sequence == target.sequence)
         .unwrap_or(false)
 }
 

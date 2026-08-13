@@ -1,6 +1,6 @@
 //! Process adapter for device-independent Riffra offline rendering.
 
-use riffra_core::{AudioRuntime, OfflineRenderRequest};
+use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use serde_json::Value;
 use std::{
     io::Write,
@@ -119,7 +119,7 @@ impl RenderWorker {
     }
 }
 
-impl AudioRuntime for RenderWorker {
+impl RenderRuntime for RenderWorker {
     fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
         self.render(request).map_err(|error| error.to_string())
     }

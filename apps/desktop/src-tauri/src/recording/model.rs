@@ -1,7 +1,7 @@
 //! RecordingCapture domain model.
 //!
 //! A [`RecordingCapture`] represents one recording event. The recording itself
-//! is the *process*; its products are [`Asset`](crate::asset::Asset)s
+//! is the *process*; its products are [`Asset`](riffra_core::Asset)s
 //! (raw/processed audio, MIDI). Separating the capture from its products lets
 //! the domain reason about partial recovery without conflating it with the
 //! produced material.
@@ -9,8 +9,7 @@
 //! State transitions are defined here and only here. Terminal states
 //! (`Completed`, `Recoverable`, `Failed`) cannot return to `Recording`.
 
-use crate::asset::AssetId;
-use crate::errors::DomainError;
+use riffra_core::{AssetId, DomainError};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

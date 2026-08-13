@@ -1,12 +1,16 @@
-//! Session-to-Runtime Transport application operations.
+//! Desktop adapters from Core session and transport decisions to the runtime.
 
 use crate::asset;
 use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::NativeSamplePad;
-use crate::rack::DeviceKind;
+use crate::presentation::{DesktopViewState, Workspace};
+use crate::runtime::RuntimeReconciler;
 use crate::runtime::ports::RuntimeDriver;
 use crate::session::context::{SessionContext, lock_error};
-use crate::session::{CreativeSession, SamplePad, TimelineTick, Workspace};
+use riffra_core::{
+    CreativeSession, DeviceKind, PortError, RuntimeProjection, RuntimeProjectionRequest, SamplePad,
+    TimelineTick,
+};
 use std::path::Path;
 use std::time::Duration;
 
@@ -181,57 +185,67 @@ pub(crate) fn runtime_snapshot_for_recording(
     runtime_timeline_snapshot(data_root, session)
 }
 
-pub(crate) fn submit_canonical_projection_nonblocking<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    projection: crate::session::actor::CanonicalProjection,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    Ok(context.runtime.submit_nonblocking(
-        runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime::model::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        },
-    ))
+struct DesktopRuntimeProjection<'a, D: RuntimeDriver> {
+    data_root: &'a Path,
+    runtime: &'a RuntimeReconciler<D>,
+    wait_for_activation: bool,
 }
 
-/// Enqueues the canonical Session captured under the Actor for the Audio
-/// Runtime without blocking on the reconcile cycle. Session commands already
-/// own the Actor for their whole synchronous operation, so this path must use
-/// the non-reentrant, guard-aware capture method. The Runtime applies the
-/// latest projection as soon as an in-flight cycle completes; workflows that
-/// need the graph active before returning (playback, recording) use
-/// [`sync_arrangement_runtime`] instead.
+impl<D: RuntimeDriver> RuntimeProjection for DesktopRuntimeProjection<'_, D> {
+    fn project(&self, request: RuntimeProjectionRequest) -> Result<(), PortError> {
+        let key = riffra_core::ProjectionKey {
+            sequence: request.sequence(),
+            session_revision: request.session().arrangement.revision,
+        };
+        let snapshot = runtime_timeline_snapshot(self.data_root, request.session());
+        if self.wait_for_activation {
+            self.runtime
+                .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
+                .map(|_| ())
+                .map_err(|error| PortError::Runtime(error.to_string()))
+        } else {
+            self.runtime.submit_nonblocking(snapshot, key);
+            Ok(())
+        }
+    }
+}
+
+/// Enqueues the latest canonical Session for the Audio Runtime without
+/// blocking on the reconcile cycle. The Runtime applies the latest projection
+/// as soon as an in-flight cycle completes; workflows that need the graph
+/// active before returning use [`sync_arrangement_runtime`] instead.
 pub(crate) fn sync_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let projection = context
-        .session_actor
-        .capture_projection_while_held(context.session)?;
-    submit_canonical_projection_nonblocking(context, projection)
+    let projection = DesktopRuntimeProjection {
+        data_root: context.data_root,
+        runtime: context.runtime,
+        wait_for_activation: false,
+    };
+    let store = crate::storage::SessionStore::new(context.data_root);
+    context
+        .core
+        .application(&store)
+        .project_current(&projection)
+        .map_err(|error| error.to_string())?;
+    Ok(context.runtime.status())
 }
 
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let projection = context.session_actor.capture_projection(context.session)?;
-    apply_arrangement_projection(context, projection)
-}
-
-fn apply_arrangement_projection<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-    projection: crate::session::actor::CanonicalProjection,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
+    let projection = DesktopRuntimeProjection {
+        data_root: context.data_root,
+        runtime: context.runtime,
+        wait_for_activation: true,
+    };
+    let store = crate::storage::SessionStore::new(context.data_root);
     context
-        .runtime
-        .apply_and_wait(
-            runtime_timeline_snapshot(context.data_root, &projection.session),
-            crate::runtime::model::ProjectionKey {
-                sequence: projection.sequence,
-                session_revision: projection.session.arrangement.revision,
-            },
-            ARRANGEMENT_RUNTIME_TIMEOUT,
-        )
-        .map_err(String::from)
+        .core
+        .application(&store)
+        .project_current(&projection)
+        .map_err(|error| error.to_string())?;
+    Ok(context.runtime.status())
 }
 
 /// Prepares a proposed Arrangement graph before its Session becomes
@@ -242,7 +256,7 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
     candidate: &CreativeSession,
     expected_sequence: u64,
 ) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let current = context.session_actor.capture_projection(context.session)?;
+    let current = context.core.snapshot().map_err(|error| error.to_string())?;
     if current.sequence != expected_sequence {
         return Err("Canonical Session changed while the VST candidate was being built.".into());
     }
@@ -250,7 +264,7 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
         .runtime
         .apply_candidate_and_wait(
             runtime_timeline_snapshot(context.data_root, candidate),
-            crate::runtime::model::ProjectionKey {
+            riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
             },
@@ -271,7 +285,11 @@ pub(crate) fn restore_sample_pads(
             .map(SamplePadRestoreOutcome::Restored)
             .map_err(String::from);
     }
-    let session = context.session.lock().map_err(lock_error)?.clone();
+    let session = context
+        .core
+        .snapshot()
+        .map_err(|error| error.to_string())?
+        .session;
     let native_pads = match resolve_native_pads(
         context.data_root,
         &session.play_state.sample_instrument.pads,
@@ -328,20 +346,20 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
     // Playback is the boundary where an eventually-consistent projection is
     // no longer sufficient. Register the Play intent before waiting for the
     // graph so a concurrent Stop can cancel the pending start.
-    let projection = context.session_actor.capture_projection(context.session)?;
+    let projection = context.core.snapshot().map_err(|error| error.to_string())?;
     let played = context.runtime.apply_and_play_if(
         transport_sequence,
         runtime_timeline_snapshot(context.data_root, &projection.session),
-        crate::runtime::model::ProjectionKey {
+        riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
         },
         std::time::Duration::from_secs(30),
         || {
             context
-                .session
+                .view_state
                 .lock()
-                .map(|session| session.workspace == Workspace::Arrange)
+                .map(|view_state| view_state.workspace == Workspace::Arrange)
                 .unwrap_or(false)
         },
     )?;
@@ -380,24 +398,14 @@ pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result
 
 /// Returns the active workspace snapshot and updates the desired audio mode.
 ///
-/// Workspace navigation is UI state, not production content. Persisting it as
-/// a full Session commit made every tab click copy the current recovery
-/// generation, serialize the whole arrangement, fsync, and wait behind any
-/// unrelated edit. The frontend applies this snapshot optimistically; the
-/// in-memory Session also retains the latest workspace so the next real edit
-/// persists it, but navigation itself creates no recovery generation. A
-/// stalled audio process is deliberately unable to block this operation
-/// because mode delivery is best-effort and nonblocking.
+/// Workspace navigation updates only the desktop view state and sends a
+/// best-effort processing-mode request to the Audio Runtime.
 pub fn switch_workspace(
     context: &SessionContext<'_>,
     workspace: Workspace,
     transport_sequence: u64,
-) -> Result<CreativeSession, String> {
-    let session = {
-        let mut current = context.session.lock().map_err(lock_error)?;
-        current.workspace = workspace;
-        current.clone()
-    };
+) -> Result<DesktopViewState, String> {
+    context.view_state.lock().map_err(lock_error)?.workspace = workspace;
     if workspace != Workspace::Arrange
         && let Err(error) = context.runtime.stop_nonblocking(transport_sequence)
     {
@@ -407,10 +415,6 @@ pub fn switch_workspace(
             "Workspace snapshot returned, but stale Arrange transport could not be stopped."
         );
     }
-    // This is deliberately not a SessionActor commit: workspace is view state
-    // and has no effect on the arrangement projection sequence. Keeping the
-    // latest value in memory lets the next real production edit persist it,
-    // while avoiding a full JSON/recovery-generation/fsync cycle per click.
     let mode = workspace_processing_mode(workspace);
     if let Err(error) = context.audio.set_processing_mode_nonblocking(mode) {
         tracing::warn!(
@@ -419,7 +423,11 @@ pub fn switch_workspace(
             "Workspace snapshot returned, but the audio processing mode could not be sent; recovery will retry the desired mode."
         );
     }
-    Ok(session)
+    context
+        .view_state
+        .lock()
+        .map_err(lock_error)
+        .map(|view_state| view_state.clone())
 }
 
 fn workspace_processing_mode(workspace: Workspace) -> &'static str {
@@ -433,9 +441,7 @@ fn workspace_processing_mode(workspace: Workspace) -> &'static str {
 mod tests {
     use super::*;
     use crate::model::RecordingStatus;
-    use crate::rack::RackDevice;
-    use crate::session::Track;
-    use crate::session::actor::SessionActor;
+    use riffra_core::{RackDevice, Track};
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -444,25 +450,26 @@ mod tests {
             "riffra-workspace-navigation-{}",
             crate::storage::now_ms()
         ));
-        let session = Mutex::new(CreativeSession::new(1));
+        let session = CreativeSession::new(1);
         let audio = crate::native_audio::AudioSupervisor::offline("test");
         let runtime_driver = Arc::new(audio.clone());
         let runtime =
             Arc::new(crate::runtime::RuntimeReconciler::new(runtime_driver, None).unwrap());
-        let actor = SessionActor::default();
+        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
+        let view_state = Mutex::new(crate::presentation::DesktopViewState::default());
         let context = SessionContext {
+            core: &core,
+            view_state: &view_state,
             audio: &audio,
             runtime: runtime.as_ref(),
-            session_actor: &actor,
             data_root: &root,
-            session: &session,
             safe_mode: false,
         };
 
         let next = switch_workspace(&context, Workspace::Arrange, 1).unwrap();
 
         assert_eq!(next.workspace, Workspace::Arrange);
-        assert_eq!(session.lock().unwrap().workspace, Workspace::Arrange);
+        assert_eq!(view_state.lock().unwrap().workspace, Workspace::Arrange);
         assert!(!root.join("scratch").join("current.json").exists());
         let _ = std::fs::remove_dir_all(root);
     }

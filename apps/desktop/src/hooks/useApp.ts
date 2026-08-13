@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AudioAnalysis,
   AudioDeviceProbe,
@@ -7,6 +7,7 @@ import type {
   BackgroundJobStatus,
   BootstrapState,
   CreativeSession,
+  DesktopSessionView,
   DesignTool,
   JobState,
   LibraryAsset,
@@ -17,8 +18,9 @@ import type {
   RenderResult,
   ScanReport,
   SeparationResult,
+  Workspace,
 } from '@/lib/domain';
-import { toAssetId } from '@/lib/domain';
+import { defaultViewState, toAssetId, toDesktopSessionView } from '@/lib/domain';
 import { isUsableRecording } from '@/lib/recordings';
 import { isEditableTypingTarget } from '@/lib/musical-typing';
 import { startingAudioStatus } from '@/lib/audio-defaults';
@@ -29,7 +31,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { workspaces } from '@/constants';
-import { useRuntimeSynchronization } from './runtime/useRuntimeSynchronization';
+import { useRuntimeRestartNotification } from './runtime/useRuntimeRestartNotification';
 import { useTransportController } from './runtime/useTransportController';
 import { useWorkspaceNavigation } from './runtime/useWorkspaceNavigation';
 import { useLibrary } from './useLibrary';
@@ -71,11 +73,12 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     onTrackPluginParameterChanged,
     persistTrackPluginState,
     persistTrackPluginParameter,
-    syncArrangementRuntime,
+    retryRuntimeProjection,
     retryStartupRuntime: retryStartupRuntimeApi,
     onRuntimeStartupFinished,
   } = api;
   const [boot, setBoot] = useState<BootstrapState | null>(null);
+  const [viewState, setViewState] = useState(defaultViewState);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [missingDependencies, setMissingDependencies] = useState<MissingDependency[]>([]);
@@ -119,7 +122,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   const startupRuntimeRecoveryAttempted = useRef(false);
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
-  const sessionRef = useRef<CreativeSession | null>(null);
+  const sessionRef = useRef<DesktopSessionView | null>(null);
   const pendingPluginChanges = useRef(
     new Map<
       string,
@@ -156,18 +159,13 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const sessionHook = useSession(api, { setBoot });
   const {
-    session,
+    session: canonicalSession,
     setSession: setSessionState,
-    undoStack,
-    setUndoStack,
-    redoStack,
-    setRedoStack,
+    historyState,
     autosaveError,
     setAutosaveError,
     exportMessage,
     setExportMessage,
-    previousSession,
-    historySkip,
     undo,
     redo,
     renameSession,
@@ -176,44 +174,28 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
   } = sessionHook;
+  const session = useMemo(
+    () => (canonicalSession ? toDesktopSessionView(canonicalSession, viewState) : null),
+    [canonicalSession, viewState],
+  );
   sessionRef.current = session;
-  // Arrangement/Inspector operations can spend seconds in native VST
-  // construction. If the user navigates away while such an operation is in
-  // flight, its older session response must not move the UI back to the
-  // workspace that started the operation. Keep the newest visible workspace
-  // and merge the operation's canonical data into it.
   const setSessionFromChildOperation = useCallback(
     (nextSession: CreativeSession) => {
       const current = sessionRef.current;
-      // `updatedAtMs` is a strictly increasing canonical commit token. Keep
-      // the visible workspace guard, but also reject an older full-session
-      // response so a slow VST/rack operation cannot overwrite newer edits.
-      if (current != null && nextSession.updatedAtMs < current.updatedAtMs) return;
-      const guarded =
-        current != null && current.workspace !== nextSession.workspace
-          ? { ...nextSession, workspace: current.workspace }
-          : nextSession;
-      sessionRef.current = guarded;
-      setSessionState(guarded);
+      const nextViewState = current
+        ? { workspace: current.workspace, designContext: current.designContext }
+        : viewState;
+      sessionRef.current = toDesktopSessionView(nextSession, nextViewState);
+      setSessionState(nextSession);
     },
-    [setSessionState],
+    [setSessionState, viewState],
   );
-  // Every session response that crosses an async native boundary goes through
-  // the same workspace guard. This includes internal App work (startup,
-  // plugin-state flushes, and rack operations), not only setters passed to
-  // child components. A slow Arrange/VST response must not overwrite a newer
-  // optimistic workspace navigation.
   const setSession = setSessionFromChildOperation;
-  const setNavigationSession = useCallback(
-    (nextSession: CreativeSession) => {
-      // Workspace navigation is view state, not an undoable production edit.
-      // Mark both optimistic and canonical navigation snapshots so rapid tab
-      // switching cannot retain full CreativeSession copies in undo history.
-      historySkip.current = true;
-      setSession(nextSession);
-    },
-    [historySkip, setSession],
-  );
+  const setNavigationWorkspace = useCallback((workspace: Workspace) => {
+    setViewState((current) => ({ ...current, workspace }));
+    const current = sessionRef.current;
+    if (current) sessionRef.current = { ...current, workspace };
+  }, []);
   // UI helper for applying a Rust Session Operation and surfacing a rejected
   // intent. Production state is never assembled or flushed from React here.
   const runSessionOp = useCallback(
@@ -228,11 +210,9 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     },
     [setAutosaveError],
   );
-  const { syncArrangeRuntime } = useRuntimeSynchronization({
+  useRuntimeRestartNotification({
     api,
-    sessionRef,
     setScanMessage,
-    syncArrangementRuntime,
   });
 
   const {
@@ -253,12 +233,10 @@ export function useApp(api: NativeApi = defaultNativeApi) {
 
   const switchWorkspace = useWorkspaceNavigation({
     api,
-    safeMode: boot?.safeMode,
     sessionRef,
-    setNavigationSession,
+    setNavigationWorkspace,
     runSessionOp,
     setAutosaveError,
-    syncArrangeRuntime,
     nextTransportSequence,
     cancelPendingPlay,
   });
@@ -268,9 +246,19 @@ export function useApp(api: NativeApi = defaultNativeApi) {
         () => openAssetInDesignApi(assetId, tool),
         'Open asset in Design',
       );
-      if (next) setSession(next);
+      if (next) {
+        setViewState(next);
+        const current = sessionRef.current;
+        if (current) {
+          sessionRef.current = {
+            ...current,
+            workspace: next.workspace,
+            designContext: next.designContext,
+          };
+        }
+      }
     },
-    [openAssetInDesignApi, runSessionOp, setSession],
+    [openAssetInDesignApi, runSessionOp],
   );
   const clearRelocatedMissingDependencies = useCallback(
     (recording: RecordingAsset) => {
@@ -566,7 +554,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     );
     if (!completed) return;
     try {
-      await syncArrangeRuntime();
+      await retryRuntimeProjection();
     } finally {
       setMissingDependencies(await getMissingDependencies());
     }
@@ -576,7 +564,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     getMissingDependencies,
     runBackgroundJob,
     startScanJob,
-    syncArrangeRuntime,
+    retryRuntimeProjection,
   ]);
 
   const retryStartupRuntimeAfterScan = useCallback(async () => {
@@ -694,6 +682,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
       .then((state) => {
         if (disposed) return;
         setBoot(state);
+        setViewState(state.viewState);
         setSession(state.session);
         setPlugins(state.pluginCatalog);
         if (!runtimeStartupEventReceived.current) {
@@ -1027,6 +1016,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
   return {
     boot,
     setBoot,
+    viewState,
     session,
     setSession: setSessionFromChildOperation,
     audio,
@@ -1097,12 +1087,7 @@ export function useApp(api: NativeApi = defaultNativeApi) {
     setFocusMode,
     backgroundJob,
     cancelActiveJob,
-    undoStack,
-    setUndoStack,
-    redoStack,
-    setRedoStack,
-    previousSession,
-    historySkip,
+    historyState,
     recordingCommandLock,
     recoverAudio,
     selectAudioDriver,
