@@ -198,14 +198,14 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 10. ショートカット
 
-### 10.1 グローバル（`hooks/useApp.ts`）
+### 10.1 グローバル（`features/desktop/useDesktopFeatures.ts`）
 
 - `Ctrl+K` コマンドパレット、`Esc` 閉じる
 - `Ctrl+Z` アンドゥ、`Ctrl+Shift+Z`／`Ctrl+Y` リドゥ
 - `Ctrl+Shift+M` 選択トラックのミュート切替
 - `1` Arrange ワークスペース、`2` Design ワークスペース
 
-### 10.2 Arrange（`hooks/arrange/useArrangeEditor.ts`）
+### 10.2 Arrange（`features/arrange/hooks/useArrangeEditor.ts`）
 
 - `Ctrl+A` 全クリップ選択、`Ctrl+C` コピー、`Ctrl+V` ペースト、`Ctrl+D` 複製（ペーストをクリップ末尾に配置）
 - `Ctrl+E` プレイヘッド位置で分割（Split）
@@ -225,9 +225,9 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 | ツールバー     | `apps/desktop/src/components/arrange/ArrangeToolbar.tsx`                                                                                                   |
 | トラック       | `apps/desktop/src/components/arrange/ArrangeTrack.tsx`                                                                                                     |
 | クリップ描画   | `apps/desktop/src/components/arrange/AudioClipView.tsx`, `MidiClipView.tsx`                                                                                |
-| 編集ロジック   | `apps/desktop/src/hooks/arrange/useArrangeEditor.ts`, `lib/arrange-timeline.ts`                                                                            |
+| 編集ロジック   | `apps/desktop/src/features/arrange/hooks/useArrangeEditor.ts`, `useArrangeCommands.ts`, `useClipInteractions.ts`, `lib/arrange-timeline.ts`                |
 | ロワーパネル   | `apps/desktop/src/components/arrange/lower-panel/ArrangeLowerPanel.tsx`                                                                                    |
 | インスペクタ   | `apps/desktop/src/components/arrange/TrackInspector.tsx`, `AudioClipInspector.tsx`, `MidiClipInspector.tsx`, `TakeInspector.tsx`, `MultiClipInspector.tsx` |
 | シェル         | `apps/desktop/src/components/layout/GlobalBar.tsx`, `LibraryPanel.tsx`, `InspectorPanel.tsx`, `TransportBar.tsx`                                           |
 | 通知           | `apps/desktop/src/components/shared/ToastStack.tsx`, `lib/toasts.ts`                                                                                       |
-| ショートカット | `apps/desktop/src/hooks/useApp.ts`, `useArrangeEditor.ts`, `constants.ts`                                                                                  |
+| ショートカット | `apps/desktop/src/features/desktop/useDesktopFeatures.ts`, `features/arrange/hooks/useArrangeEditor.ts`, `constants.ts`                                    |

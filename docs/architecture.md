@@ -60,8 +60,8 @@ Tauriシェルはセーフモード（§7）で起動するとサイドカーの
 
 ```text
 React フロントエンド
-  ├─ 状態: CreativeSession と DesktopViewState を表示用に合成する
-  ├─ 編集: NativeApi 経由で Tauri 命令を呼ぶ（正準状態は保持しない）
+  ├─ 状態: CreativeSession と DesktopViewState を独立して保持・描画する
+  ├─ 編集: Feature別の NativeApi capability 経由で Tauri 命令を呼ぶ
   └─ 型: src/lib/generated（Rust の ts-rs 出力を gen-barrel.js で束ねたもの）
 
 Tauri 命令層 (src-tauri/src/**/commands.rs)
@@ -80,6 +80,11 @@ riffra-core（crates/riffra-core）: プラットフォーム非依存のApplica
   ├─ AppCore: 正準状態、コミット順序、履歴、投影sequence
   ├─ validate_and_normalize（コミット前に正準化）
   └─ Tauri・WebView・OS統合を含まない
+
+CLI ホスト（apps/cli）
+  ├─ AppCore と SessionStorage Port を直接利用する
+  ├─ ワンショット引数と対話型 JSON Lines を同じ Dispatcher へ渡す
+  └─ Tauri・React・Desktop Adapter に依存しない
 
 永続化・外部境界
   ├─ SessionStore: scratch/current.json + generations（§6）
@@ -206,7 +211,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 ライブラリは SQLite の**読み取り専用モデル**であり、正準状態は常にセッションと Assets である。
 
 - 素材（Asset）、録音（Recording Session/Pass/Take）、セッション内容の全文検索用の眺めを提供する
-- セッション保存のたびに `queue_session_index()` が索引更新を非ブロッキングで投入する。index.rs は**最新1件だけを残す結合キュー**（latest-wins）で駆動され、連続保存時もワーカーの実行を追い越さない
+- セッション保存のたびに `library::index::queue()` が索引更新を非ブロッキングで投入する。index.rs は**最新1件だけを残す結合キュー**（latest-wins）で駆動され、連続保存時もワーカーの実行を追い越さない
 - UI はライブラリの検索・一覧をこのモデルからのみ読む
 
 ---
@@ -240,7 +245,7 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 
 ## 11. Presentationの責務
 
-フロントエンドはCreativeSessionを描画し、ユーザー操作をNativeApiの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決や部分マージを行わない。
+フロントエンドはCreativeSessionを描画し、ユーザー操作をFeature別NativeApi capabilityの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決、部分マージ、全体mutation queueを持たない。
 
 選択、パネル幅、ズーム、ダイアログ、ワークスペース、Design対象はPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。
 

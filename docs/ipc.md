@@ -63,12 +63,13 @@
 
 命令は責務に応じて4つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
-| モード                              | 挙動                                                                                                                  | 使う命令                                            |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `run_blocking`                      | Desktop command gate を取得してから実行（正準セッション操作と保存を直列化）                                           | 楽曲編集・ライブラリ操作・素材操作の大半            |
-| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                   | プローブ、スキャン、録音一覧、プラグイン接続など    |
-| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                                       | play / stop / seek、MIDI送信、プレビュー、ミュート  |
-| `run_workspace_control`             | ワークスペース遷移専用の短期トランザクション（stop 意図 + 処理モード更新を合成し、`workspace_runtime_gate` で直列化） | `switch_workspace`、`retry_runtime_projection` など |
+| モード                              | 挙動                                                                                                | 使う命令                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `run_blocking`                      | Desktop command gate を取得してから実行（正準セッション操作と保存を直列化）                         | 楽曲編集・ライブラリ操作・素材操作の大半           |
+| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理 | プローブ、スキャン、録音一覧、プラグイン接続など   |
+| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                     | play / stop / seek、MIDI送信、プレビュー、ミュート |
+
+ワークスペース遷移はDesktopViewStateだけを更新する。再生可否、ランタイム回復、Native音声処理モードを切り替えない。
 
 ### 3.2 命令カタログ
 
@@ -86,7 +87,7 @@
 | `restore_recovery_generation`                                          | 世代からの回復                                                            |
 | `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ                                  |
 
-**セッション・アレンジ（session/commands.rs）**
+**セッション・アレンジ（session/commands/）**
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -133,7 +134,7 @@
 
 ### 3.4 UI呼び出しの順序
 
-制作状態を変更する命令は、フロントエンドの共通呼び出し境界で直列化する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の時刻比較やセッション全体のマージは必要ない。
+制作状態を変更する命令の順序はCoreとDesktop command gateが所有する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の直列化、時刻比較、セッション全体のマージは行わない。
 
 連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
 
@@ -153,7 +154,7 @@
 | `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                         |
 | `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                       |
 
-購読は全て `src/native/native.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
+購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 
 ---
 
@@ -172,7 +173,7 @@
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | 状態照会            | `status`、`meterStatus`                                                                     |
 | 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`              |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（arrange / passive）    |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                              |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setMasterGainDb`               |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す） |
@@ -240,9 +241,9 @@
 
 ## 9. NativeApi と境界の対応規則
 
-`src/native/native-api.ts` の NativeApi は、すべての Tauri 命令をドメイン用語の Promise メソッドに写像する。React コンポーネントは NativeApi のみに依存し、`invoke` の文字列コマンド名・引数名を直接知らない。
+`src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
 
 - 制作状態を変更するメソッドはCreativeSessionを返す。表示状態だけを変更するメソッドはDesktopViewStateを返す
 - 起動時はCreativeSessionとDesktopViewStateを別々に受け取り、履歴操作の可否はCoreのHistoryStateを参照する
-- 音声系メソッドは `AudioStatus` を返し、`useAudio` が状態遷移と再試行を担う
-- テストでは `native-api-fake.ts` を注入し、境界A・Bをモックする。境界C〜Eの互換性は `scripts/test-ipc.ps1` と Rust 側の解析テスト（`protocol.rs` の fixture テスト）が担う
+- 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
+- テストでは `native-api-fake.ts` を注入し、呼び出し記録、設定済み応答・失敗、イベント発火だけを扱う。制作規則、履歴、validationはCoreのテストが担う

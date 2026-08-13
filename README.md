@@ -30,13 +30,14 @@
 | パス                           | 内容                                                                             |
 | ------------------------------ | -------------------------------------------------------------------------------- |
 | `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
+| `apps/cli/`                    | `riffra-core` を直接利用するワンショット／JSON Lines CLI ホスト                  |
 | `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
 | `scripts/`                     | 型生成（`gen-barrel.js`）、検証（`verify.mjs`）などの開発スクリプト              |
 | `docs/`                        | 設計・調整ドキュメント                                                           |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 
@@ -69,6 +70,9 @@ npm run verify         # ルートの一括検証（--native でネイティブ�
 
 npm run lint           # ESLint
 npm run typecheck      # tsc
+
+cargo run -p riffra-cli -- --project ./project.json get-session
+cargo run -p riffra-cli -- --interactive --project ./project.json
 ```
 
 ### 検証

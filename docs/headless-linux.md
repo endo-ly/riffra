@@ -32,6 +32,7 @@ Riffra は現在 Windows 向けの Tauri + React + C++/JUCE sidecar 構成。AI 
 ```text
 Cargo.toml                     # Rust workspace
 apps/
+  cli/                         # AppCoreを直接利用するCLIホスト
   desktop/
     src/                        # React / TypeScript
     src-tauri/                  # Tauriデスクトップホスト
@@ -75,15 +76,15 @@ riffra-cli --interactive
 
 ## CLI モード
 
-`riffra-cli` は 2 つの動作モードを用意する。
+`riffra-cli` は2つの動作モードを持つ。どちらも同じDispatcherとAppCoreを使い、成功した制作操作はSessionStorage Portを通じて原子的に保存する。
 
 ### ワンショットモード
 
 1 コマンド実行してすぐ終了する。シェルスクリプトやバッチ処理に向く。
 
 ```bash
-riffra-cli add-track --project ./project/project.json --name drums
-riffra-cli render --project ./project/project.json --out ./output.wav
+riffra-cli --project ./project.json add-track --name drums --kind audio
+riffra-cli --project ./project.json list-tracks
 ```
 
 ### 対話モード
@@ -97,10 +98,9 @@ riffra-cli --interactive --project ./project/project.json
 入力例：
 
 ```json
-{"protocolVersion":2,"requestId":"1","type":"addTrack","params":{"name":"audio-1","kind":"audio"}}
-{"protocolVersion":2,"requestId":"2","type":"addAudioClip","params":{"trackId":"track-1","startTick":0}}
-{"protocolVersion":2,"requestId":"3","type":"render","params":{"outPath":"./output.wav"}}
-{"protocolVersion":2,"requestId":"4","type":"getStatus","params":{}}
+{"requestId":"1","type":"addTrack","params":{"name":"audio-1","kind":"audio"}}
+{"requestId":"2","type":"listTracks","params":{}}
+{"requestId":"3","type":"undo","params":{}}
 ```
 
 ---
@@ -147,20 +147,13 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 - ネットワーク・認証・ポート管理が不要
 - 後から HTTP 層を追加しても `riffra-core` は変えなくて済む
 
-まず実装するコマンド例です。プロトコルの詳細は「プロトコル設計」を参照してください。
+現在のCLIは制作状態と履歴の最小境界を提供する。プロトコルの詳細は「プロトコル設計」を参照する。
 
-| カテゴリ     | 書き込み                                                            | 読み出し                                 |
-| ------------ | ------------------------------------------------------------------- | ---------------------------------------- |
-| プロジェクト | `createProject`, `loadProject`, `saveProject`                       | `getSession`                             |
-| トラック     | `addTrack`, `removeTrack`, `updateTrack`                            | `listTracks`, `getTrack`, `getRackChain` |
-| クリップ     | `addAudioClip`, `addMidiClip`, `removeClip`, `moveClip`, `trimClip` | `listClips`, `getClip`                   |
-| 音符         | `updateNote`（ピッチ、ベロシティ、CC、タイミング）                  | `getNotes`                               |
-| 再生         | `play`, `stop`, `seek`                                              | `getTransportStatus`                     |
-| 録音         | `startArrangeRecording`, `stopArrangeRecording`                     | —                                        |
-| 音源         | `loadInstrument`, `setInstrumentParameter`                          | `listInstruments`, `getInstrument`       |
-| 書き出し     | `render`, `cancelJob`                                               | `getJobs`, `getJob`                      |
-| 状態         | —                                                                   | `getStatus`                              |
-| 編集の安全   | `undo`, `redo`, `beginEdit`, `commitEdit`, `rollbackEdit`           | —                                        |
+| カテゴリ | 書き込み                  | 読み出し     |
+| -------- | ------------------------- | ------------ |
+| 設定     | `updateSessionSettings`   | `getSession` |
+| トラック | `addTrack`, `removeTrack` | `listTracks` |
+| 編集履歴 | `undo`, `redo`            | —            |
 
 ---
 
@@ -244,17 +237,11 @@ CMake targetは機能別に分ける。
 - 音声デバイスとX ServerのないLinuxコンテナでレンダーを検証する
 - VST3 Deviceを含むTrackを構造化された未対応依存として報告する
 
-### CLI 実装
+### CLI拡張
 
-- `riffra-cli` crate を作る
-- ワンショットモードを実装する
-- 対話モード（`--interactive`）を実装する
-- JSON Lines コマンドディスパッチを実装する
-- 最小コマンドセットを動かす
-- 読み出しコマンドとフィルター付き音符参照を実装する
-- イベントフレームとジョブ状態を実装する
-- `undo` / `redo` とトランザクションを実装する
-- 処理済み`requestId`の冪等処理を実装する
+- クリップ・音符の編集と対応する読み出しを追加する
+- オフラインレンダーと非同期ジョブのイベントを追加する
+- 複数操作をまとめる編集トランザクションとリクエスト冪等性を追加する
 
 ### Linux リアルタイム音声
 
