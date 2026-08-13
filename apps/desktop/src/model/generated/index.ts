@@ -44,7 +44,6 @@ export type { MidiEvent } from './MidiEvent';
 export type { MidiEventKind } from './MidiEventKind';
 export type { MidiInputRoute } from './MidiInputRoute';
 export type { MidiNote } from './MidiNote';
-export type { MidiProbe } from './MidiProbe';
 export type { MissingDependency } from './MissingDependency';
 export type { MonitoringState } from './MonitoringState';
 export type { PlayState } from './PlayState';

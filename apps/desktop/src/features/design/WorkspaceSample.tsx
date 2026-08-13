@@ -1,4 +1,5 @@
 import type { CreativeSession, RecordingAsset } from '@/model/domain';
+import styles from './sample/SampleWorkspace.module.css';
 
 export function WorkspaceSample({
   session,
@@ -24,7 +25,7 @@ export function WorkspaceSample({
         </div>
         <span className="status-tag">SOURCE MAPPING</span>
       </section>
-      <section className="section-card pad-card">
+      <section className={`section-card ${styles.padCard}`}>
         <header>
           <div>
             <span className="eyebrow">PADS</span>
@@ -32,10 +33,10 @@ export function WorkspaceSample({
           </div>
           <small>Playback engine follows this mapping gate</small>
         </header>
-        <div className="pad-grid">
+        <div className={styles.padGrid}>
           {pads.map((pad, index) => (
             <button
-              className={`sample-pad ${pad ? 'filled' : 'empty'}`}
+              className={`${styles.samplePad} ${pad ? styles.filled : styles.empty}`}
               key={pad?.id ?? `empty-${index}`}
               onClick={pad ? () => onPreviewPad(pad) : undefined}
               aria-label={pad ? `Preview ${pad.name}` : `Empty pad ${index + 1}`}
@@ -46,7 +47,7 @@ export function WorkspaceSample({
           ))}
         </div>
       </section>
-      <section className="section-card sample-sources">
+      <section className={`section-card ${styles.sampleSources}`}>
         <header>
           <div>
             <span className="eyebrow">SOURCES</span>

@@ -14,8 +14,12 @@ import type {
 import type { ArrangeApi, AudioApi, DesignApi, JobApi, RecordingApi } from '@/native/native-api';
 import { isUsableRecording } from '@/shared/recordings';
 import { toAssetId } from '@/native/contracts';
+import { useSampleKeyboard } from '@/features/design/sample/useSampleKeyboard';
 
-type DesignFeatureApi = Pick<AudioApi, 'previewAsset' | 'stopSamplePreview'> &
+type DesignFeatureApi = Pick<
+  AudioApi,
+  'previewAsset' | 'stopSamplePreview' | 'stopSamplePreviewKey'
+> &
   Pick<ArrangeApi, 'addAudioClipToArrangement'> &
   Pick<DesignApi, 'analyzeAsset' | 'listSeparations'> &
   Pick<JobApi, 'startAnalysisJob' | 'startSeparationJob'> &
@@ -65,6 +69,7 @@ export function useDesign({
     startAnalysisJob,
     startSeparationJob,
     stopSamplePreview,
+    stopSamplePreviewKey,
     listSeparations,
     updateSamplePad: updateSamplePadApi,
   } = api;
@@ -231,6 +236,8 @@ export function useDesign({
     },
     [previewAssetApi, setAudio],
   );
+
+  useSampleKeyboard({ session, previewSamplePad, stopSamplePreviewKey, setAudio });
 
   const stopPreview = useCallback(async () => {
     setAudio(await stopSamplePreview());

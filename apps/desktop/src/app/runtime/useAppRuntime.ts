@@ -5,7 +5,6 @@ import type {
   BootstrapState,
   CreativeSession,
   DesktopViewState,
-  MidiProbe,
   RenderResult,
   Workspace,
 } from '@/model/domain';
@@ -26,7 +25,7 @@ import { useProject } from '@/features/project/useProject';
 type AppRuntimeApi = BootstrapApi &
   ProjectApi &
   ProjectSettingsApi &
-  Pick<AudioApi, 'probeMidiDevices' | 'probeAudioDevices' | 'getAudioStatus'> &
+  Pick<AudioApi, 'probeAudioDevices' | 'getAudioStatus'> &
   Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters'>;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
@@ -35,12 +34,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
   const [viewState, setViewState] = useState<DesktopViewState>(defaultViewState);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-  const [midi, setMidi] = useState<MidiProbe>({
-    inputs: [],
-    outputs: [],
-    refreshedAtMs: 0,
-    message: 'MIDI device list has not been refreshed.',
-  });
   const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
     drivers: [],
     refreshedAtMs: 0,
@@ -158,8 +151,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
     setAudio,
     renderResult,
     setRenderResult,
-    midi,
-    setMidi,
     deviceProbe,
     setDeviceProbe,
     runtimeStarted,

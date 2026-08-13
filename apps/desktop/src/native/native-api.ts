@@ -14,7 +14,6 @@ import type {
   DeviceChannels,
   LibraryAsset,
   MissingDependency,
-  MidiProbe,
   ProjectExport,
   RecordingAsset,
   RenderOptions,
@@ -142,7 +141,6 @@ export interface DesignApi {
 }
 
 export interface AudioApi {
-  probeMidiDevices(): Promise<MidiProbe>;
   probeAudioDevices(): Promise<AudioDeviceProbe>;
   probeDeviceChannels(
     driver: string,

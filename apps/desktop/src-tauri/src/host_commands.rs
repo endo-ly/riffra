@@ -119,15 +119,6 @@ pub(crate) struct NativeAudioDriver {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NativeMidiProbe {
-    #[serde(default)]
-    midi_inputs: Vec<model::MidiDeviceInfo>,
-    #[serde(default)]
-    midi_outputs: Vec<model::MidiDeviceInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct NativeDeviceChannels {
     driver: String,
     input_device: String,
@@ -136,34 +127,6 @@ struct NativeDeviceChannels {
     output_device: String,
     #[serde(default)]
     output_channels: Vec<model::AudioChannelInfo>,
-}
-
-#[tauri::command]
-pub(crate) async fn probe_midi_devices(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<MidiProbe, String> {
-    if state.core.safe_mode() {
-        return Ok(MidiProbe {
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            refreshed_at_ms: storage::now_ms(),
-            message: "Safe Mode skipped MIDI discovery.".into(),
-        });
-    }
-    let stdout = run_native_probe(app, &["--probe-midi"]).await?;
-    let probe = parse_stdout::<NativeMidiProbe>(&stdout, "midiProbe")?;
-    let empty = probe.midi_inputs.is_empty() && probe.midi_outputs.is_empty();
-    Ok(MidiProbe {
-        inputs: probe.midi_inputs,
-        outputs: probe.midi_outputs,
-        refreshed_at_ms: storage::now_ms(),
-        message: if empty {
-            "No MIDI devices are currently visible to Windows.".into()
-        } else {
-            "MIDI device list refreshed.".into()
-        },
-    })
 }
 
 #[tauri::command]
@@ -346,12 +309,7 @@ where
         .map_err(|_| format!("Device probe returned an unexpected {expected_type} response."))
 }
 
-// Low-level Audio Runtime passthroughs.
-//
-// These commands are single delegations to the Audio Runtime with no
-// canonical-state side effects. Production Workflow counterparts (master gain, driver
-// selection, emergency mute) live in `session::commands` so the session stays
-// in lock-step with the runtime.
+// Low-level Audio Runtime passthroughs with no canonical-session mutation.
 
 #[tauri::command]
 pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, String> {

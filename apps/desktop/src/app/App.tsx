@@ -5,7 +5,6 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/useArrangeShell';
@@ -18,10 +17,8 @@ import { SamplePreviewControls } from '@/features/design/sample/SamplePreviewCon
 import { ReferenceSuggestion } from '@/features/design/reference/ReferenceSuggestion';
 import { WorkspaceSeparate } from '@/features/design/WorkspaceSeparate';
 import { LibraryPanel } from '@/features/library/LibraryPanel';
-import { MidiDevices } from '@/features/midi/MidiDevices';
-import { MidiMonitor } from '@/features/midi/MidiMonitor';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
-import { AudioSettingsDialog } from '@/features/settings/AudioSettingsDialog';
+import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
 import { TransportBar } from '@/features/transport/TransportBar';
 import { Icon } from '@/shared/ui/primitives';
 import { ToastStack } from '@/shared/ui/ToastStack';
@@ -140,7 +137,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     audioPreferenceMessage,
     exportMessage,
     deviceProbe,
-    midi,
     missingDependencies,
     backgroundJob,
     cancelActiveJob,
@@ -158,7 +154,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     setFocusMode,
     setReferenceLoopPreview,
     setDeviceProbe,
-    setMidi,
     renameSession,
     undo,
     redo,
@@ -462,16 +457,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               onPreview={(pad) => void previewSamplePad(pad)}
               onStop={() => void stopPreview()}
             />
-            <MidiDevices
-              probe={midi}
-              onRefresh={() =>
-                void nativeApi
-                  .probeMidiDevices()
-                  .then(setMidi)
-                  .catch(logNativeError('probeMidiDevices'))
-              }
-            />
-            <MidiMonitor probe={midi} audio={audio} onPanic={() => void stopPreview()} />
           </>
         )}
         {viewState.workspace === 'design' && viewState.designContext.activeTool === 'analyze' && (

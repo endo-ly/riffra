@@ -81,7 +81,7 @@
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `get_bootstrap_state`                                                  | CreativeSession・DesktopViewState・セーフモード・回復候補の初期状態を返す |
 | `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                                        |
-| `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` | デバイス・チャンネル列挙（境界E経由）                                     |
+| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                           |
 | `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                  |
 | `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                        |
 | `restore_recovery_generation`                                          | 世代からの回復                                                            |
@@ -215,12 +215,11 @@
 
 ## 7. 境界 E: デバイスプローブとプラグインスキャン
 
-| 起動引数                                              | 応答                                     | 用途                                                                       |
-| ----------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------- |
-| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイス・チャンネルを列挙（ストリームを開かない） |
-| `riffra-audio --probe-midi`                           | `{"type":"midiProbe", ...}`              | MIDI 入力・出力デバイスの列挙                                              |
-| `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                               |
-| `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化）            |
+| 起動引数                                              | 応答                                     | 用途                                                            |
+| ----------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
+| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイスを列挙（ストリームを開かない）  |
+| `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                    |
+| `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化） |
 
 プローブは排他コーディネータ（`run_native_probe`）を通して直列に起動し、タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。
 
@@ -230,12 +229,12 @@
 
 メインウィンドウは最小ケイパビリティで構成する。
 
-| 権限                                           | 内容                                                                                                                                                       |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core:default` / `core:window:allow-destroy`   | コア操作とウィンドウ破棄                                                                                                                                   |
-| `dialog:default`                               | ファイルダイアログ                                                                                                                                         |
-| `shell:allow-spawn`                            | サイドカー起動のみ許可。`riffra-audio` は引数バリデータ `--(serve\|probe\|probe-midi\|probe-channels)` で起動モードを限定、`riffra-plugin-scan` は引数自由 |
-| `shell:allow-stdin-write` / `shell:allow-kill` | サイドカーへの標準入力書き込みと終了制御                                                                                                                   |
+| 権限                                           | 内容                                                                                                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core:default` / `core:window:allow-destroy`   | コア操作とウィンドウ破棄                                                                                                                       |
+| `dialog:default`                               | ファイルダイアログ                                                                                                                             |
+| `shell:allow-spawn`                            | サイドカー起動のみ許可。`riffra-audio` は引数バリデータ `--(serve\|probe\|probe-channels)` で起動モードを限定、`riffra-plugin-scan` は引数自由 |
+| `shell:allow-stdin-write` / `shell:allow-kill` | サイドカーへの標準入力書き込みと終了制御                                                                                                       |
 
 ---
 

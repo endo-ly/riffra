@@ -15,7 +15,7 @@ import {
   mergeDeviceChannels,
   normalizeAudioSettingsDraft,
   selectDriverForDraft,
-} from '@/features/settings/audio-settings';
+} from '@/features/audio/audio-settings';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 import styles from './AudioSettingsDialog.module.css';
 

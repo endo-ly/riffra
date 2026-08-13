@@ -24,6 +24,8 @@ interface TransportControllerOptions {
 
 export type PlaybackMode = 'timeline' | 'preview';
 
+type PlaybackSource = PlaybackMode;
+
 /**
  * Owns transport intent sequencing and operation cancellation. The actual
  * timeline playing state comes from the native transport-status event; a
@@ -41,6 +43,7 @@ export function useTransportController({
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
+  const playbackSourceRef = useRef<PlaybackSource | null>(null);
   const sequenceRef = useRef(0);
 
   const nextTransportSequence = useCallback(() => {
@@ -87,8 +90,9 @@ export function useTransportController({
       if (!currentSession) return;
       const requestedMode = playbackMode;
       const isCurrentIntent = () => sequenceRef.current === transportSequence;
+      if (!isCurrentIntent()) return;
+      playbackSourceRef.current = requestedMode;
       if (requestedMode === 'timeline') {
-        if (!isCurrentIntent()) return;
         await api.playTimeline(transportSequence);
         return;
       }
@@ -129,8 +133,10 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      const stopTimeline = timelinePlaying;
-      const stopPreview = previewPlaying;
+      const playbackSource = playbackSourceRef.current;
+      playbackSourceRef.current = null;
+      const stopTimeline = playbackSource === 'timeline' || timelinePlaying;
+      const stopPreview = playbackSource === 'preview' || previewPlaying;
       if (stopTimeline) {
         await api.stopTimeline(transportSequence);
       }
@@ -153,11 +159,14 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      if (timelinePlaying) {
+      const playbackSource = playbackSourceRef.current;
+      playbackSourceRef.current = null;
+      const target = playbackSource ?? (timelinePlaying ? 'timeline' : null);
+      if (target === 'timeline') {
         await api.goToStartTimeline(transportSequence);
         return;
       }
-      if (previewPlaying) {
+      if (playbackSource === 'preview' || (playbackSource == null && previewPlaying)) {
         setAudio(await api.stopSamplePreview());
         setPreviewPlaying(false);
       }

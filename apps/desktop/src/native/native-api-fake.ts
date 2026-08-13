@@ -257,9 +257,6 @@ export class FakeNativeApi implements NativeApi {
   applyAiSuggestion(...args: Parameters<NativeApi['applyAiSuggestion']>) {
     return this.command('applyAiSuggestion', args);
   }
-  probeMidiDevices(...args: Parameters<NativeApi['probeMidiDevices']>) {
-    return this.command('probeMidiDevices', args);
-  }
   probeAudioDevices(...args: Parameters<NativeApi['probeAudioDevices']>) {
     return this.command('probeAudioDevices', args);
   }
@@ -643,8 +640,6 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve([]);
       case 'getMissingDependencies':
         return Promise.resolve(this.missing);
-      case 'probeMidiDevices':
-        return Promise.resolve({ inputs: [], outputs: [], refreshedAtMs: 1, message: 'fake' });
       case 'probeAudioDevices':
         return Promise.resolve({ drivers: [], refreshedAtMs: 1, message: 'fake' });
       case 'probeDeviceChannels':

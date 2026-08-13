@@ -45,7 +45,7 @@ mod types;
 
 use host_commands::*;
 use model::{
-    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, MidiProbe, RecoveryCandidate,
+    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, RecoveryCandidate,
     RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
@@ -352,7 +352,6 @@ pub fn run() {
             get_background_job,
             cancel_background_job,
             probe_audio_devices,
-            probe_midi_devices,
             probe_device_channels,
             get_audio_status,
             get_runtime_projection_status,

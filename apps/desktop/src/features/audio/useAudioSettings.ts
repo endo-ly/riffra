@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDriverConfig, AudioStatus } from '@/model/domain';
-import { reconcileAudioSettings } from '@/features/settings/audio-settings';
+import { reconcileAudioSettings } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import type { AudioApi } from '@/native/native-api';
 
@@ -11,13 +11,7 @@ interface UseAudioOptions {
 }
 
 export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
-  const {
-    recoverAudioDevice,
-    setAudioDriver,
-    enableMidiListening,
-    disableMidiListening,
-    setEmergencyMute,
-  } = api;
+  const { recoverAudioDevice, setAudioDriver, enableMidiListening, setEmergencyMute } = api;
   const { audio, setAudio } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
 
@@ -51,10 +45,6 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     setAudio(await enableMidiListening());
   }, [enableMidiListening, setAudio]);
 
-  const disableMidi = useCallback(async () => {
-    setAudio(await disableMidiListening());
-  }, [disableMidiListening, setAudio]);
-
   const toggleMute = useCallback(async () => {
     const muted = !isEmergencyMuteActive(audio);
     setAudio(await setEmergencyMute(muted));
@@ -65,7 +55,6 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     recoverAudio,
     selectAudioDriver,
     enableMidi,
-    disableMidi,
     toggleMute,
   };
 }

@@ -10,8 +10,8 @@ import {
   baseNoteForOctave,
   encodeNoteOff,
   encodeNoteOn,
-  isEditableTypingTarget,
 } from '@/features/arrange/play-surface/musical-typing';
+import { isEditableTypingTarget } from '@/shared/input';
 
 interface UseMusicalTypingOptions {
   /** When false, all listeners detach and any held notes are released. */

@@ -40,18 +40,6 @@ export const MUSICAL_TYPING_OCTAVE_UP_KEY = 'x';
 /** General MIDI percussion channel (0-indexed: 9 = MIDI channel 10). */
 export const GM_DRUM_CHANNEL = 9;
 
-/** Returns whether a keyboard event originated in a control that owns text input. */
-export function isEditableTypingTarget(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null;
-  return Boolean(
-    element &&
-    (element.tagName === 'INPUT' ||
-      element.tagName === 'TEXTAREA' ||
-      element.tagName === 'SELECT' ||
-      element.isContentEditable),
-  );
-}
-
 /** MIDI note number for C{octave}. C4 → 60, C5 → 72, etc. */
 export function baseNoteForOctave(octave: number): number {
   return (octave + 1) * 12;

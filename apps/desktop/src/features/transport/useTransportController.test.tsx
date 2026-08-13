@@ -29,6 +29,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
     <>
       <button onClick={() => void transport.playTransport()}>Play</button>
       <button onClick={() => void transport.stopTransport()}>Stop</button>
+      <button onClick={() => void transport.goToStart()}>Go to Start</button>
       <button
         onClick={() => setWorkspace((current) => (current === 'arrange' ? 'design' : 'arrange'))}
       >
@@ -41,6 +42,46 @@ function Harness({ api }: { api: FakeNativeApi }) {
 }
 
 describe('useTransportController', () => {
+  it('stops a timeline play request before the playing status arrives', async () => {
+    const api = new FakeNativeApi();
+    let playSequence = 0;
+    let stopSequence = 0;
+    api.setResponse('playTimeline', (sequence: unknown) => {
+      playSequence = Number(sequence);
+    });
+    api.setResponse('stopTimeline', (sequence: unknown) => {
+      stopSequence = Number(sequence);
+    });
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('playTimeline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+
+    await waitFor(() => expect(api.calls).toContain('stopTimeline'));
+    expect(stopSequence).toBeGreaterThan(playSequence);
+  });
+
+  it('moves a timeline play request to the start before the playing status arrives', async () => {
+    const api = new FakeNativeApi();
+    let playSequence = 0;
+    let startSequence = 0;
+    api.setResponse('playTimeline', (sequence: unknown) => {
+      playSequence = Number(sequence);
+    });
+    api.setResponse('goToStartTimeline', (sequence: unknown) => {
+      startSequence = Number(sequence);
+    });
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('playTimeline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to Start' }));
+
+    await waitFor(() => expect(api.calls).toContain('goToStartTimeline'));
+    expect(startSequence).toBeGreaterThan(playSequence);
+  });
+
   it('stops the timeline after switching from Arrange to Design', async () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);

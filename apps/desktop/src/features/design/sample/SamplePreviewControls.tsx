@@ -1,4 +1,5 @@
 import type { CreativeSession } from '@/model/domain';
+import styles from './SampleWorkspace.module.css';
 
 export function SamplePreviewControls({
   session,
@@ -13,7 +14,7 @@ export function SamplePreviewControls({
 }) {
   if (!session.playState.sampleInstrument.pads.length) return null;
   return (
-    <section className="section-card sample-preview">
+    <section className={`section-card ${styles.samplePreview}`}>
       <header>
         <div>
           <span className="eyebrow">PREVIEW BUS</span>
@@ -24,7 +25,7 @@ export function SamplePreviewControls({
         </button>
       </header>
       {session.playState.sampleInstrument.pads.map((pad) => (
-        <div className="sample-preview-row" key={pad.id}>
+        <div className={styles.samplePreviewRow} key={pad.id}>
           <div>
             <strong>{pad.name}</strong>
             <small>
@@ -32,7 +33,7 @@ export function SamplePreviewControls({
             </small>
           </div>
           <button
-            className={`text-button ${playingId === pad.id ? 'active' : ''}`}
+            className={`text-button ${playingId === pad.id ? styles.active : ''}`}
             onClick={() => onPreview(pad)}
           >
             {playingId === pad.id ? 'Playing' : 'Preview'}

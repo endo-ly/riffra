@@ -1,32 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetId, DesignTool } from '@/model/domain';
 import { isUsableRecording } from '@/shared/recordings';
-import { isEditableTypingTarget } from '@/features/arrange/play-surface/musical-typing';
+import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { workspaces } from '@/app/workspaces';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
+import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/useTransportController';
 import { useWorkspaceNavigation } from '@/app/navigation/useWorkspaceNavigation';
 import { useLibrary } from '@/features/library/useLibrary';
 import { useInbox } from '@/features/library/useInbox';
-import { useAudioSettings } from '@/features/settings/useAudioSettings';
+import { useAudioSettings } from '@/features/audio/useAudioSettings';
+import { useMissingDependencies } from '@/features/project/useMissingDependencies';
 import { useRecording } from '@/features/recording/useRecording';
 import { useDesign } from '@/features/design/useDesign';
 import { usePluginCatalog } from '@/features/plugins/usePluginCatalog';
 import { usePluginStatePersistence } from '@/app/runtime/usePluginStatePersistence';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
-  const {
-    probeMidiDevices,
-    probeAudioDevices,
-    stopSamplePreviewKey,
-    getAudioStatus,
-    openAssetInDesign: openAssetInDesignApi,
-  } = api;
+  const { probeAudioDevices, getAudioStatus, openAssetInDesign: openAssetInDesignApi } = api;
   const [commandOpen, setCommandOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const runtime = useAppRuntime(api);
@@ -39,8 +35,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     setAudio,
     renderResult,
     setRenderResult,
-    midi,
-    setMidi,
     deviceProbe,
     setDeviceProbe,
     runtimeStarted,
@@ -67,16 +61,26 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const pluginCatalog = usePluginCatalog({
     api,
     boot,
+    runBackgroundJob,
+  });
+  const { plugins, scanPlugins } = pluginCatalog;
+  useStartupRuntimeRecovery({
+    boot,
     runtimeStarted,
     runtimeStartupFinished,
     activeJobId,
     backgroundJob,
-    runBackgroundJob,
+    scanPlugins,
+    retryStartupRuntime: api.retryStartupRuntime,
     setAudio,
+  });
+  const missingDependencyState = useMissingDependencies({
+    api,
+    boot,
     setSession,
+    rescanPlugins: scanPlugins,
   });
   const {
-    plugins,
     missingDependencies,
     clearRelocatedMissingDependencies,
     relinkMissing,
@@ -84,7 +88,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     replaceMissingPluginDevice,
     rescanMissingPlugins,
     ignoreMissing,
-  } = pluginCatalog;
+  } = missingDependencyState;
   // UI helper for applying a Rust Session Operation and surfacing a rejected
   // intent. Production state is never assembled or flushed from React here.
   const runSessionOp = useCallback(
@@ -133,14 +137,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     audio,
     setAudio,
   });
-  const {
-    audioPreferenceMessage,
-    recoverAudio,
-    selectAudioDriver,
-    enableMidi,
-    disableMidi,
-    toggleMute,
-  } = audioHook;
+  const { audioPreferenceMessage, recoverAudio, selectAudioDriver, enableMidi, toggleMute } =
+    audioHook;
   const recording = useRecording(api, { audio, setAudio, setSession });
   const {
     recordings,
@@ -223,7 +221,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     const timer = setTimeout(() => {
       void reloadRecordings().catch(logNativeError('listRecordings'));
       void reloadSeparations().catch(logNativeError('listSeparations'));
-      void probeMidiDevices().then(setMidi).catch(logNativeError('probeMidiDevices'));
       void probeAudioDevices().then(setDeviceProbe).catch(logNativeError('probeAudioDevices'));
       void enableMidi().catch(logNativeError('enableMidi'));
       void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
@@ -234,41 +231,11 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     getAudioStatus,
     reloadSeparations,
     probeAudioDevices,
-    probeMidiDevices,
     reloadRecordings,
     boot,
     setAudio,
     setDeviceProbe,
-    setMidi,
   ]);
-
-  useEffect(() => {
-    const keyboardKeys = ['z', 's', 'x', 'd', 'c', 'v', 'g', 'b', 'h', 'n', 'j', 'm'];
-    const onKey = (event: KeyboardEvent) => {
-      if (isEditableTypingTarget(event.target)) return;
-      const index = keyboardKeys.indexOf(event.key.toLowerCase());
-      const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
-      if (pad) {
-        event.preventDefault();
-        void previewSamplePad(pad);
-      }
-    };
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (isEditableTypingTarget(event.target)) return;
-      const index = keyboardKeys.indexOf(event.key.toLowerCase());
-      const pad = index >= 0 ? session?.playState.sampleInstrument.pads[index] : undefined;
-      if (pad?.loopEnabled) {
-        event.preventDefault();
-        void stopSamplePreviewKey(pad.midiKey).then(setAudio);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKeyUp);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKeyUp);
-    };
-  }, [previewSamplePad, session?.playState.sampleInstrument.pads, setAudio, stopSamplePreviewKey]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -341,8 +308,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     recordingCommandPending,
     previewPadId,
     exportMessage,
-    midi,
-    setMidi,
     deviceProbe,
     setDeviceProbe,
     analysis,
@@ -369,8 +334,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     historyState,
     recoverAudio,
     selectAudioDriver,
-    enableMidi,
-    disableMidi,
     undo,
     redo,
     openRecordingAnalysis,

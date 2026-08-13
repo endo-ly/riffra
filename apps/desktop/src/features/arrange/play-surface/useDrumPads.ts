@@ -8,8 +8,8 @@ import {
   encodeNoteOff,
   encodeNoteOn,
   GM_DRUM_CHANNEL,
-  isEditableTypingTarget,
 } from '@/features/arrange/play-surface/musical-typing';
+import { isEditableTypingTarget } from '@/shared/input';
 
 interface UseDrumPadsOptions {
   /** When false, all listeners detach and any held notes are released. */

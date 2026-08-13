@@ -45,7 +45,6 @@ export type {
   MidiEvent,
   MidiEventKind,
   MidiNote,
-  MidiProbe,
   MissingDependency,
   MonitoringState,
   PlayState,

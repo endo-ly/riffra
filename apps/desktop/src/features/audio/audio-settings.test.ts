@@ -10,7 +10,7 @@ import {
   normalizeAudioSettingsDraft,
   reconcileAudioSettings,
   selectDriverForDraft,
-} from '@/features/settings/audio-settings';
+} from '@/features/audio/audio-settings';
 
 function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   return {

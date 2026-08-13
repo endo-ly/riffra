@@ -1,4 +1,5 @@
 import type { CreativeSession } from '@/model/domain';
+import styles from './SampleWorkspace.module.css';
 
 export function SamplePadEditor({
   session,
@@ -29,7 +30,7 @@ export function SamplePadEditor({
     });
   const removePad = (id: string) => void removeSamplePad(id);
   return (
-    <section className="section-card sample-editor">
+    <section className={`section-card ${styles.sampleEditor}`}>
       <header>
         <div>
           <span className="eyebrow">SLICE RANGES</span>
@@ -38,8 +39,8 @@ export function SamplePadEditor({
         <small>Source files remain untouched</small>
       </header>
       {session.playState.sampleInstrument.pads.map((pad) => (
-        <div className="sample-edit-row" key={pad.id}>
-          <div className="sample-edit-name">
+        <div className={styles.sampleEditRow} key={pad.id}>
+          <div className={styles.sampleEditName}>
             <strong>{pad.name}</strong>
             <small>
               MIDI {pad.midiKey} · {pad.endMs - pad.startMs} ms

@@ -4,7 +4,6 @@ import type {
   AudioStatus,
   AssetId,
   DeviceChannels,
-  MidiProbe,
   RuntimeProjectionStatus,
   SessionAudioPair,
 } from '@/model/domain';
@@ -12,19 +11,6 @@ import type { AssetPreviewOptions } from '../contracts';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
 import { invokeOrFallback, invoke } from '../invoke';
 import { audioCommandError } from './audio-error';
-
-export async function probeMidiDevices(): Promise<MidiProbe> {
-  return invokeOrFallback<MidiProbe>(
-    'probe_midi_devices',
-    {},
-    {
-      inputs: [],
-      outputs: [],
-      refreshedAtMs: Date.now(),
-      message: 'MIDI probe is unavailable in browser preview.',
-    },
-  );
-}
 
 export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
   return invokeOrFallback<AudioDeviceProbe>(
