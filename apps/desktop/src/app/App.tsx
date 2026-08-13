@@ -288,11 +288,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         audio={audio}
         isMuted={isMuted}
         historyState={historyState}
-        onUndo={undo}
-        onRedo={redo}
-        onSwitchWorkspace={switchWorkspace}
-        onRenameSession={renameSession}
-        onToggleMute={toggleMute}
+        onUndo={() => void undo()}
+        onRedo={() => void redo()}
+        onSwitchWorkspace={(workspace) => void switchWorkspace(workspace)}
+        onRenameSession={() => void renameSession()}
+        onToggleMute={() => void toggleMute()}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}
@@ -375,11 +375,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       {missingDependencies.length > 0 && (
         <MissingDependencies
           missing={missingDependencies}
-          onRelink={relinkMissing}
+          onRelink={(item, newPath) => void relinkMissing(item, newPath)}
           onReplacePlugin={(deviceId, newPath) =>
             void replaceMissingPluginDevice(deviceId, newPath)
           }
-          onDisablePlugin={disableMissingPluginDevice}
+          onDisablePlugin={(deviceId) => void disableMissingPluginDevice(deviceId)}
           onIgnore={ignoreMissing}
         />
       )}
@@ -395,10 +395,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             searchQuery: query,
             selectedAsset: selectedLibraryAsset,
             relatedAssets,
-            onSelectAsset: selectLibraryAsset,
-            onPreviewAsset: previewSelectedLibraryAsset,
-            onEditAsset: editSelectedLibraryAsset,
-            onOpenInDesign: openLibraryAssetAnalysis,
+            onSelectAsset: (asset) => void selectLibraryAsset(asset),
+            onPreviewAsset: () => void previewSelectedLibraryAsset(),
+            onEditAsset: () => void editSelectedLibraryAsset(),
+            onOpenInDesign: (asset) => void openLibraryAssetAnalysis(asset),
             onImportMidi: () => void importMidi(),
           }}
           plugins={{
@@ -410,7 +410,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           recordings={{
             visibleRecordings,
             count: recordings.length,
-            onOpenRecording: openRecordingAnalysis,
+            onOpenRecording: (recording) => void openRecordingAnalysis(recording),
           }}
           inbox={inbox}
         />
@@ -448,13 +448,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             <WorkspaceSample
               session={session}
               recordings={usableRecordings}
-              onCreateSamplePad={createSamplePad}
+              onCreateSamplePad={(recording) => void createSamplePad(recording)}
               onPreviewPad={(pad) => void previewSamplePad(pad)}
             />
             <SamplePadEditor
               session={session}
-              updateSamplePad={updateSamplePad}
-              removeSamplePad={removeSamplePad}
+              updateSamplePad={(padId, patch) => void updateSamplePad(padId, patch)}
+              removeSamplePad={(padId) => void removeSamplePad(padId)}
             />
             <SamplePreviewControls
               session={session}
@@ -550,11 +550,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         audio={audio}
         setAudio={setAudio}
         transportPlaying={transportPlaying}
-        onPlay={playTransport}
-        onStop={stopTransport}
-        onGoToStart={goToStart}
+        onPlay={() => void playTransport()}
+        onStop={() => void stopTransport()}
+        onGoToStart={() => void goToStart()}
         recordingCommandPending={recordingCommandPending}
-        onToggleRecording={toggleRecording}
+        onToggleRecording={() => void toggleRecording()}
         api={nativeApi}
       />
 

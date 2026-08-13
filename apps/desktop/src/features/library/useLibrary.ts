@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
 import type { AudioStatus, LibraryAsset } from '@/model/domain';
-import { toAssetId } from '@/model/domain';
+import { toAssetId } from '@/native/contracts';
 import type { AudioApi, LibraryApi, ProjectApi } from '@/native/native-api';
+import { openMidiFile } from '@/native/dialog';
 import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
@@ -23,10 +23,13 @@ export function useLibrary(
 
   const query = libraryQuery.trim().toLowerCase();
 
-  const selectLibraryAsset = useCallback(async (asset: LibraryAsset) => {
-    setSelectedLibraryAsset(asset);
-    setRelatedAssets(await relatedLibraryAssets(asset.id));
-  }, []);
+  const selectLibraryAsset = useCallback(
+    async (asset: LibraryAsset) => {
+      setSelectedLibraryAsset(asset);
+      setRelatedAssets(await relatedLibraryAssets(asset.id));
+    },
+    [relatedLibraryAssets],
+  );
 
   const editSelectedLibraryAsset = useCallback(async () => {
     if (!selectedLibraryAsset) return;
@@ -40,7 +43,7 @@ export function useLibrary(
     setLibraryResults((current) =>
       current.map((asset) => (asset.id === updated.id ? updated : asset)),
     );
-  }, [selectedLibraryAsset]);
+  }, [selectedLibraryAsset, updateLibraryAsset]);
 
   const previewSelectedLibraryAsset = useCallback(async () => {
     const asset = selectedLibraryAsset;
@@ -51,7 +54,7 @@ export function useLibrary(
     if (!asset || asset.kind !== 'audio') return;
     setAudio(await previewAsset(toAssetId(asset.id), {}));
     setPreviewPadId(null);
-  }, [previewAsset, selectedLibraryAsset]);
+  }, [previewAsset, selectedLibraryAsset, setAudio, setPreviewPadId]);
 
   // Imports an external Standard MIDI File as a canonical MIDI Asset through the
   // native dialog, then drives the cross-asset search by the file stem so the
@@ -60,11 +63,7 @@ export function useLibrary(
     if (!isNativeRuntime()) return;
     let selected: string | null;
     try {
-      const result = await open({
-        multiple: false,
-        filters: [{ name: 'Standard MIDI', extensions: ['mid', 'midi'] }],
-      });
-      selected = typeof result === 'string' ? result : null;
+      selected = await openMidiFile();
     } catch (error) {
       logNativeError('importMidiFile')(error);
       return;
@@ -101,7 +100,7 @@ export function useLibrary(
     return () => {
       active = false;
     };
-  }, [query]);
+  }, [query, searchLibrary]);
 
   return {
     librarySection,
@@ -109,11 +108,8 @@ export function useLibrary(
     libraryQuery,
     setLibraryQuery,
     libraryResults,
-    setLibraryResults,
     selectedLibraryAsset,
-    setSelectedLibraryAsset,
     relatedAssets,
-    setRelatedAssets,
     query,
     selectLibraryAsset,
     previewSelectedLibraryAsset,

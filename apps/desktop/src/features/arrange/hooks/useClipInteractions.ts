@@ -6,7 +6,7 @@ import type {
   MidiClip,
   TrackKind,
 } from '@/model/domain';
-import type { ClipCommands } from './useArrangeCommands';
+import type { ArrangeApi } from '@/native/native-api';
 import {
   clipDurationTicks,
   framesToTicks,
@@ -18,6 +18,20 @@ import {
 type ArrangeCommit = (
   operation: Promise<CreativeSession | null>,
 ) => Promise<CreativeSession | null>;
+
+type ClipCommands = Pick<
+  ArrangeApi,
+  | 'moveAudioClips'
+  | 'moveMidiClips'
+  | 'pasteTimelineClips'
+  | 'removeTimelineClips'
+  | 'splitAudioClip'
+  | 'splitMidiClip'
+  | 'trimAudioClip'
+  | 'trimMidiClip'
+  | 'updateAudioClip'
+  | 'updateMidiClip'
+>;
 
 interface ClipInteractionOptions {
   session: CreativeSession;

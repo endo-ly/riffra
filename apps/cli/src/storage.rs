@@ -19,7 +19,10 @@ impl SessionFileStorage {
 
     pub fn load_or_new(&self) -> Result<CreativeSession, String> {
         if !self.path.exists() {
-            return Ok(CreativeSession::new(now_ms()));
+            let session = CreativeSession::new(now_ms());
+            self.save(&session)
+                .map_err(|error| format!("new session could not be saved: {error}"))?;
+            return Ok(session);
         }
         let payload = fs::read(&self.path)
             .map_err(|error| format!("session file could not be read: {error}"))?;
@@ -92,4 +95,28 @@ fn now_ms() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_session_is_saved_before_first_command() {
+        let nonce = now_ms();
+        let root = std::env::temp_dir().join(format!("riffra-cli-storage-{nonce}"));
+        let path = root.join("session.json");
+        let storage = SessionFileStorage::new(path.clone());
+
+        let first = storage
+            .load_or_new()
+            .expect("new session should be created");
+        let second = storage
+            .load_or_new()
+            .expect("saved session should be readable");
+
+        assert!(path.exists());
+        assert_eq!(first.session_id, second.session_id);
+        let _ = fs::remove_dir_all(root);
+    }
 }

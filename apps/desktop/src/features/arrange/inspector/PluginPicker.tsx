@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { JobApi } from '@/native/native-api';
 import styles from '../WorkspaceArrange.module.css';
 
 interface PluginPickerProps {
-  api: NativeApi;
+  api?: Pick<JobApi, 'scanVst3Folder'>;
   title?: string;
   plugins?: PluginEntry[];
   onSelect: (plugin: PluginEntry) => void;
@@ -27,6 +27,11 @@ export function PluginPicker(props: PluginPickerProps) {
     }
     let cancelled = false;
     setLoading(true);
+    if (!props.api) {
+      setError('Plugin catalog is unavailable.');
+      setLoading(false);
+      return;
+    }
     props.api
       .scanVst3Folder()
       .then((report) => {

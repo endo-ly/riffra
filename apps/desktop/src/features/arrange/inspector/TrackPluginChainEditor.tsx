@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import type { CreativeSession, PluginEntry, Track } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { PluginPicker } from './PluginPicker';
 import styles from './TrackPluginChainEditor.module.css';
 
 interface TrackPluginChainEditorProps {
   track: Track;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
   plugins: PluginEntry[];
   commit: (operation: Promise<CreativeSession>) => void;
   missingDeviceIds: string[];

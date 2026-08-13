@@ -349,8 +349,7 @@ where
 // Low-level Audio Runtime passthroughs.
 //
 // These commands are single delegations to the Audio Runtime with no
-// canonical-state side effects. They stay in `lib.rs` because they are not
-// Production Workflow: session-persisting counterparts (master gain, driver
+// canonical-state side effects. Production Workflow counterparts (master gain, driver
 // selection, emergency mute) live in `session::commands` so the session stays
 // in lock-step with the runtime.
 

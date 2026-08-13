@@ -1,11 +1,5 @@
-import type {
-  AnalysisJobStatus,
-  AssetId,
-  BackgroundJobStatus,
-  ScanJobStatus,
-  ScanReport,
-  SeparationJobStatus,
-} from '@/model/domain';
+import type { AnalysisJobStatus, ScanJobStatus, SeparationJobStatus } from '../contracts';
+import type { AssetId, BackgroundJobStatus, ScanReport } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 import { defaultVst3Root } from './constants';
 

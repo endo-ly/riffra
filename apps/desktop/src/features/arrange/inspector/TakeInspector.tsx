@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CreativeSession, RecordingTakeRecord } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './TakeInspector.module.css';
@@ -9,7 +9,7 @@ interface TakeInspectorProps {
   session: CreativeSession;
   selection: ArrangeSelection;
   setSession: (session: CreativeSession) => void;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
 }
 
 export function TakeInspector(props: TakeInspectorProps) {

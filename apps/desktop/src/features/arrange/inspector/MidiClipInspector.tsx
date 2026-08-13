@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CreativeSession } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
 
@@ -9,7 +9,7 @@ interface MidiClipInspectorProps {
   setSession: (session: CreativeSession) => void;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
 }
 
 export function MidiClipInspector(props: MidiClipInspectorProps) {
@@ -36,7 +36,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     return null;
   }
 
-  const patch = (fields: Parameters<NativeApi['updateMidiClip']>[1]) =>
+  const patch = (fields: Parameters<ArrangeInspectorApi['updateMidiClip']>[1]) =>
     void commit(props.api.updateMidiClip(clip.id, fields));
   return (
     <div className={styles.inspector}>

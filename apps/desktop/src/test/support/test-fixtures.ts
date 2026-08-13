@@ -1,9 +1,8 @@
 import type { AudioStatus } from '@/model/domain';
 
 /**
- * Shared test builders for M0+ tests. They return valid, minimal objects so
- * individual tests only describe the fields they care about. Built on top of
- * `defaultSession` so the canonical session shape lives in one place.
+ * Shared test builders return valid, minimal objects so individual tests only
+ * describe the fields they care about.
  */
 
 export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {

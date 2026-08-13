@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, CreativeSession, Workspace } from '@/model/domain';
 import clsx from 'clsx';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Icon, Meter } from '@/shared/ui/primitives';
 import styles from './TransportBar.module.css';
@@ -20,7 +20,9 @@ interface TransportBarProps {
   onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
-  api: NativeApi;
+  api: Pick<ArrangeApi, 'updateArrangementTimebase' | 'updateTimelineLoopRange'> &
+    Pick<AudioApi, 'previewMasterGainDb' | 'setMasterGainDb'> &
+    Pick<ProjectSettingsApi, 'updateSessionSettings'>;
 }
 
 export function TransportBar(props: TransportBarProps) {

@@ -7,12 +7,10 @@ import type {
   AudioClipPatch,
   MidiClipMove,
   MidiClipPatch,
-  AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
   HistoryState,
   AssetId,
-  AssetPreviewOptions,
   DeviceChannels,
   LibraryAsset,
   MissingDependency,
@@ -21,9 +19,7 @@ import type {
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  ScanJobStatus,
   ScanReport,
-  SeparationJobStatus,
   SeparationResult,
   CreativeSession,
   DesktopViewState,
@@ -38,9 +34,15 @@ import type {
   AutomationPoint,
   TrackKind,
   Workspace,
-  TransportStatus,
 } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type {
+  AnalysisJobStatus,
+  AssetPreviewOptions,
+  ScanJobStatus,
+  SeparationJobStatus,
+  TransportStatus,
+} from './contracts';
 
 export interface TrackPluginStateChange {
   trackId: string;
@@ -183,7 +185,7 @@ export interface AudioApi {
   enableMidiListening(): Promise<AudioStatus>;
   /** Stops all MIDI input devices and silences any held notes. */
   disableMidiListening(): Promise<AudioStatus>;
-  /** Sends a live MIDI message to one assigned Instrument Track in Arrange. */
+  /** Sends a live MIDI message to the specified Instrument Track. */
   sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
   /** Sends the targeted Instrument Track panic messages without changing the session. */
   panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
@@ -192,7 +194,7 @@ export interface AudioApi {
 export interface RecordingApi {
   startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
-  stopArrangeRecording(): Promise<AudioStatus>;
+  stopArrangeRecording(): Promise<SessionAudioPair>;
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad

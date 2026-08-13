@@ -71,8 +71,8 @@ npm run verify         # ルートの一括検証（--native でネイティブ�
 npm run lint           # ESLint
 npm run typecheck      # tsc
 
-cargo run -p riffra-cli -- --project ./project.json get-session
-cargo run -p riffra-cli -- --interactive --project ./project.json
+cargo run -p riffra-cli -- --session ./project.json get-session
+cargo run -p riffra-cli -- --interactive --session ./project.json
 ```
 
 ### 検証

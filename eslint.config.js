@@ -68,6 +68,14 @@ export default tseslint.config(
               name: '@tauri-apps/api/event',
               message: 'Import Tauri events through src/native.',
             },
+            {
+              name: '@tauri-apps/api/window',
+              message: 'Import Tauri window APIs through src/native.',
+            },
+            {
+              name: '@tauri-apps/plugin-dialog',
+              message: 'Import Tauri dialogs through src/native.',
+            },
           ],
         },
       ],

@@ -7,7 +7,7 @@ import {
   snapGridTicks,
   timelineGridDensity,
 } from '@/features/arrange/model/arrange-timeline';
-import { toAssetId } from '@/model/domain';
+import { toAssetId } from '@/native/contracts';
 
 const timebase = {
   ppq: 960,

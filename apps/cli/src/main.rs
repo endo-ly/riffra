@@ -99,6 +99,11 @@ impl Options {
         } else {
             Some(parse_command(command_arguments)?)
         };
+        if !interactive && matches!(command, Some(Command::Undo | Command::Redo)) {
+            return Err(
+                "undo and redo require --interactive because history is process-local".into(),
+            );
+        }
         if interactive && command.is_some() {
             return Err("--interactive cannot be combined with a one-shot command".into());
         }
@@ -205,5 +210,17 @@ mod tests {
         assert!(undo.ok);
         assert!(redo.ok);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn one_shot_undo_requires_interactive_mode() {
+        let result = Options::parse(vec![
+            "--session".into(),
+            "session.json".into(),
+            "undo".into(),
+        ]);
+
+        let error = result.err().expect("one-shot undo should be rejected");
+        assert!(error.contains("require --interactive"));
     }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AudioAnalysis, CreativeSession, DesignContext, RecordingAsset } from '@/model/domain';
-import { compareAnalyses } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import { compareAnalyses } from './analysis-comparison';
+import type { DesignApi, ProjectSettingsApi } from '@/native/native-api';
 import { ReferenceCompare } from './ReferenceCompare';
 
 export function ReferenceSuggestion({
@@ -29,7 +29,7 @@ export function ReferenceSuggestion({
   session: CreativeSession;
   designContext: DesignContext;
   setSession: (value: CreativeSession) => void;
-  api: NativeApi;
+  api: Pick<DesignApi, 'applyAiSuggestion'> & Pick<ProjectSettingsApi, 'updateSessionSettings'>;
   onSelect: (recording: RecordingAsset) => void;
   onPreview: (recording: RecordingAsset) => void;
   onStop: () => void;

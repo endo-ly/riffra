@@ -1,42 +1,25 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type {
-  AudioDriverConfig,
-  AudioStatus,
-  CreativeSession,
-  RecordingAsset,
-} from '@/model/domain';
+import type { AudioDriverConfig, AudioStatus } from '@/model/domain';
 import { reconcileAudioSettings } from '@/features/settings/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
-import type { AudioApi, BootstrapApi, LibraryApi, RecordingApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/native-api';
 
 interface UseAudioOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  session: CreativeSession | null;
-  setSession: (session: CreativeSession) => void;
-  setRecordings: (recordings: RecordingAsset[]) => void;
 }
 
-export function useAudioSettings(
-  api: AudioApi & BootstrapApi & RecordingApi & Pick<LibraryApi, 'listRecordings'>,
-  options: UseAudioOptions,
-) {
+export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
   const {
     recoverAudioDevice,
-    bootstrap,
     setAudioDriver,
     enableMidiListening,
     disableMidiListening,
     setEmergencyMute,
-    startArrangeRecording,
-    stopArrangeRecording,
-    listRecordings,
   } = api;
-  const { audio, setAudio, setSession, setRecordings } = options;
+  const { audio, setAudio } = options;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
-  const [recordingCommandPending, setRecordingCommandPending] = useState(false);
-  const recordingCommandLock = useRef(false);
 
   const recoverAudio = useCallback(async () => {
     setAudioPreferenceMessage(null);
@@ -77,62 +60,12 @@ export function useAudioSettings(
     setAudio(await setEmergencyMute(muted));
   }, [audio, setAudio, setEmergencyMute]);
 
-  const startRecordingNow = useCallback(
-    async (recordingSessionId?: string) => {
-      if (recordingCommandLock.current) return;
-      recordingCommandLock.current = true;
-      setRecordingCommandPending(true);
-      try {
-        const nextAudio = await startArrangeRecording(recordingSessionId);
-        setAudio(nextAudio);
-        setRecordings(await listRecordings());
-      } finally {
-        recordingCommandLock.current = false;
-        setRecordingCommandPending(false);
-      }
-    },
-    [listRecordings, setAudio, setRecordings, startArrangeRecording],
-  );
-
-  const toggleRecording = useCallback(async () => {
-    if (recordingCommandLock.current) return;
-    if (!audio.recording.active) {
-      await startRecordingNow();
-      return;
-    }
-    recordingCommandLock.current = true;
-    setRecordingCommandPending(true);
-    try {
-      setAudio(await stopArrangeRecording());
-      setSession((await bootstrap()).session);
-      setRecordings(await listRecordings());
-    } finally {
-      recordingCommandLock.current = false;
-      setRecordingCommandPending(false);
-    }
-  }, [
-    audio.recording.active,
-    bootstrap,
-    listRecordings,
-    setAudio,
-    setRecordings,
-    setSession,
-    startRecordingNow,
-    stopArrangeRecording,
-  ]);
-
   return {
     audioPreferenceMessage,
-    setAudioPreferenceMessage,
-    recordingCommandPending,
-    setRecordingCommandPending,
-    recordingCommandLock,
     recoverAudio,
     selectAudioDriver,
     enableMidi,
     disableMidi,
     toggleMute,
-    startRecordingNow,
-    toggleRecording,
   };
 }

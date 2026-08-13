@@ -19,7 +19,7 @@ import type {
   PluginEntry,
   TrackKind,
 } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeWorkspaceApi } from './arrange-api';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
@@ -60,7 +60,7 @@ interface WorkspaceArrangeProps {
   setSession: (session: CreativeSession) => void;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
-  api: NativeApi;
+  api: ArrangeWorkspaceApi;
   audio: AudioStatus;
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;

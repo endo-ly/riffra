@@ -4,7 +4,9 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InspectorPanel } from './InspectorPanel';
-import { defaultSession, toAssetId, type BootstrapState } from '@/model/domain';
+import { defaultSession } from '@/native/browser-defaults';
+import { toAssetId } from '@/native/contracts';
+import type { BootstrapState } from '@/model/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);

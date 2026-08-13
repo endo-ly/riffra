@@ -4,11 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { useState } from 'react';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
-import { defaultViewState } from '@/model/domain';
+import { defaultViewState } from '@/app/view-state';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { ToastStack } from '@/shared/ui/ToastStack';
 
 afterEach(cleanup);
 
@@ -45,9 +45,8 @@ describe('App native boundary', () => {
   it('shows a runtime restart notification without replaying session commands', async () => {
     const api = new FakeNativeApi();
     function RuntimeNotification() {
-      const [message, setMessage] = useState('');
-      useRuntimeRestartNotification({ api, setScanMessage: setMessage });
-      return <output>{message}</output>;
+      useRuntimeRestartNotification({ api });
+      return <ToastStack />;
     }
     render(<RuntimeNotification />);
     await waitFor(() => expect(api.calls).toContain('onRuntimeRestarted'));
@@ -59,6 +58,37 @@ describe('App native boundary', () => {
     expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(0);
     expect(api.calls.filter((call) => call === 'restoreSamplePads')).toHaveLength(0);
     expect(api.calls.slice(0, callsBeforeRestart.length)).toEqual(callsBeforeRestart);
+  });
+
+  it('waits for runtime startup before starting the VST scan', async () => {
+    const api = new FakeNativeApi({
+      bootstrapState: { runtimeStarted: false, runtimeStartupFinished: false },
+    });
+
+    await renderApp(api);
+    expect(api.calls).not.toContain('startScanJob');
+
+    api.emitRuntimeStartupFinished(true);
+
+    await waitFor(() => expect(api.calls).toContain('startScanJob'));
+  });
+
+  it('retries runtime restoration once after a successful startup scan', async () => {
+    const api = new FakeNativeApi({
+      bootstrapState: { runtimeStarted: false, runtimeStartupFinished: false },
+    });
+
+    await renderApp(api);
+    api.emitRuntimeStartupFinished(false);
+
+    await waitFor(() => expect(api.calls).toContain('startScanJob'));
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'retryStartupRuntime')).toHaveLength(1),
+    );
+
+    api.emitRuntimeStartupFinished(false);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(api.calls.filter((call) => call === 'retryStartupRuntime')).toHaveLength(1);
   });
 
   it('ignores a cancelled transport failure after a newer status event', async () => {

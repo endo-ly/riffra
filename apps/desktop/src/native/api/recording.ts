@@ -16,8 +16,8 @@ export async function recordAnotherTake(recordingSessionId: string): Promise<Aud
   }
 }
 
-export async function stopArrangeRecording(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('stop_arrange_recording');
+export async function stopArrangeRecording(): Promise<SessionAudioPair> {
+  return await invoke<SessionAudioPair>('stop_arrange_recording');
 }
 
 export async function createSamplePad(assetId: AssetId, name: string): Promise<SessionAudioPair> {

@@ -1,5 +1,5 @@
 import type { AssetId, AudioAnalysis, RecordingAsset } from '@/model/domain';
-import { compareAnalyses } from '@/model/domain';
+import { compareAnalyses } from './analysis-comparison';
 
 export function ReferenceCompare({
   analysis,

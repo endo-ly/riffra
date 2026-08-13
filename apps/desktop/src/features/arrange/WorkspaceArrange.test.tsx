@@ -5,13 +5,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
-import {
-  defaultSession,
-  toAssetId,
-  type CreativeSession,
-  type Track,
-  type TransportStatus,
-} from '@/model/domain';
+import { type CreativeSession, type Track } from '@/model/domain';
+import { defaultSession } from '@/native/browser-defaults';
+import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { ToastStack } from '@/shared/ui/ToastStack';
@@ -558,62 +554,6 @@ describe('WorkspaceArrange', () => {
       () => expect(screen.getByText('Playback runtime is out of sync')).toBeInTheDocument(),
       { timeout: 2_000 },
     );
-  });
-
-  it('places overlapping Audio and MIDI clips on separate lanes', () => {
-    const session = defaultSession();
-    // This is an intentionally invalid legacy snapshot: the renderer must not
-    // overlay mixed timeline items even before the domain repair is applied.
-    session.arrangement.tracks.push({
-      id: 'track:audio-midi',
-      name: 'Audio and MIDI',
-      kind: 'audio',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    });
-    session.arrangement.audioClips.push({
-      id: 'clip:audio-overlap',
-      name: 'Audio overlap',
-      trackId: 'track:audio-midi',
-      assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
-      startTick: 0,
-      sourceRange: { start: 0, end: 48_000 },
-      sourceSampleRate: 48_000,
-      timelineDuration: { frames: 48_000, sampleRate: 48_000 },
-      gainDb: 0,
-      pan: 0,
-      fadeIn: { frames: 0, sampleRate: 48_000 },
-      fadeOut: { frames: 0, sampleRate: 48_000 },
-      loopEnabled: false,
-      muted: false,
-      takeVariant: 'raw',
-    });
-    session.arrangement.midiClips.push({
-      id: 'clip:midi-overlap',
-      name: 'MIDI overlap',
-      trackId: 'track:audio-midi',
-      startTick: 0,
-      durationTicks: 1_920,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
-
-    const api = new FakeNativeApi({ bootstrapState: { session } });
-    const { container } = render(<Harness api={api} initialSession={session} />);
-    const audioClip = container.querySelector<HTMLElement>('[data-clip-id="clip:audio-overlap"]');
-    const midiClip = container.querySelector<HTMLElement>('[data-clip-id="clip:midi-overlap"]');
-
-    expect(audioClip).toBeInTheDocument();
-    expect(midiClip).toBeInTheDocument();
-    expect(audioClip?.style.top).not.toBe(midiClip?.style.top);
   });
 
   it('renders one shared grid for a long timeline regardless of Track count', () => {

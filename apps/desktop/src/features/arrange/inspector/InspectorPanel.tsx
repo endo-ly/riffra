@@ -6,7 +6,7 @@ import type {
   MissingDependency,
   PluginEntry,
 } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
 import { MultiClipInspector } from './MultiClipInspector';
 import { MidiClipInspector } from './MidiClipInspector';
@@ -31,7 +31,7 @@ interface InspectorPanelProps {
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
 }
 
 export function InspectorPanel(props: InspectorPanelProps) {

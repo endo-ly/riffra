@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AudioClip, CreativeSession } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
@@ -10,7 +10,7 @@ interface ArrangeClipInspectorProps {
   setSession: (session: CreativeSession) => void;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
   onSetLoopToClip?: (clip: AudioClip) => Promise<CreativeSession>;
 }
 

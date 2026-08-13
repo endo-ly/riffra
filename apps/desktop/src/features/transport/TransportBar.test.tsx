@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TransportBar } from './TransportBar';
-import { defaultSession } from '@/model/domain';
+import { defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);

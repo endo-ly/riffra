@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compareAnalyses, defaultSession } from '@/model/domain';
+import { compareAnalyses } from '@/features/design/reference/analysis-comparison';
+import { defaultSession } from '@/native/browser-defaults';
 
 describe('Scratch Session safety defaults', () => {
   it('starts at a conservative master level with a safety limiter', () => {

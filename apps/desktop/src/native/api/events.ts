@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import type { AudioStatus, TransportStatus } from '@/model/domain';
+import type { AudioStatus } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type {
   NativeEventApi,
@@ -7,6 +7,7 @@ import type {
   TrackPluginStateChange,
 } from '../native-api';
 import { isNativeRuntime } from '../invoke';
+import type { TransportStatus } from '../contracts';
 
 function subscribe<T>(eventName: string, callback: (payload: T) => void): () => void {
   if (!isNativeRuntime()) return () => undefined;

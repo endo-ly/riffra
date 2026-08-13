@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AudioStatus, CreativeSession, PluginEntry, Track } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
@@ -16,7 +16,7 @@ interface TrackInspectorProps {
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
 }
 
 export function TrackInspector(props: TrackInspectorProps) {

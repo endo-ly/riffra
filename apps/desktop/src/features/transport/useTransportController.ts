@@ -20,7 +20,6 @@ interface TransportControllerOptions {
   renderResult: RenderResult | null;
   setRenderResult: Dispatch<SetStateAction<RenderResult | null>>;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  setRenderPreviewing: Dispatch<SetStateAction<boolean>>;
 }
 
 export type PlaybackMode = 'timeline' | 'preview';
@@ -38,7 +37,6 @@ export function useTransportController({
   renderResult,
   setRenderResult,
   setAudio,
-  setRenderPreviewing,
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
@@ -131,21 +129,23 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      if (playbackMode === 'timeline') {
+      const stopTimeline = timelinePlaying;
+      const stopPreview = previewPlaying;
+      if (stopTimeline) {
         await api.stopTimeline(transportSequence);
-        return;
       }
-      setAudio(await api.stopSamplePreview());
-      setPreviewPlaying(false);
-      setRenderPreviewing(false);
+      if (stopPreview) {
+        setAudio(await api.stopSamplePreview());
+        setPreviewPlaying(false);
+      }
     });
   }, [
     api,
     cancelPendingPlay,
     nextTransportSequence,
-    playbackMode,
+    previewPlaying,
+    timelinePlaying,
     setAudio,
-    setRenderPreviewing,
     runImmediateTransportOperation,
   ]);
 
@@ -153,21 +153,22 @@ export function useTransportController({
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      if (playbackMode === 'timeline') {
+      if (timelinePlaying) {
         await api.goToStartTimeline(transportSequence);
         return;
       }
-      setAudio(await api.stopSamplePreview());
-      setPreviewPlaying(false);
-      setRenderPreviewing(false);
+      if (previewPlaying) {
+        setAudio(await api.stopSamplePreview());
+        setPreviewPlaying(false);
+      }
     });
   }, [
     api,
     cancelPendingPlay,
     nextTransportSequence,
-    playbackMode,
+    previewPlaying,
+    timelinePlaying,
     setAudio,
-    setRenderPreviewing,
     runImmediateTransportOperation,
   ]);
 

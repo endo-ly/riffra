@@ -8,7 +8,9 @@ import { ArrangeClipInspector } from './ArrangeClipInspector';
 import { TakeInspector } from './TakeInspector';
 import { TrackInspector } from './TrackInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
-import { defaultSession, toAssetId, type CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/domain';
+import { defaultSession } from '@/native/browser-defaults';
+import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);

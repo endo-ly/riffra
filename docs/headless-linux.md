@@ -81,10 +81,11 @@ riffra-cli --interactive
 ### ワンショットモード
 
 1 コマンド実行してすぐ終了する。シェルスクリプトやバッチ処理に向く。
+操作履歴はプロセス内で管理するため、`undo` と `redo` は対話モードでのみ利用できる。
 
 ```bash
-riffra-cli --project ./project.json add-track --name drums --kind audio
-riffra-cli --project ./project.json list-tracks
+riffra-cli --session ./project.json add-track --name drums --kind audio
+riffra-cli --session ./project.json list-tracks
 ```
 
 ### 対話モード
@@ -92,7 +93,7 @@ riffra-cli --project ./project.json list-tracks
 プロセスを常駐させて、標準入力から JSON Lines 形式のコマンドを受け付ける。状態をメモリ上に保つので、連続操作が速い。
 
 ```bash
-riffra-cli --interactive --project ./project/project.json
+riffra-cli --interactive --session ./project.json
 ```
 
 入力例：
@@ -149,11 +150,11 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 
 現在のCLIは制作状態と履歴の最小境界を提供する。プロトコルの詳細は「プロトコル設計」を参照する。
 
-| カテゴリ | 書き込み                  | 読み出し     |
-| -------- | ------------------------- | ------------ |
-| 設定     | `updateSessionSettings`   | `getSession` |
-| トラック | `addTrack`, `removeTrack` | `listTracks` |
-| 編集履歴 | `undo`, `redo`            | —            |
+| カテゴリ | 書き込み                         | 読み出し     |
+| -------- | -------------------------------- | ------------ |
+| 設定     | `updateSessionSettings`          | `getSession` |
+| トラック | `addTrack`, `removeTrack`        | `listTracks` |
+| 編集履歴 | `undo`, `redo`（対話モードのみ） | —            |
 
 ---
 
@@ -199,7 +200,7 @@ AI エージェントは対話モードの `riffra-cli` をサブプロセスと
 | 機能             | コマンド                                  | 内容                                             |
 | ---------------- | ----------------------------------------- | ------------------------------------------------ |
 | 原子性           | 全コマンド                                | 1コマンドは1つの原子操作。失敗時に状態が壊れない |
-| 取り消し         | `undo`, `redo`                            | セッションの操作履歴を戻す、やり直す             |
+| 取り消し         | `undo`, `redo`（対話モードのみ）          | セッションの操作履歴を戻す、やり直す             |
 | トランザクション | `beginEdit`, `commitEdit`, `rollbackEdit` | 複数コマンドの編集をまとめて適用または破棄する   |
 | 冪等性           | リクエスト側                              | 処理済み`requestId`の再送は無視する。再送に安全  |
 

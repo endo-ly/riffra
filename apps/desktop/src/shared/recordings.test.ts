@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecordingAsset } from '@/model/domain';
-import { toAssetId } from '@/model/domain';
+import { toAssetId } from '@/native/contracts';
 import { isUsableRecording } from '@/shared/recordings';
 
 const completedRecording = (): RecordingAsset => ({

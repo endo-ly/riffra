@@ -1,20 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { CreativeSession } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
-
-export type ClipCommands = Pick<
-  ArrangeApi,
-  | 'moveAudioClips'
-  | 'moveMidiClips'
-  | 'pasteTimelineClips'
-  | 'removeTimelineClips'
-  | 'splitAudioClip'
-  | 'splitMidiClip'
-  | 'trimAudioClip'
-  | 'trimMidiClip'
-  | 'updateAudioClip'
-  | 'updateMidiClip'
->;
 
 interface ArrangeCommandOptions {
   api: ArrangeApi & Pick<TransportApi, 'retryRuntimeProjection'>;
@@ -62,32 +48,7 @@ export function useArrangeCommands({ api, setSession }: ArrangeCommandOptions) {
     }
   }, [api]);
 
-  const clipCommands = useMemo<ClipCommands>(
-    () => ({
-      moveAudioClips: (...arguments_) => api.moveAudioClips(...arguments_),
-      moveMidiClips: (...arguments_) => api.moveMidiClips(...arguments_),
-      pasteTimelineClips: (...arguments_) => api.pasteTimelineClips(...arguments_),
-      removeTimelineClips: (...arguments_) => api.removeTimelineClips(...arguments_),
-      splitAudioClip: (...arguments_) => api.splitAudioClip(...arguments_),
-      splitMidiClip: (...arguments_) => api.splitMidiClip(...arguments_),
-      trimAudioClip: (...arguments_) => api.trimAudioClip(...arguments_),
-      trimMidiClip: (...arguments_) => api.trimMidiClip(...arguments_),
-      updateAudioClip: (...arguments_) => api.updateAudioClip(...arguments_),
-      updateMidiClip: (...arguments_) => api.updateMidiClip(...arguments_),
-    }),
-    [api],
-  );
-
   return {
-    addAudioClip: (...arguments_: Parameters<ArrangeApi['addAudioClipToArrangement']>) =>
-      api.addAudioClipToArrangement(...arguments_),
-    addMidiClip: (...arguments_: Parameters<ArrangeApi['addMidiClipToArrangement']>) =>
-      api.addMidiClipToArrangement(...arguments_),
-    pasteTimelineClips: (...arguments_: Parameters<ArrangeApi['pasteTimelineClips']>) =>
-      api.pasteTimelineClips(...arguments_),
-    removeTimelineClips: (...arguments_: Parameters<ArrangeApi['removeTimelineClips']>) =>
-      api.removeTimelineClips(...arguments_),
-    clipCommands,
     commit,
     message,
     setMessage,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AudioStatus, Track } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { AudioApi } from '@/native/native-api';
 import { drumPadByNote } from '@/features/arrange/play-surface/drum-map';
 import {
   MUSICAL_TYPING_DEFAULT_OCTAVE,
@@ -26,7 +26,7 @@ interface SurfaceState {
 interface PlaySurfacePanelProps {
   track: Track | null;
   audio: AudioStatus;
-  api: NativeApi;
+  api: Pick<AudioApi, 'sendMidiToTrack'>;
   runtimeReady: boolean;
   missingDeviceIds: string[];
   onChooseInstrument: () => void;

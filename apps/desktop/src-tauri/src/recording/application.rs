@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 
 use crate::asset;
 use crate::library;
-use crate::model::AudioStatus;
+use crate::model::{AudioStatus, SessionAudioPair};
 use crate::native_audio::AudioSupervisor;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
@@ -201,11 +201,11 @@ fn build_startup_capture(
 /// buffers, and the resulting raw / processed / MIDI outputs are registered as
 /// canonical Assets. The take manifest's nested `RecordingCapture` is updated
 /// to point at those Asset IDs so the canonical state is the source of truth.
-pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, String> {
+pub fn stop_recording(context: &RecordingContext<'_>) -> Result<SessionAudioPair, String> {
     let before = context.audio.refresh_status()?;
     let status = context.audio.stop_arrange_recording()?;
     if status.recording.cancelled {
-        return Ok(status);
+        return session_audio_pair(context, status);
     }
     let directory = status
         .recording
@@ -220,7 +220,7 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, Str
                     "Recording stopped and files were preserved, but canonical finalization failed: {error}"
                 )
             })?;
-            return Ok(status);
+            return session_audio_pair(context, status);
         }
         let outputs = register_recording_outputs(context.data_root, &directory_path).map_err(|error| {
             format!(
@@ -229,7 +229,19 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, Str
         })?;
         place_recording_on_timeline(context, &directory_path, outputs)?;
     }
-    Ok(status)
+    session_audio_pair(context, status)
+}
+
+fn session_audio_pair(
+    context: &RecordingContext<'_>,
+    audio: AudioStatus,
+) -> Result<SessionAudioPair, String> {
+    let session = context
+        .core
+        .snapshot()
+        .map_err(|error| error.to_string())?
+        .session;
+    Ok(SessionAudioPair { session, audio })
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]

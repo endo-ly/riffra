@@ -8,7 +8,7 @@ import type {
   ProjectTimebase,
   Track,
 } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeApi } from '@/native/native-api';
 import { AudioClipView } from './AudioClipView';
 import { MidiClipView } from './MidiClipView';
 import {
@@ -33,7 +33,7 @@ interface ArrangeTrackProps {
   timelineWidth: number;
   pixelsPerTick: number;
   trackSize: TrackSize;
-  api: NativeApi;
+  api: ArrangeApi;
   onCommit: (operation: Promise<CreativeSession | null>) => Promise<CreativeSession | null>;
   onDrop: (event: React.DragEvent, trackId: string, trackKind: Track['kind']) => void;
   onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;

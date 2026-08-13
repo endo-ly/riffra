@@ -3,12 +3,12 @@ import type {
   AudioDriverConfig,
   AudioStatus,
   AssetId,
-  AssetPreviewOptions,
   DeviceChannels,
   MidiProbe,
   RuntimeProjectionStatus,
   SessionAudioPair,
 } from '@/model/domain';
+import type { AssetPreviewOptions } from '../contracts';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
 import { invokeOrFallback, invoke } from '../invoke';
 import { audioCommandError } from './audio-error';

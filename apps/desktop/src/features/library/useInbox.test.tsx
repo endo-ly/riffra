@@ -3,7 +3,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useInbox } from '@/features/library/useInbox';
-import { toAssetId } from '@/model/domain';
+import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import type { RecordingAsset } from '@/model/domain';
 

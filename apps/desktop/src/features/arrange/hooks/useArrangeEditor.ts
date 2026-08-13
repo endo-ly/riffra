@@ -136,8 +136,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     );
     await commit(
       asset.kind === 'audio'
-        ? commands.addAudioClip(asset.assetId, asset.name, tick, trackId)
-        : commands.addMidiClip(asset.assetId, asset.name, tick, trackId),
+        ? api.addAudioClipToArrangement(asset.assetId, asset.name, tick, trackId)
+        : api.addMidiClipToArrangement(asset.assetId, asset.name, tick, trackId),
     );
   };
 
@@ -145,7 +145,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     session,
     selectedClipIds,
     setSelectedClipIds,
-    commands: commands.clipCommands,
+    commands: api,
     tool,
     pixelsPerTick,
     analyses,
@@ -246,7 +246,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
           ...arrangement.midiClips.map((clip) => clip.id),
         ]);
         void commit(
-          commands.pasteTimelineClips(
+          api.pasteTimelineClips(
             clipboardRef.current.audioIds,
             clipboardRef.current.midiIds,
             snapTick(displayTick),
@@ -268,7 +268,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         );
         const target = Math.max(...clips.map((clip) => timelineObjectEndTick(clip, timebase)));
         void commit(
-          commands.pasteTimelineClips(
+          api.pasteTimelineClips(
             arrangement.audioClips
               .filter((clip) => selectedClipIds.includes(clip.id))
               .map((clip) => clip.id),
@@ -291,7 +291,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(
-          commands.removeTimelineClips(
+          api.removeTimelineClips(
             arrangement.audioClips
               .filter((clip) => selectedClipIds.includes(clip.id))
               .map((clip) => clip.id),
@@ -305,6 +305,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [
+    api,
     arrangement.audioClips,
     arrangement.midiClips,
     arrangement.markers,

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { CreativeSession } from '@/model/domain';
-import type { NativeApi } from '@/native/native-api';
+import type { ArrangeInspectorApi } from '../arrange-api';
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
 
@@ -10,7 +10,7 @@ interface MultiClipInspectorProps {
   selectedAudioClipIds: string[];
   selectedMidiClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
-  api: NativeApi;
+  api: ArrangeInspectorApi;
 }
 
 export function MultiClipInspector(props: MultiClipInspectorProps) {
