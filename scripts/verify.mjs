@@ -7,8 +7,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
-import { readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.NODE_NO_WARNINGS = '1';
@@ -74,6 +74,19 @@ function collectCppFiles() {
     .map((line) => resolve(root, line));
 }
 
+function snapshotDirectory(directory) {
+  const files = [];
+  const visit = (current) => {
+    for (const entry of readdirSync(current)) {
+      const path = join(current, entry);
+      if (statSync(path).isDirectory()) visit(path);
+      else files.push([relative(directory, path), readFileSync(path, 'utf8')]);
+    }
+  };
+  visit(directory);
+  return JSON.stringify(files.sort(([left], [right]) => left.localeCompare(right)));
+}
+
 function buildNative({ config = 'Debug', buildDir, withTests = false } = {}) {
   const engineDir = join(root, 'native', 'audio-engine');
 
@@ -111,13 +124,12 @@ function main() {
   const artifactsRoot = join(root, '.artifacts', 'verify');
   process.env.CARGO_TARGET_DIR = join(artifactsRoot, 'cargo');
 
+  const generatedTypes = join(root, 'apps', 'desktop', 'src', 'lib', 'generated');
+  const typesBeforeGeneration = snapshotDirectory(generatedTypes);
   run('Regenerate TypeScript bindings', resolveCommand('npm'), ['run', 'gen:types']);
-  run('TypeScript bindings staleness', 'git', [
-    'diff',
-    '--exit-code',
-    '--',
-    'apps/desktop/src/lib/generated',
-  ]);
+  if (snapshotDirectory(generatedTypes) !== typesBeforeGeneration) {
+    throw new Error('TypeScript bindings were stale before verification');
+  }
   run('TypeScript build and tests', resolveCommand('npm'), ['run', 'check']);
   run('ESLint', resolveCommand('npm'), ['run', 'lint']);
   run('Prettier check', resolveCommand('npm'), ['run', 'format:check']);
