@@ -2,6 +2,7 @@
 members = [
   "crates/riffra-core",
   "crates/riffra-render-worker",
+  "apps/cli",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"

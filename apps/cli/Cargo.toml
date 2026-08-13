@@ -1,0 +1,15 @@
+[package]
+name = "riffra-cli"
+version = "0.1.0"
+description = "Headless command host for the Riffra production core"
+authors = ["Riffra contributors"]
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+riffra-core = { path = "../../crates/riffra-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

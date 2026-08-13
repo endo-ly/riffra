@@ -2525,6 +2525,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "riffra-cli"
+version = "0.1.0"
+dependencies = [
+ "riffra-core",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "riffra-core"
 version = "0.1.0"
 dependencies = [
