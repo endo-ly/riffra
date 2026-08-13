@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const directory = join(repositoryRoot, 'apps/desktop/src/lib/generated');
+const directory = join(repositoryRoot, 'apps/desktop/src/model/generated');
 const types = readdirSync(directory)
   .filter((file) => file.endsWith('.ts') && file !== 'index.ts')
   .map((file) => file.slice(0, -3))

@@ -10,6 +10,7 @@
 - Tauri命令のカタログ（領域ごとの分類と責務、実行モード）
 - NativeApi TS契約とTauri命令との対応規則
 - サイドカー JSON Lines プロトコルの構造と規則（音声・レンダー・プローブ）
+- CLI JSON Lines プロトコルの現在の境界
 - 境界ごとのエラー・状態遷移の契約
 - 権限・ケイパビリティ設定
 
@@ -52,8 +53,9 @@
 | C    | Rust ↔ riffra-audio          | 子プロセスの stdin/stdout（JSON Lines） | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
 | D    | Rust → riffra-render-worker  | 子プロセスの stdin/stdout（JSON 1行）   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe） | 子プロセスの stdout（JSON 1行）/ 引数   | デバイス・チャンネル列挙、VST3スキャン                   |
+| F    | Host ↔ riffra-cli            | stdin/stdout（JSON Lines、対話モード）  | セッションの最小操作を外部Hostから実行                   |
 
-使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、それ以外のすべては A。
+使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、GUIを持たない外部Hostからの最小セッション操作は F、それ以外のデスクトップ操作は A。
 
 ---
 
@@ -61,14 +63,15 @@
 
 ### 3.1 実行モード
 
-命令は責務に応じて4つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
+命令は責務に応じて3つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
-| モード                              | 挙動                                                                                                                  | 使う命令                                            |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `run_blocking`                      | Desktop command gate を取得してから実行（正準セッション操作と保存を直列化）                                           | 楽曲編集・ライブラリ操作・素材操作の大半            |
-| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                   | プローブ、スキャン、録音一覧、プラグイン接続など    |
-| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                                       | play / stop / seek、MIDI送信、プレビュー、ミュート  |
-| `run_workspace_control`             | ワークスペース遷移専用の短期トランザクション（stop 意図 + 処理モード更新を合成し、`workspace_runtime_gate` で直列化） | `switch_workspace`、`retry_runtime_projection` など |
+| モード                              | 挙動                                                                                                | 使う命令                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `run_blocking`                      | Desktop command gate を取得してから実行（正準セッション操作と保存を直列化）                         | 楽曲編集・ライブラリ操作・素材操作の大半           |
+| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理 | プローブ、スキャン、録音一覧、プラグイン接続など   |
+| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                     | play / stop / seek、MIDI送信、プレビュー、ミュート |
+
+ワークスペース遷移はDesktopViewStateだけを更新する。再生可否、ランタイム回復、Native音声処理モードを切り替えない。
 
 ### 3.2 命令カタログ
 
@@ -80,17 +83,17 @@
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `get_bootstrap_state`                                                  | CreativeSession・DesktopViewState・セーフモード・回復候補の初期状態を返す |
 | `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                                        |
-| `probe_audio_devices` / `probe_midi_devices` / `probe_device_channels` | デバイス・チャンネル列挙（境界E経由）                                     |
+| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                           |
 | `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                  |
 | `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                        |
 | `restore_recovery_generation`                                          | 世代からの回復                                                            |
 | `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ                                  |
 
-**セッション・アレンジ（session/commands.rs）**
+**セッション・アレンジ（session/commands/）**
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ワークスペース     | `switch_workspace`、`retry_runtime_projection`、`go_to_start_timeline`                                                                                                                                                                                                                                                                                                              |
+| ワークスペース     | `switch_workspace`                                                                                                                                                                                                                                                                                                                                                                  |
 | タイムラインレンジ | `update_timeline_loop_range`、`update_timeline_punch_range`、`update_arrangement_timebase`                                                                                                                                                                                                                                                                                          |
 | トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`set_track_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                                                                       |
 | クリップ           | `add_audio_clip_to_arrangement`、`add_midi_clip_to_arrangement`、`update_audio_clip`、`update_midi_clip`、`move_audio_clips`、`move_midi_clips`、`trim_audio_clip`、`trim_midi_clip`、`split_audio_clip`、`split_midi_clip`、`crossfade_audio_clips`、`duplicate_audio_clip`、`duplicate_midi_clip`、`remove_timeline_clips`、`paste_timeline_clips`、`set_audio_clip_take_variant` |
@@ -123,7 +126,9 @@
 | サンプルパッド | `create_sample_pad`、`update_sample_pad`、`remove_sample_pad`、`restore_sample_pads`       |
 | AI             | `apply_ai_suggestion`                                                                      |
 
-**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
+**ランタイム回復**: `retry_runtime_projection`
+
+**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
 
 ### 3.3 エラー規約
 
@@ -133,7 +138,7 @@
 
 ### 3.4 UI呼び出しの順序
 
-制作状態を変更する命令は、フロントエンドの共通呼び出し境界で直列化する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の時刻比較やセッション全体のマージは必要ない。
+制作状態を変更する命令の順序はCoreとDesktop command gateが所有する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の直列化、時刻比較、セッション全体のマージは行わない。
 
 連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
 
@@ -153,7 +158,7 @@
 | `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                         |
 | `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                       |
 
-購読は全て `src/native/native.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
+購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 
 ---
 
@@ -172,7 +177,7 @@
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | 状態照会            | `status`、`meterStatus`                                                                     |
 | 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`              |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`、`setProcessingMode`（arrange / passive）    |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                              |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setMasterGainDb`               |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す） |
@@ -214,35 +219,67 @@
 
 ## 7. 境界 E: デバイスプローブとプラグインスキャン
 
-| 起動引数                                              | 応答                                     | 用途                                                                       |
-| ----------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------- |
-| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイス・チャンネルを列挙（ストリームを開かない） |
-| `riffra-audio --probe-midi`                           | `{"type":"midiProbe", ...}`              | MIDI 入力・出力デバイスの列挙                                              |
-| `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                               |
-| `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化）            |
+| 起動引数                                              | 応答                                     | 用途                                                            |
+| ----------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
+| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイスを列挙（ストリームを開かない）  |
+| `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                    |
+| `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化） |
 
 プローブは排他コーディネータ（`run_native_probe`）を通して直列に起動し、タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。
 
 ---
 
-## 8. 権限・ケイパビリティ（`src-tauri/capabilities/default.json`）
+## 8. 境界 F: CLI JSON Lines（`riffra-cli`）
 
-メインウィンドウは最小ケイパビリティで構成する。
+`riffra-cli` の対話モードは、GUIを持たないHostからセッションの最小操作を実行するための境界である。CLIは `riffra-core::AppCore` とセッションファイルを直接利用し、デスクトップのTauri命令、音声サイドカー、レンダーワーカーは経由しない。
 
-| 権限                                           | 内容                                                                                                                                                       |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core:default` / `core:window:allow-destroy`   | コア操作とウィンドウ破棄                                                                                                                                   |
-| `dialog:default`                               | ファイルダイアログ                                                                                                                                         |
-| `shell:allow-spawn`                            | サイドカー起動のみ許可。`riffra-audio` は引数バリデータ `--(serve\|probe\|probe-midi\|probe-channels)` で起動モードを限定、`riffra-plugin-scan` は引数自由 |
-| `shell:allow-stdin-write` / `shell:allow-kill` | サイドカーへの標準入力書き込みと終了制御                                                                                                                   |
+### 8.1 フレーミング
+
+- 起動: `riffra-cli --interactive --session <path>`
+- 送受信: stdinの1行を1要求として読み、stdoutへ1行の応答を書く
+- 相関: 要求の `requestId` を応答へそのまま返す
+- 応答: 成功は `ok: true` と `result`、失敗は `ok: false` と `error`
+- 対話モードでは空行を無視し、要求ごとに応答をflushする
+
+要求は `type` とコマンド固有のフィールドを同じ階層に置く。現在のCLIは `params` オブジェクトやイベントストリームを持たない。
+
+```json
+{"requestId":"1","type":"addTrack","name":"Bass","kind":"instrument"}
+{"requestId":"2","type":"listTracks"}
+{"requestId":"3","type":"updateSessionSettings","loopEnabled":true}
+```
+
+### 8.2 コマンドと応答
+
+現在のコマンドは `getSession`、`listTracks`、`addTrack`、`removeTrack`、`updateSessionSettings`、`undo`、`redo` である。`undo` と `redo` は履歴がプロセス内に保持されるため、対話モードでのみ利用できる。
+
+```json
+{"requestId":"1","ok":true,"result":{}}
+{"requestId":"4","ok":false,"error":{"code":"commandFailed","message":"..."}}
+```
+
+不正なJSONや未知のコマンドは `invalidRequest` または `commandFailed` として返す。イベント、ジョブ進捗、`protocolVersion`、共通Diagnostics形式は現在のCLI契約に含まれない。ワンショットモードはJSON Linesではなく、コマンドライン引数で1つの操作を実行してJSON結果を出力する。
 
 ---
 
-## 9. NativeApi と境界の対応規則
+## 9. 権限・ケイパビリティ（`src-tauri/capabilities/default.json`）
 
-`src/native/native-api.ts` の NativeApi は、すべての Tauri 命令をドメイン用語の Promise メソッドに写像する。React コンポーネントは NativeApi のみに依存し、`invoke` の文字列コマンド名・引数名を直接知らない。
+メインウィンドウは最小ケイパビリティで構成する。
+
+| 権限                                           | 内容                                                                                                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core:default` / `core:window:allow-destroy`   | コア操作とウィンドウ破棄                                                                                                                       |
+| `dialog:default`                               | ファイルダイアログ                                                                                                                             |
+| `shell:allow-spawn`                            | サイドカー起動のみ許可。`riffra-audio` は引数バリデータ `--(serve\|probe\|probe-channels)` で起動モードを限定、`riffra-plugin-scan` は引数自由 |
+| `shell:allow-stdin-write` / `shell:allow-kill` | サイドカーへの標準入力書き込みと終了制御                                                                                                       |
+
+---
+
+## 10. NativeApi と境界の対応規則
+
+`src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
 
 - 制作状態を変更するメソッドはCreativeSessionを返す。表示状態だけを変更するメソッドはDesktopViewStateを返す
 - 起動時はCreativeSessionとDesktopViewStateを別々に受け取り、履歴操作の可否はCoreのHistoryStateを参照する
-- 音声系メソッドは `AudioStatus` を返し、`useAudio` が状態遷移と再試行を担う
-- テストでは `native-api-fake.ts` を注入し、境界A・Bをモックする。境界C〜Eの互換性は `scripts/test-ipc.ps1` と Rust 側の解析テスト（`protocol.rs` の fixture テスト）が担う
+- 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
+- テストでは `native-api-fake.ts` を注入し、呼び出し記録、設定済み応答・失敗、イベント発火だけを扱う。制作規則、履歴、validationはCoreのテストが担う

@@ -7,23 +7,18 @@ import type {
   AudioClipPatch,
   MidiClipMove,
   MidiClipPatch,
-  AnalysisJobStatus,
   BackgroundJobStatus,
   BootstrapState,
   HistoryState,
   AssetId,
-  AssetPreviewOptions,
   DeviceChannels,
   LibraryAsset,
   MissingDependency,
-  MidiProbe,
   ProjectExport,
   RecordingAsset,
   RenderOptions,
   RenderResult,
-  ScanJobStatus,
   ScanReport,
-  SeparationJobStatus,
   SeparationResult,
   CreativeSession,
   DesktopViewState,
@@ -38,9 +33,15 @@ import type {
   AutomationPoint,
   TrackKind,
   Workspace,
+} from '@/model/domain';
+import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type {
+  AnalysisJobStatus,
+  AssetPreviewOptions,
+  ScanJobStatus,
+  SeparationJobStatus,
   TransportStatus,
-} from '@/lib/domain';
-import type { AudioMeters } from '@/lib/audio-meters';
+} from './contracts';
 
 export interface TrackPluginStateChange {
   trackId: string;
@@ -73,12 +74,15 @@ export interface RuntimeStartupFinishedEvent {
  * actually emit (ready, muted, faulted, offline, recording progress, plugin
  * failure) rather than inventing success paths that the product never yields.
  */
-export interface NativeApi {
+export interface BootstrapApi {
   bootstrap(): Promise<BootstrapState>;
   /** Subscribes to completion of a Session audio-graph restoration attempt. */
   onRuntimeStartupFinished(
     callback: (event: RuntimeStartupFinishedEvent) => void,
   ): Promise<() => void>;
+}
+
+export interface ProjectApi {
   undoSession(): Promise<CreativeSession>;
   redoSession(): Promise<CreativeSession>;
   getHistoryState(): Promise<HistoryState>;
@@ -101,13 +105,18 @@ export interface NativeApi {
    * freshly minted AssetId, or null when the runtime is unavailable.
    */
   importMidiBytes(name: string, bytes: number[]): Promise<AssetId | null>;
+}
 
+export interface JobApi {
   scanVst3Folder(path?: string): Promise<ScanReport>;
   startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus>;
   startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus>;
   startScanJob(path?: string): Promise<ScanJobStatus>;
   getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
+}
+
+export interface LibraryApi {
   listRecordings(query?: string): Promise<RecordingAsset[]>;
   renameRecording(id: string, name: string): Promise<string>;
   deleteRecording(id: string): Promise<void>;
@@ -122,18 +131,25 @@ export interface NativeApi {
     note: string | null,
   ): Promise<LibraryAsset | null>;
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
+}
 
+export interface DesignApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
-  probeMidiDevices(): Promise<MidiProbe>;
+  listSeparations(): Promise<SeparationResult[]>;
+  applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
+}
+
+export interface RenderApi {
+  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
+}
+
+export interface AudioApi {
   probeAudioDevices(): Promise<AudioDeviceProbe>;
   probeDeviceChannels(
     driver: string,
     inputDevice: string,
     outputDevice: string,
   ): Promise<DeviceChannels>;
-
-  listSeparations(): Promise<SeparationResult[]>;
-  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
 
   /**
    * Previews a canonical Asset by AssetId. Rust owns AssetId validation,
@@ -151,9 +167,6 @@ export interface NativeApi {
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
-  startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
-  recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
-  stopArrangeRecording(): Promise<AudioStatus>;
   /**
    * Sets the master gain on the Audio Runtime and persists the clamped value
    * into the canonical session settings. One Rust Application Operation
@@ -173,10 +186,19 @@ export interface NativeApi {
   enableMidiListening(): Promise<AudioStatus>;
   /** Stops all MIDI input devices and silences any held notes. */
   disableMidiListening(): Promise<AudioStatus>;
-  /** Sends a live MIDI message to one assigned Instrument Track in Arrange. */
+  /** Sends a live MIDI message to the specified Instrument Track. */
   sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
   /** Sends the targeted Instrument Track panic messages without changing the session. */
   panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
+}
+
+export interface RecordingApi {
+  startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
+  recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
+  stopArrangeRecording(): Promise<SessionAudioPair>;
+}
+
+export interface SamplePadApi {
   /**
    * Creates a SamplePad from an existing audio Asset as one production
    * operation: duplicate/MIDI-key rules, session update, runtime pad
@@ -195,6 +217,9 @@ export interface NativeApi {
     },
   ): Promise<SessionAudioPair>;
   removeSamplePad(padId: string): Promise<SessionAudioPair>;
+}
+
+export interface ArrangeApi {
   addAudioClipToArrangement(
     assetId: AssetId,
     name: string,
@@ -313,11 +338,6 @@ export interface NativeApi {
   stopTakeComparison(): Promise<AudioStatus>;
   activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
   placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
-  retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
-  playTimeline(transportSequence: number): Promise<void>;
-  stopTimeline(transportSequence: number): Promise<void>;
-  goToStartTimeline(transportSequence: number): Promise<void>;
-  seekTimeline(tick: number): Promise<void>;
   updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession>;
   updateTimelineLoopRange(
     enabled: boolean,
@@ -329,22 +349,28 @@ export interface NativeApi {
     startTick: number,
     endTick: number,
   ): Promise<CreativeSession>;
+}
 
+export interface TransportApi {
+  retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
+  playTimeline(transportSequence: number): Promise<void>;
+  stopTimeline(transportSequence: number): Promise<void>;
+  goToStartTimeline(transportSequence: number): Promise<void>;
+  seekTimeline(tick: number): Promise<void>;
+}
+
+export interface PresentationApi {
   /**
    * Opens a canonical Asset in a Design workspace. One user intent updates
    * workspace and target asset together in Rust instead of React assembling
    * the DesignContext itself.
    */
   openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<DesktopViewState | null>;
-  /**
-   * Switches the visible workspace and asks Rust to update the desired audio
-   * processing mode. Workspace navigation is UI state; production Session
-   * persistence happens on the next real edit rather than on every tab click.
-   */
-  switchWorkspace(
-    workspace: Workspace,
-    transportSequence: number,
-  ): Promise<DesktopViewState | null>;
+  /** Switches the desktop-owned visible workspace without mutating production state. */
+  switchWorkspace(workspace: Workspace): Promise<DesktopViewState | null>;
+}
+
+export interface ProjectSettingsApi {
   updateSessionSettings(patch: {
     projectName?: string | null;
     loopEnabled?: boolean;
@@ -354,8 +380,9 @@ export interface NativeApi {
     aiPermission?: string;
     aiContext?: string[];
   }): Promise<CreativeSession>;
-  applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
+}
 
+export interface MissingDependencyApi {
   getMissingDependencies(): Promise<MissingDependency[]>;
   /**
    * Rewrites every canonical Asset reference pointed to by `assetId` to the
@@ -371,7 +398,9 @@ export interface NativeApi {
   disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
   /** Replaces an unresolved Track Device without changing its chain position. */
   replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<CreativeSession>;
+}
 
+export interface NativeEventApi {
   /**
    * Subscribes to the `audio-status` event pushed by the Rust audio supervisor.
    * The callback receives the latest AudioStatus when the sidecar reports a
@@ -387,3 +416,21 @@ export interface NativeApi {
   onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
   onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;
 }
+
+export interface NativeApi
+  extends
+    BootstrapApi,
+    ProjectApi,
+    ProjectSettingsApi,
+    JobApi,
+    LibraryApi,
+    DesignApi,
+    RenderApi,
+    AudioApi,
+    RecordingApi,
+    SamplePadApi,
+    ArrangeApi,
+    TransportApi,
+    PresentationApi,
+    MissingDependencyApi,
+    NativeEventApi {}

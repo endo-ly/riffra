@@ -46,7 +46,7 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-- レイアウトは `apps/desktop/src/components/layout/` のシェルコンポーネントと `components/arrange/WorkspaceArrange.tsx` で構成される。
+- レイアウトは `apps/desktop/src/app/layout/` のアプリシェルと `apps/desktop/src/features/arrange/WorkspaceArrange.tsx` で構成される。
 - ライブラリ・インスペクタ・ロワーパネルの幅／高さはドラッグで変更できる。矢印キー操作は±8px、Shift押下時は±24px。
 - パネルは折りたたみ可能（高さ48pxのタブバーだけ残る）。
 - インスペクタの既定サイズ: 幅280px（最小220px／最大420px）。ライブラリパネルの既定サイズ: 幅220px（最小176px／最大360px）。
@@ -140,7 +140,7 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 6. ロワーパネル
 
-`arrange/lower-panel/ArrangeLowerPanel.tsx`
+`apps/desktop/src/features/arrange/play-surface/ArrangeLowerPanel.tsx`
 
 - タブ: **Play Surface** ／ **MIDI Editor**。MIDI EditorタブはアクティブなMIDIクリップが無い場合は無効（`activeMidiClip` が null）。
 - タブ右にコンテキスト表示（Play Surface時はサマリ、MIDI Editor時はクリップ名）。
@@ -172,7 +172,7 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 8. トランスポートバー
 
-`layout/TransportBar.tsx`
+`apps/desktop/src/features/transport/TransportBar.tsx`
 
 | 要素           | 仕様                                                                                                                                   |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -187,7 +187,7 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 9. ステータス・通知
 
-アプリ全体の一時的通知は、右下のトースト領域（`components/shared/ToastStack.tsx`、`lib/toasts.ts`）に集約する。
+アプリ全体の一時的通知は、右下のトースト領域（`apps/desktop/src/shared/ui/ToastStack.tsx`、`apps/desktop/src/shared/toasts.ts`）に集約する。
 
 - **同期ズレ通知**: Arrange でセッションとUIが整合しないとき、トーストに「Playback runtime is out of sync」とRetryボタンを表示する。
 - **再生スキップ通知**: 欠落ソース・欠落デバイスのために再生をスキップしたクリップ数があるとき、その旨を表示する（「Playback skipped N missing sources and M missing devices.」）。
@@ -198,14 +198,14 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 10. ショートカット
 
-### 10.1 グローバル（`hooks/useApp.ts`）
+### 10.1 グローバル（`apps/desktop/src/app/useAppController.ts`）
 
 - `Ctrl+K` コマンドパレット、`Esc` 閉じる
 - `Ctrl+Z` アンドゥ、`Ctrl+Shift+Z`／`Ctrl+Y` リドゥ
 - `Ctrl+Shift+M` 選択トラックのミュート切替
 - `1` Arrange ワークスペース、`2` Design ワークスペース
 
-### 10.2 Arrange（`hooks/arrange/useArrangeEditor.ts`）
+### 10.2 Arrange（`features/arrange/hooks/useArrangeEditor.ts`）
 
 - `Ctrl+A` 全クリップ選択、`Ctrl+C` コピー、`Ctrl+V` ペースト、`Ctrl+D` 複製（ペーストをクリップ末尾に配置）
 - `Ctrl+E` プレイヘッド位置で分割（Split）
@@ -219,15 +219,15 @@ Arrangeワークスペース（トラック・クリップの配置／編集／�
 
 ## 11. 参照コード
 
-| 領域           | コード                                                                                                                                                     |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 全体構造       | `apps/desktop/src/components/arrange/WorkspaceArrange.tsx`                                                                                                 |
-| ツールバー     | `apps/desktop/src/components/arrange/ArrangeToolbar.tsx`                                                                                                   |
-| トラック       | `apps/desktop/src/components/arrange/ArrangeTrack.tsx`                                                                                                     |
-| クリップ描画   | `apps/desktop/src/components/arrange/AudioClipView.tsx`, `MidiClipView.tsx`                                                                                |
-| 編集ロジック   | `apps/desktop/src/hooks/arrange/useArrangeEditor.ts`, `lib/arrange-timeline.ts`                                                                            |
-| ロワーパネル   | `apps/desktop/src/components/arrange/lower-panel/ArrangeLowerPanel.tsx`                                                                                    |
-| インスペクタ   | `apps/desktop/src/components/arrange/TrackInspector.tsx`, `AudioClipInspector.tsx`, `MidiClipInspector.tsx`, `TakeInspector.tsx`, `MultiClipInspector.tsx` |
-| シェル         | `apps/desktop/src/components/layout/GlobalBar.tsx`, `LibraryPanel.tsx`, `InspectorPanel.tsx`, `TransportBar.tsx`                                           |
-| 通知           | `apps/desktop/src/components/shared/ToastStack.tsx`, `lib/toasts.ts`                                                                                       |
-| ショートカット | `apps/desktop/src/hooks/useApp.ts`, `useArrangeEditor.ts`, `constants.ts`                                                                                  |
+| 領域           | コード                                                                                                                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 全体構造       | `apps/desktop/src/features/arrange/WorkspaceArrange.tsx`                                                                                                                                                                    |
+| ツールバー     | `apps/desktop/src/features/arrange/timeline/ArrangeToolbar.tsx`                                                                                                                                                             |
+| トラック       | `apps/desktop/src/features/arrange/timeline/ArrangeTrack.tsx`                                                                                                                                                               |
+| クリップ描画   | `apps/desktop/src/features/arrange/timeline/AudioClipView.tsx`, `MidiClipView.tsx`                                                                                                                                          |
+| 編集ロジック   | `apps/desktop/src/features/arrange/hooks/useArrangeEditor.ts`, `useArrangeCommands.ts`, `useClipInteractions.ts`, `apps/desktop/src/features/arrange/model/arrange-timeline.ts`                                             |
+| ロワーパネル   | `apps/desktop/src/features/arrange/play-surface/ArrangeLowerPanel.tsx`                                                                                                                                                      |
+| インスペクタ   | `apps/desktop/src/features/arrange/inspector/TrackInspector.tsx`, `ArrangeClipInspector.tsx`, `MidiClipInspector.tsx`, `TakeInspector.tsx`, `MultiClipInspector.tsx`                                                        |
+| シェル         | `apps/desktop/src/app/layout/GlobalBar.tsx`, `apps/desktop/src/features/library/LibraryPanel.tsx`, `apps/desktop/src/features/arrange/inspector/InspectorPanel.tsx`, `apps/desktop/src/features/transport/TransportBar.tsx` |
+| 通知           | `apps/desktop/src/shared/ui/ToastStack.tsx`, `apps/desktop/src/shared/toasts.ts`                                                                                                                                            |
+| ショートカット | `apps/desktop/src/app/useAppController.ts`, `apps/desktop/src/features/arrange/hooks/useArrangeEditor.ts`, `apps/desktop/src/app/workspaces.ts`                                                                             |

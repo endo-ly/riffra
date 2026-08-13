@@ -3,7 +3,6 @@ use crate::model::{AudioState, AudioStatus};
 use crate::native_audio::{
     AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
 };
-use crate::presentation::Workspace;
 use crate::session::adapter::{self as session_adapter, SessionContext};
 use riffra_core::CanonicalSnapshot;
 use std::time::{Duration, Instant};
@@ -101,7 +100,6 @@ trait StartupAudioPort {
         timeout: Duration,
     ) -> NativeAudioResult<u64>;
     fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus>;
-    fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus>;
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus>;
 }
 
@@ -130,10 +128,6 @@ impl StartupAudioPort for AudioSupervisor {
         AudioSupervisor::set_master_gain_db(self, gain_db)
     }
 
-    fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus> {
-        AudioSupervisor::set_processing_mode(self, mode)
-    }
-
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
         AudioSupervisor::refresh_status(self)
     }
@@ -141,7 +135,7 @@ impl StartupAudioPort for AudioSupervisor {
 
 /// Waits for the current sidecar to become safe and releases startup mute once
 /// the device safety boundary is confirmed. Arrangement restoration is a
-/// separate Runtime projection and may remain passive when a plugin fails.
+/// separate Runtime projection and may remain muted when a plugin fails.
 pub(crate) fn initialize_audio_safety(state: &AppState) -> Result<AudioStatus, String> {
     let master_gain_db = state
         .core
@@ -182,7 +176,7 @@ where
             return Ok(StartupInitialization {
                 status,
                 runtime_error: Some(
-                    "native audio startup safety check failed; feature runtime remains passive"
+                    "native audio startup safety check failed; feature runtime remains muted"
                         .into(),
                 ),
             });
@@ -236,7 +230,7 @@ where
                             return Ok(StartupInitialization {
                                 status: released,
                                 runtime_error: Some(format!(
-                                    "{error}; Arrangement Runtime remains passive"
+                                    "{error}; Arrangement Runtime remains muted"
                                 )),
                             });
                         }
@@ -268,7 +262,7 @@ where
         return Ok(StartupInitialization {
             status,
             runtime_error: Some(
-                "startup runtime target changed repeatedly; passive mode remains active".into(),
+                "startup runtime target changed repeatedly; output remains muted".into(),
             ),
         });
     }
@@ -335,11 +329,6 @@ fn initialize_safety_generation<A: StartupAudioPort>(
         .map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
 
-    audio
-        .set_processing_mode("passive")
-        .map_err(StartupError::Control)?;
-    ensure_generation(audio, generation)?;
-
     let status = audio.refresh_status().map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
     if !safe_for_startup_restore(&status) {
@@ -351,8 +340,8 @@ fn initialize_safety_generation<A: StartupAudioPort>(
 
 /// Restores feature-specific runtime state while the emergency mute remains
 /// engaged. No long-running VST or timeline operation owns a Session, Rack, or
-/// Workspace gate. If the canonical target changes while restoration is
-/// running, the old target is left passive and the newer request wins.
+/// If the canonical target changes while restoration is running, the newer
+/// request wins.
 fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), StartupRuntimeError> {
     if state.core.safe_mode() {
         return Ok(());
@@ -371,7 +360,6 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
 
     let session_context = SessionContext {
         core: &state.core,
-        view_state: &state.view_state,
         audio: state.core.audio(),
         runtime: &state.runtime,
         data_root: state.core.data_root(),
@@ -390,24 +378,12 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         ));
     }
     if !startup_target_is_current(state, &target) {
-        tracing::info!("startup runtime target changed before workspace restoration");
+        tracing::info!("startup runtime target changed before graph restoration");
         return Err(StartupRuntimeError::TargetChanged);
     }
 
-    let workspace = state
-        .view_state
-        .lock()
-        .map_err(|error| {
-            StartupRuntimeError::Feature(format!("view state lock was poisoned: {error}"))
-        })?
-        .workspace;
-    match workspace {
-        Workspace::Arrange => {
-            if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
-                failures.push(format!("arrange runtime restoration failed: {error}"));
-            }
-        }
-        Workspace::Design => {}
+    if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
+        failures.push(format!("arrangement runtime restoration failed: {error}"));
     }
 
     if sidecar_transitioned(state, generation) {
@@ -416,87 +392,15 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         ));
     }
     if !startup_target_is_current(state, &target) {
-        tracing::info!("startup runtime target changed during workspace restoration");
+        tracing::info!("startup runtime target changed during graph restoration");
         return Err(StartupRuntimeError::TargetChanged);
     }
 
     if failures.is_empty() {
-        apply_startup_processing_mode(state, generation, &target, true)
+        Ok(())
     } else {
-        match apply_startup_processing_mode(state, generation, &target, false) {
-            Ok(()) => {}
-            Err(StartupRuntimeError::GenerationChanged(message)) => {
-                return Err(StartupRuntimeError::GenerationChanged(message));
-            }
-            Err(StartupRuntimeError::TargetChanged) => {
-                return Err(StartupRuntimeError::TargetChanged);
-            }
-            Err(StartupRuntimeError::Feature(message))
-            | Err(StartupRuntimeError::Safety(message)) => {
-                return Err(StartupRuntimeError::Safety(message));
-            }
-        }
         Err(StartupRuntimeError::Feature(failures.join("; ")))
     }
-}
-
-fn apply_startup_processing_mode(
-    state: &AppState,
-    generation: u64,
-    target: &CanonicalSnapshot,
-    fallback_to_passive: bool,
-) -> Result<(), StartupRuntimeError> {
-    let _workspace_runtime_gate = state.workspace_runtime_gate.lock().map_err(|error| {
-        StartupRuntimeError::Feature(format!("workspace runtime gate was poisoned: {error}"))
-    })?;
-    let current = state
-        .core
-        .snapshot()
-        .map_err(|error| StartupRuntimeError::Feature(error.to_string()))?;
-    if current.sequence != target.sequence {
-        return Err(StartupRuntimeError::TargetChanged);
-    }
-
-    let mode = if fallback_to_passive {
-        let workspace = state
-            .view_state
-            .lock()
-            .map_err(|error| {
-                StartupRuntimeError::Feature(format!("view state lock was poisoned: {error}"))
-            })?
-            .workspace;
-        workspace_processing_mode(workspace)
-    } else {
-        "passive"
-    };
-    let mode_error = state.core.audio().set_processing_mode(mode).err();
-    let Some(error) = mode_error else {
-        if sidecar_transitioned(state, generation) {
-            return Err(StartupRuntimeError::GenerationChanged(
-                generation_changed_message(state.core.audio(), generation),
-            ));
-        }
-        return Ok(());
-    };
-    if sidecar_transitioned(state, generation) {
-        return Err(StartupRuntimeError::GenerationChanged(
-            generation_changed_message(state.core.audio(), generation),
-        ));
-    }
-    if !fallback_to_passive {
-        return Err(StartupRuntimeError::Feature(format!(
-            "startup passive mode could not be maintained: {error}"
-        )));
-    }
-
-    let passive_error = state.core.audio().set_processing_mode("passive").err();
-    let message = match passive_error {
-        Some(passive_error) => format!(
-            "startup processing mode could not be applied: {error}; passive mode could not be maintained: {passive_error}"
-        ),
-        None => format!("startup processing mode could not be applied: {error}"),
-    };
-    Err(StartupRuntimeError::Feature(message))
 }
 
 fn release_startup_mute(
@@ -578,13 +482,6 @@ fn ensure_generation<A: StartupAudioPort>(audio: &A, expected: u64) -> Result<()
 
 fn safe_for_startup_restore(status: &AudioStatus) -> bool {
     matches!(status.state, AudioState::Ready | AudioState::Muted) && !status.feedback_suspected
-}
-
-fn workspace_processing_mode(workspace: Workspace) -> &'static str {
-    match workspace {
-        Workspace::Arrange => "arrange",
-        Workspace::Design => "passive",
-    }
 }
 
 #[cfg(test)]
@@ -677,11 +574,6 @@ mod tests {
             Ok(Self::status(AudioState::Muted))
         }
 
-        fn set_processing_mode(&self, _mode: &str) -> NativeAudioResult<AudioStatus> {
-            self.record("passive");
-            Ok(Self::status(AudioState::Muted))
-        }
-
         fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
             self.record("status");
             Ok(Self::status(self.status_state))
@@ -700,7 +592,7 @@ mod tests {
         assert_eq!(status.state, AudioState::Muted);
         assert_eq!(
             audio.events.lock().unwrap().as_slice(),
-            ["lost", "ready", "gain", "passive", "status"]
+            ["lost", "ready", "gain", "status"]
         );
     }
 

@@ -48,12 +48,6 @@ impl ProjectionDriver for AudioSupervisor {
         AudioSupervisor::release_runtime_mute_if_allowed(self).map_err(RuntimeError::from)
     }
 
-    fn set_processing_mode_passive(&self) -> Result<(), RuntimeError> {
-        AudioSupervisor::set_processing_mode(self, "passive")
-            .map(|_| ())
-            .map_err(RuntimeError::from)
-    }
-
     fn force_shutdown(&self) {
         AudioSupervisor::force_shutdown(self);
     }
@@ -70,10 +64,6 @@ impl TransportDriver for AudioSupervisor {
         AudioSupervisor::stop_timeline(self)
             .map(|_| ())
             .map_err(RuntimeError::from)
-    }
-
-    fn stop_timeline_nonblocking(&self) -> Result<(), RuntimeError> {
-        AudioSupervisor::stop_timeline_nonblocking(self).map_err(RuntimeError::from)
     }
 }
 

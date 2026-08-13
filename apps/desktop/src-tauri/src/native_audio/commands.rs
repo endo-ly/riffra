@@ -110,92 +110,12 @@ impl AudioSupervisor {
         Ok(())
     }
 
-    pub fn stop_timeline_nonblocking(&self) -> NativeAudioResult<()> {
-        self.send_command_without_wait(serde_json::json!({
-            "type": "stopTimeline",
-            "reportStatus": false,
-        }))
-    }
-
     pub fn seek_timeline(&self, tick: u64) -> NativeAudioResult<()> {
         self.send_command(
             serde_json::json!({"type": "seekTimeline", "tick": tick}),
             "",
         )?;
         Ok(())
-    }
-
-    pub fn set_processing_mode(&self, mode: &str) -> NativeAudioResult<AudioStatus> {
-        if !matches!(mode, "arrange" | "passive") {
-            return Err(NativeAudioError::native_rejected(
-                "Audio processing mode is invalid.",
-            ));
-        }
-        // Keep the desired control ahead of the acknowledgement. If the
-        // sidecar disappears while this request is in flight, a replacement
-        // process must restore the user's latest mode rather than the last
-        // mode that happened to acknowledge successfully.
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })?
-            .processing_mode = mode.into();
-        let status = self.send_command(
-            serde_json::json!({"type": "setProcessingMode", "mode": mode}),
-            "",
-        )?;
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })?
-            .processing_mode_sent = Some(mode.into());
-        Ok(status)
-    }
-
-    /// Updates the desired processing mode and sends it without waiting for a
-    /// status acknowledgement. Workspace navigation uses this path because a
-    /// third-party VST must never hold the navigation/persistence boundary.
-    /// Recovery restores the same desired value if the write races with a
-    /// sidecar restart.
-    pub fn set_processing_mode_nonblocking(&self, mode: &str) -> NativeAudioResult<()> {
-        if !matches!(mode, "arrange" | "passive") {
-            return Err(NativeAudioError::native_rejected(
-                "Audio processing mode is invalid.",
-            ));
-        }
-        let changed = {
-            let mut controls = self.recovery.runtime_controls.lock().map_err(|_| {
-                NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                }
-            })?;
-            if controls.processing_mode == mode
-                && controls.processing_mode_sent.as_deref() == Some(mode)
-            {
-                false
-            } else {
-                controls.processing_mode = mode.into();
-                true
-            }
-        };
-        if !changed {
-            return Ok(());
-        }
-        let result = self.send_command_without_wait(serde_json::json!({
-            "type": "setProcessingMode",
-            "mode": mode,
-            "reportStatus": false,
-        }));
-        if result.is_ok()
-            && let Ok(mut controls) = self.recovery.runtime_controls.lock()
-        {
-            controls.processing_mode_sent = Some(mode.into());
-        }
-        result
     }
 
     pub fn set_track_device_bypassed(

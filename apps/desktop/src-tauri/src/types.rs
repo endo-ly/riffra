@@ -2,7 +2,7 @@
 //!
 //! Every Rust struct or enum that crosses the Tauri IPC boundary derives
 //! `ts_rs::TS`. This module regenerates the TypeScript declaration files under
-//! `src/lib/generated/` from those types. `scripts/verify.mjs` runs this export
+//! `src/model/generated/` from those types. `scripts/verify.mjs` runs this export
 //! before the TypeScript build and fails when the committed bindings differ
 //! from the freshly generated output, so the two sides cannot drift.
 
@@ -13,9 +13,8 @@ use crate::library::LibraryAsset;
 use crate::missing::MissingDependency;
 use crate::model::{
     AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo,
-    AudioState, AudioStatus, BootstrapState, DeviceChannels, MidiDeviceInfo, MidiProbe,
-    RecordingStatus, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
-    SessionAudioPair,
+    AudioState, AudioStatus, BootstrapState, DeviceChannels, MidiDeviceInfo, RecordingStatus,
+    RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::presentation::{DesignContext, DesignTool, DesktopViewState, Workspace};
@@ -39,7 +38,7 @@ use ts_rs::{Config, TS};
 #[test]
 fn export_types() {
     let cfg = Config::new()
-        .with_out_dir("../src/lib/generated")
+        .with_out_dir("../src/model/generated")
         .with_large_int("number");
     AssetId::export_all(&cfg).expect("AssetId bindings");
     BackgroundJobStatus::export_all(&cfg).expect("BackgroundJobStatus bindings");
@@ -94,7 +93,6 @@ fn export_types() {
     AudioDriverInfo::export_all(&cfg).expect("AudioDriverInfo bindings");
     AudioDeviceProbe::export_all(&cfg).expect("AudioDeviceProbe bindings");
     DeviceChannels::export_all(&cfg).expect("DeviceChannels bindings");
-    MidiProbe::export_all(&cfg).expect("MidiProbe bindings");
     MidiDeviceInfo::export_all(&cfg).expect("MidiDeviceInfo bindings");
     RecordingStatus::export_all(&cfg).expect("RecordingStatus bindings");
     RecoveryCandidate::export_all(&cfg).expect("RecoveryCandidate bindings");

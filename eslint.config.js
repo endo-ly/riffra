@@ -17,7 +17,7 @@ export default tseslint.config(
       '.artifacts',
       'apps/desktop/src-tauri',
       'native',
-      'apps/desktop/src/lib/generated',
+      'apps/desktop/src/model/generated',
       '*.config.ts',
     ],
   },
@@ -56,6 +56,35 @@ export default tseslint.config(
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-misused-promises': 'warn',
       '@typescript-eslint/consistent-type-imports': 'warn',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@tauri-apps/api/core',
+              message: 'Import Tauri commands through src/native.',
+            },
+            {
+              name: '@tauri-apps/api/event',
+              message: 'Import Tauri events through src/native.',
+            },
+            {
+              name: '@tauri-apps/api/window',
+              message: 'Import Tauri window APIs through src/native.',
+            },
+            {
+              name: '@tauri-apps/plugin-dialog',
+              message: 'Import Tauri dialogs through src/native.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/native/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
   prettier,

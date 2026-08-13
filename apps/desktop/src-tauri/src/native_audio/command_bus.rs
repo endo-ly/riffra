@@ -84,52 +84,6 @@ impl AudioSupervisor {
         Ok(())
     }
 
-    pub(super) fn send_command_without_wait(&self, command: Value) -> NativeAudioResult<()> {
-        let payload = serde_json::to_string(&command).map_err(|error| {
-            NativeAudioError::protocol(format!("Audio command could not be encoded: {error}"))
-        })?;
-        let mut expected_generation = self.sidecar_generation();
-        for _ in 0..3 {
-            expected_generation = self.sidecar_generation();
-            self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
-            let _command_gate =
-                self.process
-                    .command_gate
-                    .lock()
-                    .map_err(|_| NativeAudioError::LockPoisoned {
-                        resource: "Audio command gate",
-                    })?;
-            if self.sidecar_generation() != expected_generation
-                || !self.process.is_ready(expected_generation)
-            {
-                continue;
-            }
-            let mut child_slot =
-                self.process
-                    .child
-                    .lock()
-                    .map_err(|_| NativeAudioError::LockPoisoned {
-                        resource: "Audio child",
-                    })?;
-            let child = child_slot.as_mut().ok_or_else(|| {
-                NativeAudioError::transport_lost(
-                    "Native audio transport lost: the requested audio command was not sent.",
-                )
-            })?;
-            return child
-                .write(format!("{payload}\n").as_bytes())
-                .map_err(|error| {
-                    NativeAudioError::transport_lost(format!(
-                        "Native audio transport lost: {error}"
-                    ))
-                });
-        }
-        Err(NativeAudioError::GenerationChanged {
-            expected: expected_generation,
-            actual: self.sidecar_generation(),
-        })
-    }
-
     pub(super) fn wait_for_command(
         &self,
         mut command: Value,

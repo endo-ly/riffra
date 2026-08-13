@@ -220,9 +220,6 @@ pub fn add_midi_clip(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
 ) -> Result<CreativeSession, String> {
-    if name.trim().is_empty() {
-        return Err("MIDI clip name must not be empty.".into());
-    }
     let source_asset = asset::load(context.data_root, &asset_id)
         .ok_or_else(|| format!("MIDI Asset is not registered: {asset_id}"))?;
     if source_asset.kind != AssetKind::Midi {
@@ -243,7 +240,6 @@ pub fn add_midi_clip(
                 events,
             })
     })?;
-    context.view_state.lock().map_err(lock_error)?.workspace = Workspace::Arrange;
     sync_arrangement(context)?;
     Ok(committed)
 }

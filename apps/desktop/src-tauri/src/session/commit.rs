@@ -22,7 +22,7 @@ where
 {
     let store = SessionStore::new(context.data_root);
     let committed = operation(context.core, &store).map_err(|error| error.to_string())?;
-    crate::queue_session_index(context.data_root, &committed);
+    crate::library::index::queue(context.data_root, &committed);
     Ok(committed)
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn commit_recording_session(
         .application(&store)
         .commit_recording(base, candidate)
         .map_err(|error| error.to_string())?;
-    crate::queue_session_index(context.data_root, &committed);
+    crate::library::index::queue(context.data_root, &committed);
     Ok(committed)
 }
 
@@ -55,7 +55,7 @@ pub fn import_session(
         .application(&store)
         .import_project(session)
         .map_err(|error| error.to_string())?;
-    crate::queue_session_index(context.data_root, &committed);
+    crate::library::index::queue(context.data_root, &committed);
     Ok(committed)
 }
 
@@ -73,6 +73,6 @@ pub fn restore_generation(
         .application(&store)
         .restore_project(session)
         .map_err(|error| error.to_string())?;
-    crate::queue_session_index(context.data_root, &committed);
+    crate::library::index::queue(context.data_root, &committed);
     Ok(committed)
 }

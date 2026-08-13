@@ -13,8 +13,6 @@ namespace riffra {
 
 class SafetyAudioCallback final : public juce::AudioIODeviceCallback {
 public:
-    enum class ProcessingMode { arrange, passive };
-
     SafetyAudioCallback() = default;
     ~SafetyAudioCallback() override;
 
@@ -50,7 +48,6 @@ public:
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
-    void setProcessingMode(ProcessingMode mode) noexcept;
 
 
     void audioDeviceIOCallbackWithContext(
@@ -147,7 +144,6 @@ private:
     static constexpr std::size_t kSynthVoiceCount = 16;
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;
     TimelineEngine* timelineEngine = nullptr;
-    std::atomic<ProcessingMode> processingMode { ProcessingMode::passive };
 
     juce::CriticalSection errorLock;
     juce::String lastDeviceError;

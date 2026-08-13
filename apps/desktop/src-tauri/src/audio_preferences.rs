@@ -7,7 +7,6 @@
 use crate::AppState;
 use crate::model::{AudioAccessMode, AudioState, AudioStatus};
 use crate::native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
-use crate::presentation::DesktopViewState;
 use crate::runtime::RuntimeReconciler;
 use crate::session::context::SessionContext;
 use crate::storage::replace_file;
@@ -152,7 +151,6 @@ impl AudioPreferencesStore {
 pub struct AudioPreferencesContext<'a> {
     pub app: &'a AppHandle,
     pub core: &'a AppCore<AudioSupervisor>,
-    pub view_state: &'a Mutex<DesktopViewState>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
@@ -283,7 +281,6 @@ fn reconcile_runtime_after_audio_device_change(
 ) -> Result<(), String> {
     crate::session::adapter::reconcile_runtime_after_audio_device_change(&SessionContext {
         core: context.core,
-        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
         data_root: context.data_root,
@@ -401,7 +398,6 @@ pub async fn set_audio_driver(
         &AudioPreferencesContext {
             app: &app,
             core: &state.core,
-            view_state: &state.view_state,
             audio: state.core.audio(),
             runtime: &state.runtime,
             data_root: state.core.data_root(),

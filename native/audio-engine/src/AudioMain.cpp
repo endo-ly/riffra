@@ -444,20 +444,6 @@ juce::var discoverAudioDevices() {
     return juce::var(result);
 }
 
-juce::var discoverMidiDevices() {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "midiProbe");
-    juce::Array<juce::var> midiInputs;
-    for (const auto& device : juce::MidiInput::getAvailableDevices())
-        midiInputs.add(midiDeviceValue(device));
-    result->setProperty("midiInputs", midiInputs);
-    juce::Array<juce::var> midiOutputs;
-    for (const auto& device : juce::MidiOutput::getAvailableDevices())
-        midiOutputs.add(midiDeviceValue(device));
-    result->setProperty("midiOutputs", midiOutputs);
-    return juce::var(result);
-}
-
 // Opens a single device to report its channel names. Called only from Audio
 // Settings for the device the user has selected, once per device, instead of
 // touching every interface during startup. For same-device drivers (ASIO) the
@@ -1309,9 +1295,6 @@ int serve(
                 continue;
             }
             if (type == "playTimeline") {
-                // Arrange playback always owns the processing mode while the
-                // transport is running.
-                callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
                 timelineEngine.play();
                 writeJson(timelineEngine.status());
                 continue;
@@ -1327,27 +1310,6 @@ int serve(
                     command.getProperty("tick", 0)));
                 timelineEngine.seekToTick(tick);
                 writeJson(timelineEngine.status());
-                continue;
-            }
-            if (type == "setProcessingMode") {
-                const auto mode = command.getProperty("mode", {}).toString();
-                const auto reportStatus = static_cast<bool>(
-                    command.getProperty("reportStatus", true));
-                if (mode == "arrange")
-                    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::arrange);
-                else if (mode == "passive")
-                    callback.setProcessingMode(SafetyAudioCallback::ProcessingMode::passive);
-                else {
-                    writeJson(makeError("processingMode", "Processing mode is invalid."));
-                    continue;
-                }
-                if (reportStatus)
-                    writeJson(currentStatus(
-                        manager, callback, &midiMonitor, {}, &timelineEngine));
-                continue;
-            }
-            if (type == "probeMidiDevices") {
-                writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }
             if (type == "configureSamplePads") {
@@ -1868,16 +1830,12 @@ int serve(
 int runMain(const juce::StringArray& arguments) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (arguments.size() < 2) {
-        writeJson(makeError("arguments", "Use --probe, --probe-midi, --probe-channels or --serve."));
+        writeJson(makeError("arguments", "Use --probe, --probe-channels or --serve."));
         return 1;
     }
     const auto command = arguments[1];
     if (command == "--probe") {
         writeJson(discoverAudioDevices());
-        return 0;
-    }
-    if (command == "--probe-midi") {
-        writeJson(discoverMidiDevices());
         return 0;
     }
     if (command == "--probe-channels") {

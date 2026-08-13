@@ -155,15 +155,6 @@ pub struct AudioStatus {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiProbe {
-    pub inputs: Vec<MidiDeviceInfo>,
-    pub outputs: Vec<MidiDeviceInfo>,
-    pub refreshed_at_ms: u64,
-    pub message: String,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiDeviceInfo {

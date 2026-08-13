@@ -4,8 +4,7 @@ use super::*;
 
 /// Creates a SamplePad from an existing audio Asset and commits it end-to-end:
 /// asset existence + duplicate rules, pad id / MIDI key assignment, slice
-/// validation, runtime configuration, session update, and persistence. The
-/// design context is aimed at the new pad's asset.
+/// validation, runtime configuration, session update, and persistence.
 ///
 /// Runtime configuration happens inside the operation; the caller applies the
 /// returned session and audio status and does not sync the runtime separately.
@@ -16,9 +15,6 @@ pub fn create_sample_pad(
     asset_id: AssetId,
     name: String,
 ) -> Result<SessionAudioPair, String> {
-    if name.trim().is_empty() {
-        return Err("Sample pad name must not be empty.".into());
-    }
     let source_asset = asset::load(context.data_root, &asset_id)
         .ok_or_else(|| format!("Sample pad references an unregistered asset: {asset_id}"))?;
     if source_asset.kind != AssetKind::Audio {
@@ -64,12 +60,6 @@ pub fn create_sample_pad(
             core.application(store).add_sample_pad(pad)
         })
     })?;
-    if result.session != previous_session {
-        let mut view_state = context.view_state.lock().map_err(lock_error)?;
-        view_state.workspace = Workspace::Design;
-        view_state.design_context.active_tool = DesignTool::Sample;
-        view_state.design_context.target_asset_id = Some(asset_id);
-    }
     Ok(result)
 }
 
@@ -195,9 +185,3 @@ pub fn remove_sample_pad(
         })
     })
 }
-
-// Session commit, Arrangement, and Design/Workspace operations.
-//
-// These mutate the canonical CreativeSession and persist it without touching
-// the Audio Runtime. They share the Core Application commit boundary so the
-// save path lives in one place.

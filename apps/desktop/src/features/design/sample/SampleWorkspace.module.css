@@ -1,0 +1,169 @@
+.padCard {
+  margin-bottom: 12px;
+}
+
+.padCard header,
+.sampleSources header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.padCard h2,
+.sampleSources h2 {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.padCard header > small,
+.sampleSources header > small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.padGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.samplePad {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 72px;
+  padding: 8px;
+  text-align: left;
+  border: 1px solid #2d3a43;
+  border-radius: 6px;
+}
+
+.empty {
+  color: var(--muted);
+  background: #0c1116;
+}
+
+.filled {
+  color: #071216;
+  background: linear-gradient(145deg, #8aeee8, #52c9dc);
+  border-color: #8aeee8;
+}
+
+.samplePad strong,
+.samplePad small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.samplePad strong {
+  font-size: 10px;
+}
+
+.samplePad small {
+  font:
+    8px 'DM Mono',
+    Consolas,
+    monospace;
+  opacity: 0.8;
+}
+
+.sampleEditor {
+  margin-top: 12px;
+}
+
+.sampleEditor header > small,
+.samplePreview header > small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.sampleEditRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 90px 90px auto;
+  align-items: end;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid #27313a;
+}
+
+.sampleEditName strong,
+.sampleEditName small,
+.sampleEditRow label span {
+  display: block;
+}
+
+.sampleEditName strong {
+  overflow: hidden;
+  color: #cbd3dc;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sampleEditName small,
+.sampleEditRow label span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.sampleEditRow input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 5px 6px;
+  color: #dfe5eb;
+  font:
+    9px 'DM Mono',
+    Consolas,
+    monospace;
+  background: #0c1116;
+  border: 1px solid #2d3a43;
+  border-radius: 4px;
+}
+
+.samplePreview {
+  margin-top: 12px;
+}
+
+.samplePreviewRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid #27313a;
+}
+
+.samplePreviewRow > div {
+  min-width: 0;
+}
+
+.samplePreviewRow strong,
+.samplePreviewRow small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.samplePreviewRow strong {
+  color: #cbd3dc;
+  font-size: 10px;
+}
+
+.samplePreviewRow small {
+  margin-top: 3px;
+  color: var(--muted);
+  font:
+    8px 'DM Mono',
+    Consolas,
+    monospace;
+}
+
+.active {
+  color: #071216;
+  background: var(--teal);
+}

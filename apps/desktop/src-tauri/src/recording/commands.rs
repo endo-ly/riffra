@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::library;
-use crate::model::AudioStatus;
+use crate::model::{AudioStatus, SessionAudioPair};
 use crate::recording::RecordingAsset;
 use crate::recording::application::{self, RecordingContext};
 
@@ -35,7 +35,6 @@ where
 fn app_context(state: &AppState) -> RecordingContext<'_> {
     RecordingContext {
         core: &state.core,
-        view_state: &state.view_state,
         audio: state.core.audio(),
         runtime: &state.runtime,
         data_root: state.core.data_root(),
@@ -135,7 +134,7 @@ pub async fn record_another_take(
 }
 
 #[tauri::command]
-pub async fn stop_arrange_recording(app: AppHandle) -> Result<AudioStatus, String> {
+pub async fn stop_arrange_recording(app: AppHandle) -> Result<SessionAudioPair, String> {
     run_blocking(app, |state| {
         application::stop_recording(&app_context(state))
     })

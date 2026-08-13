@@ -151,10 +151,6 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
     pub(crate) fn stop(&self) -> Result<(), RuntimeError> {
         self.executor.driver.stop_timeline()
     }
-
-    pub(crate) fn stop_nonblocking(&self) -> Result<(), RuntimeError> {
-        self.executor.driver.stop_timeline_nonblocking()
-    }
 }
 
 impl<D: TransportDriver> Drop for TransportExecutionLease<'_, D> {
@@ -222,10 +218,6 @@ mod tests {
         fn stop_timeline(&self) -> Result<(), RuntimeError> {
             self.stopped.fetch_add(1, Ordering::Relaxed);
             Ok(())
-        }
-
-        fn stop_timeline_nonblocking(&self) -> Result<(), RuntimeError> {
-            self.stop_timeline()
         }
     }
 

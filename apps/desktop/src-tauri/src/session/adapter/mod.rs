@@ -3,8 +3,8 @@
 //! The operations use three consistency policies:
 //!
 //! - Sample-pad operations ([`create_sample_pad`], [`update_sample_pad`],
-//!   [`remove_sample_pad`]) touch play state, view state, the Asset
-//!   registry (existence check), and the Audio Runtime (pad configuration).
+//!   [`remove_sample_pad`]) touch play state, the Asset registry (existence
+//!   check), and the Audio Runtime (pad configuration).
 //!   Because the runtime and the persisted session must agree, each operation
 //!   applies the new pad set to the runtime, persists the session, and restores
 //!   the previous pad set when persistence fails.
@@ -16,9 +16,6 @@
 //!
 //! - Pure-session operations ([`import_session`] and [`restore_generation`])
 //!   mutate the session and persist it without waiting for VST lifecycle work.
-//!   Design navigation and workspace navigation are view state: they are
-//!   returned as in-memory snapshots and send only a nonblocking desired
-//!   runtime mode, so navigation never enters the durable Session commit path.
 //!
 //! Core owns editing rules, canonical state, history, and conflict decisions.
 //! This layer resolves files and plugins, invokes native services, delegates
@@ -27,7 +24,6 @@
 
 mod arrangement;
 mod midi_import;
-mod presentation;
 mod rack;
 mod recording;
 mod runtime;
@@ -35,7 +31,6 @@ mod sample_pad;
 
 pub(crate) use arrangement::*;
 pub(crate) use midi_import::*;
-pub(crate) use presentation::*;
 pub(crate) use rack::*;
 pub(crate) use recording::*;
 pub(crate) use runtime::*;
@@ -50,7 +45,6 @@ use std::{fs, path::Path};
 use crate::asset;
 use crate::model::{AudioStatus, SessionAudioPair};
 use crate::plugin_catalog;
-use crate::presentation::{DesignTool, DesktopViewState, Workspace};
 use crate::runtime::ports::RuntimeDriver;
 use crate::storage::SessionStore;
 use riffra_core::{
@@ -62,12 +56,12 @@ use riffra_core::{
 pub(crate) use crate::session::commit::{
     commit_core_application, commit_recording_session, import_session, restore_generation,
 };
-pub(crate) use crate::session::context::{SessionContext, current_session, lock_error};
+pub(crate) use crate::session::context::{SessionContext, current_session};
 pub(crate) use crate::session::transport::{
     SamplePadRestoreOutcome, audio_command_succeeded, go_to_start_timeline, play_timeline,
     prepare_arrangement_candidate, resolve_native_pads, restore_sample_pads,
-    runtime_snapshot_for_recording, seek_timeline, stop_timeline, switch_workspace,
-    sync_arrangement, sync_arrangement_runtime,
+    runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement,
+    sync_arrangement_runtime,
 };
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNotePatch, MidiNoteUpdate,
@@ -83,7 +77,7 @@ mod tests {
     };
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Barrier, Mutex, OnceLock, mpsc};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -160,10 +154,6 @@ mod tests {
 
         fn stop_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
             Ok(())
-        }
-
-        fn stop_timeline_nonblocking(&self) -> Result<(), crate::runtime::error::RuntimeError> {
-            self.stop_timeline()
         }
     }
 
@@ -243,10 +233,6 @@ mod tests {
         fn stop_timeline(&self) -> Result<(), crate::runtime::error::RuntimeError> {
             Ok(())
         }
-
-        fn stop_timeline_nonblocking(&self) -> Result<(), crate::runtime::error::RuntimeError> {
-            self.stop_timeline()
-        }
     }
 
     fn plugin_base_session() -> CreativeSession {
@@ -258,11 +244,6 @@ mod tests {
         session
     }
 
-    fn test_view_state() -> &'static Mutex<crate::presentation::DesktopViewState> {
-        static VIEW_STATE: OnceLock<Mutex<crate::presentation::DesktopViewState>> = OnceLock::new();
-        VIEW_STATE.get_or_init(|| Mutex::new(Default::default()))
-    }
-
     fn candidate_context<'a>(
         root: &'a Path,
         runtime: &'a crate::runtime::RuntimeReconciler<CandidateRuntimeDriver>,
@@ -271,7 +252,6 @@ mod tests {
     ) -> SessionContext<'a, CandidateRuntimeDriver> {
         SessionContext {
             core,
-            view_state: test_view_state(),
             audio,
             runtime,
             data_root: root,
@@ -476,7 +456,6 @@ mod tests {
         ));
         let context = SessionContext {
             core: core.as_ref(),
-            view_state: test_view_state(),
             audio: audio.as_ref(),
             runtime: runtime.as_ref(),
             data_root: &root,
@@ -503,7 +482,6 @@ mod tests {
             thread::spawn(move || {
                 let context = SessionContext {
                     core: core.as_ref(),
-                    view_state: test_view_state(),
                     audio: audio.as_ref(),
                     runtime: runtime.as_ref(),
                     data_root: &root,

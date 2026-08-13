@@ -25,13 +25,11 @@
 //! filesystem already provides.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use crate::asset;
 use crate::library;
-use crate::model::AudioStatus;
+use crate::model::{AudioStatus, SessionAudioPair};
 use crate::native_audio::AudioSupervisor;
-use crate::presentation::{DesktopViewState, Workspace};
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
 use crate::storage::now_ms;
@@ -47,7 +45,6 @@ use riffra_core::{
 /// keeps the operation signatures small without pulling in `tauri::State`.
 pub struct RecordingContext<'a> {
     pub core: &'a AppCore<AudioSupervisor>,
-    pub view_state: &'a Mutex<DesktopViewState>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
@@ -121,7 +118,6 @@ fn start_recording_in_session(
         // control-state restoration, the retry, and the publish boundary.
         std::time::Duration::from_secs(60),
     )?;
-    context.audio.set_processing_mode("arrange")?;
     let status = context.audio.start_arrange_recording(
         &directory,
         midi_only,
@@ -131,11 +127,6 @@ fn start_recording_in_session(
         &directory,
         &session,
         &status,
-        context
-            .view_state
-            .lock()
-            .map_err(|error| format!("View state lock was poisoned: {error}"))?
-            .workspace,
         recording_session_id,
     ));
     if let Some(capture) = capture
@@ -157,7 +148,6 @@ fn build_startup_capture(
     directory: &Path,
     session: &CreativeSession,
     status: &AudioStatus,
-    workspace: Workspace,
     recording_session_id: Option<&str>,
 ) -> RecordingCapture {
     let mut capture = RecordingCapture::start(
@@ -177,7 +167,6 @@ fn build_startup_capture(
             .map(|channel| channel.name.clone())
     });
     capture.buffer_size = status.buffer_size;
-    capture.workspace = Some(format!("{workspace:?}").to_lowercase());
     capture.master_db = Some(session.settings.master_db);
     capture.count_in_beats = Some(session.settings.count_in_beats);
     let latency_ticks = status
@@ -212,11 +201,11 @@ fn build_startup_capture(
 /// buffers, and the resulting raw / processed / MIDI outputs are registered as
 /// canonical Assets. The take manifest's nested `RecordingCapture` is updated
 /// to point at those Asset IDs so the canonical state is the source of truth.
-pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, String> {
+pub fn stop_recording(context: &RecordingContext<'_>) -> Result<SessionAudioPair, String> {
     let before = context.audio.refresh_status()?;
     let status = context.audio.stop_arrange_recording()?;
     if status.recording.cancelled {
-        return Ok(status);
+        return session_audio_pair(context, status);
     }
     let directory = status
         .recording
@@ -231,7 +220,7 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, Str
                     "Recording stopped and files were preserved, but canonical finalization failed: {error}"
                 )
             })?;
-            return Ok(status);
+            return session_audio_pair(context, status);
         }
         let outputs = register_recording_outputs(context.data_root, &directory_path).map_err(|error| {
             format!(
@@ -240,7 +229,19 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, Str
         })?;
         place_recording_on_timeline(context, &directory_path, outputs)?;
     }
-    Ok(status)
+    session_audio_pair(context, status)
+}
+
+fn session_audio_pair(
+    context: &RecordingContext<'_>,
+    audio: AudioStatus,
+) -> Result<SessionAudioPair, String> {
+    let session = context
+        .core
+        .snapshot()
+        .map_err(|error| error.to_string())?
+        .session;
+    Ok(SessionAudioPair { session, audio })
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -474,7 +475,6 @@ fn finalize_arrange_recording(
     let outputs = register_track_outputs(context.data_root, directory, &manifest)?;
     let session_context = crate::session::adapter::SessionContext {
         core: context.core,
-        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
         data_root: context.data_root,
@@ -1297,7 +1297,6 @@ fn place_recording_on_timeline(
     }
     let session_context = crate::session::adapter::SessionContext {
         core: context.core,
-        view_state: context.view_state,
         audio: context.audio,
         runtime: context.runtime,
         data_root: context.data_root,
@@ -1697,7 +1696,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex, OnceLock},
+        sync::{Arc, OnceLock},
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -1733,7 +1732,6 @@ mod tests {
         safe_mode: bool,
     ) -> RecordingContext<'a> {
         static TEST_CORE: OnceLock<AppCore<AudioSupervisor>> = OnceLock::new();
-        static TEST_VIEW_STATE: OnceLock<Mutex<DesktopViewState>> = OnceLock::new();
         RecordingContext {
             core: TEST_CORE.get_or_init(|| {
                 AppCore::new(
@@ -1744,7 +1742,6 @@ mod tests {
                     false,
                 )
             }),
-            view_state: TEST_VIEW_STATE.get_or_init(Default::default),
             audio,
             runtime,
             data_root,

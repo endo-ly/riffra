@@ -13,7 +13,7 @@
         {
           "name": "riffra-audio",
           "sidecar": true,
-          "args": [{ "validator": "--(serve|probe|probe-midi|probe-channels)" }]
+          "args": [{ "validator": "--(serve|probe|probe-channels)" }]
         },
         {
           "name": "riffra-plugin-scan",

@@ -15,10 +15,6 @@ void SafetyAudioCallback::setTimelineEngine(TimelineEngine* const engine) noexce
     timelineEngine = engine;
 }
 
-void SafetyAudioCallback::setProcessingMode(const ProcessingMode mode) noexcept {
-    processingMode.store(mode, std::memory_order_release);
-}
-
 void SafetyAudioCallback::panicAll() noexcept {
     allNotesOff();
     if (timelineEngine != nullptr) {
@@ -407,14 +403,12 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         int recordedSamples = numSamples;
         (void) timelineEngine->recordingWindow(numSamples, recordingOffset, recordedSamples);
     }
-    const auto mode = processingMode.load(std::memory_order_acquire);
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
     const auto* selectedInput = inputChannelData != nullptr
         && selectedChannel < numInputChannels
         ? inputChannelData[selectedChannel]
         : nullptr;
-    const auto monitoringRoutesActive = mode == ProcessingMode::arrange
-        && timelineEngine != nullptr
+    const auto monitoringRoutesActive = timelineEngine != nullptr
         && timelineEngine->monitoringEnabled();
     std::uint64_t invalidInputSamples = 0;
     const auto peakForInput = [numSamples, &invalidInputSamples](
@@ -456,7 +450,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+        if (timelineEngine != nullptr)
             timelineEngine->mix(
                 inputChannelData,
                 numInputChannels,
@@ -479,7 +473,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+        if (timelineEngine != nullptr)
             timelineEngine->mix(
                 inputChannelData,
                 numInputChannels,
@@ -502,7 +496,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
         if (outputChannelData[channel] != nullptr)
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
 
-    if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+    if (timelineEngine != nullptr)
         timelineEngine->mix(
             inputChannelData,
             numInputChannels,
@@ -510,7 +504,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             numOutputChannels,
             numSamples);
 
-    if (timelineEngine != nullptr && mode == ProcessingMode::arrange)
+    if (timelineEngine != nullptr)
         timelineEngine->mixMetronome(outputChannelData, numOutputChannels, numSamples);
 
     const juce::ScopedTryLock previewTry(previewLock);
