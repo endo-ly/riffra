@@ -19,9 +19,11 @@ afterEach(() => {
 function Harness({
   api,
   initialSession,
+  onToggleTransport,
 }: {
   api: FakeNativeApi;
   initialSession?: CreativeSession;
+  onToggleTransport?: () => void;
 }) {
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
@@ -37,6 +39,7 @@ function Harness({
         audio={api.audio}
         focusedTrackId={null}
         onFocusTrack={() => undefined}
+        onToggleTransport={onToggleTransport ?? (() => undefined)}
       />
       <ToastStack />
     </>
@@ -178,6 +181,183 @@ describe('WorkspaceArrange', () => {
     finishQuantize!(session);
     await screen.findByText('Quantized 1 note to 1/16.');
     await waitFor(() => expect(api.calls).toContain('quantizeMidiNotes'));
+  });
+
+  it('keeps MIDI editor shortcuts inside the focused editor', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:instrument-shortcuts',
+      name: 'Instrument Shortcuts',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:shortcuts',
+      name: 'Shortcuts',
+      trackId: 'track:instrument-shortcuts',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:shortcut-a',
+          note: 60,
+          startTick: 0,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+        {
+          id: 'note:shortcut-b',
+          note: 64,
+          startTick: 480,
+          durationTicks: 240,
+          velocity: 96,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:shortcuts"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    fireEvent.keyDown(editor, { key: 'a', ctrlKey: true });
+
+    expect(
+      [...editor.querySelectorAll('[data-note-id]')].every((note) =>
+        note.className.includes('selected'),
+      ),
+    ).toBe(true);
+
+    fireEvent.keyDown(editor, { key: 'Delete' });
+
+    expect(api.calls).toContain('removeMidiNotes');
+    expect(api.calls).not.toContain('removeTimelineClips');
+  });
+
+  it('creates an empty MIDI clip from an instrument lane and opens its editor', async () => {
+    const session = defaultSession();
+    const track = {
+      id: 'track:instrument-empty',
+      name: 'Instrument Empty',
+      kind: 'instrument' as const,
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off' as const,
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    };
+    session.arrangement.tracks.push(track);
+    const createdSession: CreativeSession = {
+      ...session,
+      arrangement: {
+        ...session.arrangement,
+        midiClips: [
+          {
+            id: 'clip:created-empty',
+            name: 'MIDI Clip',
+            trackId: track.id,
+            startTick: 480,
+            durationTicks: 1_920,
+            notes: [],
+            events: [],
+            muted: false,
+            loopEnabled: false,
+          },
+        ],
+      },
+    };
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    let createArgs: Parameters<FakeNativeApi['createMidiClip']> | undefined;
+    api.createMidiClip = async (...args) => {
+      createArgs = args;
+      api.calls.push('createMidiClip');
+      return createdSession;
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const lane = container.querySelector(`[data-track-id="${track.id}"] > div[class*="lane_"]`)!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 100, top: 0, right: 800, bottom: 80, width: 700, height: 80 }),
+    });
+
+    fireEvent.doubleClick(lane, { clientX: 196, clientY: 40 });
+
+    await waitFor(() => expect(createArgs).toBeDefined());
+    expect(createArgs?.[0]).toBe(track.id);
+    expect(createArgs?.[2]).toBe(session.arrangement.timebase.ppq * 4);
+    expect(await screen.findByLabelText('MIDI Editor')).toBeInTheDocument();
+    expect(container.querySelector('[data-clip-id="clip:created-empty"]')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('uses Pointer blank clicks for selection and Draw drags for note creation', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:instrument-draw',
+      name: 'Instrument Draw',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:draw',
+      name: 'Draw',
+      trackId: 'track:instrument-draw',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    let addArgs: Parameters<FakeNativeApi['addMidiNote']> | undefined;
+    api.addMidiNote = async (...args) => {
+      addArgs = args;
+      api.calls.push('addMidiNote');
+      return session;
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:draw"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('[data-midi-lane]')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 1_536, width: 400, height: 1_536 }),
+    });
+
+    fireEvent.pointerDown(lane, { clientX: 100, clientY: 804, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 804, pointerId: 1 });
+    expect(api.calls).not.toContain('addMidiNote');
+
+    fireEvent.click(within(editor).getByRole('button', { name: 'Draw' }));
+    fireEvent.pointerDown(lane, { clientX: 100, clientY: 804, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 804, pointerId: 2 });
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 804, pointerId: 2 });
+
+    await waitFor(() => expect(addArgs).toBeDefined());
+    expect(addArgs?.[3]).toBeGreaterThan(0);
+    expect(addArgs?.[4]).toBe(96);
   });
 
   it('reports grid-aligned notes without sending a quantize operation', async () => {
@@ -432,6 +612,16 @@ describe('WorkspaceArrange', () => {
         Boolean(key.parentElement?.querySelector('[class*="pianoWhiteKey_"]')),
       ),
     ).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pitch zoom in' }));
+
+    expect((keyboard.querySelector('[data-piano-key="60"]') as HTMLElement).style.height).toBe(
+      '14px',
+    );
+    expect(
+      (keyboard.querySelector('[data-piano-key="61"] [class*="pianoBlackKey_"]') as HTMLElement)
+        .style.height,
+    ).toBe('11px');
   });
 
   it('reports MIDI and Audio clips when confirming Track deletion', () => {
@@ -1072,5 +1262,143 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(document.body);
 
     await waitFor(() => expect(screen.getByText('Delete')).not.toBeVisible());
+  });
+
+  it('commits a velocity lane drag once and previews the active instrument', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:velocity',
+      name: 'Velocity Track',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      instrument: {
+        id: 'device:velocity',
+        name: 'Fake Synth',
+        kind: 'plugin',
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        disabledPlaceholder: false,
+      },
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:velocity',
+      name: 'Velocity Clip',
+      trackId: 'track:velocity',
+      startTick: 960,
+      durationTicks: 1_920,
+      notes: [
+        {
+          id: 'note:velocity',
+          note: 60,
+          startTick: 0,
+          durationTicks: 240,
+          velocity: 64,
+          channel: 0,
+        },
+      ],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:velocity"]')!);
+    const velocityLane = await screen.findByLabelText('MIDI Editor');
+    const lane = velocityLane.querySelector('[data-velocity-lane]') as HTMLElement;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 400, height: 88, right: 400, bottom: 88 }),
+    });
+    const bar = lane.querySelector('[data-velocity-note-id="note:velocity"]') as HTMLElement;
+
+    fireEvent.pointerDown(bar, { pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(window, { clientY: 70 });
+    fireEvent.pointerUp(window, { clientY: 70 });
+
+    await waitFor(() => expect(api.calls).toContain('updateMidiNotes'));
+    expect(api.calls.filter((call) => call === 'updateMidiNotes')).toHaveLength(1);
+
+    const pianoKey = velocityLane.querySelector('[data-piano-key="60"]') as HTMLElement;
+    fireEvent.pointerDown(pianoKey, { pointerId: 2 });
+    fireEvent.pointerUp(pianoKey, { pointerId: 2 });
+    expect(api.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(2);
+  });
+
+  it('seeks from the MIDI ruler and supports lower panel collapse and maximize', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:navigation',
+      name: 'Navigation Track',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:navigation',
+      name: 'Navigation Clip',
+      trackId: 'track:navigation',
+      startTick: 1_920,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:navigation"]')!);
+    const ruler = await screen.findByLabelText('MIDI editor ruler');
+    Object.defineProperty(ruler, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 400, height: 32, right: 400, bottom: 32 }),
+    });
+    fireEvent.pointerDown(ruler, { clientX: 96 });
+    expect(api.calls).toContain('seekTimeline');
+
+    const workspace = screen.getByLabelText('Arrange timeline');
+    Object.defineProperty(workspace, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+    const resizeHandle = screen.getByRole('button', { name: 'Resize lower panel' });
+    fireEvent.pointerDown(resizeHandle, { clientY: 500 });
+    fireEvent.pointerMove(window, { clientY: -200 });
+    fireEvent.pointerUp(window, { clientY: -200 });
+    expect(screen.getByRole('region', { name: 'Arrange lower panel' })).toHaveStyle(
+      '--panel-height: 558px',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Maximize lower panel' }));
+    expect(screen.getByRole('button', { name: 'Restore lower panel size' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse lower panel' }));
+    expect(screen.getByRole('button', { name: 'Restore lower panel' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Maximize lower panel' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore lower panel' }));
+    expect(screen.getByRole('button', { name: 'Collapse lower panel' })).toBeInTheDocument();
+  });
+
+  it('routes Space to the shared transport controller from the Arrange editor', async () => {
+    const api = new FakeNativeApi();
+    let toggles = 0;
+    render(<Harness api={api} onToggleTransport={() => (toggles += 1)} />);
+    const workspace = screen.getByLabelText('Arrange timeline');
+
+    fireEvent.keyDown(workspace, { key: ' ' });
+
+    expect(toggles).toBe(1);
   });
 });

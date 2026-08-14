@@ -435,6 +435,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             setSelection={arrange.setSelection}
             api={nativeApi}
             audio={audio}
+            onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
             plugins={plugins}
             focusedTrackId={arrange.focusedTrackId}
             onFocusTrack={arrange.setFocusedTrackId}

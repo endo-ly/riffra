@@ -43,6 +43,14 @@ import type {
   TransportStatus,
 } from './contracts';
 
+export interface MidiNoteInput {
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  velocity: number;
+  channel: number;
+}
+
 export interface TrackPluginStateChange {
   trackId: string;
   deviceId: string;
@@ -232,6 +240,12 @@ export interface ArrangeApi {
     startTick?: number,
     trackId?: string,
   ): Promise<CreativeSession | null>;
+  createMidiClip(
+    trackId: string,
+    startTick: number,
+    durationTicks: number,
+    name?: string,
+  ): Promise<CreativeSession | null>;
   updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
   updateMidiClip(clipId: string, patch: MidiClipPatch): Promise<CreativeSession | null>;
   removeTimelineClips(
@@ -313,6 +327,7 @@ export interface ArrangeApi {
     velocity: number,
     channel: number,
   ): Promise<CreativeSession>;
+  insertMidiNotes(clipId: string, notes: MidiNoteInput[]): Promise<CreativeSession>;
   updateMidiNote(
     clipId: string,
     noteId: string,
@@ -326,6 +341,7 @@ export interface ArrangeApi {
     }[],
   ): Promise<CreativeSession>;
   removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
+  removeMidiNotes(clipId: string, noteIds: string[]): Promise<CreativeSession>;
   quantizeMidiNotes(clipId: string, noteIds: string[], gridTicks: number): Promise<CreativeSession>;
   duplicateMidiNotes(
     clipId: string,

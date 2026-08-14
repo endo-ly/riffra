@@ -66,6 +66,17 @@ pub struct MidiNoteUpdate {
     pub patch: MidiNotePatch,
 }
 
+/// Identity-free MIDI note data accepted by a Core insertion operation.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiNoteInput {
+    pub pitch: u8,
+    pub start_tick: TimelineTick,
+    pub duration_ticks: u64,
+    pub velocity: u8,
+    pub channel: u8,
+}
+
 /// Partial update for a timeline marker.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -348,6 +359,20 @@ fn normalize_track_name(name: String) -> Result<String, ApplicationError> {
         ));
     }
     Ok(name)
+}
+
+fn normalize_midi_clip_name(name: Option<String>) -> String {
+    let name = name
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(80)
+        .collect::<String>();
+    if name.is_empty() {
+        "MIDI Clip".into()
+    } else {
+        name
+    }
 }
 
 fn apply_audio_clip_take_variant(

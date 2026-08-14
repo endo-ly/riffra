@@ -15,6 +15,7 @@ import type {
   MidiClipPatch,
   MidiInputRoute,
 } from '@/model/domain';
+import type { MidiNoteInput } from '../native-api';
 import { invokeLatest, invokeOrFallback, invoke } from '../invoke';
 
 export async function addAudioClipToArrangement(
@@ -39,6 +40,19 @@ export async function addMidiClipToArrangement(
   return invokeOrFallback<CreativeSession | null>(
     'add_midi_clip_to_arrangement',
     { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
+    null,
+  );
+}
+
+export async function createMidiClip(
+  trackId: string,
+  startTick: number,
+  durationTicks: number,
+  name?: string,
+): Promise<CreativeSession | null> {
+  return invokeOrFallback<CreativeSession | null>(
+    'create_midi_clip',
+    { trackId, startTick, durationTicks, name: name ?? null },
     null,
   );
 }
@@ -248,6 +262,13 @@ export async function addMidiNote(
   });
 }
 
+export async function insertMidiNotes(
+  clipId: string,
+  notes: MidiNoteInput[],
+): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('insert_midi_notes', { clipId, notes });
+}
+
 export async function updateMidiNote(
   clipId: string,
   noteId: string,
@@ -268,6 +289,10 @@ export async function updateMidiNotes(
 
 export async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
   return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
+}
+
+export async function removeMidiNotes(clipId: string, noteIds: string[]): Promise<CreativeSession> {
+  return await invoke<CreativeSession>('remove_midi_notes', { clipId, noteIds });
 }
 
 export async function quantizeMidiNotes(

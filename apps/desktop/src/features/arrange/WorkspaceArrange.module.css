@@ -54,16 +54,15 @@
   border: 0;
 }
 
+.segmented button svg {
+  width: 12px;
+  height: 12px;
+}
+
 .segmented .active {
   color: #dfffff;
   background: #21333b;
   box-shadow: inset 0 0 0 1px rgba(85, 217, 232, 0.26);
-}
-
-.pointerGlyph,
-.splitGlyph {
-  color: var(--cyan);
-  font-size: 11px;
 }
 
 .compactField {

@@ -332,6 +332,9 @@ export class FakeNativeApi implements NativeApi {
   addMidiClipToArrangement(...args: Parameters<NativeApi['addMidiClipToArrangement']>) {
     return this.command('addMidiClipToArrangement', args);
   }
+  createMidiClip(...args: Parameters<NativeApi['createMidiClip']>) {
+    return this.command('createMidiClip', args);
+  }
   updateAudioClip(...args: Parameters<NativeApi['updateAudioClip']>) {
     return this.command('updateAudioClip', args);
   }
@@ -437,6 +440,9 @@ export class FakeNativeApi implements NativeApi {
   addMidiNote(...args: Parameters<NativeApi['addMidiNote']>) {
     return this.command('addMidiNote', args);
   }
+  insertMidiNotes(...args: Parameters<NativeApi['insertMidiNotes']>) {
+    return this.command('insertMidiNotes', args);
+  }
   updateMidiNote(...args: Parameters<NativeApi['updateMidiNote']>) {
     return this.command('updateMidiNote', args);
   }
@@ -445,6 +451,9 @@ export class FakeNativeApi implements NativeApi {
   }
   removeMidiNote(...args: Parameters<NativeApi['removeMidiNote']>) {
     return this.command('removeMidiNote', args);
+  }
+  removeMidiNotes(...args: Parameters<NativeApi['removeMidiNotes']>) {
+    return this.command('removeMidiNotes', args);
   }
   quantizeMidiNotes(...args: Parameters<NativeApi['quantizeMidiNotes']>) {
     return this.command('quantizeMidiNotes', args);
@@ -769,6 +778,7 @@ const sessionMethodNames = new Set<keyof NativeApi>([
   'replaceMissingTrackPlugin',
   'addAudioClipToArrangement',
   'addMidiClipToArrangement',
+  'createMidiClip',
   'updateAudioClip',
   'updateMidiClip',
   'removeTimelineClips',
@@ -803,9 +813,11 @@ const sessionMethodNames = new Set<keyof NativeApi>([
   'updateMarker',
   'removeMarker',
   'addMidiNote',
+  'insertMidiNotes',
   'updateMidiNote',
   'updateMidiNotes',
   'removeMidiNote',
+  'removeMidiNotes',
   'quantizeMidiNotes',
   'duplicateMidiNotes',
   'setAudioClipTakeVariant',

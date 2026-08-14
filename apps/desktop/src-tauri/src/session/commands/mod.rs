@@ -18,7 +18,7 @@ use crate::presentation::{DesignTool, DesktopViewState, Workspace};
 use crate::session::adapter::{self, SessionContext};
 use crate::storage::SessionStore;
 use riffra_core::application::{
-    MidiNotePatch, MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
+    MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
 };
 use riffra_core::{
     AssetId, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,

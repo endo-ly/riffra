@@ -64,8 +64,8 @@ pub(crate) use crate::session::transport::{
     sync_arrangement_runtime,
 };
 use riffra_core::application::{
-    AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNotePatch, MidiNoteUpdate,
-    SamplePadPatch, SessionSettingsPatch,
+    AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
+    MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
 };
 use riffra_core::domain::TrackPatch;
 #[cfg(test)]

@@ -44,7 +44,7 @@ interface ArrangeTrackProps {
     clip: MidiClip,
     side: 'left' | 'right',
   ) => void;
-  onSelect: (clipId: string) => void;
+  onSelect: (clipId: string, append?: boolean) => void;
   onSelectTrack: () => void;
   onOpenPlaySurface?: () => void;
   onTrim: (
@@ -54,6 +54,7 @@ interface ArrangeTrackProps {
   ) => void;
   onFade: (event: React.PointerEvent<HTMLSpanElement>, clip: AudioClip, side: 'in' | 'out') => void;
   onOpenMidiEditor?: (clip: MidiClip) => void;
+  onDoubleClickLane?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onAudioClipContextMenu?: (event: React.MouseEvent, clip: AudioClip) => void;
   onMidiClipContextMenu?: (event: React.MouseEvent, clip: MidiClip) => void;
   onRename: (name: string) => void;
@@ -428,6 +429,12 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           const bounds = event.currentTarget.getBoundingClientRect();
           const tick = Math.max(0, (event.clientX - bounds.left) / props.pixelsPerTick);
           props.onContextMenu?.(event, props.track.id, tick);
+        }}
+        onDoubleClick={(event) => {
+          if ((event.target as HTMLElement).closest('[data-clip-id]')) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const tick = Math.max(0, (event.clientX - bounds.left) / props.pixelsPerTick);
+          props.onDoubleClickLane?.(event, props.track.id, tick);
         }}
       >
         {audioItems.map(({ clip, key }) => (

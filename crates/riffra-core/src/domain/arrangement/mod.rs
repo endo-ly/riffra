@@ -672,6 +672,45 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Inserts identity-bearing MIDI notes after validating the resulting Clip.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input is empty, note identities collide, or
+    /// the resulting Clip violates MIDI validation rules.
+    pub fn insert_midi_notes(
+        &mut self,
+        clip_id: &str,
+        notes: Vec<MidiNote>,
+    ) -> Result<(), DomainError> {
+        if notes.is_empty() {
+            return Err(DomainError::InvalidClip(
+                "no midi notes were inserted.".into(),
+            ));
+        }
+        let index = self
+            .midi_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| DomainError::InvalidClip(format!("midi clip '{clip_id}' not found.")))?;
+        let mut candidate = self.midi_clips[index].clone();
+        let mut note_ids = candidate
+            .notes
+            .iter()
+            .map(|note| note.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if notes.iter().any(|note| !note_ids.insert(note.id.as_str())) {
+            return Err(DomainError::InvalidClip(
+                "midi note identities must be unique.".into(),
+            ));
+        }
+        candidate.notes.extend(notes);
+        self.validate_midi_clip(&candidate)?;
+        self.midi_clips[index] = candidate;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
     pub fn update_midi_clip(
         &mut self,
         clip_id: &str,
@@ -933,6 +972,41 @@ impl Arrangement {
                 .max(1);
             clip.notes.push(note);
         }
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Removes multiple MIDI notes as one domain edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selection is empty, the Clip is unknown, or
+    /// any selected Note ID is missing.
+    pub fn remove_midi_notes(
+        &mut self,
+        clip_id: &str,
+        note_ids: &[String],
+    ) -> Result<(), DomainError> {
+        if note_ids.is_empty() {
+            return Err(DomainError::InvalidClip(
+                "no midi notes were selected.".into(),
+            ));
+        }
+        let clip = self
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| DomainError::InvalidClip(format!("midi clip '{clip_id}' not found.")))?;
+        if note_ids
+            .iter()
+            .any(|id| !clip.notes.iter().any(|note| note.id == *id))
+        {
+            return Err(DomainError::InvalidClip(
+                "one or more midi notes were not found.".into(),
+            ));
+        }
+        clip.notes
+            .retain(|note| !note_ids.iter().any(|id| id == &note.id));
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }

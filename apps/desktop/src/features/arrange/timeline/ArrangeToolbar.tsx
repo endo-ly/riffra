@@ -4,6 +4,7 @@ import {
   type ArrangeTool,
   type SnapGrid,
 } from '@/features/arrange/model/arrange-timeline';
+import { Icon } from '@/shared/ui/primitives';
 import styles from '../WorkspaceArrange.module.css';
 
 interface ArrangeToolbarProps {
@@ -30,13 +31,13 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
           className={props.tool === 'select' ? styles.active : ''}
           onClick={() => props.onTool('select')}
         >
-          <span className={styles.pointerGlyph}>↖</span> Select
+          <Icon name="pointer" /> Select
         </button>
         <button
           className={props.tool === 'split' ? styles.active : ''}
           onClick={() => props.onTool('split')}
         >
-          <span className={styles.splitGlyph}>╱</span> Split
+          <Icon name="scissors" /> Split
         </button>
       </div>
 
