@@ -45,6 +45,15 @@ The engine is built with CMake. Use the wrapper script for your platform:
 .\build.ps1 -Configuration Debug
 ```
 
+The Windows wrapper defaults to the `Visual Studio 17 2022` generator and the
+`x64` architecture. Override either value when using another installed
+toolchain, for example:
+
+```powershell
+.\build.ps1 -Configuration Debug -Generator Ninja
+.\build.ps1 -Configuration Debug -Generator 'Visual Studio 16 2019' -Architecture x64
+```
+
 ```bash
 # macOS / Linux
 ./build.sh Debug
@@ -59,7 +68,3 @@ Both scripts do the following:
 
 This directory can be built independently of npm. The Tauri application expects
 the sidecars to exist under `apps/desktop/src-tauri/binaries/` before it starts.
-
-For a full project verification that also runs TypeScript and Rust checks, run
-`npm run verify:native` from the repository root. See the root
-[README.md](../../README.md) for the complete workflow.

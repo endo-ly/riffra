@@ -7,6 +7,31 @@
 
 - セッション開始時に、プロジェクトルートの`README.md`を参照する。基本的なPJ概要と開発ルールを記載している。
 
+### 検証
+
+検証対象が明確な場合は、対象ファイルまたは対象crateを指定して範囲を絞る。
+
+- TypeScript / Frontend
+  - 個別テスト: `npm run test -- src/<test-file>`（パスは`apps/desktop`基準）
+  - `npm run typecheck --workspace @riffra/desktop`
+  - `npm run build --workspace @riffra/desktop`
+  - `npx eslint <changed TypeScript files>`
+  - `npx prettier --check <changed TypeScript, CSS, JSON, or Markdown files>`
+- Rust
+  - `cargo fmt --manifest-path Cargo.toml --all --check`
+  - `cargo clippy --manifest-path Cargo.toml -p <crate> --all-targets -- -D warnings`
+  - `cargo test --manifest-path Cargo.toml -p <crate>`
+  - Workspace-wide changes require `cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings` and `cargo test --manifest-path Cargo.toml --workspace`.
+- C++ / Native audio engine
+  - CMakeのconfigure、build、CTest、sidecarのinstallをまとめて実行:
+    - Windows: `.\native\audio-engine\build.ps1 -Configuration Debug`
+    - macOS / Linux: `./native/audio-engine/build.sh Debug`
+  - 個別に検証:
+    - `cmake -S native/audio-engine -B native/audio-engine/build`
+    - `cmake --build native/audio-engine/build --config Debug --parallel`
+    - `ctest --test-dir native/audio-engine/build -C Debug --output-on-failure`
+    - `clang-format --style=file -i <changed C++ files>`
+
 ## 規約
 
 ### コーディング

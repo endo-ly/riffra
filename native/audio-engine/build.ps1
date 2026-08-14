@@ -6,6 +6,10 @@ param(
 
     [string] $BuildDirectory = (Join-Path $PSScriptRoot 'build'),
 
+    [string] $Generator = 'Visual Studio 17 2022',
+
+    [string] $Architecture = 'x64',
+
     [switch] $SkipTests
 )
 
@@ -29,10 +33,13 @@ $ctest = Find-Executable -Name 'ctest' -Fallback $vsCtest
 
 $buildDir = $BuildDirectory
 
-# Use the Visual Studio multi-config generator on Windows so that Debug and
-# Release builds coexist under the same build tree. --config selects the actual
-# configuration; -DCMAKE_BUILD_TYPE is ignored by multi-config generators.
-& $cmake -S $engineDir -B $buildDir -G 'Visual Studio 17 2022' -A x64
+# Use the configured generator. Visual Studio generators support -A for the
+# target architecture; other generators select their architecture themselves.
+$configureArgs = @('-S', $engineDir, '-B', $buildDir, '-G', $Generator)
+if ($Generator -like 'Visual Studio *' -and $Architecture) {
+    $configureArgs += @('-A', $Architecture)
+}
+& $cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
 & $cmake --build $buildDir --config $Configuration --parallel

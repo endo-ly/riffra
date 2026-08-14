@@ -2,9 +2,9 @@
 //!
 //! Every Rust struct or enum that crosses the Tauri IPC boundary derives
 //! `ts_rs::TS`. This module regenerates the TypeScript declaration files under
-//! `src/model/generated/` from those types. `scripts/verify.mjs` runs this export
-//! before the TypeScript build and fails when the committed bindings differ
-//! from the freshly generated output, so the two sides cannot drift.
+//! `src/model/generated/` from those types. Run `npm run gen:types` after changing
+//! a boundary type and keep the generated files synchronized with the Rust
+//! definitions.
 
 use crate::analysis::AudioAnalysis;
 use crate::audio_preferences::AudioDriverConfig;
