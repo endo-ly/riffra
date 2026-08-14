@@ -1,16 +1,14 @@
-#include "ArrangeRecordingSession.h"
-
-#include "TestSupport.h"
-
 #include <gtest/gtest.h>
 
 #include <array>
 
+#include "ArrangeRecordingSession.h"
+#include "TestSupport.h"
+
 namespace riffra {
 namespace {
 
-juce::var makeConfiguration()
-{
+juce::var makeConfiguration() {
     auto* configuration = new juce::DynamicObject();
     configuration->setProperty("sampleRate", 48'000.0);
     configuration->setProperty("timelineStartTick", 960);
@@ -36,66 +34,54 @@ juce::var makeConfiguration()
     return juce::var(configuration);
 }
 
-bool writeCapture(ArrangeRecordingSession& session, juce::String& error)
-{
-    std::array<float, 512> guitarRaw {};
-    std::array<float, 512> guitarLeft {};
-    std::array<float, 512> guitarRight {};
-    std::array<float, 512> vocalRaw {};
-    std::array<float, 512> vocalLeft {};
-    std::array<float, 512> vocalRight {};
+bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {
+    std::array<float, 512> guitarRaw{};
+    std::array<float, 512> guitarLeft{};
+    std::array<float, 512> guitarRight{};
+    std::array<float, 512> vocalRaw{};
+    std::array<float, 512> vocalLeft{};
+    std::array<float, 512> vocalRight{};
     guitarRaw.fill(0.1f);
     guitarLeft.fill(0.2f);
     guitarRight.fill(0.21f);
     vocalRaw.fill(0.3f);
     vocalLeft.fill(0.4f);
     vocalRight.fill(0.41f);
-    const std::array<const float*, 2> guitarProcessed {
-        guitarLeft.data(), guitarRight.data() };
-    const std::array<const float*, 2> vocalProcessed {
-        vocalLeft.data(), vocalRight.data() };
+    const std::array<const float*, 2> guitarProcessed{guitarLeft.data(), guitarRight.data()};
+    const std::array<const float*, 2> vocalProcessed{vocalLeft.data(), vocalRight.data()};
 
     session.setCaptureRange(1000, 1256, 24'000, 24'256);
     session.setCaptureRange(1256, 1512, 24'000, 24'256);
-    if (!session.beginAudioTrackCapture("track:guitar", 1000, 24'000))
-        return false;
-    session.writeAudioTrack(
-        "track:guitar", guitarRaw.data(), 256, guitarProcessed.data(), 256);
+    if (!session.beginAudioTrackCapture("track:guitar", 1000, 24'000)) return false;
+    session.writeAudioTrack("track:guitar", guitarRaw.data(), 256, guitarProcessed.data(), 256);
     session.endAudioTrackCapture("track:guitar", 1256, 24'256);
     session.completeAudioTrackTail("track:guitar");
-    if (!session.beginAudioTrackCapture("track:guitar", 1256, 24'000))
-        return false;
-    const std::array<const float*, 2> guitarProcessedSecond {
-        guitarLeft.data() + 256, guitarRight.data() + 256 };
-    session.writeAudioTrack(
-        "track:guitar", guitarRaw.data() + 256, 256, guitarProcessedSecond.data(), 256);
+    if (!session.beginAudioTrackCapture("track:guitar", 1256, 24'000)) return false;
+    const std::array<const float*, 2> guitarProcessedSecond{guitarLeft.data() + 256,
+                                                            guitarRight.data() + 256};
+    session.writeAudioTrack("track:guitar", guitarRaw.data() + 256, 256,
+                            guitarProcessedSecond.data(), 256);
     session.endAudioTrackCapture("track:guitar", 1512, 24'256);
     session.completeAudioTrackTail("track:guitar");
 
-    if (!session.beginAudioTrackCapture("track:vocal", 1000, 24'000))
-        return false;
-    session.writeAudioTrack(
-        "track:vocal", vocalRaw.data(), 256, vocalProcessed.data(), 256);
+    if (!session.beginAudioTrackCapture("track:vocal", 1000, 24'000)) return false;
+    session.writeAudioTrack("track:vocal", vocalRaw.data(), 256, vocalProcessed.data(), 256);
     session.endAudioTrackCapture("track:vocal", 1256, 24'256);
     session.completeAudioTrackTail("track:vocal");
-    if (!session.beginAudioTrackCapture("track:vocal", 1256, 24'000))
-        return false;
-    const std::array<const float*, 2> vocalProcessedSecond {
-        vocalLeft.data() + 256, vocalRight.data() + 256 };
-    session.writeAudioTrack(
-        "track:vocal", vocalRaw.data() + 256, 256, vocalProcessedSecond.data(), 256);
+    if (!session.beginAudioTrackCapture("track:vocal", 1256, 24'000)) return false;
+    const std::array<const float*, 2> vocalProcessedSecond{vocalLeft.data() + 256,
+                                                           vocalRight.data() + 256};
+    session.writeAudioTrack("track:vocal", vocalRaw.data() + 256, 256, vocalProcessedSecond.data(),
+                            256);
     session.endAudioTrackCapture("track:vocal", 1512, 24'256);
     session.completeAudioTrackTail("track:vocal");
 
-    session.writeMidiTrack(
-        "track:keys", "midi:keyboard",
-        juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);
-    session.writeMidiTrack(
-        "track:keys", "midi:keyboard",
-        juce::MidiMessage::noteOn(1, 61, static_cast<juce::uint8>(100)), 900);
-    session.writeMidiTrack(
-        "track:keys", "midi:keyboard",
-        juce::MidiMessage::noteOn(1, 62, static_cast<juce::uint8>(100)), 1600);
+    session.writeMidiTrack("track:keys", "midi:keyboard",
+                           juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);
+    session.writeMidiTrack("track:keys", "midi:keyboard",
+                           juce::MidiMessage::noteOn(1, 61, static_cast<juce::uint8>(100)), 900);
+    session.writeMidiTrack("track:keys", "midi:keyboard",
+                           juce::MidiMessage::noteOn(1, 62, static_cast<juce::uint8>(100)), 1600);
     session.markLoopBoundary(1256);
     return session.finish(error);
 }
@@ -105,10 +91,9 @@ protected:
     test::TemporaryDirectory directory;
 };
 
-} // namespace
+}  // namespace
 
-TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest)
-{
+TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
     juce::String error;
     const auto configuration = makeConfiguration();
     auto session = ArrangeRecordingSession::create(directory.get(), configuration, error);
@@ -120,8 +105,9 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest)
         auto* capture = new juce::DynamicObject();
         capture->setProperty("captureId", "capture:test");
         object->setProperty("capture", juce::var(capture));
-        ASSERT_TRUE(directory.get().getChildFile("manifest.json").replaceWithText(
-            juce::JSON::toString(manifest, true)));
+        ASSERT_TRUE(directory.get()
+                        .getChildFile("manifest.json")
+                        .replaceWithText(juce::JSON::toString(manifest, true)));
     }
 
     ASSERT_TRUE(writeCapture(*session, error)) << error;
@@ -157,8 +143,7 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest)
     EXPECT_TRUE(directory.get().getChildFile("tracks/0001/processed.wav").existsAsFile());
     EXPECT_TRUE(directory.get().getChildFile("tracks/0002/midi.json").existsAsFile());
 
-    const auto midi = test::parseJsonFile(
-        directory.get().getChildFile("tracks/0002/midi.json"));
+    const auto midi = test::parseJsonFile(directory.get().getChildFile("tracks/0002/midi.json"));
     ASSERT_TRUE(midi.isObject());
     const auto events = midi.getProperty("events", {});
     ASSERT_TRUE(events.isArray());
@@ -169,16 +154,14 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest)
     EXPECT_EQ(static_cast<int>(events[1].getProperty("data1", -1)), 60);
 }
 
-TEST_F(ArrangeRecordingSessionTest, CancelsWithoutLeavingARecoverableDirectory)
-{
+TEST_F(ArrangeRecordingSessionTest, CancelsWithoutLeavingARecoverableDirectory) {
     const auto cancelledDirectory = directory.get().getChildFile("cancelled");
     juce::String error;
-    auto session = ArrangeRecordingSession::create(
-        cancelledDirectory, makeConfiguration(), error);
+    auto session = ArrangeRecordingSession::create(cancelledDirectory, makeConfiguration(), error);
     ASSERT_NE(session, nullptr) << error;
     ASSERT_TRUE(session->cancel(error)) << error;
 
     EXPECT_FALSE(cancelledDirectory.exists());
 }
 
-} // namespace riffra
+}  // namespace riffra

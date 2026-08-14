@@ -106,7 +106,7 @@ private:
     std::atomic<bool> panicPending{false};
     std::unique_ptr<std::atomic<float>[]> pendingParameterValues;
     std::unique_ptr<std::atomic<bool>[]> pendingParameterDirty;
-    std::atomic<std::size_t> pendingParameterCapacity { 0 };
+    std::atomic<std::size_t> pendingParameterCapacity{0};
 };
 
 }  // namespace riffra

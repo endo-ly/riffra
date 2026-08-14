@@ -1,12 +1,12 @@
 #pragma once
 
-#include "PluginRack.h"
-
 #include <JuceHeader.h>
 
 #include <cmath>
 #include <memory>
 #include <vector>
+
+#include "PluginRack.h"
 
 namespace riffra {
 
@@ -33,8 +33,8 @@ public:
     }
     void releaseResources() override { trace.released = true; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
-            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
+               layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
         trace.processed = trace.prepared;
@@ -72,8 +72,8 @@ struct InstrumentTrace final {
 class TestInstrumentProcessor final : public juce::AudioProcessor {
 public:
     explicit TestInstrumentProcessor(InstrumentTrace& processorTrace)
-        : AudioProcessor(BusesProperties()
-                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+        : AudioProcessor(
+              BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
           trace(processorTrace) {}
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
@@ -81,8 +81,8 @@ public:
     }
     void releaseResources() override { trace.released = true; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
-            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::disabled() &&
+               layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         trace.processed = trace.prepared;
@@ -98,8 +98,8 @@ public:
         buffer.clear();
         if (trace.noteHeld) {
             for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
-                juce::FloatVectorOperations::fill(
-                    buffer.getWritePointer(channel), 0.25f, buffer.getNumSamples());
+                juce::FloatVectorOperations::fill(buffer.getWritePointer(channel), 0.25f,
+                                                  buffer.getNumSamples());
         }
     }
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
@@ -135,15 +135,15 @@ public:
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          trace { processorId, processorGain, processorTailSeconds, &processorOrder } {
+          trace{processorId, processorGain, processorTailSeconds, &processorOrder} {
         setLatencySamples(latency);
     }
 
     void prepareToPlay(double, int) override {}
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
-            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
+               layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
         trace.order->push_back(trace.id);
@@ -177,8 +177,7 @@ public:
         parameters.reserve(700);
         for (int index = 0; index < 700; ++index) {
             auto* parameter = new juce::AudioParameterFloat(
-                "state" + juce::String(index), "State " + juce::String(index),
-                0.0f, 1.0f, 0.0f);
+                "state" + juce::String(index), "State " + juce::String(index), 0.0f, 1.0f, 0.0f);
             parameters.push_back(parameter);
             addParameter(parameter);
         }
@@ -187,8 +186,8 @@ public:
     void prepareToPlay(double, int) override {}
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
-            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
+               layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
@@ -210,8 +209,7 @@ public:
         }
     }
     void setStateInformation(const void* data, int size) override {
-        if (data == nullptr || size != static_cast<int>(parameters.size() * sizeof(float)))
-            return;
+        if (data == nullptr || size != static_cast<int>(parameters.size() * sizeof(float))) return;
         const auto* values = static_cast<const float*>(data);
         for (std::size_t index = 0; index < parameters.size(); ++index)
             parameters[index]->setValueNotifyingHost(values[index]);
@@ -223,11 +221,9 @@ private:
 
 class PluginRackTestPeer final {
 public:
-    static std::unique_ptr<PluginRack> install(
-        std::unique_ptr<juce::AudioProcessor> processor,
-        double sampleRate,
-        int blockSize,
-        juce::String& error) {
+    static std::unique_ptr<PluginRack> install(std::unique_ptr<juce::AudioProcessor> processor,
+                                               double sampleRate, int blockSize,
+                                               juce::String& error) {
         if (processor == nullptr) {
             error = "Test processor was null.";
             return {};
@@ -246,10 +242,10 @@ public:
         rack->pendingMidi.reset();
         rack->preparedSampleRate.store(sampleRate, std::memory_order_release);
         rack->preparedBlockSize.store(blockSize, std::memory_order_release);
-        rack->pluginInputChannels.store(
-            processor->getMainBusNumInputChannels(), std::memory_order_release);
-        rack->pluginOutputChannels.store(
-            processor->getMainBusNumOutputChannels(), std::memory_order_release);
+        rack->pluginInputChannels.store(processor->getMainBusNumInputChannels(),
+                                        std::memory_order_release);
+        rack->pluginOutputChannels.store(processor->getMainBusNumOutputChannels(),
+                                         std::memory_order_release);
         rack->plugin = std::move(processor);
         rack->loaded.store(true, std::memory_order_release);
         rack->loadCount.store(1, std::memory_order_release);
@@ -257,4 +253,4 @@ public:
     }
 };
 
-} // namespace riffra
+}  // namespace riffra

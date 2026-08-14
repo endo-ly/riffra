@@ -13,18 +13,11 @@ public:
         double sampleRate = 0.0;
     };
 
-    [[nodiscard]] bool render(
-        const juce::var& snapshot,
-        juce::AudioFormatManager& formats,
-        const juce::File& destination,
-        std::uint64_t startTick,
-        std::uint64_t endTick,
-        double sampleRate,
-        int blockSize,
-        float masterGainDb,
-        bool normalize,
-        Result& result,
-        juce::String& error);
+    [[nodiscard]] bool render(const juce::var& snapshot, juce::AudioFormatManager& formats,
+                              const juce::File& destination, std::uint64_t startTick,
+                              std::uint64_t endTick, double sampleRate, int blockSize,
+                              float masterGainDb, bool normalize, Result& result,
+                              juce::String& error);
 };
 
-} // namespace riffra
+}  // namespace riffra

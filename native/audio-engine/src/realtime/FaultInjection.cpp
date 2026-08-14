@@ -20,8 +20,7 @@ std::string environmentValue(const char* name) {
 #if defined(_WIN32)
     char* value = nullptr;
     std::size_t length = 0;
-    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr)
-        return {};
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) return {};
     const std::string result(value, length > 0 ? length - 1 : 0);
     std::free(value);
     return result;
@@ -33,12 +32,18 @@ std::string environmentValue(const char* name) {
 
 const char* stageName(const FaultStage stage) noexcept {
     switch (stage) {
-    case FaultStage::discovery: return "discovery";
-    case FaultStage::create: return "create";
-    case FaultStage::prepare: return "prepare";
-    case FaultStage::stateApply: return "stateApply";
-    case FaultStage::editorOpen: return "editorOpen";
-    case FaultStage::destroy: return "destroy";
+        case FaultStage::discovery:
+            return "discovery";
+        case FaultStage::create:
+            return "create";
+        case FaultStage::prepare:
+            return "prepare";
+        case FaultStage::stateApply:
+            return "stateApply";
+        case FaultStage::editorOpen:
+            return "editorOpen";
+        case FaultStage::destroy:
+            return "destroy";
     }
     return "";
 }
@@ -56,10 +61,8 @@ int delayMilliseconds() noexcept {
 
 bool modeMatches(const char* mode, const FaultStage stage) noexcept {
     const auto configured = environmentValue("RIFFRA_FAULT_MODE");
-    if (configured == mode)
-        return true;
-    if (configured == std::string(stageName(stage)) + "Delay")
-        return std::string(mode) == "delay";
+    if (configured == mode) return true;
+    if (configured == std::string(stageName(stage)) + "Delay") return std::string(mode) == "delay";
     return false;
 }
 
@@ -74,16 +77,13 @@ void abortProcess() noexcept {
 }  // namespace
 
 void FaultInjection::before(const FaultStage stage) {
-    if (!stageSelected(stage))
-        return;
+    if (!stageSelected(stage)) return;
     const auto mode = environmentValue("RIFFRA_FAULT_MODE");
-    if (mode.empty())
-        return;
+    if (mode.empty()) return;
     if (modeMatches("throwException", stage))
-        throw std::runtime_error(
-            "Fault injection requested at the " + std::string(stageName(stage)) + " boundary.");
-    if (modeMatches("processAbort", stage))
-        abortProcess();
+        throw std::runtime_error("Fault injection requested at the " +
+                                 std::string(stageName(stage)) + " boundary.");
+    if (modeMatches("processAbort", stage)) abortProcess();
     if (modeMatches("neverReturn", stage)) {
         for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -92,11 +92,9 @@ void FaultInjection::before(const FaultStage stage) {
 }
 
 void FaultInjection::stdoutFlood() {
-    if (environmentValue("RIFFRA_FAULT_MODE") != "stdoutFlood")
-        return;
-    static std::atomic<bool> emitted { false };
-    if (emitted.exchange(true, std::memory_order_acq_rel))
-        return;
+    if (environmentValue("RIFFRA_FAULT_MODE") != "stdoutFlood") return;
+    static std::atomic<bool> emitted{false};
+    if (emitted.exchange(true, std::memory_order_acq_rel)) return;
     std::string flood(256 * 1024, 'x');
     flood.push_back('\n');
     std::cout << flood << std::flush;

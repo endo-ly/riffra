@@ -6,4 +6,4 @@ bool deviceLossRequiresFault(const bool devicePresent, const bool audioActive) n
     return !devicePresent && audioActive;
 }
 
-} // namespace riffra
+}  // namespace riffra

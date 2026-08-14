@@ -1,9 +1,9 @@
 #pragma once
 
-#include "PluginRack.h"
-
 #include <memory>
 #include <vector>
+
+#include "PluginRack.h"
 
 namespace riffra {
 
@@ -12,34 +12,21 @@ class TimelineEngineTestPeer;
 
 class PluginChain final {
 public:
-    bool load(
-        const juce::var& devices,
-        double sampleRate,
-        int blockSize,
-        juce::String& error,
-        const juce::String& runtimeRole);
+    bool load(const juce::var& devices, double sampleRate, int blockSize, juce::String& error,
+              const juce::String& runtimeRole);
     void prepare(double sampleRate, int blockSize) noexcept;
     void reset() noexcept;
     void release() noexcept;
     void clear() noexcept;
     void allNotesOff() noexcept;
-    void process(
-        const float* const* inputChannels,
-        int inputChannelCount,
-        float* const* outputChannels,
-        int outputChannelCount,
-        int sampleCount,
-        const juce::MidiBuffer* midi = nullptr) noexcept;
+    void process(const float* const* inputChannels, int inputChannelCount,
+                 float* const* outputChannels, int outputChannelCount, int sampleCount,
+                 const juce::MidiBuffer* midi = nullptr) noexcept;
     bool setBypassed(const juce::String& deviceId, bool bypassed) noexcept;
-    bool setParameter(
-        const juce::String& deviceId,
-        int parameterIndex,
-        float value,
-        juce::String& error) noexcept;
+    bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
+                      juce::String& error) noexcept;
     bool applyState(const juce::var& devices, juce::String& error) noexcept;
-    [[nodiscard]] juce::var persistedState(
-        const juce::String& deviceId,
-        juce::String& error) const;
+    [[nodiscard]] juce::var persistedState(const juce::String& deviceId, juce::String& error) const;
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] int size() const noexcept;
@@ -62,4 +49,4 @@ private:
     juce::AudioBuffer<float> secondBuffer;
 };
 
-} // namespace riffra
+}  // namespace riffra

@@ -10,18 +10,19 @@ public:
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)
 #endif
-          ) {}
+          ) {
+    }
 
     void prepareToPlay(double, int) override {}
     void releaseResources() override {}
 
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override {
 #if JucePlugin_IsSynth
-        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
-            && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled() &&
+               layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 #else
-        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
-            && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
+               layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 #endif
     }
 
@@ -46,6 +47,4 @@ public:
     void setStateInformation(const void*, int) override {}
 };
 
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
-    return new RiffraTestProcessor();
-}
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new RiffraTestProcessor(); }

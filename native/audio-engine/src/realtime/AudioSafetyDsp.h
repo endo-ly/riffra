@@ -29,8 +29,7 @@ public:
         const auto channels = std::min(numChannels, activeChannels);
         for (int ch = 0; ch < channels; ++ch) {
             auto* channel = data[ch];
-            if (channel == nullptr)
-                continue;
+            if (channel == nullptr) continue;
             auto& pIn = prevInput[static_cast<std::size_t>(ch)];
             auto& pOut = prevOutput[static_cast<std::size_t>(ch)];
             for (int s = 0; s < numSamples; ++s) {
@@ -46,8 +45,8 @@ public:
 private:
     static constexpr int kMaxChannels = 32;
     static constexpr float kCoefficient = 0.999f;
-    std::array<float, static_cast<std::size_t>(kMaxChannels)> prevInput {};
-    std::array<float, static_cast<std::size_t>(kMaxChannels)> prevOutput {};
+    std::array<float, static_cast<std::size_t>(kMaxChannels)> prevInput{};
+    std::array<float, static_cast<std::size_t>(kMaxChannels)> prevOutput{};
     int activeChannels = 0;
 };
 
@@ -70,22 +69,19 @@ public:
         feedbackSuspected.store(false, std::memory_order_relaxed);
     }
 
-    void observe(
-        const float peak,
-        const int numSamples,
-        const bool monitoringEnabled) noexcept {
+    void observe(const float peak, const int numSamples, const bool monitoringEnabled) noexcept {
         if (!monitoringEnabled) {
             sustainedSamples.store(0, std::memory_order_release);
             feedbackSuspected.store(false, std::memory_order_release);
             return;
         }
         if (peak >= kPeakThreshold) {
-            const auto observedSamples = sustainedSamples.fetch_add(
-                static_cast<std::uint64_t>(std::max(0, numSamples)),
-                std::memory_order_acq_rel)
-                + static_cast<std::uint64_t>(std::max(0, numSamples));
-            const auto threshold = static_cast<std::uint64_t>(
-                currentSampleRate * kSustainedMs / 1000.0);
+            const auto observedSamples =
+                sustainedSamples.fetch_add(static_cast<std::uint64_t>(std::max(0, numSamples)),
+                                           std::memory_order_acq_rel) +
+                static_cast<std::uint64_t>(std::max(0, numSamples));
+            const auto threshold =
+                static_cast<std::uint64_t>(currentSampleRate * kSustainedMs / 1000.0);
             if (observedSamples >= threshold)
                 feedbackSuspected.store(true, std::memory_order_release);
         } else if (peak < kReleaseThreshold) {
@@ -106,8 +102,8 @@ private:
     static constexpr float kReleaseThreshold = 0.5f;
     static constexpr double kSustainedMs = 250.0;
     double currentSampleRate = 48000.0;
-    std::atomic<std::uint64_t> sustainedSamples { 0 };
-    std::atomic<bool> feedbackSuspected { false };
+    std::atomic<std::uint64_t> sustainedSamples{0};
+    std::atomic<bool> feedbackSuspected{false};
 };
 
-} // namespace riffra
+}  // namespace riffra

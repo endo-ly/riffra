@@ -1,8 +1,8 @@
-#include "TimelineEngine.h"
-
 #include <JuceHeader.h>
 
 #include <iostream>
+
+#include "TimelineEngine.h"
 
 namespace {
 
@@ -16,12 +16,8 @@ juce::var makePluginDevice(const juce::String& id, const juce::String& path) {
     return juce::var(device);
 }
 
-juce::var makeTrack(
-    const juce::String& id,
-    const juce::String& kind,
-    const juce::var& devices,
-    const juce::var& instrument,
-    const bool armed) {
+juce::var makeTrack(const juce::String& id, const juce::String& kind, const juce::var& devices,
+                    const juce::var& instrument, const bool armed) {
     auto* track = new juce::DynamicObject();
     track->setProperty("id", id);
     track->setProperty("kind", kind);
@@ -34,8 +30,7 @@ juce::var makeTrack(
     auto* rack = new juce::DynamicObject();
     rack->setProperty("devices", devices);
     track->setProperty("rack", juce::var(rack));
-    if (!instrument.isVoid())
-        track->setProperty("instrument", instrument);
+    if (!instrument.isVoid()) track->setProperty("instrument", instrument);
     track->setProperty("audioClips", juce::Array<juce::var>());
     track->setProperty("midiClips", juce::Array<juce::var>());
     track->setProperty("automation", juce::Array<juce::var>());
@@ -59,21 +54,12 @@ juce::var makeSnapshot(const juce::String& effectPath, const juce::String& instr
     juce::Array<juce::var> tracks;
     juce::Array<juce::var> instrumentEffects;
     instrumentEffects.add(makePluginDevice("device:instrument-effect", effectPath));
-    tracks.add(makeTrack(
-        "track:instrument",
-        "instrument",
-        juce::var(instrumentEffects),
-        juce::var(instrument),
-        true));
+    tracks.add(makeTrack("track:instrument", "instrument", juce::var(instrumentEffects),
+                         juce::var(instrument), true));
 
     juce::Array<juce::var> audioEffects;
     audioEffects.add(makePluginDevice("device:audio-effect", effectPath));
-    tracks.add(makeTrack(
-        "track:audio",
-        "audio",
-        juce::var(audioEffects),
-        {},
-        true));
+    tracks.add(makeTrack("track:audio", "audio", juce::var(audioEffects), {}, true));
 
     auto* snapshot = new juce::DynamicObject();
     snapshot->setProperty("revision", 1);

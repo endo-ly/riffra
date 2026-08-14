@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+
 #include <atomic>
 #include <limits>
 #include <memory>
@@ -9,28 +10,21 @@ namespace riffra {
 
 class RecordingSession final {
 public:
-    static std::unique_ptr<RecordingSession> create(
-        const juce::File& directory,
-        double sampleRate,
-        int rawChannels,
-        int processedChannels,
-        juce::String& error);
+    static std::unique_ptr<RecordingSession> create(const juce::File& directory, double sampleRate,
+                                                    int rawChannels, int processedChannels,
+                                                    juce::String& error);
 
     ~RecordingSession();
 
     RecordingSession(const RecordingSession&) = delete;
     RecordingSession& operator=(const RecordingSession&) = delete;
 
-    bool write(
-        const float* const* rawData,
-        const float* const* processedData,
-        int numSamples) noexcept;
+    bool write(const float* const* rawData, const float* const* processedData,
+               int numSamples) noexcept;
     bool writeRaw(const float* const* rawData, int numSamples) noexcept;
     bool writeProcessed(const float* const* processedData, int numSamples) noexcept;
-    bool writeProcessedOffline(
-        const float* const* processedData,
-        int numSamples,
-        int timeoutMs) noexcept;
+    bool writeProcessedOffline(const float* const* processedData, int numSamples,
+                               int timeoutMs) noexcept;
     /// Flush and close the raw writer so the file can be read back.
     /// The processed writer remains active.
     juce::File flushRaw() noexcept;
@@ -59,20 +53,14 @@ public:
     [[nodiscard]] juce::var status() const;
 
 private:
-    RecordingSession(
-        juce::File directory,
-        double sampleRate,
-        int rawChannels,
-        int processedChannels);
+    RecordingSession(juce::File directory, double sampleRate, int rawChannels,
+                     int processedChannels);
 
     bool initialise(juce::String& error);
     bool writeManifest(const juce::String& state, juce::String& error) const;
     void recordProcessedDropout(std::uint64_t attemptedStart, int numSamples) noexcept;
     static std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> createWriter(
-        const juce::File& file,
-        double sampleRate,
-        int channels,
-        juce::TimeSliceThread& thread,
+        const juce::File& file, double sampleRate, int channels, juce::TimeSliceThread& thread,
         juce::String& error);
 
     juce::File recordingDirectory;
@@ -85,25 +73,24 @@ private:
     int rawChannelCount = 0;
     int processedChannelCount = 0;
     juce::Time startedAt;
-    juce::TimeSliceThread writerThread { "Riffra recording writer" };
+    juce::TimeSliceThread writerThread{"Riffra recording writer"};
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> rawWriter;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> processedWriter;
-    std::atomic<std::uint64_t> samplesWritten { 0 };
-    std::atomic<std::uint64_t> rawSamplesWritten { 0 };
-    std::atomic<std::uint64_t> processedSamplesWritten { 0 };
-    std::atomic<std::uint64_t> rawAttemptedSamples { 0 };
-    std::atomic<std::uint64_t> processedAttemptedSamples { 0 };
-    std::atomic<std::uint64_t> rawDroppedBlocks { 0 };
-    std::atomic<std::uint64_t> processedDroppedBlocks { 0 };
-    std::atomic<std::uint64_t> rawMissingSamples { 0 };
-    std::atomic<std::uint64_t> processedMissingSamples { 0 };
-    std::atomic<std::uint64_t> rawFirstMissingSample { std::numeric_limits<std::uint64_t>::max() };
-    std::atomic<std::uint64_t> rawLastMissingSample { 0 };
-    std::atomic<std::uint64_t> processedFirstMissingSample {
-        std::numeric_limits<std::uint64_t>::max()
-    };
-    std::atomic<std::uint64_t> processedLastMissingSample { 0 };
+    std::atomic<std::uint64_t> samplesWritten{0};
+    std::atomic<std::uint64_t> rawSamplesWritten{0};
+    std::atomic<std::uint64_t> processedSamplesWritten{0};
+    std::atomic<std::uint64_t> rawAttemptedSamples{0};
+    std::atomic<std::uint64_t> processedAttemptedSamples{0};
+    std::atomic<std::uint64_t> rawDroppedBlocks{0};
+    std::atomic<std::uint64_t> processedDroppedBlocks{0};
+    std::atomic<std::uint64_t> rawMissingSamples{0};
+    std::atomic<std::uint64_t> processedMissingSamples{0};
+    std::atomic<std::uint64_t> rawFirstMissingSample{std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> rawLastMissingSample{0};
+    std::atomic<std::uint64_t> processedFirstMissingSample{
+        std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> processedLastMissingSample{0};
     bool finished = false;
 };
 
-} // namespace riffra
+}  // namespace riffra

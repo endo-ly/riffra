@@ -9,33 +9,26 @@ namespace riffra {
 namespace {
 constexpr int kWriterBufferSamples = 131072;
 constexpr int kBitsPerSample = 24;
-}
+}  // namespace
 
-std::unique_ptr<RecordingSession> RecordingSession::create(
-    const juce::File& directory,
-    const double sampleRate,
-    const int rawChannels,
-    const int processedChannels,
-    juce::String& error) {
+std::unique_ptr<RecordingSession> RecordingSession::create(const juce::File& directory,
+                                                           const double sampleRate,
+                                                           const int rawChannels,
+                                                           const int processedChannels,
+                                                           juce::String& error) {
     if (sampleRate <= 0.0 || rawChannels <= 0 || processedChannels <= 0) {
-        error = "Recording requires an active sample rate and at least one raw and processed channel.";
+        error =
+            "Recording requires an active sample rate and at least one raw and processed channel.";
         return {};
     }
-    auto session = std::unique_ptr<RecordingSession>(new RecordingSession(
-        directory,
-        sampleRate,
-        rawChannels,
-        processedChannels));
-    if (!session->initialise(error))
-        return {};
+    auto session = std::unique_ptr<RecordingSession>(
+        new RecordingSession(directory, sampleRate, rawChannels, processedChannels));
+    if (!session->initialise(error)) return {};
     return session;
 }
 
-RecordingSession::RecordingSession(
-    juce::File directory,
-    const double sampleRate,
-    const int rawChannels,
-    const int processedChannels)
+RecordingSession::RecordingSession(juce::File directory, const double sampleRate,
+                                   const int rawChannels, const int processedChannels)
     : recordingDirectory(std::move(directory)),
       rawPartial(recordingDirectory.getChildFile("raw.wav.partial")),
       processedPartial(recordingDirectory.getChildFile("processed.wav.partial")),
@@ -67,22 +60,11 @@ bool RecordingSession::initialise(juce::String& error) {
     }
 
     writerThread.startThread(juce::Thread::Priority::normal);
-    rawWriter = createWriter(
-        rawPartial,
-        recordingSampleRate,
-        rawChannelCount,
-        writerThread,
-        error);
-    if (rawWriter == nullptr)
-        return false;
-    processedWriter = createWriter(
-        processedPartial,
-        recordingSampleRate,
-        processedChannelCount,
-        writerThread,
-        error);
-    if (processedWriter == nullptr)
-        return false;
+    rawWriter = createWriter(rawPartial, recordingSampleRate, rawChannelCount, writerThread, error);
+    if (rawWriter == nullptr) return false;
+    processedWriter = createWriter(processedPartial, recordingSampleRate, processedChannelCount,
+                                   writerThread, error);
+    if (processedWriter == nullptr) return false;
 
     const auto flushSamples = juce::roundToInt(recordingSampleRate * 2.0);
     rawWriter->setFlushInterval(flushSamples);
@@ -91,11 +73,8 @@ bool RecordingSession::initialise(juce::String& error) {
 }
 
 std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> RecordingSession::createWriter(
-    const juce::File& file,
-    const double sampleRate,
-    const int channels,
-    juce::TimeSliceThread& thread,
-    juce::String& error) {
+    const juce::File& file, const double sampleRate, const int channels,
+    juce::TimeSliceThread& thread, juce::String& error) {
     auto fileStream = file.createOutputStream();
     if (fileStream == nullptr || !fileStream->openedOk()) {
         error = "Recording file could not be opened: " + file.getFileName();
@@ -103,25 +82,21 @@ std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> RecordingSession::creat
     }
     std::unique_ptr<juce::OutputStream> stream = std::move(fileStream);
     juce::WavAudioFormat format;
-    const auto options = juce::AudioFormatWriterOptions {}
-        .withSampleRate(sampleRate)
-        .withNumChannels(channels)
-        .withBitsPerSample(kBitsPerSample);
+    const auto options = juce::AudioFormatWriterOptions{}
+                             .withSampleRate(sampleRate)
+                             .withNumChannels(channels)
+                             .withBitsPerSample(kBitsPerSample);
     auto writer = format.createWriterFor(stream, options);
     if (writer == nullptr) {
         error = "WAV writer could not be created: " + file.getFileName();
         return {};
     }
-    return std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(
-        writer.release(),
-        thread,
-        kWriterBufferSamples);
+    return std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(writer.release(), thread,
+                                                                     kWriterBufferSamples);
 }
 
-bool RecordingSession::write(
-    const float* const* rawData,
-    const float* const* processedData,
-    const int numSamples) noexcept {
+bool RecordingSession::write(const float* const* rawData, const float* const* processedData,
+                             const int numSamples) noexcept {
     if (finished || rawWriter == nullptr || processedWriter == nullptr || numSamples <= 0)
         return false;
     const auto rawWritten = writeRaw(rawData, numSamples);
@@ -130,18 +105,18 @@ bool RecordingSession::write(
 }
 
 bool RecordingSession::writeRaw(const float* const* rawData, const int numSamples) noexcept {
-    if (finished || rawWriter == nullptr || numSamples <= 0)
-        return false;
+    if (finished || rawWriter == nullptr || numSamples <= 0) return false;
     const auto attemptedStart = rawAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     if (!rawWriter->write(rawData, numSamples)) {
         rawDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
-        rawMissingSamples.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+        rawMissingSamples.fetch_add(static_cast<std::uint64_t>(numSamples),
+                                    std::memory_order_relaxed);
         auto expected = std::numeric_limits<std::uint64_t>::max();
-        rawFirstMissingSample.compare_exchange_strong(expected, attemptedStart, std::memory_order_relaxed);
-        rawLastMissingSample.store(
-            attemptedStart + static_cast<std::uint64_t>(numSamples),
-            std::memory_order_relaxed);
+        rawFirstMissingSample.compare_exchange_strong(expected, attemptedStart,
+                                                      std::memory_order_relaxed);
+        rawLastMissingSample.store(attemptedStart + static_cast<std::uint64_t>(numSamples),
+                                   std::memory_order_relaxed);
         return false;
     }
     rawSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
@@ -149,47 +124,40 @@ bool RecordingSession::writeRaw(const float* const* rawData, const int numSample
     return true;
 }
 
-bool RecordingSession::writeProcessed(
-    const float* const* processedData,
-    const int numSamples) noexcept {
-    if (finished || processedWriter == nullptr || numSamples <= 0)
-        return false;
+bool RecordingSession::writeProcessed(const float* const* processedData,
+                                      const int numSamples) noexcept {
+    if (finished || processedWriter == nullptr || numSamples <= 0) return false;
     const auto attemptedStart = processedAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
     if (!processedWriter->write(processedData, numSamples)) {
         recordProcessedDropout(attemptedStart, numSamples);
         return false;
     }
-    processedSamplesWritten.fetch_add(
-        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    processedSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples),
+                                      std::memory_order_relaxed);
     return true;
 }
 
-bool RecordingSession::writeProcessedOffline(
-    const float* const* processedData,
-    const int numSamples,
-    const int timeoutMs) noexcept {
-    if (finished || processedWriter == nullptr || numSamples <= 0
-        || processedData == nullptr || timeoutMs < 0)
+bool RecordingSession::writeProcessedOffline(const float* const* processedData,
+                                             const int numSamples, const int timeoutMs) noexcept {
+    if (finished || processedWriter == nullptr || numSamples <= 0 || processedData == nullptr ||
+        timeoutMs < 0)
         return false;
 
     const auto attemptedStart = processedAttemptedSamples.fetch_add(
         static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
 
     const auto deadline =
-        juce::Time::getMillisecondCounter()
-        + static_cast<std::uint32_t>(timeoutMs);
+        juce::Time::getMillisecondCounter() + static_cast<std::uint32_t>(timeoutMs);
 
     do {
         if (processedWriter->write(processedData, numSamples)) {
-            processedSamplesWritten.fetch_add(
-                static_cast<std::uint64_t>(numSamples),
-                std::memory_order_relaxed);
+            processedSamplesWritten.fetch_add(static_cast<std::uint64_t>(numSamples),
+                                              std::memory_order_relaxed);
             return true;
         }
 
-        if (juce::Time::getMillisecondCounter() >= deadline)
-            break;
+        if (juce::Time::getMillisecondCounter() >= deadline) break;
 
         juce::Thread::sleep(1);
     } while (true);
@@ -198,30 +166,26 @@ bool RecordingSession::writeProcessedOffline(
     return false;
 }
 
-void RecordingSession::recordProcessedDropout(
-    const std::uint64_t attemptedStart,
-    const int numSamples) noexcept {
+void RecordingSession::recordProcessedDropout(const std::uint64_t attemptedStart,
+                                              const int numSamples) noexcept {
     processedDroppedBlocks.fetch_add(1, std::memory_order_relaxed);
-    processedMissingSamples.fetch_add(
-        static_cast<std::uint64_t>(numSamples), std::memory_order_relaxed);
+    processedMissingSamples.fetch_add(static_cast<std::uint64_t>(numSamples),
+                                      std::memory_order_relaxed);
     auto expected = std::numeric_limits<std::uint64_t>::max();
-    processedFirstMissingSample.compare_exchange_strong(
-        expected, attemptedStart, std::memory_order_relaxed);
-    processedLastMissingSample.store(
-        attemptedStart + static_cast<std::uint64_t>(numSamples),
-        std::memory_order_relaxed);
+    processedFirstMissingSample.compare_exchange_strong(expected, attemptedStart,
+                                                        std::memory_order_relaxed);
+    processedLastMissingSample.store(attemptedStart + static_cast<std::uint64_t>(numSamples),
+                                     std::memory_order_relaxed);
 }
 
 juce::File RecordingSession::flushRaw() noexcept {
     rawWriter.reset();
-    if (rawPartial.existsAsFile())
-        return rawPartial;
+    if (rawPartial.existsAsFile()) return rawPartial;
     return {};
 }
 
 bool RecordingSession::finish(juce::String& error) {
-    if (finished)
-        return true;
+    if (finished) return true;
     finished = true;
     rawWriter.reset();
     processedWriter.reset();
@@ -229,7 +193,8 @@ bool RecordingSession::finish(juce::String& error) {
 
     auto completed = getRawSamplesWritten() > 0 && getProcessedSamplesWritten() > 0;
     if (!completed)
-        error << "Recording contains no audio samples; empty partial files were kept for diagnosis. ";
+        error
+            << "Recording contains no audio samples; empty partial files were kept for diagnosis. ";
     if (!rawPartial.existsAsFile()) {
         completed = false;
         error << "Raw recording file is missing. ";
@@ -242,8 +207,8 @@ bool RecordingSession::finish(juce::String& error) {
         error << "Processed recording file is missing. ";
     } else if (completed && !processedPartial.moveFileTo(processedFinal)) {
         completed = false;
-        error << "Processed recording remains recoverable at "
-              << processedPartial.getFullPathName() << ".";
+        error << "Processed recording remains recoverable at " << processedPartial.getFullPathName()
+              << ".";
     }
     juce::String manifestError;
     if (!writeManifest(completed ? "completed" : "recoverable", manifestError)) {
@@ -324,8 +289,7 @@ std::uint64_t RecordingSession::getFirstMissingSample() const noexcept {
 }
 
 std::uint64_t RecordingSession::getLastMissingSample() const noexcept {
-    return std::max(
-        getRawLastMissingSample(), getProcessedLastMissingSample());
+    return std::max(getRawLastMissingSample(), getProcessedLastMissingSample());
 }
 
 juce::var RecordingSession::status() const {
@@ -341,29 +305,21 @@ juce::var RecordingSession::status() const {
     result->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
     result->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
     result->setProperty("rawAttemptedSamples", static_cast<juce::int64>(getRawAttemptedSamples()));
-    result->setProperty(
-        "processedAttemptedSamples",
-        static_cast<juce::int64>(getProcessedAttemptedSamples()));
+    result->setProperty("processedAttemptedSamples",
+                        static_cast<juce::int64>(getProcessedAttemptedSamples()));
     result->setProperty("rawDroppedBlocks", static_cast<juce::int64>(getRawDroppedBlocks()));
-    result->setProperty(
-        "processedDroppedBlocks",
-        static_cast<juce::int64>(getProcessedDroppedBlocks()));
+    result->setProperty("processedDroppedBlocks",
+                        static_cast<juce::int64>(getProcessedDroppedBlocks()));
     result->setProperty("rawMissingSamples", static_cast<juce::int64>(getRawMissingSamples()));
-    result->setProperty(
-        "processedMissingSamples",
-        static_cast<juce::int64>(getProcessedMissingSamples()));
-    result->setProperty(
-        "rawDropoutStartSample",
-        static_cast<juce::int64>(getRawFirstMissingSample()));
-    result->setProperty(
-        "rawDropoutEndSample",
-        static_cast<juce::int64>(getRawLastMissingSample()));
-    result->setProperty(
-        "processedDropoutStartSample",
-        static_cast<juce::int64>(getProcessedFirstMissingSample()));
-    result->setProperty(
-        "processedDropoutEndSample",
-        static_cast<juce::int64>(getProcessedLastMissingSample()));
+    result->setProperty("processedMissingSamples",
+                        static_cast<juce::int64>(getProcessedMissingSamples()));
+    result->setProperty("rawDropoutStartSample",
+                        static_cast<juce::int64>(getRawFirstMissingSample()));
+    result->setProperty("rawDropoutEndSample", static_cast<juce::int64>(getRawLastMissingSample()));
+    result->setProperty("processedDropoutStartSample",
+                        static_cast<juce::int64>(getProcessedFirstMissingSample()));
+    result->setProperty("processedDropoutEndSample",
+                        static_cast<juce::int64>(getProcessedLastMissingSample()));
     result->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     return juce::var(result);
 }
@@ -382,34 +338,25 @@ bool RecordingSession::writeManifest(const juce::String& state, juce::String& er
     object->setProperty("dropoutStartSample", static_cast<juce::int64>(getFirstMissingSample()));
     object->setProperty("dropoutEndSample", static_cast<juce::int64>(getLastMissingSample()));
     object->setProperty("rawAttemptedSamples", static_cast<juce::int64>(getRawAttemptedSamples()));
-    object->setProperty(
-        "processedAttemptedSamples",
-        static_cast<juce::int64>(getProcessedAttemptedSamples()));
+    object->setProperty("processedAttemptedSamples",
+                        static_cast<juce::int64>(getProcessedAttemptedSamples()));
     object->setProperty("rawDroppedBlocks", static_cast<juce::int64>(getRawDroppedBlocks()));
-    object->setProperty(
-        "processedDroppedBlocks",
-        static_cast<juce::int64>(getProcessedDroppedBlocks()));
+    object->setProperty("processedDroppedBlocks",
+                        static_cast<juce::int64>(getProcessedDroppedBlocks()));
     object->setProperty("rawMissingSamples", static_cast<juce::int64>(getRawMissingSamples()));
-    object->setProperty(
-        "processedMissingSamples",
-        static_cast<juce::int64>(getProcessedMissingSamples()));
-    object->setProperty(
-        "rawDropoutStartSample",
-        static_cast<juce::int64>(getRawFirstMissingSample()));
-    object->setProperty(
-        "rawDropoutEndSample",
-        static_cast<juce::int64>(getRawLastMissingSample()));
-    object->setProperty(
-        "processedDropoutStartSample",
-        static_cast<juce::int64>(getProcessedFirstMissingSample()));
-    object->setProperty(
-        "processedDropoutEndSample",
-        static_cast<juce::int64>(getProcessedLastMissingSample()));
+    object->setProperty("processedMissingSamples",
+                        static_cast<juce::int64>(getProcessedMissingSamples()));
+    object->setProperty("rawDropoutStartSample",
+                        static_cast<juce::int64>(getRawFirstMissingSample()));
+    object->setProperty("rawDropoutEndSample", static_cast<juce::int64>(getRawLastMissingSample()));
+    object->setProperty("processedDropoutStartSample",
+                        static_cast<juce::int64>(getProcessedFirstMissingSample()));
+    object->setProperty("processedDropoutEndSample",
+                        static_cast<juce::int64>(getProcessedLastMissingSample()));
     object->setProperty("recoveryStatus", getDroppedBlocks() == 0 ? "clean" : "partial");
     object->setProperty("rawFile", rawFinal.existsAsFile() ? "raw.wav" : "raw.wav.partial");
-    object->setProperty(
-        "processedFile",
-        processedFinal.existsAsFile() ? "processed.wav" : "processed.wav.partial");
+    object->setProperty("processedFile",
+                        processedFinal.existsAsFile() ? "processed.wav" : "processed.wav.partial");
     if (!manifest.replaceWithText(juce::JSON::toString(juce::var(object), true))) {
         error = "Recording manifest could not be written.";
         return false;
@@ -417,4 +364,4 @@ bool RecordingSession::writeManifest(const juce::String& state, juce::String& er
     return true;
 }
 
-} // namespace riffra
+}  // namespace riffra

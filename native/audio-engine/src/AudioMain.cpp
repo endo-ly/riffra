@@ -1,32 +1,32 @@
 #include <JuceHeader.h>
 
-#include "SafetyAudioCallback.h"
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <cstdint>
+#include <cstdlib>
+#include <deque>
+#include <exception>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include "AudioRuntimeStatus.h"
 #include "FaultInjection.h"
 #include "PluginEditorHost.h"
 #include "RuntimeLifecycleExecutor.h"
+#include "SafetyAudioCallback.h"
 #include "TimelineEngine.h"
-
-#include <iostream>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <cmath>
-#include <limits>
-#include <vector>
-#include <atomic>
-#include <array>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
-#include <condition_variable>
-#include <deque>
-#include <exception>
-#include <optional>
-#include <thread>
-#include <unordered_map>
-#include <utility>
 
 #if JUCE_WINDOWS
 #ifndef NOMINMAX
@@ -37,9 +37,9 @@
 
 namespace {
 
-using riffra::SafetyAudioCallback;
 using riffra::PluginEditorHost;
 using riffra::RuntimeLifecycleExecutor;
+using riffra::SafetyAudioCallback;
 using riffra::TimelineEngine;
 
 thread_local juce::String currentRequestId;
@@ -55,13 +55,11 @@ public:
     ~OutputWriter() { stop(); }
 
     void enqueue(std::string line, const OutputKind kind) {
-        if (kind == OutputKind::control)
-            riffra::FaultInjection::stdoutFlood();
+        if (kind == OutputKind::control) riffra::FaultInjection::stdoutFlood();
         {
             const std::lock_guard lock(mutex);
             ensureStarted();
-            if (kind == OutputKind::telemetry
-                && telemetryQueue.size() >= kTelemetryQueueLimit) {
+            if (kind == OutputKind::telemetry && telemetryQueue.size() >= kTelemetryQueueLimit) {
                 droppedTelemetry.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -108,8 +106,7 @@ private:
     static constexpr std::size_t kStateQueueLimit = 256;
 
     void ensureStarted() {
-        if (writer.joinable())
-            return;
+        if (writer.joinable()) return;
         writer = std::thread([this] { run(); });
     }
 
@@ -119,11 +116,11 @@ private:
             {
                 std::unique_lock lock(mutex);
                 wake.wait(lock, [this] {
-                    return stopping || !controlQueue.empty() || !stateQueue.empty()
-                        || !telemetryQueue.empty();
+                    return stopping || !controlQueue.empty() || !stateQueue.empty() ||
+                           !telemetryQueue.empty();
                 });
-                if (stopping && controlQueue.empty() && stateQueue.empty()
-                    && telemetryQueue.empty())
+                if (stopping && controlQueue.empty() && stateQueue.empty() &&
+                    telemetryQueue.empty())
                     return;
                 if (!controlQueue.empty()) {
                     line = std::move(controlQueue.front());
@@ -153,8 +150,7 @@ private:
             stateQueue.clear();
         }
         wake.notify_one();
-        if (writer.joinable())
-            writer.join();
+        if (writer.joinable()) writer.join();
     }
 
     mutable std::mutex mutex;
@@ -164,8 +160,8 @@ private:
     std::unordered_map<std::string, std::string> stateQueue;
     std::deque<std::string> telemetryQueue;
     std::thread writer;
-    std::atomic<std::uint64_t> droppedTelemetry { 0 };
-    std::atomic<std::uint64_t> droppedState { 0 };
+    std::atomic<std::uint64_t> droppedTelemetry{0};
+    std::atomic<std::uint64_t> droppedState{0};
     bool stopping = false;
 };
 
@@ -188,18 +184,14 @@ struct AudioConfiguration {
 };
 
 juce::String accessModeForDriver(const juce::String& driver) {
-    if (driver == "Windows Audio"
-        || driver == "Windows Audio (Low Latency Mode)"
-        || driver == "DirectSound")
+    if (driver == "Windows Audio" || driver == "Windows Audio (Low Latency Mode)" ||
+        driver == "DirectSound")
         return "shared";
-    if (driver == "Windows Audio (Exclusive Mode)")
-        return "exclusive";
+    if (driver == "Windows Audio (Exclusive Mode)") return "exclusive";
     return "driverManaged";
 }
 
-bool driverRequiresSameDevice(const juce::String& driver) {
-    return driver == "ASIO";
-}
+bool driverRequiresSameDevice(const juce::String& driver) { return driver == "ASIO"; }
 
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
@@ -211,7 +203,9 @@ public:
         bool loop = false;
     };
 
-    void setAudioCallback(SafetyAudioCallback* const callback) noexcept { audioCallback = callback; }
+    void setAudioCallback(SafetyAudioCallback* const callback) noexcept {
+        audioCallback = callback;
+    }
     void setTimelineEngine(TimelineEngine* const engine) noexcept { timelineEngine = engine; }
 
     void replacePads(std::map<int, Pad>&& next) {
@@ -219,21 +213,19 @@ public:
         pads = std::move(next);
     }
 
-    void handleIncomingMidiMessage(
-        juce::MidiInput* source,
-        const juce::MidiMessage& message) override {
+    void handleIncomingMidiMessage(juce::MidiInput* source,
+                                   const juce::MidiMessage& message) override {
         messageCount.fetch_add(1, std::memory_order_relaxed);
-        const auto routedToTimeline = timelineEngine != nullptr
-            && timelineEngine->enqueueLiveMidi(
-                message,
-                source != nullptr ? source->getIdentifier() : juce::String {});
+        const auto routedToTimeline =
+            timelineEngine != nullptr &&
+            timelineEngine->enqueueLiveMidi(
+                message, source != nullptr ? source->getIdentifier() : juce::String{});
         if (routedToTimeline) {
             if (message.isNoteOn() || message.isNoteOff())
                 lastNote.store(message.getNoteNumber(), std::memory_order_release);
             return;
         }
-        if (!message.isNoteOn() && !message.isNoteOff())
-            return;
+        if (!message.isNoteOn() && !message.isNoteOff()) return;
 
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
 
@@ -261,8 +253,7 @@ public:
                 loop = found->second.loop;
             }
         }
-        if (audioCallback == nullptr)
-            return;
+        if (audioCallback == nullptr) return;
 
         if (buffer == nullptr) {
             audioCallback->startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
@@ -271,30 +262,32 @@ public:
 
         juce::String error;
         if (audioCallback->startPreview(
-                *buffer,
-                start,
-                end,
-                juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()) * gain,
-                loop,
-                error,
-                message.getNoteNumber()))
+                *buffer, start, end, juce::jlimit(0.05f, 1.0f, message.getFloatVelocity()) * gain,
+                loop, error, message.getNoteNumber()))
             padTriggers.fetch_add(1, std::memory_order_relaxed);
     }
 
     void setActive(const bool value) noexcept { active.store(value, std::memory_order_release); }
     [[nodiscard]] bool isActive() const noexcept { return active.load(std::memory_order_acquire); }
-    [[nodiscard]] std::uint64_t getMessageCount() const noexcept { return messageCount.load(std::memory_order_acquire); }
-    [[nodiscard]] int getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
+    [[nodiscard]] std::uint64_t getMessageCount() const noexcept {
+        return messageCount.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] int getLastNote() const noexcept {
+        return lastNote.load(std::memory_order_acquire);
+    }
     [[nodiscard]] int getPadMappingCount() const noexcept {
         const juce::ScopedLock lock(padLock);
         return static_cast<int>(pads.size());
     }
-    [[nodiscard]] std::uint64_t getPadTriggerCount() const noexcept { return padTriggers.load(std::memory_order_acquire); }
+    [[nodiscard]] std::uint64_t getPadTriggerCount() const noexcept {
+        return padTriggers.load(std::memory_order_acquire);
+    }
+
 private:
-    std::atomic<bool> active { false };
-    std::atomic<std::uint64_t> messageCount { 0 };
-    std::atomic<int> lastNote { -1 };
-    std::atomic<std::uint64_t> padTriggers { 0 };
+    std::atomic<bool> active{false};
+    std::atomic<std::uint64_t> messageCount{0};
+    std::atomic<int> lastNote{-1};
+    std::atomic<std::uint64_t> padTriggers{0};
     SafetyAudioCallback* audioCallback = nullptr;
     TimelineEngine* timelineEngine = nullptr;
     mutable juce::CriticalSection padLock;
@@ -310,10 +303,7 @@ juce::var makeError(const juce::String& scope, const juce::String& message) {
     return juce::var(object);
 }
 
-bool parseMidiBytes(
-    const juce::var& value,
-    juce::MidiMessage& message,
-    juce::String& error) {
+bool parseMidiBytes(const juce::var& value, juce::MidiMessage& message, juce::String& error) {
     if (!value.isArray()) {
         error = "A bytes array of MIDI data is required.";
         return false;
@@ -331,8 +321,8 @@ bool parseMidiBytes(
             return false;
         }
         const auto numeric = static_cast<double>(valueAtIndex);
-        if (!std::isfinite(numeric) || std::floor(numeric) != numeric
-            || numeric < 0.0 || numeric > 255.0) {
+        if (!std::isfinite(numeric) || std::floor(numeric) != numeric || numeric < 0.0 ||
+            numeric > 255.0) {
             error = "MIDI bytes must be integers from 0 through 255.";
             return false;
         }
@@ -349,24 +339,21 @@ bool parseMidiBytes(
         }
     }
     switch (bytesArray.size()) {
-    case 1:
-        message = juce::MidiMessage(bytes[0]);
-        break;
-    case 2:
-        message = juce::MidiMessage(bytes[0], bytes[1]);
-        break;
-    default:
-        message = juce::MidiMessage(bytes[0], bytes[1], bytes[2]);
-        break;
+        case 1:
+            message = juce::MidiMessage(bytes[0]);
+            break;
+        case 2:
+            message = juce::MidiMessage(bytes[0], bytes[1]);
+            break;
+        default:
+            message = juce::MidiMessage(bytes[0], bytes[1], bytes[2]);
+            break;
     }
     return true;
 }
 
-void writeJson(
-    const juce::var& value,
-    const juce::String& requestId = {},
-    const OutputKind kind = OutputKind::control,
-    std::string stateKey = {}) {
+void writeJson(const juce::var& value, const juce::String& requestId = {},
+               const OutputKind kind = OutputKind::control, std::string stateKey = {}) {
     auto response = value;
     const auto effectiveRequestId = requestId.isNotEmpty() ? requestId : currentRequestId;
     if (effectiveRequestId.isNotEmpty())
@@ -379,18 +366,14 @@ void writeJson(
         outputWriter.enqueue(std::move(line), kind);
 }
 
-juce::Array<juce::var> channelNames(
-    const juce::StringArray& names,
-    const bool input) {
+juce::Array<juce::var> channelNames(const juce::StringArray& names, const bool input) {
     juce::Array<juce::var> channels;
     for (int index = 0; index < names.size(); ++index) {
         auto* channel = new juce::DynamicObject();
         channel->setProperty("index", index);
-        channel->setProperty(
-            "name",
-            names[index].isNotEmpty()
-                ? names[index]
-                : (input ? "Input " : "Output ") + juce::String(index + 1));
+        channel->setProperty("name", names[index].isNotEmpty() ? names[index]
+                                                               : (input ? "Input " : "Output ") +
+                                                                     juce::String(index + 1));
         channels.add(juce::var(channel));
     }
     return channels;
@@ -399,7 +382,7 @@ juce::Array<juce::var> channelNames(
 juce::var listedAudioDevice(const juce::String& name) {
     auto* result = new juce::DynamicObject();
     result->setProperty("name", name);
-    result->setProperty("channels", juce::Array<juce::var> {});
+    result->setProperty("channels", juce::Array<juce::var>{});
     return juce::var(result);
 }
 
@@ -419,18 +402,14 @@ juce::var discoverAudioDevices() {
         driver->setProperty("name", type->getTypeName());
         driver->setProperty("accessMode", accessModeForDriver(type->getTypeName()));
         const auto sameDevice = driverRequiresSameDevice(type->getTypeName());
-        driver->setProperty(
-            "devicePairing",
-            sameDevice ? "sameDevice" : "independent");
+        driver->setProperty("devicePairing", sameDevice ? "sameDevice" : "independent");
 
         juce::Array<juce::var> inputs;
-        for (const auto& name : type->getDeviceNames(true))
-            inputs.add(listedAudioDevice(name));
+        for (const auto& name : type->getDeviceNames(true)) inputs.add(listedAudioDevice(name));
         driver->setProperty("inputs", inputs);
 
         juce::Array<juce::var> outputs;
-        for (const auto& name : type->getDeviceNames(false))
-            outputs.add(listedAudioDevice(name));
+        for (const auto& name : type->getDeviceNames(false)) outputs.add(listedAudioDevice(name));
         driver->setProperty("outputs", outputs);
         driverTypes.add(juce::var(driver));
     }
@@ -448,11 +427,10 @@ juce::var discoverAudioDevices() {
 // Settings for the device the user has selected, once per device, instead of
 // touching every interface during startup. For same-device drivers (ASIO) the
 // one open yields both input and output channel names.
-std::optional<juce::var> probeDeviceChannels(
-    const juce::String& driver,
-    const juce::String& inputDevice,
-    const juce::String& outputDevice,
-    juce::String& error) {
+std::optional<juce::var> probeDeviceChannels(const juce::String& driver,
+                                             const juce::String& inputDevice,
+                                             const juce::String& outputDevice,
+                                             juce::String& error) {
     juce::AudioDeviceManager manager;
     juce::OwnedArray<juce::AudioIODeviceType> types;
     manager.createAudioDeviceTypes(types);
@@ -466,14 +444,13 @@ std::optional<juce::var> probeDeviceChannels(
     juce::Array<juce::var> outputChannels;
     bool driverFound = false;
     for (auto* type : types) {
-        if (type->getTypeName() != driver)
-            continue;
+        if (type->getTypeName() != driver) continue;
         driverFound = true;
         type->scanForDevices();
         const auto sameDevice = driverRequiresSameDevice(driver);
         if (sameDevice) {
-            auto device = std::unique_ptr<juce::AudioIODevice>(
-                type->createDevice(outputDevice, inputDevice));
+            auto device =
+                std::unique_ptr<juce::AudioIODevice>(type->createDevice(outputDevice, inputDevice));
             if (device == nullptr) {
                 error = "The selected audio device could not be opened.";
                 return std::nullopt;
@@ -487,7 +464,7 @@ std::optional<juce::var> probeDeviceChannels(
         } else {
             if (inputDevice.isNotEmpty()) {
                 auto input = std::unique_ptr<juce::AudioIODevice>(
-                    type->createDevice(juce::String {}, inputDevice));
+                    type->createDevice(juce::String{}, inputDevice));
                 if (input == nullptr) {
                     error = "The selected input device could not be opened.";
                     return std::nullopt;
@@ -500,7 +477,7 @@ std::optional<juce::var> probeDeviceChannels(
             }
             if (outputDevice.isNotEmpty()) {
                 auto output = std::unique_ptr<juce::AudioIODevice>(
-                    type->createDevice(outputDevice, juce::String {}));
+                    type->createDevice(outputDevice, juce::String{}));
                 if (output == nullptr) {
                     error = "The selected output device could not be opened.";
                     return std::nullopt;
@@ -530,24 +507,24 @@ std::optional<juce::var> probeDeviceChannels(
     return juce::var(result);
 }
 
-juce::var currentStatus(
-    juce::AudioDeviceManager& manager,
-    const SafetyAudioCallback& callback,
-    const MidiMonitor* midi = nullptr,
-    const juce::String& message = {},
-    const TimelineEngine* timeline = nullptr) {
+juce::var currentStatus(juce::AudioDeviceManager& manager, const SafetyAudioCallback& callback,
+                        const MidiMonitor* midi = nullptr, const juce::String& message = {},
+                        const TimelineEngine* timeline = nullptr) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
-    const juce::String state = callback.isDeviceFaulted() ? "faulted"
-        : (callback.isEmergencyMuted() ? "muted" : "ready");
+    const juce::String state =
+        callback.isDeviceFaulted() ? "faulted" : (callback.isEmergencyMuted() ? "muted" : "ready");
     status->setProperty("state", state);
     if (callback.isDeviceFaulted())
-        status->setProperty("message", "Audio device disconnected; output is muted and any captured take is preserved.");
+        status->setProperty(
+            "message",
+            "Audio device disconnected; output is muted and any captured take is preserved.");
     status->setProperty("emergencyMuted", callback.isEmergencyMuted());
     status->setProperty("masterGainDb", callback.getMasterGainDb());
     status->setProperty("inputPeak", callback.getInputPeak());
     status->setProperty("outputPeak", callback.getOutputPeak());
-    status->setProperty("invalidSamples", static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    status->setProperty("invalidSamples",
+                        static_cast<juce::int64>(callback.getInvalidSampleCount()));
     status->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
     status->setProperty("previewing", callback.isPreviewing());
     if (midi != nullptr) {
@@ -555,15 +532,15 @@ juce::var currentStatus(
         status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
         status->setProperty("lastMidiNote", midi->getLastNote());
         status->setProperty("midiPadMappings", midi->getPadMappingCount());
-        status->setProperty("midiPadTriggers", static_cast<juce::int64>(midi->getPadTriggerCount()));
+        status->setProperty("midiPadTriggers",
+                            static_cast<juce::int64>(midi->getPadTriggerCount()));
     }
     status->setProperty("recording", callback.recordingStatus());
     if (timeline != nullptr) {
         const auto timelineStatus = timeline->status();
         status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
     }
-    if (message.isNotEmpty())
-        status->setProperty("message", message);
+    if (message.isNotEmpty()) status->setProperty("message", message);
 
     juce::Array<juce::var> midiInputs;
     for (const auto& device : juce::MidiInput::getAvailableDevices())
@@ -584,45 +561,39 @@ juce::var currentStatus(
         juce::Array<juce::var> inputChannels;
         const auto channelNames = device->getInputChannelNames();
         const auto activeInputChannels = device->getActiveInputChannels();
-        for (int physicalIndex = 0, logicalIndex = 0;
-             physicalIndex < channelNames.size();
+        for (int physicalIndex = 0, logicalIndex = 0; physicalIndex < channelNames.size();
              ++physicalIndex) {
-            if (!activeInputChannels[physicalIndex])
-                continue;
+            if (!activeInputChannels[physicalIndex]) continue;
             auto* channel = new juce::DynamicObject();
             channel->setProperty("index", logicalIndex++);
-            channel->setProperty(
-                "name",
-                channelNames[physicalIndex].isNotEmpty()
-                    ? channelNames[physicalIndex]
-                    : "Input " + juce::String(physicalIndex + 1));
+            channel->setProperty("name", channelNames[physicalIndex].isNotEmpty()
+                                             ? channelNames[physicalIndex]
+                                             : "Input " + juce::String(physicalIndex + 1));
             inputChannels.add(juce::var(channel));
         }
         status->setProperty("inputChannels", inputChannels);
         juce::Array<juce::var> outputChannels;
         const auto outputChannelNames = device->getOutputChannelNames();
         const auto activeOutputChannels = device->getActiveOutputChannels();
-        for (int physicalIndex = 0, logicalIndex = 0;
-             physicalIndex < outputChannelNames.size();
+        for (int physicalIndex = 0, logicalIndex = 0; physicalIndex < outputChannelNames.size();
              ++physicalIndex) {
-            if (!activeOutputChannels[physicalIndex])
-                continue;
+            if (!activeOutputChannels[physicalIndex]) continue;
             auto* channel = new juce::DynamicObject();
             channel->setProperty("index", logicalIndex++);
-            channel->setProperty(
-                "name",
-                outputChannelNames[physicalIndex].isNotEmpty()
-                    ? outputChannelNames[physicalIndex]
-                    : "Output " + juce::String(physicalIndex + 1));
+            channel->setProperty("name", outputChannelNames[physicalIndex].isNotEmpty()
+                                             ? outputChannelNames[physicalIndex]
+                                             : "Output " + juce::String(physicalIndex + 1));
             outputChannels.add(juce::var(channel));
         }
         status->setProperty("outputChannels", outputChannels);
         status->setProperty("sampleRate", device->getCurrentSampleRate());
         status->setProperty("bufferSize", device->getCurrentBufferSizeSamples());
-        const auto latencySamples = device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
-        const auto latencyMs = device->getCurrentSampleRate() > 0.0
-            ? 1000.0 * static_cast<double>(latencySamples) / device->getCurrentSampleRate()
-            : 0.0;
+        const auto latencySamples =
+            device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
+        const auto latencyMs =
+            device->getCurrentSampleRate() > 0.0
+                ? 1000.0 * static_cast<double>(latencySamples) / device->getCurrentSampleRate()
+                : 0.0;
         status->setProperty("roundTripMs", latencyMs);
     }
     return juce::var(status);
@@ -633,25 +604,21 @@ juce::var currentMeters(const SafetyAudioCallback& callback) {
     meters->setProperty("type", "audioMeters");
     meters->setProperty("inputPeak", callback.getInputPeak());
     meters->setProperty("outputPeak", callback.getOutputPeak());
-    meters->setProperty(
-        "invalidSamples",
-        static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    meters->setProperty("invalidSamples",
+                        static_cast<juce::int64>(callback.getInvalidSampleCount()));
     meters->setProperty("emergencyMuted", callback.isEmergencyMuted());
     meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
-    meters->setProperty(
-        "droppedTelemetryFrames",
-        static_cast<juce::int64>(outputWriter.droppedTelemetryCount()));
-    meters->setProperty(
-        "droppedStateEvents",
-        static_cast<juce::int64>(outputWriter.droppedStateCount()));
+    meters->setProperty("droppedTelemetryFrames",
+                        static_cast<juce::int64>(outputWriter.droppedTelemetryCount()));
+    meters->setProperty("droppedStateEvents",
+                        static_cast<juce::int64>(outputWriter.droppedStateCount()));
     return juce::var(meters);
 }
 
 bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
 #if JUCE_WINDOWS
     const auto process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(parentPid));
-    if (process == nullptr)
-        return false;
+    if (process == nullptr) return false;
     const auto result = WaitForSingleObject(process, 0);
     CloseHandle(process);
     return result == WAIT_TIMEOUT;
@@ -662,8 +629,7 @@ bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
 }
 
 std::unique_ptr<juce::XmlElement> configuredAudioXml(const AudioConfiguration& configuration) {
-    if (configuration.driver.isEmpty())
-        return {};
+    if (configuration.driver.isEmpty()) return {};
     auto xml = std::make_unique<juce::XmlElement>("DEVICESETUP");
     xml->setAttribute("deviceType", configuration.driver);
     if (configuration.inputDevice.isNotEmpty())
@@ -673,17 +639,14 @@ std::unique_ptr<juce::XmlElement> configuredAudioXml(const AudioConfiguration& c
     return xml;
 }
 
-juce::String initialiseConfiguredAudio(
-    juce::AudioDeviceManager& manager,
-    const AudioConfiguration& configuration) {
+juce::String initialiseConfiguredAudio(juce::AudioDeviceManager& manager,
+                                       const AudioConfiguration& configuration) {
     AudioConfiguration resolved = configuration;
-    if (resolved.driver.isEmpty())
-        resolved.driver = "Windows Audio (Low Latency Mode)";
+    if (resolved.driver.isEmpty()) resolved.driver = "Windows Audio (Low Latency Mode)";
     const auto& deviceTypes = manager.getAvailableDeviceTypes();
     auto* deviceType = [&]() -> juce::AudioIODeviceType* {
         for (auto* candidate : deviceTypes)
-            if (candidate->getTypeName().equalsIgnoreCase(resolved.driver))
-                return candidate;
+            if (candidate->getTypeName().equalsIgnoreCase(resolved.driver)) return candidate;
         return nullptr;
     }();
     if (deviceType == nullptr)
@@ -691,23 +654,16 @@ juce::String initialiseConfiguredAudio(
 
     const auto defaultDeviceName = [deviceType](const bool isInput) {
         const auto names = deviceType->getDeviceNames(isInput);
-        if (names.isEmpty())
-            return juce::String {};
-        const auto index = juce::jlimit(
-            0,
-            names.size() - 1,
-            deviceType->getDefaultDeviceIndex(isInput));
+        if (names.isEmpty()) return juce::String{};
+        const auto index =
+            juce::jlimit(0, names.size() - 1, deviceType->getDefaultDeviceIndex(isInput));
         return names[index];
     };
-    if (resolved.inputDevice.isEmpty())
-        resolved.inputDevice = defaultDeviceName(true);
-    if (resolved.outputDevice.isEmpty())
-        resolved.outputDevice = defaultDeviceName(false);
+    if (resolved.inputDevice.isEmpty()) resolved.inputDevice = defaultDeviceName(true);
+    if (resolved.outputDevice.isEmpty()) resolved.outputDevice = defaultDeviceName(false);
     if (driverRequiresSameDevice(resolved.driver)) {
-        if (resolved.inputDevice.isEmpty())
-            resolved.inputDevice = resolved.outputDevice;
-        if (resolved.outputDevice.isEmpty())
-            resolved.outputDevice = resolved.inputDevice;
+        if (resolved.inputDevice.isEmpty()) resolved.inputDevice = resolved.outputDevice;
+        if (resolved.outputDevice.isEmpty()) resolved.outputDevice = resolved.inputDevice;
         if (resolved.inputDevice != resolved.outputDevice)
             return "The selected ASIO input and output must use the same device.";
     }
@@ -721,24 +677,13 @@ juce::String initialiseConfiguredAudio(
     preferredSetup.useDefaultInputChannels = true;
     preferredSetup.sampleRate = configuration.sampleRate;
     preferredSetup.bufferSize = configuration.bufferSize;
-    auto error = manager.initialise(
-        resolved.inputDevice.isNotEmpty() ? 2 : 0,
-        2,
-        xml.get(),
-        false,
-        {},
-        &preferredSetup);
+    auto error = manager.initialise(resolved.inputDevice.isNotEmpty() ? 2 : 0, 2, xml.get(), false,
+                                    {}, &preferredSetup);
     if (error.isNotEmpty() && configuration.inputDevice.isEmpty()) {
         resolved.inputDevice.clear();
         xml = configuredAudioXml(resolved);
         preferredSetup.inputDeviceName.clear();
-        error = manager.initialise(
-            0,
-            2,
-            xml.get(),
-            false,
-            {},
-            &preferredSetup);
+        error = manager.initialise(0, 2, xml.get(), false, {}, &preferredSetup);
     }
     if (error.isEmpty() && manager.getCurrentAudioDevice() == nullptr)
         return "The requested audio driver did not open an output device.";
@@ -750,20 +695,16 @@ juce::String initialiseConfiguredAudio(
 /// finalize any in-progress recording so the partial take is preserved.
 class DeviceFaultWatcher final : public juce::ChangeListener {
 public:
-    DeviceFaultWatcher(
-        juce::AudioDeviceManager& manager,
-        SafetyAudioCallback& callback,
-        TimelineEngine& timeline)
+    DeviceFaultWatcher(juce::AudioDeviceManager& manager, SafetyAudioCallback& callback,
+                       TimelineEngine& timeline)
         : deviceManager(manager), audioCallback(callback), timelineEngine(timeline) {}
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override {
         const bool present = deviceManager.getCurrentAudioDevice() != nullptr;
-        const bool audioActive = !audioCallback.isEmergencyMuted()
-            || audioCallback.recordingStatus().getProperty("active", false);
-        if (!riffra::deviceLossRequiresFault(present, audioActive))
-            return;
-        if (audioCallback.isDeviceFaulted())
-            return;
+        const bool audioActive = !audioCallback.isEmergencyMuted() ||
+                                 audioCallback.recordingStatus().getProperty("active", false);
+        if (!riffra::deviceLossRequiresFault(present, audioActive)) return;
+        if (audioCallback.isDeviceFaulted()) return;
         audioCallback.setDeviceFaulted(true);
         audioCallback.setEmergencyMuted(true);
         juce::String ignored;
@@ -778,9 +719,8 @@ private:
     TimelineEngine& timelineEngine;
 };
 
-int serve(
-    const std::optional<std::uint32_t> parentPid,
-    const AudioConfiguration& startupConfiguration) {
+int serve(const std::optional<std::uint32_t> parentPid,
+          const AudioConfiguration& startupConfiguration) {
     juce::AudioDeviceManager manager;
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -794,7 +734,7 @@ int serve(
     MidiMonitor midiMonitor;
     std::mutex midiInputsLock;
     std::vector<std::unique_ptr<juce::MidiInput>> midiInputs;
-    std::atomic<bool> midiListeningEnabled { false };
+    std::atomic<bool> midiListeningEnabled{false};
     std::set<juce::String> activeMidiDeviceIds;
     callback.setTimelineEngine(&timelineEngine);
     midiMonitor.setAudioCallback(&callback);
@@ -837,20 +777,19 @@ int serve(
             error = initialiseConfiguredAudio(manager, sharedFallback);
         }
         if (error.isNotEmpty()) {
-            writeJson(makeError(
-                "audioDevice",
-                requestedError + ". Shared Windows audio also failed: " + error));
+            writeJson(makeError("audioDevice",
+                                requestedError + ". Shared Windows audio also failed: " + error));
             return 2;
         }
-        startupMessage = "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
+        startupMessage =
+            "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
     }
 
-    auto startupInputChannel = startupMessage.isEmpty()
-        ? startupConfiguration.inputChannel
-        : 0;
-    const auto startupInputChannels = manager.getCurrentAudioDevice() != nullptr
-        ? manager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
-        : 0;
+    auto startupInputChannel = startupMessage.isEmpty() ? startupConfiguration.inputChannel : 0;
+    const auto startupInputChannels =
+        manager.getCurrentAudioDevice() != nullptr
+            ? manager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
+            : 0;
     if (startupInputChannel >= startupInputChannels) {
         startupInputChannel = 0;
         startupMessage = "The saved input channel was unavailable, so Input 1 was selected.";
@@ -861,21 +800,19 @@ int serve(
     manager.addChangeListener(&deviceWatcher);
     writeJson(currentStatus(manager, callback, &midiMonitor, startupMessage));
 
-    std::atomic<bool> watchdogRunning { true };
+    std::atomic<bool> watchdogRunning{true};
     std::thread watchdog;
     if (parentPid.has_value()) {
         watchdog = std::thread([&watchdogRunning, parentPid] {
             while (watchdogRunning.load(std::memory_order_acquire)) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
-                if (!watchdogRunning.load(std::memory_order_acquire))
-                    break;
-                if (!parentProcessIsAlive(*parentPid))
-                    std::_Exit(0);
+                if (!watchdogRunning.load(std::memory_order_acquire)) break;
+                if (!parentProcessIsAlive(*parentPid)) std::_Exit(0);
             }
         });
     }
 
-    std::atomic<bool> midiPollRunning { true };
+    std::atomic<bool> midiPollRunning{true};
     std::thread midiPollThread([&] {
         while (midiPollRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -899,7 +836,7 @@ int serve(
     // Meter push thread: periodically writes peak/dropout meters to stdout so
     // the Rust supervisor can emit compact audio-meter events to the frontend without
     // React polling. 50 ms ≈ 20 fps, smooth enough for meter UI.
-    std::atomic<bool> meterPushRunning { true };
+    std::atomic<bool> meterPushRunning{true};
     std::thread meterPushThread([&] {
         while (meterPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -908,7 +845,7 @@ int serve(
         }
     });
 
-    std::atomic<bool> transportPushRunning { true };
+    std::atomic<bool> transportPushRunning{true};
     std::thread transportPushThread([&] {
         while (transportPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -920,12 +857,11 @@ int serve(
     // Plugin construction and timeline preparation may execute third-party
     // code for an unbounded amount of time. Keep that work away from the
     // command reader so transport and workspace commands remain serviceable.
-    std::atomic<bool> timelineOperationRunning { false };
-    RuntimeLifecycleExecutor runtimeLifecycle(
-        [](RuntimeLifecycleExecutor::Task task) {
-            if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
-                std::_Exit(125);
-        });
+    std::atomic<bool> timelineOperationRunning{false};
+    RuntimeLifecycleExecutor runtimeLifecycle([](RuntimeLifecycleExecutor::Task task) {
+        if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
+            std::_Exit(125);
+    });
     runtimeLifecycle.setTimeoutHandler([] {
         // Do not write to stdout here. The parent may be the stalled party or
         // its pipe may already be back-pressured; the watchdog's only bounded
@@ -950,15 +886,15 @@ int serve(
                 callback.setEmergencyMuted(true);
                 const auto submitted = runtimeLifecycle.submit(
                     [&] {
-                    if (trackPluginEditor != nullptr) {
-                        trackPluginEditor->close();
-                        trackPluginEditor.reset();
-                        trackPluginEditorTrackId.clear();
-                        trackPluginEditorDeviceId.clear();
-                    }
-                    timelineOperationRunning.store(false, std::memory_order_release);
-                },
-                std::chrono::seconds(10));
+                        if (trackPluginEditor != nullptr) {
+                            trackPluginEditor->close();
+                            trackPluginEditor.reset();
+                            trackPluginEditorTrackId.clear();
+                            trackPluginEditorDeviceId.clear();
+                        }
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                    },
+                    std::chrono::seconds(10));
                 if (submitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
                     std::_Exit(125);
                 break;
@@ -980,20 +916,20 @@ int serve(
             }
             if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot") {
                 if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
-                    writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));
+                    writeJson(
+                        makeError("timelineProtocol", "Unsupported timeline protocol version."));
                     continue;
                 }
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "Another Arrangement Graph is still loading a VST3. The current runtime remains available."));
+                    writeJson(makeError("timelineBusy",
+                                        "Another Arrangement Graph is still loading a VST3. The "
+                                        "current runtime remains available."));
                     continue;
                 }
                 const auto commitImmediately = type == "loadTimelineSnapshot";
                 auto* device = manager.getCurrentAudioDevice();
-                const auto blockSize = device != nullptr
-                    ? device->getCurrentBufferSizeSamples()
-                    : 0;
+                const auto blockSize =
+                    device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
                 const auto snapshot = command.getProperty("snapshot", {});
                 const auto sampleRate = callback.getSampleRate();
                 const auto requestId = currentRequestId;
@@ -1009,17 +945,12 @@ int serve(
                         juce::String timelineError;
                         bool loaded = false;
                         try {
-                            loaded = timelineEngine.loadSnapshot(
-                                snapshot,
-                                formatManager,
-                                sampleRate,
-                                blockSize,
-                                timelineError,
-                                commitImmediately);
+                            loaded = timelineEngine.loadSnapshot(snapshot, formatManager,
+                                                                 sampleRate, blockSize,
+                                                                 timelineError, commitImmediately);
                         } catch (const std::exception& exception) {
-                            timelineError =
-                                "Arrangement VST3 loading raised an exception: "
-                                + juce::String(exception.what());
+                            timelineError = "Arrangement VST3 loading raised an exception: " +
+                                            juce::String(exception.what());
                         } catch (...) {
                             timelineError =
                                 "Arrangement VST3 loading failed with an unknown exception.";
@@ -1031,81 +962,89 @@ int serve(
                             auto* ack = new juce::DynamicObject();
                             ack->setProperty("type", "timelineAck");
                             ack->setProperty("revision", snapshot.getProperty("revision", 0));
-                            ack->setProperty("appliedAtAudioClockSample",
-                                timelineEngine.status().getProperty("audioClockSample", 0));
                             ack->setProperty(
-                                "unavailableClipIds",
-                                snapshot.getProperty("unavailableClipIds", juce::Array<juce::var> {}));
+                                "appliedAtAudioClockSample",
+                                timelineEngine.status().getProperty("audioClockSample", 0));
+                            ack->setProperty("unavailableClipIds",
+                                             snapshot.getProperty("unavailableClipIds",
+                                                                  juce::Array<juce::var>{}));
                             writeJson(juce::var(ack), requestId);
                         }
                     },
                     kTimelineVstLifecycleTimeout);
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
             if (type == "commitTimelineSnapshot") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3 and cannot be committed yet."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3 and cannot "
+                                        "be committed yet."));
                     continue;
                 }
                 const auto requestId = currentRequestId;
                 timelineOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId] {
-                    const auto shouldCloseEditor = timelineEngine.hasPreparedSnapshot()
-                        && trackPluginEditor != nullptr
-                        && !timelineEngine.preparedTrackReusesRuntimeDevices(
-                            trackPluginEditorTrackId);
-                    if (shouldCloseEditor) {
-                        trackPluginEditor->close();
-                        trackPluginEditor.reset();
-                        trackPluginEditorTrackId.clear();
-                        trackPluginEditorDeviceId.clear();
-                    }
-                    juce::String timelineError;
-                    const auto committed = timelineEngine.commitPreparedSnapshot(timelineError);
-                    timelineOperationRunning.store(false, std::memory_order_release);
-                    if (!committed) {
-                        writeJson(makeError("timeline", timelineError), requestId);
-                        return;
-                    }
-                    writeJson(timelineEngine.status(), requestId);
-                }, kTimelineVstLifecycleTimeout);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId] {
+                        const auto shouldCloseEditor =
+                            timelineEngine.hasPreparedSnapshot() && trackPluginEditor != nullptr &&
+                            !timelineEngine.preparedTrackReusesRuntimeDevices(
+                                trackPluginEditorTrackId);
+                        if (shouldCloseEditor) {
+                            trackPluginEditor->close();
+                            trackPluginEditor.reset();
+                            trackPluginEditorTrackId.clear();
+                            trackPluginEditorDeviceId.clear();
+                        }
+                        juce::String timelineError;
+                        const auto committed = timelineEngine.commitPreparedSnapshot(timelineError);
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!committed) {
+                            writeJson(makeError("timeline", timelineError), requestId);
+                            return;
+                        }
+                        writeJson(timelineEngine.status(), requestId);
+                    },
+                    kTimelineVstLifecycleTimeout);
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
             if (type == "discardTimelineSnapshot") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3 and cannot be discarded yet."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3 and cannot "
+                                        "be discarded yet."));
                     continue;
                 }
                 const auto requestId = currentRequestId;
                 timelineOperationRunning.store(true, std::memory_order_release);
-                const auto submitted = runtimeLifecycle.submit([&, requestId] {
-                    timelineEngine.discardPreparedSnapshot();
-                    timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(timelineEngine.status(), requestId);
-                }, std::chrono::seconds(5));
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId] {
+                        timelineEngine.discardPreparedSnapshot();
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        writeJson(timelineEngine.status(), requestId);
+                    },
+                    std::chrono::seconds(5));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
             if (type == "setTrackDeviceBypassed") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Track "
+                                        "device changes can be retried shortly."));
                     continue;
                 }
                 const auto requestId = currentRequestId;
@@ -1128,15 +1067,16 @@ int serve(
                     std::chrono::seconds(10));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
             if (type == "setTrackDeviceParameter") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Track device changes can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Track "
+                                        "device changes can be retried shortly."));
                     continue;
                 }
                 const auto requestId = currentRequestId;
@@ -1161,15 +1101,16 @@ int serve(
                     std::chrono::seconds(10));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
             if (type == "openTrackPluginEditor") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. The plugin editor can be opened when it finishes."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. The plugin "
+                                        "editor can be opened when it finishes."));
                     continue;
                 }
                 const auto requestId = currentRequestId;
@@ -1181,7 +1122,8 @@ int serve(
                         auto* device = timelineEngine.findDevice(editorTrackId, editorDeviceId);
                         if (device == nullptr) {
                             timelineOperationRunning.store(false, std::memory_order_release);
-                            writeJson(makeError("trackDevice", "Track Device was not found."), requestId);
+                            writeJson(makeError("trackDevice", "Track Device was not found."),
+                                      requestId);
                             return;
                         }
                         if (trackPluginEditor != nullptr) {
@@ -1195,7 +1137,8 @@ int serve(
                             [&, editorTrackId, editorDeviceId](const juce::var& state) {
                                 const auto stateCopy = state;
                                 const auto stateKey =
-                                    "track-state:" + (editorTrackId + ":" + editorDeviceId).toStdString();
+                                    "track-state:" +
+                                    (editorTrackId + ":" + editorDeviceId).toStdString();
                                 // State events are best-effort latest-value updates. Capacity
                                 // drops and shutdown must never become unbounded control errors.
                                 (void)runtimeLifecycle.submitState(
@@ -1203,9 +1146,7 @@ int serve(
                                     [&, editorTrackId, editorDeviceId, stateCopy, stateKey] {
                                         juce::String mirrorError;
                                         if (!timelineEngine.mirrorEditorDeviceState(
-                                                editorTrackId,
-                                                editorDeviceId,
-                                                stateCopy,
+                                                editorTrackId, editorDeviceId, stateCopy,
                                                 mirrorError)) {
                                             writeJson(makeError("trackDevice", mirrorError));
                                         }
@@ -1215,54 +1156,44 @@ int serve(
                                         changed->setProperty("deviceId", editorDeviceId);
                                         changed->setProperty(
                                             "parameterValues",
-                                            stateCopy.getProperty(
-                                                "parameterValues",
-                                                juce::Array<juce::var> {}));
+                                            stateCopy.getProperty("parameterValues",
+                                                                  juce::Array<juce::var>{}));
                                         changed->setProperty(
-                                            "stateData",
-                                            stateCopy.getProperty("stateData", {}));
+                                            "stateData", stateCopy.getProperty("stateData", {}));
                                         changed->setProperty(
-                                            "bypassed",
-                                            stateCopy.getProperty("bypassed", false));
-                                        writeJson(
-                                            juce::var(changed),
-                                            {},
-                                            OutputKind::state,
-                                            stateKey);
+                                            "bypassed", stateCopy.getProperty("bypassed", false));
+                                        writeJson(juce::var(changed), {}, OutputKind::state,
+                                                  stateKey);
                                     },
                                     std::chrono::seconds(10));
                             },
-                            [&, editorTrackId, editorDeviceId](const int parameterIndex, const float value) {
-                                const auto stateKey = "track-parameter:"
-                                    + (editorTrackId + ":" + editorDeviceId).toStdString()
-                                    + ":" + std::to_string(parameterIndex);
+                            [&, editorTrackId, editorDeviceId](const int parameterIndex,
+                                                               const float value) {
+                                const auto stateKey =
+                                    "track-parameter:" +
+                                    (editorTrackId + ":" + editorDeviceId).toStdString() + ":" +
+                                    std::to_string(parameterIndex);
                                 // State events are best-effort latest-value updates. Capacity
                                 // drops and shutdown must never become unbounded control errors.
                                 (void)runtimeLifecycle.submitState(
                                     stateKey,
-                                    [&, editorTrackId, editorDeviceId, parameterIndex, value, stateKey] {
+                                    [&, editorTrackId, editorDeviceId, parameterIndex, value,
+                                     stateKey] {
                                         juce::String mirrorError;
                                         if (!timelineEngine.mirrorEditorDeviceParameter(
-                                                editorTrackId,
-                                                editorDeviceId,
-                                                parameterIndex,
-                                                value,
-                                                mirrorError)) {
+                                                editorTrackId, editorDeviceId, parameterIndex,
+                                                value, mirrorError)) {
                                             writeJson(makeError("trackDevice", mirrorError));
                                             return;
                                         }
                                         auto* changed = new juce::DynamicObject();
-                                        changed->setProperty(
-                                            "type", "trackPluginParameterChanged");
+                                        changed->setProperty("type", "trackPluginParameterChanged");
                                         changed->setProperty("trackId", editorTrackId);
                                         changed->setProperty("deviceId", editorDeviceId);
                                         changed->setProperty("parameterIndex", parameterIndex);
                                         changed->setProperty("value", value);
-                                        writeJson(
-                                            juce::var(changed),
-                                            {},
-                                            OutputKind::state,
-                                            stateKey);
+                                        writeJson(juce::var(changed), {}, OutputKind::state,
+                                                  stateKey);
                                     },
                                     std::chrono::seconds(10));
                             });
@@ -1271,11 +1202,11 @@ int serve(
                         try {
                             opened = trackPluginEditor->open(editorError);
                         } catch (const std::exception& exception) {
-                            editorError =
-                                "Track VST3 editor opening raised an exception: "
-                                + juce::String(exception.what());
+                            editorError = "Track VST3 editor opening raised an exception: " +
+                                          juce::String(exception.what());
                         } catch (...) {
-                            editorError = "Track VST3 editor opening failed with an unknown exception.";
+                            editorError =
+                                "Track VST3 editor opening failed with an unknown exception.";
                         }
                         timelineOperationRunning.store(false, std::memory_order_release);
                         if (!opened) {
@@ -1290,7 +1221,8 @@ int serve(
                     std::chrono::seconds(30));
                 if (!submitted) {
                     timelineOperationRunning.store(false, std::memory_order_release);
-                    writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
                 }
                 continue;
             }
@@ -1306,17 +1238,17 @@ int serve(
                 continue;
             }
             if (type == "seekTimeline") {
-                const auto tick = static_cast<std::uint64_t>(static_cast<juce::int64>(
-                    command.getProperty("tick", 0)));
+                const auto tick = static_cast<std::uint64_t>(
+                    static_cast<juce::int64>(command.getProperty("tick", 0)));
                 timelineEngine.seekToTick(tick);
                 writeJson(timelineEngine.status());
                 continue;
             }
             if (type == "configureSamplePads") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Sample pad changes can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Sample pad "
+                                        "changes can be retried shortly."));
                     continue;
                 }
                 const auto padsValue = command.getProperty("pads", {});
@@ -1414,9 +1346,9 @@ int serve(
             }
             if (type == "startTakeComparison") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Take comparison can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Take "
+                                        "comparison can be retried shortly."));
                     continue;
                 }
                 const auto loadComparisonFile = [&](const juce::String& path,
@@ -1425,16 +1357,15 @@ int serve(
                                                     juce::AudioBuffer<float>& target,
                                                     juce::String& loadError) {
                     std::unique_ptr<juce::AudioFormatReader> reader(
-                        path.isEmpty() ? nullptr
-                                       : formatManager.createReaderFor(juce::File(path)));
-                    if (reader == nullptr || reader->lengthInSamples <= 0
-                        || reader->lengthInSamples > std::numeric_limits<int>::max()) {
+                        path.isEmpty() ? nullptr : formatManager.createReaderFor(juce::File(path)));
+                    if (reader == nullptr || reader->lengthInSamples <= 0 ||
+                        reader->lengthInSamples > std::numeric_limits<int>::max()) {
                         loadError = "Take comparison source is unavailable.";
                         return false;
                     }
-                    if (startFrame < 0 || endFrame <= startFrame
-                        || endFrame > reader->lengthInSamples
-                        || endFrame - startFrame > std::numeric_limits<int>::max()) {
+                    if (startFrame < 0 || endFrame <= startFrame ||
+                        endFrame > reader->lengthInSamples ||
+                        endFrame - startFrame > std::numeric_limits<int>::max()) {
                         loadError = "Take comparison range is outside its source.";
                         return false;
                     }
@@ -1444,18 +1375,16 @@ int serve(
                         loadError = "Take comparison requires an active output sample rate.";
                         return false;
                     }
-                    juce::AudioBuffer<float> source(
-                        static_cast<int>(reader->numChannels), sourceFrames + 4);
+                    juce::AudioBuffer<float> source(static_cast<int>(reader->numChannels),
+                                                    sourceFrames + 4);
                     source.clear();
-                    if (!reader->read(
-                            &source, 0, sourceFrames, startFrame, true, true)) {
+                    if (!reader->read(&source, 0, sourceFrames, startFrame, true, true)) {
                         loadError = "Take comparison source could not be read.";
                         return false;
                     }
                     const auto targetFrames = std::max(
-                        1,
-                        static_cast<int>(std::llround(
-                            static_cast<double>(sourceFrames) * targetRate / reader->sampleRate)));
+                        1, static_cast<int>(std::llround(static_cast<double>(sourceFrames) *
+                                                         targetRate / reader->sampleRate)));
                     target.setSize(static_cast<int>(reader->numChannels), targetFrames);
                     if (std::abs(reader->sampleRate - targetRate) <= 0.5) {
                         target.copyFrom(0, 0, source, 0, 0, targetFrames);
@@ -1465,11 +1394,8 @@ int serve(
                         const auto ratio = reader->sampleRate / targetRate;
                         for (int channel = 0; channel < target.getNumChannels(); ++channel) {
                             juce::LagrangeInterpolator interpolator;
-                            interpolator.process(
-                                ratio,
-                                source.getReadPointer(channel),
-                                target.getWritePointer(channel),
-                                targetFrames);
+                            interpolator.process(ratio, source.getReadPointer(channel),
+                                                 target.getWritePointer(channel), targetFrames);
                         }
                     }
                     return true;
@@ -1477,21 +1403,16 @@ int serve(
                 juce::String comparisonError;
                 if (!loadComparisonFile(
                         command.getProperty("rawPath", {}).toString(),
-                        static_cast<juce::int64>(
-                            command.getProperty("rawStartFrame", 0)),
-                        static_cast<juce::int64>(
-                            command.getProperty("rawEndFrame", 0)),
-                        comparisonRaw, comparisonError)
-                    || !loadComparisonFile(
+                        static_cast<juce::int64>(command.getProperty("rawStartFrame", 0)),
+                        static_cast<juce::int64>(command.getProperty("rawEndFrame", 0)),
+                        comparisonRaw, comparisonError) ||
+                    !loadComparisonFile(
                         command.getProperty("processedPath", {}).toString(),
-                        static_cast<juce::int64>(
-                            command.getProperty("processedStartFrame", 0)),
-                        static_cast<juce::int64>(
-                            command.getProperty("processedEndFrame", 0)),
-                        comparisonProcessed, comparisonError)
-                    || !callback.startPreview(
-                        comparisonRaw, 0, comparisonRaw.getNumSamples(), 1.0f,
-                        false, comparisonError, 1)) {
+                        static_cast<juce::int64>(command.getProperty("processedStartFrame", 0)),
+                        static_cast<juce::int64>(command.getProperty("processedEndFrame", 0)),
+                        comparisonProcessed, comparisonError) ||
+                    !callback.startPreview(comparisonRaw, 0, comparisonRaw.getNumSamples(), 1.0f,
+                                           false, comparisonError, 1)) {
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
                 }
@@ -1501,8 +1422,7 @@ int serve(
             if (type == "switchTakeComparisonVariant") {
                 const auto variant = command.getProperty("variant", {}).toString();
                 juce::String comparisonError;
-                const auto& buffer = variant == "processed"
-                    ? comparisonProcessed : comparisonRaw;
+                const auto& buffer = variant == "processed" ? comparisonProcessed : comparisonRaw;
                 if (!callback.switchPreviewBuffer(1, buffer, comparisonError)) {
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
@@ -1519,9 +1439,9 @@ int serve(
             }
             if (type == "previewSample") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Preview can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Preview "
+                                        "can be retried shortly."));
                     continue;
                 }
                 const auto path = command.getProperty("path", {}).toString();
@@ -1586,9 +1506,9 @@ int serve(
             }
             if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still changing; targeted MIDI "
+                                        "can be retried shortly."));
                     continue;
                 }
                 const auto trackId = command.getProperty("trackId", {}).toString();
@@ -1601,8 +1521,7 @@ int serve(
                         writeJson(makeError("midi", midiError));
                         continue;
                     }
-                    accepted = timelineEngine.enqueueTargetedMidi(
-                        trackId, message, timelineError);
+                    accepted = timelineEngine.enqueueTargetedMidi(trackId, message, timelineError);
                 } else {
                     accepted = timelineEngine.panicTargetedMidi(trackId, timelineError);
                 }
@@ -1615,9 +1534,9 @@ int serve(
             }
             if (type == "recoverAudioDevice") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Audio device recovery can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Audio "
+                                        "device recovery can be retried shortly."));
                     continue;
                 }
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
@@ -1637,9 +1556,9 @@ int serve(
             }
             if (type == "setAudioDriver") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError(
-                        "timelineBusy",
-                        "The Arrangement Graph is still loading a VST3. Audio driver changes can be retried shortly."));
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Audio "
+                                        "driver changes can be retried shortly."));
                     continue;
                 }
                 const auto driver = command.getProperty("driver", {}).toString();
@@ -1717,8 +1636,8 @@ int serve(
             if (type == "startArrangeRecording") {
                 const auto directory = command.getProperty("directory", {}).toString();
                 juce::String recordingError;
-                const auto started = callback.startArrangeRecording(
-                    juce::File(directory), timelineEngine, recordingError);
+                const auto started = callback.startArrangeRecording(juce::File(directory),
+                                                                    timelineEngine, recordingError);
                 if (directory.isEmpty() || !started) {
                     writeJson(makeError("recording", directory.isEmpty()
                                                          ? "Recording directory is required."
@@ -1726,10 +1645,9 @@ int serve(
                     continue;
                 }
                 if (!timelineEngine.startRecording(
-                        static_cast<int>(command.getProperty("countInBeats", 0)),
-                        recordingError)) {
+                        static_cast<int>(command.getProperty("countInBeats", 0)), recordingError)) {
                     juce::String rollbackError;
-                    (void) callback.stopArrangeRecording(timelineEngine, rollbackError);
+                    (void)callback.stopArrangeRecording(timelineEngine, rollbackError);
                     writeJson(makeError("recording", recordingError));
                     continue;
                 }
@@ -1737,24 +1655,19 @@ int serve(
                 continue;
             }
             if (type == "stopArrangeRecording") {
-                const auto cancelledCountIn =
-                    timelineEngine.cancelRecordingIfCountingIn();
+                const auto cancelledCountIn = timelineEngine.cancelRecordingIfCountingIn();
 
                 juce::String recordingError;
 
                 if (cancelledCountIn) {
                     timelineEngine.stop();
 
-                    if (!callback.cancelArrangeRecording(
-                            timelineEngine,
-                            recordingError)) {
+                    if (!callback.cancelArrangeRecording(timelineEngine, recordingError)) {
                         writeJson(makeError("recording", recordingError));
                         continue;
                     }
                 } else {
-                    if (!callback.stopArrangeRecording(
-                            timelineEngine,
-                            recordingError)) {
+                    if (!callback.stopArrangeRecording(timelineEngine, recordingError)) {
                         writeJson(makeError("recording", recordingError));
                         continue;
                     }
@@ -1762,12 +1675,7 @@ int serve(
                     timelineEngine.stop();
                 }
 
-                writeJson(currentStatus(
-                    manager,
-                    callback,
-                    &midiMonitor,
-                    {},
-                    &timelineEngine));
+                writeJson(currentStatus(manager, callback, &midiMonitor, {}, &timelineEngine));
                 continue;
             }
             if (type == "status") {
@@ -1781,15 +1689,17 @@ int serve(
             writeJson(makeError("protocol", "Unsupported command: " + type));
         }
 
-        const auto cleanupSubmitted = runtimeLifecycle.submit([&] {
-            if (trackPluginEditor != nullptr) {
-                trackPluginEditor->close();
-                trackPluginEditor.reset();
-                trackPluginEditorTrackId.clear();
-                trackPluginEditorDeviceId.clear();
-            }
-            timelineOperationRunning.store(false, std::memory_order_release);
-        }, std::chrono::seconds(10));
+        const auto cleanupSubmitted = runtimeLifecycle.submit(
+            [&] {
+                if (trackPluginEditor != nullptr) {
+                    trackPluginEditor->close();
+                    trackPluginEditor.reset();
+                    trackPluginEditorTrackId.clear();
+                    trackPluginEditorDeviceId.clear();
+                }
+                timelineOperationRunning.store(false, std::memory_order_release);
+            },
+            std::chrono::seconds(10));
         if (cleanupSubmitted && !runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
             std::_Exit(125);
         juce::MessageManager::callAsync(
@@ -1798,8 +1708,7 @@ int serve(
 
     juce::MessageManager::getInstance()->runDispatchLoop();
     if (commandThread.joinable()) commandThread.join();
-    if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-        std::_Exit(125);
+    if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 
@@ -1811,21 +1720,17 @@ int serve(
     manager.removeChangeListener(&deviceWatcher);
     manager.closeAudioDevice();
     watchdogRunning.store(false, std::memory_order_release);
-    if (watchdog.joinable())
-    watchdog.join();
+    if (watchdog.joinable()) watchdog.join();
     midiPollRunning.store(false, std::memory_order_release);
-    if (midiPollThread.joinable())
-        midiPollThread.join();
+    if (midiPollThread.joinable()) midiPollThread.join();
     meterPushRunning.store(false, std::memory_order_release);
-    if (meterPushThread.joinable())
-        meterPushThread.join();
+    if (meterPushThread.joinable()) meterPushThread.join();
     transportPushRunning.store(false, std::memory_order_release);
-    if (transportPushThread.joinable())
-        transportPushThread.join();
+    if (transportPushThread.joinable()) transportPushThread.join();
     return 0;
 }
 
-} // namespace
+}  // namespace
 
 int runMain(const juce::StringArray& arguments) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
@@ -1846,8 +1751,7 @@ int runMain(const juce::StringArray& arguments) {
         const auto secondInput = findFlag("--input-device");
         const auto secondOutput = findFlag("--output-device");
         const auto readValue = [&](const int flagIndex) -> juce::String {
-            if (flagIndex < 2 || flagIndex + 1 >= arguments.size())
-                return {};
+            if (flagIndex < 2 || flagIndex + 1 >= arguments.size()) return {};
             return arguments[flagIndex + 1];
         };
         const auto driver = readValue(secondDriver);
@@ -1871,13 +1775,10 @@ int runMain(const juce::StringArray& arguments) {
         AudioConfiguration configuration;
         for (int index = 2; index < arguments.size(); ++index) {
             const auto argument = arguments[index];
-            if (argument != "--parent-pid"
-                && argument != "--audio-driver"
-                && argument != "--input-device"
-                && argument != "--input-channel"
-                && argument != "--output-device"
-                && argument != "--sample-rate"
-                && argument != "--buffer-size")
+            if (argument != "--parent-pid" && argument != "--audio-driver" &&
+                argument != "--input-device" && argument != "--input-channel" &&
+                argument != "--output-device" && argument != "--sample-rate" &&
+                argument != "--buffer-size")
                 continue;
             if (index + 1 >= arguments.size()) {
                 writeJson(makeError("arguments", argument + " requires a value."));
@@ -1887,7 +1788,8 @@ int runMain(const juce::StringArray& arguments) {
             if (argument == "--parent-pid") {
                 const auto pid = value.getLargeIntValue();
                 if (pid <= 0 || pid > std::numeric_limits<std::uint32_t>::max()) {
-                    writeJson(makeError("arguments", "--parent-pid must be a positive process id."));
+                    writeJson(
+                        makeError("arguments", "--parent-pid must be a positive process id."));
                     return 1;
                 }
                 parentPid = static_cast<std::uint32_t>(pid);
@@ -1918,15 +1820,13 @@ int runMain(const juce::StringArray& arguments) {
 #if JUCE_WINDOWS
 int wmain(int argc, wchar_t* argv[]) {
     juce::StringArray arguments;
-    for (int index = 0; index < argc; ++index)
-        arguments.add(argv[index]);
+    for (int index = 0; index < argc; ++index) arguments.add(argv[index]);
     return runMain(arguments);
 }
 #else
 int main(int argc, char* argv[]) {
     juce::StringArray arguments;
-    for (int index = 0; index < argc; ++index)
-        arguments.add(juce::String::fromUTF8(argv[index]));
+    for (int index = 0; index < argc; ++index) arguments.add(juce::String::fromUTF8(argv[index]));
     return runMain(arguments);
 }
 #endif

@@ -1,17 +1,18 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "ArrangementCaptureSink.h"
-#include "ArrangementGraph.h"
-#include "PluginChain.h"
-#include "RecordingCaptureRuntime.h"
-#include "TimelineTimebase.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+#include "ArrangementCaptureSink.h"
+#include "ArrangementGraph.h"
+#include "PluginChain.h"
+#include "RecordingCaptureRuntime.h"
+#include "TimelineTimebase.h"
 
 namespace riffra {
 
@@ -26,13 +27,9 @@ public:
     TimelineEngine(const TimelineEngine&) = delete;
     TimelineEngine& operator=(const TimelineEngine&) = delete;
 
-    bool loadSnapshot(
-        const juce::var& snapshot,
-        juce::AudioFormatManager& formats,
-        double outputSampleRate,
-        int maximumBlockSize,
-        juce::String& error,
-        bool commitImmediately = true);
+    bool loadSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
+                      double outputSampleRate, int maximumBlockSize, juce::String& error,
+                      bool commitImmediately = true);
     bool commitPreparedSnapshot(juce::String& error) noexcept;
     void discardPreparedSnapshot() noexcept;
     void play() noexcept;
@@ -46,67 +43,42 @@ public:
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
-    [[nodiscard]] bool enqueueLiveMidi(
-        const juce::MidiMessage& message,
-        const juce::String& deviceId = {}) noexcept;
-    [[nodiscard]] bool enqueueTargetedMidi(
-        const juce::String& trackId,
-        const juce::MidiMessage& message,
-        juce::String& error) noexcept;
-    [[nodiscard]] bool panicTargetedMidi(
-        const juce::String& trackId,
-        juce::String& error) noexcept;
+    [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message,
+                                       const juce::String& deviceId = {}) noexcept;
+    [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
+                                           const juce::MidiMessage& message,
+                                           juce::String& error) noexcept;
+    [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.
     void panicAllInstrumentTracks() noexcept;
-    bool setDeviceBypassed(
-        const juce::String& trackId,
-        const juce::String& deviceId,
-        bool bypassed,
-        juce::String& error) noexcept;
-    bool setDeviceParameter(
-        const juce::String& trackId,
-        const juce::String& deviceId,
-        int parameterIndex,
-        float value,
-        juce::String& error) noexcept;
-    [[nodiscard]] PluginRack* findDevice(
-        const juce::String& trackId,
-        const juce::String& deviceId) noexcept;
-    bool mirrorEditorDeviceState(
-        const juce::String& trackId,
-        const juce::String& deviceId,
-        const juce::var& persistedState,
-        juce::String& error) noexcept;
-    bool mirrorEditorDeviceParameter(
-        const juce::String& trackId,
-        const juce::String& deviceId,
-        int parameterIndex,
-        float value,
-        juce::String& error) noexcept;
-    [[nodiscard]] juce::var devicePersistedState(
-        const juce::String& trackId,
-        const juce::String& deviceId,
-        juce::String& error) const;
+    bool setDeviceBypassed(const juce::String& trackId, const juce::String& deviceId, bool bypassed,
+                           juce::String& error) noexcept;
+    bool setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
+                            int parameterIndex, float value, juce::String& error) noexcept;
+    [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
+                                         const juce::String& deviceId) noexcept;
+    bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,
+                                 const juce::var& persistedState, juce::String& error) noexcept;
+    bool mirrorEditorDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
+                                     int parameterIndex, float value, juce::String& error) noexcept;
+    [[nodiscard]] juce::var devicePersistedState(const juce::String& trackId,
+                                                 const juce::String& deviceId,
+                                                 juce::String& error) const;
     [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
         const juce::String& trackId) const noexcept;
     [[nodiscard]] bool hasPreparedSnapshot() const noexcept;
     [[nodiscard]] bool monitoringEnabled() const noexcept;
-    /// Returns whether the active graph routes the physical input channel to a monitored Audio Track.
+    /// Returns whether the active graph routes the physical input channel to a monitored Audio
+    /// Track.
     [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
-    [[nodiscard]] bool recordingWindow(
-        int sampleCount,
-        int& sampleOffset,
-        int& capturedSamples) noexcept;
+    [[nodiscard]] bool recordingWindow(int sampleCount, int& sampleOffset,
+                                       int& capturedSamples) noexcept;
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
-    void mix(
-        const float* const* inputChannels,
-        int inputChannelCount,
-        float* const* outputChannels,
-        int outputChannelCount,
-        int sampleCount) noexcept;
+    void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
+             int outputChannelCount, int sampleCount) noexcept;
     [[nodiscard]] juce::var status() const;
 
 private:
@@ -232,118 +204,79 @@ private:
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
-    bool prepareSnapshot(
-        const juce::var& snapshot,
-        juce::AudioFormatManager& formats,
-        double outputSampleRate,
-        int maximumBlockSize,
-        std::unique_ptr<PreparedTimeline>& prepared,
-        bool& monitorLiveInputState,
-        std::uint32_t& monitoringInputChannelsState,
-        bool& armedInstrumentTrackState,
-        juce::String& error);
-    void mixRange(
-        Track& track,
-        std::int64_t rangeStart,
-        int destinationStart,
-        int sampleCount) noexcept;
-    void processTracks(
-        PreparedTimeline& timeline,
-        const float* const* inputChannels,
-        int inputChannelCount,
-        float* const* outputChannels,
-        int channelCount,
-        std::int64_t rangeStart,
-        int destinationStart,
-        int sampleCount) noexcept;
-    void processLiveInstrumentTracks(
-        PreparedTimeline& timeline,
-        float* const* outputChannels,
-        int channelCount,
-        int sampleCount) noexcept;
-    void processLiveAudioTracks(
-        PreparedTimeline& timeline,
-        const float* const* inputChannels,
-        int inputChannelCount,
-        float* const* outputChannels,
-        int channelCount,
-        std::int64_t rangeStart,
-        int destinationStart,
-        int sampleCount) noexcept;
-    void processInstrumentTrack(
-        Track& track,
-        int sampleCount,
-        const juce::MidiBuffer* timelineMidi) noexcept;
+    bool prepareSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
+                         double outputSampleRate, int maximumBlockSize,
+                         std::unique_ptr<PreparedTimeline>& prepared, bool& monitorLiveInputState,
+                         std::uint32_t& monitoringInputChannelsState,
+                         bool& armedInstrumentTrackState, juce::String& error);
+    void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
+                  int sampleCount) noexcept;
+    void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
+                       int inputChannelCount, float* const* outputChannels, int channelCount,
+                       std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+    void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
+                                     int channelCount, int sampleCount) noexcept;
+    void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
+                                int inputChannelCount, float* const* outputChannels,
+                                int channelCount, std::int64_t rangeStart, int destinationStart,
+                                int sampleCount) noexcept;
+    void processInstrumentTrack(Track& track, int sampleCount,
+                                const juce::MidiBuffer* timelineMidi) noexcept;
     void processLiveInstrumentTrack(Track& track, int sampleCount) noexcept;
-    void mixProcessedTrack(
-        Track& track,
-        bool audible,
-        float* const* outputChannels,
-        int channelCount,
-        std::int64_t rangeStart,
-        int destinationStart,
-        int sampleCount) noexcept;
-    void mixLiveTrack(
-        Track& track,
-        bool audible,
-        float* const* outputChannels,
-        int channelCount,
-        std::int64_t rangeStart,
-        int destinationStart,
-        int sampleCount) noexcept;
-    void scheduleMidi(
-        const PreparedTimeline& prepared,
-        Track& track,
-        std::int64_t rangeStart,
-        int sampleCount) noexcept;
+    void mixProcessedTrack(Track& track, bool audible, float* const* outputChannels,
+                           int channelCount, std::int64_t rangeStart, int destinationStart,
+                           int sampleCount) noexcept;
+    void mixLiveTrack(Track& track, bool audible, float* const* outputChannels, int channelCount,
+                      std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+    void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
+                      int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
-    bool generateLoopProcessedVariants(
-        PreparedTimeline& timeline,
-        ArrangementCaptureSink* sink) noexcept;
+    bool generateLoopProcessedVariants(PreparedTimeline& timeline,
+                                       ArrangementCaptureSink* sink) noexcept;
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
 
-    juce::TimeSliceThread readAheadThread { "Riffra timeline read-ahead" };
+    juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
     mutable juce::SpinLock timelineLock;
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;
-    std::atomic<PreparedTimeline*> activeTimeline { nullptr };
-    std::atomic<bool> runtimeDevicesNeedReprepare { false };
-    std::atomic<std::uint32_t> activeAudioReaders { 0 };
-    std::atomic<bool> publishInProgress { false };
-    std::atomic<bool> panicAllPending { false };
+    std::atomic<PreparedTimeline*> activeTimeline{nullptr};
+    std::atomic<bool> runtimeDevicesNeedReprepare{false};
+    std::atomic<std::uint32_t> activeAudioReaders{0};
+    std::atomic<bool> publishInProgress{false};
+    std::atomic<bool> panicAllPending{false};
     bool pendingMonitorLiveInput = false;
     std::uint32_t pendingMonitoringInputChannels = 0;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
-    std::atomic<State> state { State::stopped };
-    std::atomic<std::int64_t> timelineSample { 0 };
-    std::atomic<std::int64_t> lastMixStartSample { 0 };
-    std::atomic<std::uint64_t> audioClockSample { 0 };
-    std::atomic<std::uint64_t> callbackAudioStartSample { 0 };
-    mutable std::atomic<std::uint64_t> sequence { 0 };
-    std::atomic<std::uint64_t> callbackLockMisses { 0 };
-    std::atomic<std::uint64_t> callbackPublishMisses { 0 };
-    std::atomic<std::uint64_t> clockGeneration { 0 };
-    std::atomic<std::uint64_t> discontinuity { 1 };
-    std::atomic<bool> monitorLiveInput { false };
-    std::atomic<std::uint32_t> monitoringInputChannels { 0 };
-    std::atomic<bool> armedInstrumentTrack { false };
-    std::atomic<RecordingPhase> recordingPhase { RecordingPhase::idle };
-    std::atomic<std::int64_t> countInRemainingSamples { 0 };
-    std::atomic<std::int64_t> countInBlockStartRemainingSamples { 0 };
-    std::atomic<std::uint64_t> recordingStartAudioSample { 0 };
-    std::atomic<std::uint64_t> recordingStartTick { 0 };
-    std::atomic<std::uint32_t> recordingPassOrdinal { 0 };
-    std::atomic<int> captureBlockOffset { 0 };
-    std::atomic<int> captureBlockSamples { 0 };
-    std::atomic<int> playbackBlockOffset { 0 };
-    std::atomic<int> lastMixPlaybackOffset { 0 };
+    std::atomic<State> state{State::stopped};
+    std::atomic<std::int64_t> timelineSample{0};
+    std::atomic<std::int64_t> lastMixStartSample{0};
+    std::atomic<std::uint64_t> audioClockSample{0};
+    std::atomic<std::uint64_t> callbackAudioStartSample{0};
+    mutable std::atomic<std::uint64_t> sequence{0};
+    std::atomic<std::uint64_t> callbackLockMisses{0};
+    std::atomic<std::uint64_t> callbackPublishMisses{0};
+    std::atomic<std::uint64_t> clockGeneration{0};
+    std::atomic<std::uint64_t> discontinuity{1};
+    std::atomic<bool> monitorLiveInput{false};
+    std::atomic<std::uint32_t> monitoringInputChannels{0};
+    std::atomic<bool> armedInstrumentTrack{false};
+    std::atomic<RecordingPhase> recordingPhase{RecordingPhase::idle};
+    std::atomic<std::int64_t> countInRemainingSamples{0};
+    std::atomic<std::int64_t> countInBlockStartRemainingSamples{0};
+    std::atomic<std::uint64_t> recordingStartAudioSample{0};
+    std::atomic<std::uint64_t> recordingStartTick{0};
+    std::atomic<std::uint32_t> recordingPassOrdinal{0};
+    std::atomic<int> captureBlockOffset{0};
+    std::atomic<int> captureBlockSamples{0};
+    std::atomic<int> playbackBlockOffset{0};
+    std::atomic<int> lastMixPlaybackOffset{0};
 };
 
-} // namespace riffra
+}  // namespace riffra
