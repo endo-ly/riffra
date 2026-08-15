@@ -61,7 +61,7 @@ export async function previewAsset(
   }
 }
 
-export async function stopSamplePreview(): Promise<AudioStatus> {
+export async function stopPreview(): Promise<AudioStatus> {
   try {
     return await invoke<AudioStatus>('stop_preview');
   } catch (error) {

@@ -246,8 +246,8 @@ export class FakeNativeApi implements NativeApi {
   previewAsset(...args: Parameters<NativeApi['previewAsset']>) {
     return this.command('previewAsset', args);
   }
-  stopSamplePreview(...args: Parameters<NativeApi['stopSamplePreview']>) {
-    return this.command('stopSamplePreview', args);
+  stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
+    return this.command('stopPreview', args);
   }
   getAudioStatus(...args: Parameters<NativeApi['getAudioStatus']>) {
     return this.command('getAudioStatus', args);
@@ -764,7 +764,7 @@ const sessionMethodNames = new Set<keyof NativeApi>([
 
 const audioMethodNames = new Set<keyof NativeApi>([
   'previewAsset',
-  'stopSamplePreview',
+  'stopPreview',
   'recoverAudioDevice',
   'retryStartupRuntime',
   'setAudioDriver',

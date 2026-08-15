@@ -14,7 +14,7 @@
 //! riffra-core owns the production rules and the canonical Application /
 //! Domain operations. This crate hosts the filesystem, runtime, and OS
 //! integration: recording lifecycle and Inbox management in `recording`,
-//! background-job orchestration in `analysis` / `render` / `plugins`,
+//! background-job orchestration in `render` / `plugins`,
 //! session command hosting in `session`, library read-model queries in
 //! `library`, asset preview in `asset`, and app-level commands and native
 //! probes in `host_commands`.

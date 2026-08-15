@@ -152,7 +152,7 @@ export interface AudioApi {
    * options object so the contract stays readable as the preview tuning grows.
    */
   previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
-  stopSamplePreview(): Promise<AudioStatus>;
+  stopPreview(): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
   getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
