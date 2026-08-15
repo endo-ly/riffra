@@ -23,6 +23,7 @@ The safety chain is deliberately small and auditable: immediate emergency mute, 
 {"type":"recoverAudioDevice"}
 {"type":"previewSample","path":"C:\\path\\to\\processed.wav","startMs":0,"endMs":1000,"gain":1.0}
 {"type":"stopPreview"}
+{"type":"configureSamplePads","pads":[{"id":"pad:kick","name":"Kick","assetPath":"C:\\path\\to\\kick.wav","startMs":0,"endMs":500,"midiKey":36}]}
 {"type":"openMidiInput","name":"Controller Name"}
 {"type":"closeMidiInput"}
 {"type":"startArrangeRecording","directory":"C:\\path\\to\\recording"}
