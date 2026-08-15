@@ -1,57 +1,41 @@
 #pragma once
 
-#include "ArrangementCaptureSink.h"
-#include "RecordingSession.h"
-
 #include <array>
 #include <atomic>
-#include <memory>
 #include <limits>
+#include <memory>
 #include <vector>
+
+#include "ArrangementCaptureSink.h"
+#include "RecordingSession.h"
 
 namespace riffra {
 
 class ArrangeRecordingSession final : public ArrangementCaptureSink {
 public:
-    static std::unique_ptr<ArrangeRecordingSession> create(
-        const juce::File& directory,
-        const juce::var& configuration,
-        juce::String& error);
+    static std::unique_ptr<ArrangeRecordingSession> create(const juce::File& directory,
+                                                           const juce::var& configuration,
+                                                           juce::String& error);
 
-    bool beginAudioTrackCapture(
-        const juce::String& trackId,
-        std::uint64_t audioClockStartSample,
-        std::uint64_t timelineStartSample) noexcept override;
-    void writeAudioTrack(
-        const juce::String& trackId,
-        const float* raw,
-        int rawSampleCount,
-        const float* const* processed,
-        int processedSampleCount) noexcept override;
-    bool endAudioTrackCapture(
-        const juce::String& trackId,
-        std::uint64_t audioClockEndSample,
-        std::uint64_t timelineEndSample) noexcept override;
+    bool beginAudioTrackCapture(const juce::String& trackId, std::uint64_t audioClockStartSample,
+                                std::uint64_t timelineStartSample) noexcept override;
+    void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
+                         const float* const* processed, int processedSampleCount) noexcept override;
+    bool endAudioTrackCapture(const juce::String& trackId, std::uint64_t audioClockEndSample,
+                              std::uint64_t timelineEndSample) noexcept override;
     bool completeAudioTrackTail(const juce::String& trackId) noexcept override;
     void markLoopBoundary(std::uint64_t audioSample) noexcept override;
-    void writeMidiTrack(
-        const juce::String& trackId,
-        const juce::String& sourceDeviceId,
-        const juce::MidiMessage& message,
-        std::uint64_t audioSample) noexcept override;
-    void setCaptureRange(
-        std::uint64_t startAudioSample,
-        std::uint64_t endAudioSample,
-        std::uint64_t startTimelineSample,
-        std::uint64_t endTimelineSample) noexcept override;
+    void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
+                        const juce::MidiMessage& message,
+                        std::uint64_t audioSample) noexcept override;
+    void setCaptureRange(std::uint64_t startAudioSample, std::uint64_t endAudioSample,
+                         std::uint64_t startTimelineSample,
+                         std::uint64_t endTimelineSample) noexcept override;
     juce::File prepareRawForReading(const juce::String& trackId) noexcept override;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>>
-    getRawSegmentRanges(const juce::String& trackId) noexcept override;
-    bool writeProcessedAudioTrackOffline(
-        const juce::String& trackId,
-        const float* const* processed,
-        int sampleCount,
-        int timeoutMs) noexcept override;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> getRawSegmentRanges(
+        const juce::String& trackId) noexcept override;
+    bool writeProcessedAudioTrackOffline(const juce::String& trackId, const float* const* processed,
+                                         int sampleCount, int timeoutMs) noexcept override;
     bool finish(juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;
@@ -125,20 +109,16 @@ private:
     std::int64_t punchEndSample = 0;
     std::vector<TrackWriter> tracks;
     mutable juce::CriticalSection midiLock;
-    std::array<std::atomic<std::uint64_t>, kMaximumLoopBoundaries> loopBoundaries {};
-    std::atomic<std::size_t> loopBoundaryCount { 0 };
-    std::array<CaptureSegment, kMaximumCaptureSegments> captureSegments {};
-    std::atomic<std::size_t> captureSegmentCount { 0 };
+    std::array<std::atomic<std::uint64_t>, kMaximumLoopBoundaries> loopBoundaries{};
+    std::atomic<std::size_t> loopBoundaryCount{0};
+    std::array<CaptureSegment, kMaximumCaptureSegments> captureSegments{};
+    std::atomic<std::size_t> captureSegmentCount{0};
     std::uint64_t capturedFileSamples = 0;
-    std::atomic<std::uint64_t> recordStartAudioSample {
-        std::numeric_limits<std::uint64_t>::max()
-    };
-    std::atomic<std::uint64_t> recordEndAudioSample { 0 };
-    std::atomic<std::uint64_t> recordStartTimelineSample {
-        std::numeric_limits<std::uint64_t>::max()
-    };
-    std::atomic<std::uint64_t> recordEndTimelineSample { 0 };
-    std::atomic<bool> finished { false };
+    std::atomic<std::uint64_t> recordStartAudioSample{std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> recordEndAudioSample{0};
+    std::atomic<std::uint64_t> recordStartTimelineSample{std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> recordEndTimelineSample{0};
+    std::atomic<bool> finished{false};
 };
 
-} // namespace riffra
+}  // namespace riffra

@@ -1,8 +1,9 @@
 #include <JuceHeader.h>
-#include "PluginRack.h"
 
 #include <iostream>
 #include <optional>
+
+#include "PluginRack.h"
 
 namespace {
 
@@ -35,20 +36,15 @@ juce::var describePlugin(const juce::PluginDescription& description) {
     plugin->setProperty("numOutputs", description.numOutputChannels);
     plugin->setProperty("isInstrument", description.isInstrument);
     plugin->setProperty("hasSharedContainer", description.hasSharedContainer);
-    plugin->setProperty(
-        "lastFileModifiedMs",
-        static_cast<juce::int64>(description.lastFileModTime.toMilliseconds()));
-    plugin->setProperty(
-        "lastInfoUpdatedMs",
-        static_cast<juce::int64>(description.lastInfoUpdateTime.toMilliseconds()));
+    plugin->setProperty("lastFileModifiedMs",
+                        static_cast<juce::int64>(description.lastFileModTime.toMilliseconds()));
+    plugin->setProperty("lastInfoUpdatedMs",
+                        static_cast<juce::int64>(description.lastInfoUpdateTime.toMilliseconds()));
     return juce::var(plugin);
 }
 
-juce::var makeLoadTestResult(
-    const juce::String& path,
-    bool success,
-    const juce::String& message,
-    double durationMs) {
+juce::var makeLoadTestResult(const juce::String& path, bool success, const juce::String& message,
+                             double durationMs) {
     auto* result = new juce::DynamicObject();
     result->setProperty("type", "pluginLoadTestResult");
     result->setProperty("path", path);
@@ -61,8 +57,7 @@ juce::var makeLoadTestResult(
 
 std::optional<juce::String> validateInstanceCreation(const juce::String& path) {
     riffra::PluginRack rack;
-    if (const auto loadError = rack.load(path, 44100.0, 512))
-        return loadError->message;
+    if (const auto loadError = rack.load(path, 44100.0, 512)) return loadError->message;
     rack.clear();
     return std::nullopt;
 }
@@ -84,8 +79,7 @@ int scan(const juce::String& path, bool includeLoadTest) {
 
     juce::Array<juce::var> plugins;
     for (const auto* description : descriptions)
-        if (description != nullptr)
-            plugins.add(describePlugin(*description));
+        if (description != nullptr) plugins.add(describePlugin(*description));
 
     auto* result = new juce::DynamicObject();
     result->setProperty("type", "pluginScanResult");
@@ -95,8 +89,7 @@ int scan(const juce::String& path, bool includeLoadTest) {
     if (includeLoadTest) {
         const auto loadTestStarted = juce::Time::getMillisecondCounterHiRes();
         const auto loadError = validateInstanceCreation(path);
-        const auto loadDurationMs =
-            juce::Time::getMillisecondCounterHiRes() - loadTestStarted;
+        const auto loadDurationMs = juce::Time::getMillisecondCounterHiRes() - loadTestStarted;
         result->setProperty("loadTested", loadError == std::nullopt);
         result->setProperty(
             "loadTestMessage",
@@ -104,9 +97,7 @@ int scan(const juce::String& path, bool includeLoadTest) {
         result->setProperty("loadTestDurationMs", loadDurationMs);
     }
 
-    result->setProperty(
-        "scanDurationMs",
-        juce::Time::getMillisecondCounterHiRes() - started);
+    result->setProperty("scanDurationMs", juce::Time::getMillisecondCounterHiRes() - started);
     writeJson(juce::var(result));
     return 0;
 }
@@ -114,8 +105,7 @@ int scan(const juce::String& path, bool includeLoadTest) {
 int validateLoad(const juce::String& path) {
     const auto started = juce::Time::getMillisecondCounterHiRes();
     if (!juce::File(path).exists()) {
-        writeJson(makeLoadTestResult(
-            path, false, "VST3 bundle or file does not exist.", 0.0));
+        writeJson(makeLoadTestResult(path, false, "VST3 bundle or file does not exist.", 0.0));
         return 2;
     }
 
@@ -126,12 +116,12 @@ int validateLoad(const juce::String& path) {
         return 4;
     }
 
-    writeJson(makeLoadTestResult(
-        path, true, "VST3 instance created and initialized successfully.", durationMs));
+    writeJson(makeLoadTestResult(path, true, "VST3 instance created and initialized successfully.",
+                                 durationMs));
     return 0;
 }
 
-} // namespace
+}  // namespace
 
 int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
@@ -141,10 +131,9 @@ int main(int argc, char* argv[]) {
     }
     const auto mode = juce::String(argv[1]);
     if (mode == "--help" || mode == "-h") {
-        writeJson(makeError(
-            {},
-            "Usage: riffra-plugin-scan --scan <vst3-path>\n"
-            "       riffra-plugin-scan --validate-load <vst3-path>"));
+        writeJson(makeError({},
+                            "Usage: riffra-plugin-scan --scan <vst3-path>\n"
+                            "       riffra-plugin-scan --validate-load <vst3-path>"));
         return 0;
     }
     if (argc != 3) {
@@ -152,10 +141,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const auto path = juce::String::fromUTF8(argv[2]);
-    if (mode == "--scan")
-        return scan(path, true);
-    if (mode == "--validate-load")
-        return validateLoad(path);
+    if (mode == "--scan") return scan(path, true);
+    if (mode == "--validate-load") return validateLoad(path);
     writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
     return 1;
 }

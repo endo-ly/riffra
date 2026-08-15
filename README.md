@@ -34,7 +34,7 @@
 | `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
-| `scripts/`                     | 型生成（`gen-barrel.js`）、検証（`verify.mjs`）などの開発スクリプト              |
+| `scripts/`                     | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
 | `docs/`                        | 設計・調整ドキュメント                                                           |
 
 依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
@@ -63,10 +63,10 @@
 npm install            # npm workspace の依存関係を導入
 npm run dev            # Vite のみでフロントエンド開発（ブラウザ）
 npm run dev:tauri      # Tauri アプリ全体を起動（ネイティブ音声を利用する場合はこちら）
+npm run test            # フロントエンドの全テスト
 
 npm run gen:types      # Rust 定義から TS 型を再生成（ts-rs + gen-barrel.js）
 npm run check          # 型チェック + ビルド + テスト
-npm run verify         # ルートの一括検証（--native でネイティブビルドを含む）
 
 npm run lint           # ESLint
 npm run typecheck      # tsc
@@ -74,13 +74,6 @@ npm run typecheck      # tsc
 cargo run -p riffra-cli -- --session ./project.json get-session
 cargo run -p riffra-cli -- --interactive --session ./project.json
 ```
-
-### 検証
-
-- フロントエンド: Vitest + Testing Library（`apps/desktop/src` 配下に配置）
-- Rust: `cargo test`（各 crate）
-- ネイティブ: CMake + CTest（`native/audio-engine`）
-- 一括検証: `npm run verify`
 
 ## ドキュメント
 

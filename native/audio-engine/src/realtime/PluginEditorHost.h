@@ -2,8 +2,8 @@
 
 #include <JuceHeader.h>
 
-#include <functional>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -16,10 +16,8 @@ public:
     using StateCallback = std::function<void(const juce::var&)>;
     using ParameterCallback = std::function<void(int, float)>;
 
-    explicit PluginEditorHost(
-        PluginRack& rack,
-        StateCallback stateCallback = {},
-        ParameterCallback parameterCallback = {});
+    explicit PluginEditorHost(PluginRack& rack, StateCallback stateCallback = {},
+                              ParameterCallback parameterCallback = {});
     ~PluginEditorHost();
 
     bool open(juce::String& error);
@@ -62,11 +60,11 @@ private:
     std::unique_ptr<std::atomic<float>[]> parameterValues;
     std::unique_ptr<std::atomic<bool>[]> parameterDirty;
     std::size_t parameterCapacity = 0;
-    std::atomic<bool> opaqueStateDirty { false };
-    std::atomic<bool> parameterStateDirty { false };
-    std::atomic<std::uint32_t> lastOpaqueStateChangeMs { 0 };
+    std::atomic<bool> opaqueStateDirty{false};
+    std::atomic<bool> parameterStateDirty{false};
+    std::atomic<std::uint32_t> lastOpaqueStateChangeMs{0};
     std::unique_ptr<ProcessorListener> listener;
-    StateTimer stateTimer { *this };
+    StateTimer stateTimer{*this};
     std::unique_ptr<EditorWindow> window;
 };
 

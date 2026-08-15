@@ -41,7 +41,7 @@ public:
     };
 
     /// The watchdog resolution (how often the running task is re-checked).
-    static constexpr std::chrono::milliseconds kWatchdogGranularity { 25 };
+    static constexpr std::chrono::milliseconds kWatchdogGranularity{25};
 
     /// Creates a lifecycle executor. When supplied, `dispatcher` runs each
     /// task while the worker remains responsible for sequencing and watchdog
@@ -59,10 +59,8 @@ public:
     /// one another, and a bounded state lane prevents parameter floods from
     /// delaying lifecycle work. State events are time-bounded like lifecycle
     /// tasks.
-    [[nodiscard]] StateSubmitResult submitState(
-        std::string key,
-        Task task,
-        std::chrono::milliseconds timeout);
+    [[nodiscard]] StateSubmitResult submitState(std::string key, Task task,
+                                                std::chrono::milliseconds timeout);
     /// Installs the handler invoked when a running task exceeds its timeout.
     /// The default handler terminates the process. The handler runs on the
     /// watchdog thread and must never block.
@@ -75,7 +73,7 @@ public:
 private:
     struct TimedTask {
         Task task;
-        std::chrono::milliseconds timeout { 0 };
+        std::chrono::milliseconds timeout{0};
     };
 
     void run();
@@ -94,8 +92,8 @@ private:
     bool stopping = false;
     bool running = false;
     bool currentTaskTimedOut = false;
-    std::chrono::steady_clock::time_point currentTaskStarted {};
-    std::chrono::milliseconds currentTaskTimeout { 0 };
+    std::chrono::steady_clock::time_point currentTaskStarted{};
+    std::chrono::milliseconds currentTaskTimeout{0};
     // Threads are declared after every piece of state they can observe and
     // are started in the constructor body, once the complete object exists.
     std::thread worker;

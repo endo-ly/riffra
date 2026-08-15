@@ -8,8 +8,8 @@ class TemporaryDirectory final {
 public:
     TemporaryDirectory() {
         directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
-            .getChildFile("riffra-audio-tests")
-            .getChildFile(juce::Uuid().toString());
+                        .getChildFile("riffra-audio-tests")
+                        .getChildFile(juce::Uuid().toString());
         directory.createDirectory();
     }
 
@@ -28,4 +28,4 @@ inline juce::var parseJsonFile(const juce::File& file) {
     return juce::JSON::parse(file.loadFileAsString());
 }
 
-} // namespace riffra::test
+}  // namespace riffra::test

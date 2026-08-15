@@ -252,10 +252,3 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 フロントエンドはCreativeSessionを描画し、ユーザー操作をFeature別NativeApi capabilityの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決、部分マージ、全体mutation queueを持たない。
 
 選択、パネル幅、ズーム、ダイアログ、ワークスペース、Design対象はPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。
-
-## 12. 検証
-
-- Rust 単体・結合: `cargo test`（各 crate。Core Application / Storage / ランタイム投影 / 不変条件テストを含む）
-- フロントエンド: Vitest + Testing Library
-- ネイティブ: CMake + CTest
-- 一括: `npm run verify`（`--native` でネイティブビルドを含む）

@@ -5,12 +5,8 @@
 
 namespace riffra {
 
-bool PluginChain::load(
-    const juce::var& values,
-    const double sampleRate,
-    const int blockSize,
-    juce::String& error,
-    const juce::String& runtimeRole) {
+bool PluginChain::load(const juce::var& values, const double sampleRate, const int blockSize,
+                       juce::String& error, const juce::String& runtimeRole) {
     if (!values.isArray()) {
         error = "Plugin Chain devices must be an array.";
         return false;
@@ -28,15 +24,15 @@ bool PluginChain::load(
         }
         auto rack = std::make_unique<PluginRack>();
         if (const auto loadError = rack->load(path, sampleRate, blockSize)) {
-            error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": "
-                + loadError->message;
+            error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": " +
+                    loadError->message;
             return false;
         }
         if (!rack->applyPersistedState(value, error)) {
             error = runtimeRole + " device " + id + " failed at stateApply: " + error;
             return false;
         }
-        candidate.push_back(Device { id, std::move(rack) });
+        candidate.push_back(Device{id, std::move(rack)});
     }
     devices = std::move(candidate);
     prepareBuffers(blockSize);
@@ -45,8 +41,7 @@ bool PluginChain::load(
 
 void PluginChain::prepare(const double sampleRate, const int blockSize) noexcept {
     prepareBuffers(blockSize);
-    for (auto& device : devices)
-        device.rack->prepare(sampleRate, blockSize);
+    for (auto& device : devices) device.rack->prepare(sampleRate, blockSize);
 }
 
 void PluginChain::prepareBuffers(const int blockSize) noexcept {
@@ -56,38 +51,28 @@ void PluginChain::prepareBuffers(const int blockSize) noexcept {
 }
 
 void PluginChain::reset() noexcept {
-    for (auto& device : devices)
-        device.rack->reset();
+    for (auto& device : devices) device.rack->reset();
 }
 
 void PluginChain::release() noexcept {
-    for (auto& device : devices)
-        device.rack->release();
+    for (auto& device : devices) device.rack->release();
 }
 
-void PluginChain::clear() noexcept {
-    devices.clear();
-}
+void PluginChain::clear() noexcept { devices.clear(); }
 
 void PluginChain::allNotesOff() noexcept {
-    for (auto& device : devices)
-        device.rack->allNotesOff();
+    for (auto& device : devices) device.rack->allNotesOff();
 }
 
-void PluginChain::process(
-    const float* const* inputChannels,
-    const int inputChannelCount,
-    float* const* outputChannels,
-    const int outputChannelCount,
-    const int sampleCount,
-    const juce::MidiBuffer* midi) noexcept {
+void PluginChain::process(const float* const* inputChannels, const int inputChannelCount,
+                          float* const* outputChannels, const int outputChannelCount,
+                          const int sampleCount, const juce::MidiBuffer* midi) noexcept {
     if (devices.empty()) {
         for (int channel = 0; channel < outputChannelCount; ++channel) {
-            if (outputChannels[channel] == nullptr)
-                continue;
+            if (outputChannels[channel] == nullptr) continue;
             const auto source = inputChannelCount > 0
-                ? inputChannels[std::min(channel, inputChannelCount - 1)]
-                : nullptr;
+                                    ? inputChannels[std::min(channel, inputChannelCount - 1)]
+                                    : nullptr;
             if (source != nullptr)
                 juce::FloatVectorOperations::copy(outputChannels[channel], source, sampleCount);
             else
@@ -102,36 +87,25 @@ void PluginChain::process(
         auto& target = index % 2 == 0 ? firstBuffer : secondBuffer;
         auto* const* targetChannels = last ? outputChannels : target.getArrayOfWritePointers();
         const auto targetCount = last ? outputChannelCount : target.getNumChannels();
-        devices[index].rack->process(
-            currentInput,
-            currentInputCount,
-            targetChannels,
-            targetCount,
-            sampleCount,
-            index == 0 ? midi : nullptr);
+        devices[index].rack->process(currentInput, currentInputCount, targetChannels, targetCount,
+                                     sampleCount, index == 0 ? midi : nullptr);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }
 }
 
 bool PluginChain::setBypassed(const juce::String& deviceId, const bool bypassed) noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
-        return device.id == deviceId;
-    });
-    if (found == devices.end())
-        return false;
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
+    if (found == devices.end()) return false;
     found->rack->setBypassed(bypassed);
     return true;
 }
 
-bool PluginChain::setParameter(
-    const juce::String& deviceId,
-    const int parameterIndex,
-    const float value,
-    juce::String& error) noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
-        return device.id == deviceId;
-    });
+bool PluginChain::setParameter(const juce::String& deviceId, const int parameterIndex,
+                               const float value, juce::String& error) noexcept {
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
     if (found == devices.end()) {
         error = "Plugin Chain device was not found.";
         return false;
@@ -145,9 +119,8 @@ bool PluginChain::applyState(const juce::var& values, juce::String& error) noexc
         return false;
     }
     for (const auto& value : *values.getArray()) {
-        if (!value.isObject()
-            || value.getProperty("kind", {}).toString() != "plugin"
-            || static_cast<bool>(value.getProperty("disabledPlaceholder", false)))
+        if (!value.isObject() || value.getProperty("kind", {}).toString() != "plugin" ||
+            static_cast<bool>(value.getProperty("disabledPlaceholder", false)))
             continue;
         const auto deviceId = value.getProperty("id", {}).toString();
         auto* rack = findDevice(deviceId);
@@ -155,15 +128,12 @@ bool PluginChain::applyState(const juce::var& values, juce::String& error) noexc
             error = "Plugin Chain state references an unknown device.";
             return false;
         }
-        if (!rack->applyPersistedState(value, error))
-            return false;
+        if (!rack->applyPersistedState(value, error)) return false;
     }
     return true;
 }
 
-juce::var PluginChain::persistedState(
-    const juce::String& deviceId,
-    juce::String& error) const {
+juce::var PluginChain::persistedState(const juce::String& deviceId, juce::String& error) const {
     const auto* rack = findDevice(deviceId);
     if (rack == nullptr) {
         error = "Plugin Chain device was not found.";
@@ -174,35 +144,28 @@ juce::var PluginChain::persistedState(
 
 int PluginChain::latencySamples() const noexcept {
     auto total = 0;
-    for (const auto& device : devices)
-        total += std::max(0, device.rack->latencySamples());
+    for (const auto& device : devices) total += std::max(0, device.rack->latencySamples());
     return total;
 }
 
 int PluginChain::tailSamples() const noexcept {
     std::int64_t total = 0;
-    for (const auto& device : devices)
-        total += std::max(0, device.rack->tailSamples());
-    return static_cast<int>(std::min<std::int64_t>(
-        total, std::numeric_limits<int>::max()));
+    for (const auto& device : devices) total += std::max(0, device.rack->tailSamples());
+    return static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
 }
 
-int PluginChain::size() const noexcept {
-    return static_cast<int>(devices.size());
-}
+int PluginChain::size() const noexcept { return static_cast<int>(devices.size()); }
 
 PluginRack* PluginChain::findDevice(const juce::String& deviceId) noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
-        return device.id == deviceId;
-    });
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
     return found != devices.end() ? found->rack.get() : nullptr;
 }
 
 const PluginRack* PluginChain::findDevice(const juce::String& deviceId) const noexcept {
-    const auto found = std::find_if(devices.begin(), devices.end(), [&](const Device& device) {
-        return device.id == deviceId;
-    });
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
     return found != devices.end() ? found->rack.get() : nullptr;
 }
 
-} // namespace riffra
+}  // namespace riffra

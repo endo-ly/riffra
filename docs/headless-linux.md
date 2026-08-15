@@ -1,6 +1,6 @@
 # ヘッドレス Linux 対応
 
-本書は、現在利用できるヘッドレス操作の範囲と、Linux上でレンダーやリアルタイム音声を扱うための将来方針を分けて説明する。
+本書は、Linuxで利用できるセッション編集とNative audio engineの境界、およびその検証方法を説明する。
 
 ## 現在の実装
 
@@ -62,31 +62,33 @@ cargo run -p riffra-cli -- --interactive --session ./project.json
 
 この分離により、CLIはオーディオデバイスやGUIのない環境でも、セッションの読み出しと最小限の制作状態編集を実行できる。CLIが外部プラグインをスキャンしたり、音声デバイスを開いたりすることはない。
 
-## 将来のLinux対応
+## Linux Hostの境界
 
-Linux上で制作状態の編集を超えた処理を提供する場合も、まずCoreのApplication APIとHostの境界を分ける。
+Linuxのセッション編集は`riffra-core`と`riffra-cli`が担当する。オーディオ処理はNative audio engineを別プロセスとして扱い、CLIへ音声デバイスの所有を追加しない。
 
 ### オフラインレンダー
 
 CLIからレンダーを呼び出す必要が生じた場合は、現在のCLIコマンドへデスクトップ専用の処理を直接追加せず、CoreのRender Portとレンダーワーカーを利用するHost側の経路を追加する。音声デバイスを初期化しないレンダー経路として成立させ、プラグインを含む未対応トラックは成功扱いにせず、明示的なエラーとして返す。
 
-### Linuxのリアルタイム音声
+### Native audio engine
 
-再生、録音、MIDI、デバイス管理をLinuxで提供する場合は、リアルタイム音声HostへALSAまたはJACKの実装を追加する。CLIのセッション編集と音声デバイスの所有を同じプロセスへ混在させない。
+LinuxのNative audio engineはALSAを使用する。WindowsのASIO/WASAPIとはオーディオデバイスの実装を分け、プロセス境界とJSON Linesの契約は共通にする。
+
+Linuxでは物理オーディオデバイスを持たない環境でも、CMakeのビルド、CTest、VST3のスキャンとランタイム検証を実行できる。実機デバイスの入出力は、ALSAデバイスを備えた環境で別途検証する。
 
 ### プロトコルの拡張
 
 レンダーや長時間ジョブをCLIから操作する段階で、必要な要求のバージョン管理、パラメータの名前空間、非同期イベント、診断情報を追加する。その時点で実装した契約だけを [docs/ipc.md](ipc.md) とCLIのプロトコル定義へ反映する。
 
-## Linuxでの検証方針
+## Linuxでの検証
 
-現時点でLinux Hostとして検証対象にできるのは、`riffra-core` と `riffra-cli` のセッション操作である。オフラインレンダーとリアルタイム音声をLinuxで検証する段階では、音声デバイスやX Serverを必要としないレンダー経路と、ALSA/JACKを使うリアルタイム経路を別々にビルド・テストする。
+Linuxでは、セッション操作とNative audio engineを別々の検証対象として扱う。CIでは、`riffra-core`、`riffra-cli`、Native audio engineのビルドとテストを実行する。Native audio engineのデバイスオープンは物理デバイスを必要とするため、CIのCTestには含めない。
 
 ```bash
 # CLI
 cargo test -p riffra-cli
 cargo run -p riffra-cli -- --session ./project.json get-session
 
-# 将来のレンダーHost検証時に追加する経路
-cmake -B build-linux -S native/audio-engine -DCMAKE_BUILD_TYPE=Release
+# Native audio engine
+./native/audio-engine/build.sh Debug
 ```

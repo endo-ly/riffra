@@ -1,13 +1,14 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "AudioSafetyDsp.h"
-#include "ArrangeRecordingSession.h"
-#include "TimelineEngine.h"
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <memory>
+
+#include "ArrangeRecordingSession.h"
+#include "AudioSafetyDsp.h"
+#include "TimelineEngine.h"
 
 namespace riffra {
 
@@ -29,33 +30,26 @@ public:
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept;
     [[nodiscard]] bool isFeedbackSuspected() const noexcept;
     [[nodiscard]] double getSampleRate() const noexcept;
-    bool startArrangeRecording(
-        const juce::File& directory,
-        TimelineEngine& timeline,
-        juce::String& error);
+    bool startArrangeRecording(const juce::File& directory, TimelineEngine& timeline,
+                               juce::String& error);
     bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error);
     bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
-    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain, bool loop, juce::String& error, int voiceKey = -1);
+    bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
+                      bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
-    bool switchPreviewBuffer(
-        int voiceKey,
-        const juce::AudioBuffer<float>& buffer,
-        juce::String& error);
+    bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
+                             juce::String& error);
     void startSynthNote(int note, float velocity) noexcept;
     void stopSynthNote(int note) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
 
-
     void audioDeviceIOCallbackWithContext(
-        const float* const* inputChannelData,
-        int numInputChannels,
-        float* const* outputChannelData,
-        int numOutputChannels,
-        int numSamples,
+        const float* const* inputChannelData, int numInputChannels, float* const* outputChannelData,
+        int numOutputChannels, int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
@@ -66,17 +60,15 @@ public:
 private:
     static constexpr float kMinimumGainDb = -90.0f;
     static void holdPeak(std::atomic<float>& peak, float value) noexcept;
-    void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
+    void mixPreview(float* const* outputChannelData, int numOutputChannels,
+                    int numSamples) noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept;
 
     /// Shared epilogue for the silenced paths (emergency-mute and feedback
     /// detection). Clears the output bus, holds the input peak, and zeroes the
     /// output peak so the two call sites cannot drift apart.
-    void silenceAndCommit(
-        float* const* outputChannelData,
-        int numOutputChannels,
-        int numSamples,
-        float rawInputPeak) noexcept;
+    void silenceAndCommit(float* const* outputChannelData, int numOutputChannels, int numSamples,
+                          float rawInputPeak) noexcept;
 
     /// Panics every sound source: the built-in synth, the arranged
     /// instrument racks, and their live companions. Used by the emergency
@@ -95,26 +87,25 @@ private:
     /// the audio thread.
     static float lookupSine(float phase) noexcept;
 
-
     static constexpr float kMaximumGainDb = 0.0f;
     static constexpr float kLimiterCeiling = 0.98f;
     static constexpr double kFadeInSeconds = 0.5;
 
-    std::atomic<bool> emergencyMuted { true };
-    std::atomic<bool> deviceFaulted { false };
-    std::atomic<float> targetGainLinear { juce::Decibels::decibelsToGain(-18.0f) };
-    std::atomic<float> masterGainDb { -18.0f };
-    std::atomic<int> inputChannel { 0 };
-    mutable std::atomic<float> inputPeak { 0.0f };
-    mutable std::atomic<float> outputPeak { 0.0f };
-    std::atomic<std::uint64_t> invalidSamples { 0 };
-    std::atomic<bool> feedbackSuspected { false };
-    std::atomic<double> activeSampleRate { 0.0 };
+    std::atomic<bool> emergencyMuted{true};
+    std::atomic<bool> deviceFaulted{false};
+    std::atomic<float> targetGainLinear{juce::Decibels::decibelsToGain(-18.0f)};
+    std::atomic<float> masterGainDb{-18.0f};
+    std::atomic<int> inputChannel{0};
+    mutable std::atomic<float> inputPeak{0.0f};
+    mutable std::atomic<float> outputPeak{0.0f};
+    std::atomic<std::uint64_t> invalidSamples{0};
+    std::atomic<bool> feedbackSuspected{false};
+    std::atomic<double> activeSampleRate{0.0};
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
-    std::atomic<bool> arrangeRecordingCancelled { false };
+    std::atomic<bool> arrangeRecordingCancelled{false};
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {
         juce::AudioBuffer<float> buffer;
@@ -151,4 +142,4 @@ private:
     FeedbackDetector feedbackDetector;
 };
 
-} // namespace riffra
+}  // namespace riffra

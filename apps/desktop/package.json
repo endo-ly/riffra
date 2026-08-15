@@ -8,8 +8,7 @@
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri",
-    "dev:tauri": "npm run tauri dev",
+    "dev:tauri": "tauri dev",
     "gen:types": "cargo test --manifest-path ../../Cargo.toml -p riffra-desktop export_types && node ../../scripts/gen-barrel.js",
     "check": "npm run build && npm run test",
     "typecheck": "tsc -b"

@@ -10,8 +10,7 @@
     "dev": "npm run dev --workspace @riffra/desktop",
     "build": "npm run build --workspace @riffra/desktop",
     "preview": "npm run preview --workspace @riffra/desktop",
-    "test": "npm run test --workspace @riffra/desktop",
-    "tauri": "npm run tauri --workspace @riffra/desktop",
+    "test": "npm run test --workspace @riffra/desktop --",
     "dev:tauri": "npm run dev:tauri --workspace @riffra/desktop",
     "gen:types": "npm run gen:types --workspace @riffra/desktop",
     "check": "npm run check --workspace @riffra/desktop",
@@ -21,8 +20,6 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "knip": "knip --tsConfig apps/desktop/tsconfig.app.json --include=files,dependencies --no-config-hints",
-    "verify": "node scripts/verify.mjs",
-    "verify:native": "node scripts/verify.mjs --native",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -18,31 +19,22 @@ public:
         float value = 0.0f;
     };
 
-    [[nodiscard]] static bool midiRouteMatches(
-        const juce::String& configuredDeviceId,
-        int configuredChannel,
-        const juce::String& sourceDeviceId,
-        int messageChannel) noexcept;
-    [[nodiscard]] static const float* audioInputSource(
-        int configuredChannel,
-        const float* const* physicalInputChannels,
-        int physicalInputChannelCount) noexcept;
-    [[nodiscard]] static bool shouldMonitorAudioInput(
-        const juce::String& monitoring,
-        bool armed,
-        bool instrument) noexcept;
-    [[nodiscard]] static std::int64_t compensationDelay(
-        std::int64_t maximumPluginDelay,
-        std::int64_t trackPluginDelay) noexcept;
-    [[nodiscard]] static std::pair<int, int> captureIntersection(
-        int chunkStart,
-        int chunkSamples,
-        int captureStart,
-        int captureSamples) noexcept;
-    [[nodiscard]] static float automationValueAt(
-        const std::vector<AutomationPoint>& points,
-        std::int64_t sample,
-        float fallback) noexcept;
+    [[nodiscard]] static bool midiRouteMatches(const juce::String& configuredDeviceId,
+                                               int configuredChannel,
+                                               const juce::String& sourceDeviceId,
+                                               int messageChannel) noexcept;
+    [[nodiscard]] static const float* audioInputSource(int configuredChannel,
+                                                       const float* const* physicalInputChannels,
+                                                       int physicalInputChannelCount) noexcept;
+    [[nodiscard]] static bool shouldMonitorAudioInput(const juce::String& monitoring, bool armed,
+                                                      bool instrument) noexcept;
+    [[nodiscard]] static std::int64_t compensationDelay(std::int64_t maximumPluginDelay,
+                                                        std::int64_t trackPluginDelay) noexcept;
+    [[nodiscard]] static std::pair<int, int> captureIntersection(int chunkStart, int chunkSamples,
+                                                                 int captureStart,
+                                                                 int captureSamples) noexcept;
+    [[nodiscard]] static float automationValueAt(const std::vector<AutomationPoint>& points,
+                                                 std::int64_t sample, float fallback) noexcept;
 };
 
-} // namespace riffra
+}  // namespace riffra

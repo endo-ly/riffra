@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+
 #include <cstdint>
 #include <vector>
 
@@ -9,32 +10,23 @@ namespace riffra {
 class ArrangementCaptureSink {
 public:
     virtual ~ArrangementCaptureSink() = default;
-    virtual bool beginAudioTrackCapture(
-        const juce::String& trackId,
-        std::uint64_t audioClockStartSample,
-        std::uint64_t timelineStartSample) noexcept = 0;
-    virtual void writeAudioTrack(
-        const juce::String& trackId,
-        const float* raw,
-        int rawSampleCount,
-        const float* const* processed,
-        int processedSampleCount) noexcept = 0;
-    virtual bool endAudioTrackCapture(
-        const juce::String& trackId,
-        std::uint64_t audioClockEndSample,
-        std::uint64_t timelineEndSample) noexcept = 0;
+    virtual bool beginAudioTrackCapture(const juce::String& trackId,
+                                        std::uint64_t audioClockStartSample,
+                                        std::uint64_t timelineStartSample) noexcept = 0;
+    virtual void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
+                                 const float* const* processed,
+                                 int processedSampleCount) noexcept = 0;
+    virtual bool endAudioTrackCapture(const juce::String& trackId,
+                                      std::uint64_t audioClockEndSample,
+                                      std::uint64_t timelineEndSample) noexcept = 0;
     virtual bool completeAudioTrackTail(const juce::String& trackId) noexcept = 0;
     virtual void markLoopBoundary(std::uint64_t audioSample) noexcept = 0;
-    virtual void writeMidiTrack(
-        const juce::String& trackId,
-        const juce::String& sourceDeviceId,
-        const juce::MidiMessage& message,
-        std::uint64_t audioSample) noexcept = 0;
-    virtual void setCaptureRange(
-        std::uint64_t startAudioSample,
-        std::uint64_t endAudioSample,
-        std::uint64_t startTimelineSample,
-        std::uint64_t endTimelineSample) noexcept = 0;
+    virtual void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
+                                const juce::MidiMessage& message,
+                                std::uint64_t audioSample) noexcept = 0;
+    virtual void setCaptureRange(std::uint64_t startAudioSample, std::uint64_t endAudioSample,
+                                 std::uint64_t startTimelineSample,
+                                 std::uint64_t endTimelineSample) noexcept = 0;
 
     /// Flush the raw writer and prepare for offline reading.
     /// Returns the path to the raw WAV file, or empty on failure.
@@ -44,8 +36,8 @@ public:
     }
 
     /// Returns the raw file segment boundaries [start, end) for a track.
-    virtual std::vector<std::pair<std::uint64_t, std::uint64_t>>
-    getRawSegmentRanges(const juce::String& trackId) noexcept {
+    virtual std::vector<std::pair<std::uint64_t, std::uint64_t>> getRawSegmentRanges(
+        const juce::String& trackId) noexcept {
         juce::ignoreUnused(trackId);
         return {};
     }
@@ -53,14 +45,12 @@ public:
     /// Offline processed audio track writer used after loop recording stops.
     /// Unlike writeAudioTrack(), this method may wait for the writer FIFO,
     /// and returns true only when all samples are successfully committed.
-    virtual bool writeProcessedAudioTrackOffline(
-        const juce::String& trackId,
-        const float* const* processed,
-        int sampleCount,
-        int timeoutMs) noexcept {
+    virtual bool writeProcessedAudioTrackOffline(const juce::String& trackId,
+                                                 const float* const* processed, int sampleCount,
+                                                 int timeoutMs) noexcept {
         juce::ignoreUnused(trackId, processed, sampleCount, timeoutMs);
         return false;
     }
 };
 
-} // namespace riffra
+}  // namespace riffra

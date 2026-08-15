@@ -4,8 +4,10 @@ This sidecar owns the real-time timing domain. The Tauri process supervises it a
 
 Current executable modes:
 
-- `riffra-audio.exe --probe` enumerates ASIO/WASAPI device types without opening an audio stream.
-- `riffra-audio.exe --serve` opens the default device in emergency-mute state and accepts one JSON command per stdin line.
+- `riffra-audio --probe` enumerates platform audio device types without opening an audio stream.
+- `riffra-audio --serve` opens the default device in emergency-mute state and accepts one JSON command per stdin line.
+
+Windows uses ASIO and WASAPI. Linux uses ALSA.
 
 The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed on a software-monitored input. Rust releases startup mute after this safety boundary; a failed VST graph is kept passive and reported separately from device safety. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
 
@@ -45,10 +47,22 @@ The engine is built with CMake. Use the wrapper script for your platform:
 .\build.ps1 -Configuration Debug
 ```
 
+The Windows wrapper defaults to the `Visual Studio 17 2022` generator and the
+`x64` architecture. Override either value when using another installed
+toolchain, for example:
+
+```powershell
+.\build.ps1 -Configuration Debug -Generator Ninja
+.\build.ps1 -Configuration Debug -Generator 'Visual Studio 16 2019' -Architecture x64
+```
+
 ```bash
 # macOS / Linux
 ./build.sh Debug
 ```
+
+The sidecar target triple follows the host platform by default. When
+cross-compiling, pass `-DRIFFRA_TARGET_TRIPLE=<triple>` to CMake.
 
 Both scripts do the following:
 
@@ -59,7 +73,3 @@ Both scripts do the following:
 
 This directory can be built independently of npm. The Tauri application expects
 the sidecars to exist under `apps/desktop/src-tauri/binaries/` before it starts.
-
-For a full project verification that also runs TypeScript and Rust checks, run
-`npm run verify:native` from the repository root. See the root
-[README.md](../../README.md) for the complete workflow.

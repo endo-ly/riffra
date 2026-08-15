@@ -1,10 +1,10 @@
 #pragma once
 
-#include "ArrangementCaptureSink.h"
-#include "PluginChain.h"
-
 #include <atomic>
 #include <cstdint>
+
+#include "ArrangementCaptureSink.h"
+#include "PluginChain.h"
 
 namespace riffra {
 
@@ -64,44 +64,28 @@ public:
     [[nodiscard]] SinkLease acquireSink() noexcept;
 
     void resetTrack(RecordingCaptureTrackState& track) noexcept;
-    [[nodiscard]] bool hasCaptureWork(
-        const RecordingCaptureTrackState& track) const noexcept;
-    [[nodiscard]] bool beginTrackCapture(
-        const juce::String& trackId,
-        RecordingCaptureTrackState& track,
-        std::uint64_t audioStartSample,
-        std::uint64_t timelineStartSample) noexcept;
-    [[nodiscard]] bool endTrackCapture(
-        const juce::String& trackId,
-        const RecordingCaptureTrackState& track) noexcept;
-    [[nodiscard]] bool beginTailDrain(
-        const juce::String& trackId,
-        RecordingCaptureTrackState& track,
-        std::int64_t pluginDelaySamples,
-        std::int64_t pluginTailSamples) noexcept;
-    [[nodiscard]] bool drainTail(
-        const juce::String& trackId,
-        RecordingCaptureTrackState& track,
-        juce::AudioBuffer<float>& silentInput,
-        int sampleCount) noexcept;
+    [[nodiscard]] bool hasCaptureWork(const RecordingCaptureTrackState& track) const noexcept;
+    [[nodiscard]] bool beginTrackCapture(const juce::String& trackId,
+                                         RecordingCaptureTrackState& track,
+                                         std::uint64_t audioStartSample,
+                                         std::uint64_t timelineStartSample) noexcept;
+    [[nodiscard]] bool endTrackCapture(const juce::String& trackId,
+                                       const RecordingCaptureTrackState& track) noexcept;
+    [[nodiscard]] bool beginTailDrain(const juce::String& trackId,
+                                      RecordingCaptureTrackState& track,
+                                      std::int64_t pluginDelaySamples,
+                                      std::int64_t pluginTailSamples) noexcept;
+    [[nodiscard]] bool drainTail(const juce::String& trackId, RecordingCaptureTrackState& track,
+                                 juce::AudioBuffer<float>& silentInput, int sampleCount) noexcept;
 
-    void writeAudioTrack(
-        const juce::String& trackId,
-        const float* raw,
-        int rawSampleCount,
-        const float* const* processed,
-        int processedSampleCount) noexcept;
+    void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
+                         const float* const* processed, int processedSampleCount) noexcept;
     void markLoopBoundary(std::uint64_t audioSample) noexcept;
-    void writeMidiTrack(
-        const juce::String& trackId,
-        const juce::String& sourceDeviceId,
-        const juce::MidiMessage& message,
-        std::uint64_t audioSample) noexcept;
-    void setCaptureRange(
-        std::uint64_t startAudioSample,
-        std::uint64_t endAudioSample,
-        std::uint64_t startTimelineSample,
-        std::uint64_t endTimelineSample) noexcept;
+    void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
+                        const juce::MidiMessage& message, std::uint64_t audioSample) noexcept;
+    void setCaptureRange(std::uint64_t startAudioSample, std::uint64_t endAudioSample,
+                         std::uint64_t startTimelineSample,
+                         std::uint64_t endTimelineSample) noexcept;
 
     [[nodiscard]] unsigned int drainingTailTracks() const noexcept {
         return drainingTailTracksCount.load(std::memory_order_acquire);
@@ -113,14 +97,12 @@ public:
     void resetDrainingTailTracks() noexcept;
 
 private:
-    void incrementError() noexcept {
-        captureErrorCount.fetch_add(1, std::memory_order_relaxed);
-    }
+    void incrementError() noexcept { captureErrorCount.fetch_add(1, std::memory_order_relaxed); }
 
-    std::atomic<ArrangementCaptureSink*> recordingSink { nullptr };
-    std::atomic<unsigned int> recordingSinkReaders { 0 };
-    std::atomic<unsigned int> drainingTailTracksCount { 0 };
-    std::atomic<std::uint64_t> captureErrorCount { 0 };
+    std::atomic<ArrangementCaptureSink*> recordingSink{nullptr};
+    std::atomic<unsigned int> recordingSinkReaders{0};
+    std::atomic<unsigned int> drainingTailTracksCount{0};
+    std::atomic<std::uint64_t> captureErrorCount{0};
 };
 
-} // namespace riffra
+}  // namespace riffra
