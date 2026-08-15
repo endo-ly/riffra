@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
 import {
   SNAP_GRID_OPTIONS,
@@ -13,9 +13,20 @@ import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musica
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { toast } from '@/shared/toasts';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
+import { Icon } from '@/shared/ui/primitives';
+import { MidiEditorRuler } from './MidiEditorRuler';
+import { MidiVelocityLane } from './MidiVelocityLane';
 import styles from './MidiEditorPanel.module.css';
 
 type MidiEditResult = void | PromiseLike<CreativeSession | null>;
+type MidiEditorTool = 'pointer' | 'draw';
+interface MidiNoteInput {
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  velocity: number;
+  channel: number;
+}
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
@@ -25,18 +36,48 @@ interface MidiEditorPanelProps {
     clipId: string,
     updates: { noteId: string; patch: Partial<MidiNote> }[],
   ) => void | PromiseLike<CreativeSession | null>;
-  onRemoveNote?: (clipId: string, noteId: string) => void;
-  onAddNote?: (clipId: string, startTick: number, pitch: number) => void;
+  onRemoveNotes: (clipId: string, noteIds: string[]) => MidiEditResult;
+  onAddNote?: (
+    clipId: string,
+    startTick: number,
+    pitch: number,
+    durationTicks: number,
+    velocity: number,
+    channel: number,
+  ) => MidiEditResult;
+  onInsertNotes?: (clipId: string, notes: MidiNoteInput[]) => MidiEditResult;
   onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => MidiEditResult;
-  onDuplicateNotes?: (clipId: string, noteIds: string[], offsetTicks: number) => void;
+  onDuplicateNotes?: (clipId: string, noteIds: string[], offsetTicks: number) => MidiEditResult;
+  playheadTick?: number;
+  onSeek?: (tick: number) => void;
+  previewAvailable?: boolean;
+  onSendMidi?: (trackId: string, bytes: number[]) => Promise<unknown>;
+  onPanicMidi?: (trackId: string) => Promise<unknown>;
 }
 
 const PITCH_HIGH = 128;
 const PITCH_LOW = 0;
 const EMPTY_NOTES: MidiNote[] = [];
 
+function pitchFromClientY(
+  clientY: number,
+  boundsTop: number,
+  rowHeight: number,
+  clampToRange = false,
+) {
+  const row = Math.floor((clientY - boundsTop) / rowHeight);
+  const pitch = PITCH_HIGH - 1 - row;
+  if (clampToRange) return Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, pitch));
+  return pitch >= PITCH_LOW && pitch < PITCH_HIGH ? pitch : null;
+}
+
+function pitchRowTop(pitch: number, rowHeight: number) {
+  return (PITCH_HIGH - pitch - 1) * rowHeight;
+}
+
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
-  const { clip, onRemoveNote } = props;
+  const { clip } = props;
+  const { onPanicMidi } = props;
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const [dragging, setDragging] = useState<{
     gestureId: number;
@@ -44,10 +85,21 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     previewNotes: Record<string, MidiNote>;
     awaitingCanonical: boolean;
   } | null>(null);
+  const [tool, setTool] = useState<MidiEditorTool>('pointer');
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [velocityDraft, setVelocityDraft] = useState(96);
+  const [lastUsedVelocity, setLastUsedVelocity] = useState(96);
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
+  const [rowHeight, setRowHeight] = useState(12);
+  const [horizontalScrollLeft, setHorizontalScrollLeft] = useState(0);
+  const [previewEnabled, setPreviewEnabled] = useState(true);
   const [marquee, setMarquee] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [drawPreview, setDrawPreview] = useState<{
     left: number;
     top: number;
     width: number;
@@ -59,9 +111,13 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     noteId: string;
   } | null>(null);
   const dragGestureRef = useRef(0);
+  const editorRef = useRef<HTMLDivElement>(null);
   const laneViewportRef = useRef<HTMLDivElement>(null);
   const centeredClipIdRef = useRef<string | undefined>(undefined);
-  const rowHeight = 12;
+  const previewHeldNotesRef = useRef<Set<number>>(new Set());
+  const clipboardRef = useRef<{
+    notes: (Omit<MidiNoteInput, 'startTick'> & { relativeStartTick: number })[];
+  } | null>(null);
   const clipId = clip?.id;
   const hasClip = clip !== null;
   const clipNoteCenter = clip?.notes.length
@@ -69,9 +125,21 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     : 60;
   const visibleTicks = Math.max(props.clip?.durationTicks ?? 1920, 1920);
   const laneHeight = (PITCH_HIGH - PITCH_LOW) * rowHeight;
+  const velocityLaneHeight = 88;
+  const laneWidth = visibleTicks * pixelsPerTick;
+  const canvasWidth = 48 + laneWidth;
   const beatTicks = ticksPerBeat(props.timebase);
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
+  const subdivisionLineTicks = useMemo(() => {
+    if (snapTicks <= 0) return [];
+    const pixelsPerSubdivision = snapTicks * pixelsPerTick;
+    const stride = Math.max(1, Math.ceil(8 / Math.max(1, pixelsPerSubdivision)));
+    const step = snapTicks * stride;
+    return Array.from({ length: Math.ceil(visibleTicks / step) }, (_, index) => index * step)
+      .filter((tick) => tick > 0)
+      .filter((tick) => tick % beatTicks !== 0 && tick % barTicks !== 0);
+  }, [barTicks, beatTicks, pixelsPerTick, snapTicks, visibleTicks]);
 
   const notes = props.clip?.notes ?? EMPTY_NOTES;
   const selectedNotes = useMemo(
@@ -88,17 +156,233 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     [],
   );
 
+  const previewTrackId = clip?.trackId ?? null;
+  const previewCanSend = Boolean(
+    previewEnabled && props.previewAvailable && previewTrackId && props.onSendMidi,
+  );
+
+  const releasePreviewNotes = useCallback(() => {
+    if (!previewTrackId || previewHeldNotesRef.current.size === 0) return;
+    previewHeldNotesRef.current.clear();
+    void onPanicMidi?.(previewTrackId);
+  }, [onPanicMidi, previewTrackId]);
+
   useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete' || !clip || selectedNoteIds.length === 0) return;
-      if (isEditableTarget(event.target)) return;
-      event.preventDefault();
-      for (const noteId of selectedNoteIds) onRemoveNote?.(clip.id, noteId);
-      setSelectedNoteIds([]);
+    return releasePreviewNotes;
+  }, [clipId, previewEnabled, props.previewAvailable, releasePreviewNotes]);
+
+  const previewNoteOn = (pitch: number) => {
+    if (!previewCanSend || !previewTrackId || previewHeldNotesRef.current.has(pitch)) return;
+    previewHeldNotesRef.current.add(pitch);
+    void props.onSendMidi?.(previewTrackId, [0x90, pitch, lastUsedVelocity]);
+  };
+
+  const previewNoteOff = (pitch: number) => {
+    if (!previewTrackId || !previewHeldNotesRef.current.delete(pitch)) return;
+    void props.onSendMidi?.(previewTrackId, [0x80, pitch, 0]);
+  };
+
+  const applyHorizontalZoom = useCallback(
+    (next: number, clientX?: number) => {
+      const bounded = Math.min(1, Math.max(0.05, next));
+      const viewport = laneViewportRef.current;
+      if (!viewport) {
+        setPixelsPerTick(bounded);
+        return;
+      }
+      const bounds = viewport.getBoundingClientRect();
+      const cursor =
+        clientX === undefined
+          ? viewport.clientWidth / 2
+          : Math.max(0, Math.min(viewport.clientWidth, clientX - bounds.left));
+      const tick = Math.max(0, (viewport.scrollLeft + cursor - 48) / pixelsPerTick);
+      setPixelsPerTick(bounded);
+      requestAnimationFrame(() => {
+        viewport.scrollLeft = Math.max(0, 48 + tick * bounded - cursor);
+      });
+    },
+    [pixelsPerTick],
+  );
+
+  const applyVerticalZoom = useCallback(
+    (next: number) => {
+      const bounded = Math.min(24, Math.max(8, next));
+      const viewport = laneViewportRef.current;
+      if (!viewport) {
+        setRowHeight(bounded);
+        return;
+      }
+      const centerPitch =
+        PITCH_HIGH - 1 - (viewport.scrollTop + viewport.clientHeight / 2) / rowHeight;
+      setRowHeight(bounded);
+      requestAnimationFrame(() => {
+        viewport.scrollTop = Math.max(
+          0,
+          (PITCH_HIGH - 1 - centerPitch) * bounded - viewport.clientHeight / 2,
+        );
+      });
+    },
+    [rowHeight],
+  );
+
+  const removeSelectedNotes = (noteIds = selectedNoteIds): MidiEditResult => {
+    if (!clip || noteIds.length === 0) return;
+    const uniqueIds = [...new Set(noteIds)];
+    setSelectedNoteIds([]);
+    return props.onRemoveNotes(clip.id, uniqueIds);
+  };
+
+  const copySelectedNotes = (): boolean => {
+    if (!selectedNotes.length) return false;
+    const anchor = Math.min(...selectedNotes.map((note) => note.startTick));
+    clipboardRef.current = {
+      notes: selectedNotes.map((note) => ({
+        pitch: note.note,
+        relativeStartTick: note.startTick - anchor,
+        durationTicks: note.durationTicks,
+        velocity: note.velocity,
+        channel: note.channel,
+      })),
     };
-    window.addEventListener('keydown', keydown);
-    return () => window.removeEventListener('keydown', keydown);
-  }, [clip, onRemoveNote, selectedNoteIds]);
+    return true;
+  };
+
+  const pasteNotes = (): MidiEditResult => {
+    if (!clip || !clipboardRef.current || !props.onInsertNotes) return;
+    const anchor = Math.max(0, Math.round(props.playheadTick ?? 0));
+    const beforeIds = new Set(clip.notes.map((note) => note.id));
+    const inputs = clipboardRef.current.notes.map(({ relativeStartTick, ...note }) => ({
+      ...note,
+      startTick: anchor + relativeStartTick,
+    }));
+    const operation = props.onInsertNotes(clip.id, inputs);
+    if (operation === undefined) return;
+    void Promise.resolve(operation).then((next) => {
+      if (!next) return;
+      const nextClip = next.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
+      if (!nextClip) return;
+      setSelectedNoteIds(
+        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
+      );
+    });
+    return operation;
+  };
+
+  const duplicateSelectedNotes = (): MidiEditResult => {
+    if (!clip || selectedNotes.length === 0) return;
+    const start = Math.min(...selectedNotes.map((note) => note.startTick));
+    const end = Math.max(
+      ...selectedNotes.map((note) => note.startTick + Math.max(1, note.durationTicks)),
+    );
+    return props.onDuplicateNotes?.(clip.id, selectedNoteIds, Math.max(1, end - start));
+  };
+
+  const nudgeSelectedNotes = (
+    direction: 'left' | 'right' | 'up' | 'down',
+    pitchStep = 1,
+  ): MidiEditResult => {
+    if (!clip || selectedNotes.length === 0 || !props.onUpdateNotes) return;
+    const timeStep = snapTicks || beatTicks;
+    const requestedPitchDelta =
+      direction === 'up' ? pitchStep : direction === 'down' ? -pitchStep : 0;
+    const lowestSelectedPitch = Math.min(...selectedNotes.map((note) => note.note));
+    const highestSelectedPitch = Math.max(...selectedNotes.map((note) => note.note));
+    const pitchDelta =
+      requestedPitchDelta > 0
+        ? Math.min(requestedPitchDelta, PITCH_HIGH - 1 - highestSelectedPitch)
+        : Math.max(requestedPitchDelta, PITCH_LOW - lowestSelectedPitch);
+    const timeDelta = direction === 'left' ? -timeStep : direction === 'right' ? timeStep : 0;
+    if (pitchDelta === 0 && timeDelta === 0) return;
+    return props.onUpdateNotes(
+      clip.id,
+      selectedNotes.map((note) => ({
+        noteId: note.id,
+        patch: {
+          startTick: Math.max(0, note.startTick + timeDelta),
+          note: Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, note.note + pitchDelta)),
+        },
+      })),
+    );
+  };
+
+  const addNoteAt = (
+    lane: HTMLElement,
+    clientX: number,
+    clientY: number,
+    durationTicks = snapTicks || beatTicks,
+  ): MidiEditResult => {
+    if (!clip || !props.onAddNote) return;
+    const bounds = lane.getBoundingClientRect();
+    const rawTick = (clientX - bounds.left) / pixelsPerTick;
+    const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
+    if (rawPitch === null) return;
+    const requestedStartTick = snapTicks
+      ? Math.max(0, Math.round(rawTick / snapTicks) * snapTicks)
+      : Math.max(0, Math.round(rawTick));
+    const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
+    const beforeIds = new Set(clip.notes.map((note) => note.id));
+    const operation = props.onAddNote(
+      clip.id,
+      startTick,
+      rawPitch,
+      Math.max(1, Math.round(durationTicks)),
+      lastUsedVelocity,
+      1,
+    );
+    if (operation === undefined) return;
+    void Promise.resolve(operation).then((next) => {
+      if (!next) return;
+      const nextClip = next.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
+      if (!nextClip) return;
+      setSelectedNoteIds(
+        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
+      );
+    });
+    return operation;
+  };
+
+  const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isEditableTarget(event.target)) return;
+    const key = event.key.toLowerCase();
+    const modifier = event.ctrlKey || event.metaKey;
+    let operation: MidiEditResult | undefined;
+
+    if (modifier && key === 'a') {
+      setSelectedNoteIds(notes.map((note) => note.id));
+    } else if (modifier && key === 'c') {
+      copySelectedNotes();
+    } else if (modifier && key === 'x') {
+      if (copySelectedNotes()) operation = removeSelectedNotes();
+    } else if (modifier && key === 'v') {
+      operation = pasteNotes();
+    } else if (modifier && key === 'd') {
+      operation = duplicateSelectedNotes();
+    } else if (event.key === 'Delete' && selectedNoteIds.length > 0) {
+      operation = removeSelectedNotes();
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      operation = nudgeSelectedNotes(event.key === 'ArrowLeft' ? 'left' : 'right');
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      operation = nudgeSelectedNotes(
+        event.key === 'ArrowUp' ? 'up' : 'down',
+        event.shiftKey ? 12 : 1,
+      );
+    } else if (event.key === 'Escape') {
+      setSelectedNoteIds([]);
+      setMarquee(null);
+      setNoteContextMenu(null);
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void Promise.resolve(operation);
+  };
+
+  useEffect(() => {
+    if (!clipId) return;
+    requestAnimationFrame(() => editorRef.current?.focus());
+  }, [clipId]);
 
   useEffect(() => {
     setVelocityDraft(selectedVelocity);
@@ -109,6 +393,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     setDragging(null);
     dragGestureRef.current += 1;
     setMarquee(null);
+    setDrawPreview(null);
     setNoteContextMenu(null);
   }, [clipId, hasClip]);
 
@@ -125,7 +410,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       0,
       (PITCH_HIGH - 1 - clipNoteCenter) * rowHeight - viewport.clientHeight / 2,
     );
-  }, [clipId, clipNoteCenter, hasClip]);
+  }, [clipId, clipNoteCenter, hasClip, rowHeight]);
 
   useEffect(() => {
     if (!dragging?.awaitingCanonical || !clip) return;
@@ -159,17 +444,48 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const noteContextItems: ContextMenuItem[] = contextNote
     ? [
         {
+          label: 'Cut',
+          onClick: () => {
+            if (copySelectedNotes()) void Promise.resolve(removeSelectedNotes());
+            setNoteContextMenu(null);
+          },
+        },
+        {
+          label: 'Copy',
+          onClick: () => {
+            copySelectedNotes();
+            setNoteContextMenu(null);
+          },
+        },
+        {
+          label: 'Quantize',
+          disabled: snapTicks === 0 || !props.onQuantize,
+          onClick: () => {
+            setNoteContextMenu(null);
+            const ids = selectedNoteIds.length ? selectedNoteIds : [contextNote.id];
+            const selected = props.clip!.notes.filter((note) => ids.includes(note.id));
+            const offGrid = countOffGridNotes(selected, snapTicks);
+            if (offGrid === 0) {
+              toast('Selected notes are already on the grid.');
+              return;
+            }
+            void Promise.resolve(props.onQuantize?.(props.clip!.id, ids, snapTicks));
+          },
+        },
+        {
           label: 'Delete',
           danger: true,
           onClick: () => {
-            props.onRemoveNote?.(props.clip!.id, contextNote.id);
-            setSelectedNoteIds((current) => current.filter((id) => id !== contextNote.id));
+            void Promise.resolve(removeSelectedNotes());
+            setNoteContextMenu(null);
           },
         },
         {
           label: 'Duplicate',
-          onClick: () =>
-            props.onDuplicateNotes?.(props.clip!.id, [contextNote.id], snapTicks || 240),
+          onClick: () => {
+            void Promise.resolve(duplicateSelectedNotes());
+            setNoteContextMenu(null);
+          },
         },
       ]
     : [];
@@ -179,13 +495,12 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     note: MidiNote,
     mode: 'move' | 'resize',
   ) => {
+    editorRef.current?.focus();
     event.stopPropagation();
     const originX = event.clientX;
     const originY = event.clientY;
     const movingNoteIds =
-      mode === 'move' && selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1
-        ? selectedNoteIds
-        : [note.id];
+      selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1 ? selectedNoteIds : [note.id];
     const originNotes = props.clip!.notes.filter((candidate) =>
       movingNoteIds.includes(candidate.id),
     );
@@ -206,40 +521,55 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     const updatePreview = (clientX: number, clientY: number) => {
       const deltaTicks = (clientX - originX) / pixelsPerTick;
       if (mode === 'move') {
-        const nextTick = Math.max(
-          0,
-          snapTicks
-            ? Math.round((note.startTick + deltaTicks) / snapTicks) * snapTicks
-            : Math.round(note.startTick + deltaTicks),
+        const snappedStart = snapTicks
+          ? Math.round((note.startTick + deltaTicks) / snapTicks) * snapTicks
+          : Math.round(note.startTick + deltaTicks);
+        const minTickDelta = -Math.min(...originNotes.map((candidate) => candidate.startTick));
+        const tickDelta = Math.max(minTickDelta, snappedStart - note.startTick);
+        const rawPitchDelta = Math.round((originY - clientY) / rowHeight);
+        const minPitchDelta = Math.max(
+          ...originNotes.map((candidate) => PITCH_LOW - candidate.note),
         );
-        const pitchDelta = Math.round((originY - clientY) / rowHeight);
-        const nextPitch = Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, note.note + pitchDelta));
+        const maxPitchDelta = Math.min(
+          ...originNotes.map((candidate) => PITCH_HIGH - 1 - candidate.note),
+        );
+        const pitchDelta = Math.max(minPitchDelta, Math.min(maxPitchDelta, rawPitchDelta));
         return {
           ...note,
-          startTick: nextTick,
-          note: nextPitch,
+          startTick: note.startTick + tickDelta,
+          note: note.note + pitchDelta,
         };
       }
-      const nextDur = Math.max(
-        1,
-        snapTicks
-          ? Math.round((note.durationTicks + deltaTicks) / snapTicks) * snapTicks
-          : Math.round(note.durationTicks + deltaTicks),
+      const snappedDuration = snapTicks
+        ? Math.round((note.durationTicks + deltaTicks) / snapTicks) * snapTicks
+        : Math.round(note.durationTicks + deltaTicks);
+      const minDurationDelta = Math.max(
+        ...originNotes.map((candidate) => 1 - candidate.durationTicks),
       );
-      return { ...note, durationTicks: nextDur };
+      const durationDelta = Math.max(minDurationDelta, snappedDuration - note.durationTicks);
+      return { ...note, durationTicks: note.durationTicks + durationDelta };
     };
     const buildPreviewNotes = (nextNote: MidiNote) => {
-      if (mode !== 'move' || originNotes.length < 2) return { [nextNote.id]: nextNote };
-      const tickDelta = nextNote.startTick - note.startTick;
-      const pitchDelta = nextNote.note - note.note;
+      if (originNotes.length < 2) return { [nextNote.id]: nextNote };
+      if (mode === 'move') {
+        const tickDelta = nextNote.startTick - note.startTick;
+        const pitchDelta = nextNote.note - note.note;
+        return Object.fromEntries(
+          originNotes.map((candidate) => [
+            candidate.id,
+            {
+              ...candidate,
+              startTick: candidate.startTick + tickDelta,
+              note: candidate.note + pitchDelta,
+            },
+          ]),
+        ) as Record<string, MidiNote>;
+      }
+      const durationDelta = nextNote.durationTicks - note.durationTicks;
       return Object.fromEntries(
         originNotes.map((candidate) => [
           candidate.id,
-          {
-            ...candidate,
-            startTick: Math.max(0, candidate.startTick + tickDelta),
-            note: Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, candidate.note + pitchDelta)),
-          },
+          { ...candidate, durationTicks: candidate.durationTicks + durationDelta },
         ]),
       ) as Record<string, MidiNote>;
     };
@@ -277,17 +607,18 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         );
       });
       if (changed) {
-        if (mode === 'move' && originNotes.length > 1) {
-          operation = props.onUpdateNotes?.(
-            props.clip!.id,
-            originNotes.map((candidate) => ({
-              noteId: candidate.id,
-              patch: {
-                startTick: previewNotes[candidate.id].startTick,
-                note: previewNotes[candidate.id].note,
-              },
-            })),
-          );
+        const updates = originNotes.map((candidate) => {
+          const next = previewNotes[candidate.id];
+          return {
+            noteId: candidate.id,
+            patch:
+              mode === 'move'
+                ? { startTick: next.startTick, note: next.note }
+                : { durationTicks: next.durationTicks },
+          };
+        });
+        if (props.onUpdateNotes && originNotes.length > 1) {
+          operation = props.onUpdateNotes(props.clip!.id, updates);
         } else {
           operation = props.onUpdateNote?.(props.clip!.id, preview);
         }
@@ -313,13 +644,38 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   };
 
   return (
-    <div className={styles.editor} aria-label="MIDI Editor">
+    <div
+      ref={editorRef}
+      className={styles.editor}
+      aria-label="MIDI Editor"
+      tabIndex={0}
+      onKeyDown={handleEditorKeyDown}
+      onPointerDown={(event) => {
+        if (!(event.target as HTMLElement).closest('button, input, select')) {
+          editorRef.current?.focus();
+        }
+      }}
+    >
       <header className={styles.header}>
-        <div className={styles.clipInfo}>
-          <strong>{props.clip.name}</strong>
-          <small>{Math.ceil(props.clip.durationTicks / barTicks)} bars</small>
-        </div>
         <div className={styles.editorTools}>
+          <div className={styles.toolGroup} aria-label="MIDI Editor tool">
+            <button
+              type="button"
+              className={`${styles.toolButton} ${tool === 'pointer' ? styles.toolButtonActive : ''}`}
+              aria-pressed={tool === 'pointer'}
+              onClick={() => setTool('pointer')}
+            >
+              <Icon name="pointer" /> Pointer
+            </button>
+            <button
+              type="button"
+              className={`${styles.toolButton} ${tool === 'draw' ? styles.toolButtonActive : ''}`}
+              aria-pressed={tool === 'draw'}
+              onClick={() => setTool('draw')}
+            >
+              <Icon name="pencil" /> Draw
+            </button>
+          </div>
           <label className={styles.control}>
             <span>Snap</span>
             <select value={snap} onChange={(event) => setSnap(event.target.value as SnapGrid)}>
@@ -330,21 +686,52 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            className={`${styles.toolButton} ${previewEnabled ? styles.toolButtonActive : ''}`}
+            aria-pressed={previewEnabled}
+            disabled={!props.previewAvailable}
+            title={
+              props.previewAvailable
+                ? 'Preview notes on the active instrument'
+                : 'Audio runtime unavailable'
+            }
+            onClick={() => setPreviewEnabled((enabled) => !enabled)}
+          >
+            <Icon name="play" /> Preview
+          </button>
           <div className={styles.zoomGroup} aria-label="MIDI Editor zoom">
-            <span>Zoom</span>
+            <span>Time</span>
             <button
               type="button"
               aria-label="Zoom out"
-              onClick={() => setPixelsPerTick((value) => Math.max(0.05, value / 1.25))}
+              onClick={() => applyHorizontalZoom(pixelsPerTick / 1.25)}
             >
-              −
+              <Icon name="zoomOut" />
             </button>
             <button
               type="button"
               aria-label="Zoom in"
-              onClick={() => setPixelsPerTick((value) => Math.min(1, value * 1.25))}
+              onClick={() => applyHorizontalZoom(pixelsPerTick * 1.25)}
             >
-              ＋
+              <Icon name="zoomIn" />
+            </button>
+          </div>
+          <div className={styles.zoomGroup} aria-label="MIDI Editor pitch zoom">
+            <span>Pitch</span>
+            <button
+              type="button"
+              aria-label="Pitch zoom out"
+              onClick={() => applyVerticalZoom(rowHeight - 2)}
+            >
+              <Icon name="zoomOut" />
+            </button>
+            <button
+              type="button"
+              aria-label="Pitch zoom in"
+              onClick={() => applyVerticalZoom(rowHeight + 2)}
+            >
+              <Icon name="zoomIn" />
             </button>
           </div>
           <button
@@ -381,9 +768,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             type="button"
             className={styles.toolButton}
             disabled={!selectedNoteIds.length}
-            onClick={() =>
-              props.onDuplicateNotes?.(props.clip!.id, selectedNoteIds, snapTicks || 240)
-            }
+            onClick={() => void Promise.resolve(duplicateSelectedNotes())}
           >
             Duplicate
           </button>
@@ -396,24 +781,32 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               max="127"
               value={velocityDraft}
               disabled={!selectedNoteIds.length}
-              onChange={(event) => setVelocityDraft(Number(event.currentTarget.value))}
+              onChange={(event) => {
+                const value = Number(event.currentTarget.value);
+                setVelocityDraft(value);
+                setLastUsedVelocity(value);
+              }}
               onKeyUp={(event) => {
                 if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') {
+                  const value = Number(event.currentTarget.value);
+                  setLastUsedVelocity(value);
                   void props.onUpdateNotes?.(
                     props.clip!.id,
                     selectedNoteIds.map((noteId) => ({
                       noteId,
-                      patch: { velocity: Number(event.currentTarget.value) },
+                      patch: { velocity: value },
                     })),
                   );
                 }
               }}
               onPointerUp={(event) => {
+                const value = Number(event.currentTarget.value);
+                setLastUsedVelocity(value);
                 void props.onUpdateNotes?.(
                   props.clip!.id,
                   selectedNoteIds.map((noteId) => ({
                     noteId,
-                    patch: { velocity: Number(event.currentTarget.value) },
+                    patch: { velocity: value },
                   })),
                 );
               }}
@@ -421,164 +814,306 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           </label>
         </div>
       </header>
-      <div ref={laneViewportRef} className={styles.laneViewport}>
-        <div className={styles.roll}>
+      <div className={styles.editorSurface}>
+        <div className={styles.rulerViewport}>
+          <div className={styles.laneLabel}>Ruler</div>
           <div
-            className={styles.pitchKeyboard}
-            style={{ height: laneHeight }}
-            aria-label="MIDI piano keyboard"
-          >
-            {pitchRows.map((pitch) => (
-              <div
-                key={pitch}
-                className={styles.pianoKey}
-                style={{ top: (PITCH_HIGH - pitch - 1) * rowHeight }}
-              >
-                <span className={styles.pianoWhiteKey}>
-                  {pitch % 12 === 0 ? midiNoteName(pitch) : null}
-                </span>
-                {isBlackKey(pitch % 12) && (
-                  <span className={styles.pianoBlackKey} aria-hidden="true" />
-                )}
-              </div>
-            ))}
-          </div>
-          <div
-            className={styles.lane}
-            style={{ height: laneHeight, width: visibleTicks * pixelsPerTick }}
-            onPointerDown={(event) => {
-              setNoteContextMenu(null);
-              const target = event.target as HTMLElement;
-              if (target.closest('[data-note-id]')) return;
-              const lane = event.currentTarget;
-              const bounds = lane.getBoundingClientRect();
-              const originX = event.clientX;
-              const originY = event.clientY;
-              const move = (pointer: PointerEvent) =>
-                setMarquee({
-                  left: Math.min(originX, pointer.clientX) - bounds.left,
-                  top: Math.min(originY, pointer.clientY) - bounds.top,
-                  width: Math.abs(pointer.clientX - originX),
-                  height: Math.abs(pointer.clientY - originY),
-                });
-              let cancel: () => void = () => undefined;
-              const finish = (pointer: PointerEvent) => {
-                window.removeEventListener('pointermove', move);
-                window.removeEventListener('pointerup', finish);
-                window.removeEventListener('pointercancel', cancel);
-                const width = Math.abs(pointer.clientX - originX);
-                const height = Math.abs(pointer.clientY - originY);
-                if (width < 4 && height < 4) {
-                  const tick = (originX - bounds.left) / pixelsPerTick;
-                  const pitch = PITCH_HIGH - 1 - Math.floor((originY - bounds.top) / rowHeight);
-                  if (pitch >= PITCH_LOW && pitch < PITCH_HIGH) {
-                    const startTick = snapTicks
-                      ? Math.round(tick / snapTicks) * snapTicks
-                      : Math.max(0, Math.round(tick));
-                    props.onAddNote?.(props.clip!.id, Math.max(0, startTick), pitch);
-                  }
-                } else {
-                  const left = Math.min(originX, pointer.clientX);
-                  const right = Math.max(originX, pointer.clientX);
-                  const top = Math.min(originY, pointer.clientY);
-                  const bottom = Math.max(originY, pointer.clientY);
-                  const ids = [...lane.querySelectorAll<HTMLElement>('[data-note-id]')]
-                    .filter((element) => {
-                      const rect = element.getBoundingClientRect();
-                      return (
-                        rect.right >= left &&
-                        rect.left <= right &&
-                        rect.bottom >= top &&
-                        rect.top <= bottom
-                      );
-                    })
-                    .map((element) => element.dataset.noteId!)
-                    .filter(Boolean);
-                  setSelectedNoteIds(
-                    event.ctrlKey || event.shiftKey
-                      ? [...new Set([...selectedNoteIds, ...ids])]
-                      : ids,
-                  );
-                }
-                setMarquee(null);
-              };
-              cancel = () => {
-                window.removeEventListener('pointermove', move);
-                window.removeEventListener('pointerup', finish);
-                window.removeEventListener('pointercancel', cancel);
-                setMarquee(null);
-              };
-              window.addEventListener('pointermove', move);
-              window.addEventListener('pointerup', finish);
-              window.addEventListener('pointercancel', cancel);
+            className={styles.rulerContent}
+            style={{
+              width: laneWidth,
+              transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
             }}
           >
-            {marquee && <div className={styles.marquee} style={marquee} />}
-            {Array.from({ length: Math.ceil(visibleTicks / barTicks) }, (_, bar) => (
-              <i
-                key={bar}
-                className={styles.barLine}
-                style={{ left: bar * barTicks * pixelsPerTick }}
-              />
-            ))}
-            {Array.from({ length: Math.ceil(visibleTicks / beatTicks) }, (_, beat) => (
-              <i
-                key={beat}
-                className={styles.beatLine}
-                style={{ left: beat * beatTicks * pixelsPerTick }}
-              />
-            ))}
-            {pitchRows.map((pitch) => (
-              <div
-                key={pitch}
-                className={`${styles.pitchRow} ${isBlackKey(pitch % 12) ? styles.pitchBlack : ''} ${pitch % 12 === 0 ? styles.pitchOctave : ''}`}
-                style={{ top: (PITCH_HIGH - pitch - 1) * rowHeight }}
-              >
-                {pitch % 12 === 0 ? midiNoteName(pitch) : null}
-              </div>
-            ))}
-            {notes
-              .filter((note) => note.note >= PITCH_LOW && note.note < PITCH_HIGH)
-              .map((note) => {
-                const visibleNote = dragging?.previewNotes[note.id] ?? note;
-                const isPreviewed = Boolean(dragging?.previewNotes[note.id]);
-                const noteWidth = visibleNote.durationTicks * pixelsPerTick;
-                return (
-                  <span
-                    key={note.id}
-                    data-note-id={note.id}
-                    className={`${styles.note} ${isPreviewed ? styles.dragging : ''} ${noteWidth < 12 ? styles.narrow : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
-                    style={{
-                      left: visibleNote.startTick * pixelsPerTick,
-                      top: (PITCH_HIGH - visibleNote.note - 1) * rowHeight,
-                      width: Math.max(4, noteWidth),
-                      height: rowHeight - 1,
-                      opacity: Math.max(0.45, 0.4 + (visibleNote.velocity / 127) * 0.6),
-                    }}
-                    onPointerDown={(event) => handlePointerDown(event, note, 'move')}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSelectedNoteIds((current) =>
-                        event.ctrlKey || event.shiftKey
-                          ? current.includes(note.id)
-                            ? current.filter((id) => id !== note.id)
-                            : [...current, note.id]
-                          : [note.id],
-                      );
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setNoteContextMenu({ x: event.clientX, y: event.clientY, noteId: note.id });
-                    }}
-                  >
-                    <i
-                      className={styles.resizeHandle}
-                      onPointerDown={(event) => handlePointerDown(event, note, 'resize')}
-                    />
+            <MidiEditorRuler
+              timebase={props.timebase}
+              clipStartTick={clip!.startTick}
+              visibleTicks={visibleTicks}
+              pixelsPerTick={pixelsPerTick}
+              playheadTick={props.playheadTick}
+              onSeek={props.onSeek}
+            />
+          </div>
+        </div>
+        <div
+          ref={laneViewportRef}
+          className={styles.laneViewport}
+          data-midi-pitch-viewport
+          onScroll={(event) => setHorizontalScrollLeft(event.currentTarget.scrollLeft)}
+        >
+          <div className={styles.roll} style={{ width: canvasWidth }}>
+            <div
+              className={styles.pitchKeyboard}
+              style={{ height: laneHeight }}
+              aria-label="MIDI piano keyboard"
+            >
+              {pitchRows.map((pitch) => (
+                <div
+                  key={pitch}
+                  className={styles.pianoKey}
+                  style={{
+                    top: pitchRowTop(pitch, rowHeight),
+                    height: rowHeight,
+                  }}
+                  data-piano-key={pitch}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Preview ${midiNoteName(pitch)}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.setPointerCapture?.(event.pointerId);
+                    previewNoteOn(pitch);
+                  }}
+                  onPointerUp={(event) => {
+                    event.stopPropagation();
+                    previewNoteOff(pitch);
+                  }}
+                  onPointerCancel={() => previewNoteOff(pitch)}
+                  onPointerLeave={() => previewNoteOff(pitch)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    previewNoteOn(pitch);
+                  }}
+                  onKeyUp={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    previewNoteOff(pitch);
+                  }}
+                >
+                  <span className={styles.pianoWhiteKey}>
+                    {pitch % 12 === 0 ? midiNoteName(pitch) : null}
                   </span>
-                );
-              })}
+                  {isBlackKey(pitch % 12) && (
+                    <span
+                      className={styles.pianoBlackKey}
+                      style={{
+                        top: Math.max(1, Math.round(rowHeight * 0.08)),
+                        height: Math.max(5, Math.round(rowHeight * 0.75)),
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div
+              className={styles.lane}
+              data-midi-lane
+              style={{ height: laneHeight, width: laneWidth }}
+              onPointerDown={(event) => {
+                setNoteContextMenu(null);
+                editorRef.current?.focus();
+                const target = event.target as HTMLElement;
+                if (target.closest('[data-note-id]')) return;
+                const lane = event.currentTarget;
+                const bounds = lane.getBoundingClientRect();
+                const originX = event.clientX;
+                const originY = event.clientY;
+                const append = event.ctrlKey || event.shiftKey;
+                const draw = tool === 'draw';
+                const move = (pointer: PointerEvent) =>
+                  draw
+                    ? setDrawPreview({
+                        left: Math.min(originX, pointer.clientX) - bounds.left,
+                        top: pitchRowTop(
+                          pitchFromClientY(originY, bounds.top, rowHeight, true) ?? PITCH_LOW,
+                          rowHeight,
+                        ),
+                        width: Math.abs(pointer.clientX - originX),
+                        height: rowHeight - 1,
+                      })
+                    : setMarquee({
+                        left: Math.min(originX, pointer.clientX) - bounds.left,
+                        top: Math.min(originY, pointer.clientY) - bounds.top,
+                        width: Math.abs(pointer.clientX - originX),
+                        height: Math.abs(pointer.clientY - originY),
+                      });
+                let cancel: () => void = () => undefined;
+                const finish = (pointer: PointerEvent) => {
+                  window.removeEventListener('pointermove', move);
+                  window.removeEventListener('pointerup', finish);
+                  window.removeEventListener('pointercancel', cancel);
+                  const width = Math.abs(pointer.clientX - originX);
+                  const height = Math.abs(pointer.clientY - originY);
+                  if (draw) {
+                    const left = Math.min(originX, pointer.clientX);
+                    const right = Math.max(originX, pointer.clientX);
+                    const rawStart = (left - bounds.left) / pixelsPerTick;
+                    const rawEnd = (right - bounds.left) / pixelsPerTick;
+                    const startTick = snapTicks
+                      ? Math.max(0, Math.round(rawStart / snapTicks) * snapTicks)
+                      : Math.max(0, Math.round(rawStart));
+                    const endTick = snapTicks
+                      ? Math.max(startTick, Math.round(rawEnd / snapTicks) * snapTicks)
+                      : Math.max(startTick, Math.round(rawEnd));
+                    const durationTicks = Math.max(
+                      1,
+                      endTick - startTick || snapTicks || beatTicks,
+                    );
+                    void Promise.resolve(addNoteAt(lane, left, originY, durationTicks));
+                  } else if (width < 4 && height < 4) {
+                    setSelectedNoteIds([]);
+                  } else {
+                    const left = Math.min(originX, pointer.clientX);
+                    const right = Math.max(originX, pointer.clientX);
+                    const top = Math.min(originY, pointer.clientY);
+                    const bottom = Math.max(originY, pointer.clientY);
+                    const ids = [...lane.querySelectorAll<HTMLElement>('[data-note-id]')]
+                      .filter((element) => {
+                        const rect = element.getBoundingClientRect();
+                        return (
+                          rect.right >= left &&
+                          rect.left <= right &&
+                          rect.bottom >= top &&
+                          rect.top <= bottom
+                        );
+                      })
+                      .map((element) => element.dataset.noteId!)
+                      .filter(Boolean);
+                    setSelectedNoteIds(append ? [...new Set([...selectedNoteIds, ...ids])] : ids);
+                  }
+                  setMarquee(null);
+                  setDrawPreview(null);
+                };
+                cancel = () => {
+                  window.removeEventListener('pointermove', move);
+                  window.removeEventListener('pointerup', finish);
+                  window.removeEventListener('pointercancel', cancel);
+                  setMarquee(null);
+                  setDrawPreview(null);
+                };
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', finish);
+                window.addEventListener('pointercancel', cancel);
+              }}
+              onDoubleClick={(event) => {
+                if ((event.target as HTMLElement).closest('[data-note-id]')) return;
+                event.preventDefault();
+                void Promise.resolve(addNoteAt(event.currentTarget, event.clientX, event.clientY));
+              }}
+            >
+              {marquee && <div className={styles.marquee} style={marquee} />}
+              {drawPreview && <div className={styles.drawPreview} style={drawPreview} />}
+              {props.playheadTick !== undefined &&
+                props.playheadTick >= 0 &&
+                props.playheadTick <= visibleTicks && (
+                  <i
+                    className={styles.editorPlayhead}
+                    style={{ left: props.playheadTick * pixelsPerTick }}
+                  />
+                )}
+              {Array.from({ length: Math.ceil(visibleTicks / barTicks) }, (_, bar) => (
+                <i
+                  key={bar}
+                  className={styles.barLine}
+                  style={{ left: bar * barTicks * pixelsPerTick }}
+                />
+              ))}
+              {Array.from({ length: Math.ceil(visibleTicks / beatTicks) }, (_, beat) => (
+                <i
+                  key={beat}
+                  className={styles.beatLine}
+                  style={{ left: beat * beatTicks * pixelsPerTick }}
+                />
+              ))}
+              {subdivisionLineTicks.map((tick) => (
+                <i
+                  key={`subdivision-${tick}`}
+                  className={styles.subdivisionLine}
+                  data-grid-subdivision
+                  style={{ left: tick * pixelsPerTick }}
+                />
+              ))}
+              {pitchRows.map((pitch) => (
+                <div
+                  key={pitch}
+                  className={`${styles.pitchRow} ${isBlackKey(pitch % 12) ? styles.pitchBlack : ''} ${pitch % 12 === 0 ? styles.pitchOctave : ''}`}
+                  style={{
+                    top: pitchRowTop(pitch, rowHeight),
+                    height: rowHeight,
+                    lineHeight: `${rowHeight}px`,
+                  }}
+                >
+                  {pitch % 12 === 0 ? midiNoteName(pitch) : null}
+                </div>
+              ))}
+              {notes
+                .filter((note) => note.note >= PITCH_LOW && note.note < PITCH_HIGH)
+                .map((note) => {
+                  const visibleNote = dragging?.previewNotes[note.id] ?? note;
+                  const isPreviewed = Boolean(dragging?.previewNotes[note.id]);
+                  const noteWidth = visibleNote.durationTicks * pixelsPerTick;
+                  return (
+                    <span
+                      key={note.id}
+                      data-note-id={note.id}
+                      className={`${styles.note} ${isPreviewed ? styles.dragging : ''} ${noteWidth < 12 ? styles.narrow : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
+                      style={{
+                        left: visibleNote.startTick * pixelsPerTick,
+                        top: pitchRowTop(visibleNote.note, rowHeight),
+                        width: Math.max(4, noteWidth),
+                        height: rowHeight - 1,
+                        opacity: Math.max(0.45, 0.4 + (visibleNote.velocity / 127) * 0.6),
+                      }}
+                      onPointerDown={(event) => handlePointerDown(event, note, 'move')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        editorRef.current?.focus();
+                        setSelectedNoteIds((current) =>
+                          event.ctrlKey || event.shiftKey
+                            ? current.includes(note.id)
+                              ? current.filter((id) => id !== note.id)
+                              : [...current, note.id]
+                            : [note.id],
+                        );
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        editorRef.current?.focus();
+                        if (!selectedNoteIds.includes(note.id)) setSelectedNoteIds([note.id]);
+                        setNoteContextMenu({ x: event.clientX, y: event.clientY, noteId: note.id });
+                      }}
+                    >
+                      <i
+                        className={styles.resizeHandle}
+                        onPointerDown={(event) => handlePointerDown(event, note, 'resize')}
+                      />
+                    </span>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+        <div className={styles.velocityViewport} data-midi-velocity-viewport>
+          <div className={styles.velocityRow} style={{ width: canvasWidth }}>
+            <div className={styles.laneLabel}>Velocity</div>
+            <div
+              className={styles.velocityContent}
+              style={{
+                width: laneWidth,
+                transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
+              }}
+            >
+              <MidiVelocityLane
+                notes={notes}
+                selectedNoteIds={selectedNoteIds}
+                visibleTicks={visibleTicks}
+                pixelsPerTick={pixelsPerTick}
+                barTicks={barTicks}
+                beatTicks={beatTicks}
+                height={velocityLaneHeight}
+                playheadTick={props.playheadTick}
+                clipId={clip!.id}
+                onSelectNoteIds={setSelectedNoteIds}
+                onUpdateNotes={props.onUpdateNotes}
+                onFocus={() => editorRef.current?.focus()}
+                onVelocityChange={setLastUsedVelocity}
+              />
+            </div>
           </div>
         </div>
       </div>

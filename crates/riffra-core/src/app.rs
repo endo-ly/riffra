@@ -617,6 +617,212 @@ mod tests {
     }
 
     #[test]
+    fn creating_an_empty_midi_clip_is_core_owned_and_requires_an_instrument_track() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let audio = application.add_track("Audio", TrackKind::Audio).unwrap();
+        let audio_id = audio.arrangement.tracks[0].id.clone();
+
+        let error = application
+            .create_midi_clip(&audio_id, TimelineTick(0), 960, None)
+            .unwrap_err();
+        assert!(error.to_string().contains("requires an Instrument Track"));
+
+        let instrument = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let instrument_id = instrument.arrangement.tracks[1].id.clone();
+        let committed = application
+            .create_midi_clip(
+                &instrument_id,
+                TimelineTick(480),
+                0,
+                Some("  Lead  ".into()),
+            )
+            .unwrap();
+        let clip = &committed.arrangement.midi_clips[0];
+
+        assert!(clip.id.starts_with("midi-clip:"));
+        assert_eq!(clip.name, "Lead");
+        assert_eq!(clip.track_id, instrument_id);
+        assert_eq!(clip.start_tick, TimelineTick(480));
+        assert_eq!(clip.duration_ticks, 1);
+        assert!(clip.asset_id.is_none());
+        assert!(clip.notes.is_empty());
+        assert!(clip.events.is_empty());
+    }
+
+    #[test]
+    fn batch_midi_note_insert_and_remove_each_have_one_undoable_commit() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        application
+            .create_midi_clip(&track_id, TimelineTick(0), 1_920, None)
+            .unwrap();
+        let before_insert_saves = storage.sessions.lock().unwrap().len();
+
+        let inserted = application
+            .insert_midi_notes(
+                "midi-clip:missing",
+                vec![crate::application::MidiNoteInput {
+                    pitch: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 480,
+                    velocity: 96,
+                    channel: 1,
+                }],
+            )
+            .unwrap_err();
+        assert!(inserted.to_string().contains("not found"));
+
+        let clip_id = core.snapshot().unwrap().session.arrangement.midi_clips[0]
+            .id
+            .clone();
+        let inserted = application
+            .insert_midi_notes(
+                &clip_id,
+                vec![
+                    crate::application::MidiNoteInput {
+                        pitch: 60,
+                        start_tick: TimelineTick(0),
+                        duration_ticks: 480,
+                        velocity: 96,
+                        channel: 1,
+                    },
+                    crate::application::MidiNoteInput {
+                        pitch: 64,
+                        start_tick: TimelineTick(480),
+                        duration_ticks: 0,
+                        velocity: 100,
+                        channel: 1,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            storage.sessions.lock().unwrap().len(),
+            before_insert_saves + 1
+        );
+        assert_eq!(inserted.arrangement.midi_clips[0].notes.len(), 2);
+        assert_eq!(
+            inserted.arrangement.midi_clips[0].notes[1].duration_ticks,
+            1
+        );
+        assert_ne!(
+            inserted.arrangement.midi_clips[0].notes[0].id,
+            inserted.arrangement.midi_clips[0].notes[1].id
+        );
+
+        let note_ids = inserted.arrangement.midi_clips[0]
+            .notes
+            .iter()
+            .map(|note| note.id.clone())
+            .collect::<Vec<_>>();
+        let undone_insert = core.undo(&storage).unwrap();
+        assert!(undone_insert.arrangement.midi_clips[0].notes.is_empty());
+        let redone_insert = core.redo(&storage).unwrap();
+        assert_eq!(redone_insert.arrangement.midi_clips[0].notes.len(), 2);
+
+        let before_remove_saves = storage.sessions.lock().unwrap().len();
+        let removed = application.remove_midi_notes(&clip_id, note_ids).unwrap();
+        assert!(removed.arrangement.midi_clips[0].notes.is_empty());
+        assert_eq!(
+            storage.sessions.lock().unwrap().len(),
+            before_remove_saves + 1
+        );
+        let undone_remove = core.undo(&storage).unwrap();
+        assert_eq!(undone_remove.arrangement.midi_clips[0].notes.len(), 2);
+        let redone_remove = core.redo(&storage).unwrap();
+        assert!(redone_remove.arrangement.midi_clips[0].notes.is_empty());
+    }
+
+    #[test]
+    fn midi_note_duplicate_and_paste_extend_the_clip_as_one_edit() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        let created = application
+            .create_midi_clip(&track_id, TimelineTick(0), 1_920, None)
+            .unwrap();
+        let clip_id = created.arrangement.midi_clips[0].id.clone();
+        let inserted = application
+            .insert_midi_notes(
+                &clip_id,
+                vec![crate::application::MidiNoteInput {
+                    pitch: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 1_920,
+                    velocity: 96,
+                    channel: 1,
+                }],
+            )
+            .unwrap();
+        let note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+
+        let duplicated = application
+            .duplicate_midi_notes(&clip_id, vec![note_id], 1_920)
+            .unwrap();
+        let duplicated_clip = &duplicated.arrangement.midi_clips[0];
+        assert_eq!(duplicated_clip.duration_ticks, 3_840);
+        assert_eq!(duplicated_clip.notes.len(), 2);
+        assert_eq!(duplicated_clip.notes[1].start_tick, TimelineTick(1_920));
+        assert_eq!(duplicated_clip.notes[1].duration_ticks, 1_920);
+
+        let undone_duplicate = core.undo(&storage).unwrap();
+        let undone_clip = &undone_duplicate.arrangement.midi_clips[0];
+        assert_eq!(undone_clip.duration_ticks, 1_920);
+        assert_eq!(undone_clip.notes.len(), 1);
+
+        let pasted = application
+            .insert_midi_notes(
+                &clip_id,
+                vec![crate::application::MidiNoteInput {
+                    pitch: 64,
+                    start_tick: TimelineTick(1_920),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                }],
+            )
+            .unwrap();
+        let pasted_clip = &pasted.arrangement.midi_clips[0];
+        assert_eq!(pasted_clip.duration_ticks, 2_400);
+        assert_eq!(pasted_clip.notes.len(), 2);
+
+        let undone_paste = core.undo(&storage).unwrap();
+        assert_eq!(undone_paste.arrangement.midi_clips[0].duration_ticks, 1_920);
+        assert_eq!(undone_paste.arrangement.midi_clips[0].notes.len(), 1);
+    }
+
+    #[test]
     fn prepared_plugin_commit_uses_the_runtime_validated_candidate() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(

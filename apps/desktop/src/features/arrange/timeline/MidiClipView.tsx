@@ -47,7 +47,7 @@ export function MidiClipView(props: MidiClipViewProps) {
         opacity: clip.muted ? 0.48 : 1,
       }}
       onClick={(event) => {
-        if (event.ctrlKey) {
+        if (event.ctrlKey || event.shiftKey) {
           props.onSelect(clip.id, true);
         } else if (!props.selected) {
           props.onSelect(clip.id);

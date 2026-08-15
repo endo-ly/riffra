@@ -18,6 +18,17 @@ export function Icon({ name }: { name: string }) {
     envelope: 'M3 5h18v14H3V5Zm2 1.7v.6l7 4.4 7-4.4v-.6L12 11 5 6.7Zm14 2.3-7 4.4L5 9v8h14V9Z',
     metronome: 'M9 2h6l3 18H6L9 2Zm1.7 2L9 18h6L13.3 4h-2.6ZM12 7v4',
     marker: 'M5 3v18l4-3h10V3H5Zm2 1.7h10V16H8.5L7 17.1V4.7Z',
+    pointer: 'm6 3 12 9-5.2 1.1 3.5 6.1-2.1 1.2-3.5-6.1L7 18.6 6 3Z',
+    pencil:
+      'm4 16.8-.8 3.8 3.8-.8L18.7 8.1l-3-3L4 16.8Zm12.4-13.1 3 3 1.1-1.1a1.4 1.4 0 0 0 0-2l-1-1a1.4 1.4 0 0 0-2 0l-1.1 1.1Z',
+    scissors:
+      'M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm0 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm2-4 10-6v2l-8 5 8 5v2l-10-6v-2Z',
+    zoomOut: 'M5 11h14v2H5v-2Z',
+    zoomIn: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z',
+    collapse: 'm5 9 7 7 7-7-1.4-1.4L12 13.2 6.4 7.6 5 9Z',
+    expand: 'm5 15 1.4 1.4L12 11.8l5.6 4.6L19 15l-7-7-7 7Z',
+    maximize: 'M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z',
+    restore: 'M7 7h10v10H7V7Zm2 2v6h6V9H9Z',
   };
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">

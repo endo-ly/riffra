@@ -81,6 +81,26 @@ pub async fn add_audio_clip_to_arrangement(
 }
 
 #[tauri::command]
+pub async fn create_midi_clip(
+    track_id: String,
+    start_tick: TimelineTick,
+    duration_ticks: u64,
+    name: Option<String>,
+    app: AppHandle,
+) -> Result<CreativeSession, String> {
+    run_blocking(app, move |state| {
+        adapter::create_midi_clip(
+            &app_context(state),
+            &track_id,
+            start_tick,
+            duration_ticks,
+            name,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn add_midi_clip_to_arrangement(
     asset_id: String,
     name: String,
@@ -440,6 +460,18 @@ pub async fn add_midi_note(
 }
 
 #[tauri::command]
+pub async fn insert_midi_notes(
+    clip_id: String,
+    notes: Vec<MidiNoteInput>,
+    app: AppHandle,
+) -> Result<CreativeSession, String> {
+    run_blocking(app, move |state| {
+        adapter::insert_midi_notes(&app_context(state), &clip_id, notes)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn update_midi_note(
     clip_id: String,
     note_id: String,
@@ -472,6 +504,18 @@ pub async fn remove_midi_note(
 ) -> Result<CreativeSession, String> {
     run_blocking(app, move |state| {
         adapter::remove_midi_note(&app_context(state), &clip_id, &note_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn remove_midi_notes(
+    clip_id: String,
+    note_ids: Vec<String>,
+    app: AppHandle,
+) -> Result<CreativeSession, String> {
+    run_blocking(app, move |state| {
+        adapter::remove_midi_notes(&app_context(state), &clip_id, &note_ids)
     })
     .await
 }

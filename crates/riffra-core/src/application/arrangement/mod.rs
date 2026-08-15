@@ -261,6 +261,42 @@ where
         self.commit_arrangement(|arrangement| arrangement.add_midi_clip(clip).map_err(Into::into))
     }
 
+    /// Creates an empty MIDI Clip on an existing Instrument Track.
+    ///
+    /// The Core owns the Clip identity, default name, empty content, and
+    /// duration normalization so hosts only submit user intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the track is missing, is not an Instrument Track,
+    /// or the resulting Clip cannot be validated or persisted.
+    pub fn create_midi_clip(
+        &self,
+        track_id: &str,
+        start_tick: TimelineTick,
+        duration_ticks: u64,
+        name: Option<String>,
+    ) -> Result<CreativeSession, ApplicationError> {
+        let name = normalize_midi_clip_name(name);
+        self.commit_arrangement(|arrangement| {
+            arrangement
+                .add_midi_clip(MidiClip {
+                    id: next_id("midi-clip"),
+                    name,
+                    track_id: track_id.to_owned(),
+                    asset_id: None,
+                    start_tick,
+                    duration_ticks: duration_ticks.max(1),
+                    notes: Vec::new(),
+                    events: Vec::new(),
+                    muted: false,
+                    loop_enabled: false,
+                    recording_take_id: None,
+                })
+                .map_err(Into::into)
+        })
+    }
+
     /// Adds parsed MIDI Asset content to the timeline with Core-owned
     /// identities, creating an Instrument Track when necessary.
     ///
@@ -572,6 +608,57 @@ where
         })
     }
 
+    /// Inserts multiple identity-free MIDI notes as one atomic edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty input, invalid MIDI values, an unknown
+    /// Clip, or a note that would make the Clip invalid.
+    pub fn insert_midi_notes(
+        &self,
+        clip_id: &str,
+        inputs: Vec<MidiNoteInput>,
+    ) -> Result<CreativeSession, ApplicationError> {
+        if inputs.is_empty() {
+            return Err(ApplicationError::InvalidCommand(
+                "at least one midi note is required".into(),
+            ));
+        }
+        for input in &inputs {
+            if input.pitch > 127 {
+                return Err(ApplicationError::InvalidCommand(
+                    "midi pitch must be between 0 and 127".into(),
+                ));
+            }
+            if input.velocity > 127 {
+                return Err(ApplicationError::InvalidCommand(
+                    "midi velocity must be between 0 and 127".into(),
+                ));
+            }
+            if !(1..=16).contains(&input.channel) {
+                return Err(ApplicationError::InvalidCommand(
+                    "midi channel must be between 1 and 16".into(),
+                ));
+            }
+        }
+        let notes = inputs
+            .into_iter()
+            .map(|input| MidiNote {
+                id: next_id("note"),
+                note: input.pitch,
+                start_tick: input.start_tick,
+                duration_ticks: input.duration_ticks.max(1),
+                velocity: input.velocity,
+                channel: input.channel,
+            })
+            .collect();
+        self.commit_arrangement(|arrangement| {
+            arrangement
+                .insert_midi_notes(clip_id, notes)
+                .map_err(Into::into)
+        })
+    }
+
     /// Applies one atomic set of updates to notes in a MIDI clip.
     pub fn update_midi_notes(
         &self,
@@ -657,6 +744,24 @@ where
             }
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
+        })
+    }
+
+    /// Removes multiple MIDI notes as one atomic edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty selection, an unknown Clip, or a missing
+    /// Note ID.
+    pub fn remove_midi_notes(
+        &self,
+        clip_id: &str,
+        note_ids: Vec<String>,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            arrangement
+                .remove_midi_notes(clip_id, &note_ids)
+                .map_err(Into::into)
         })
     }
 

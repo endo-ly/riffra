@@ -5,8 +5,13 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  color: #dbe8ec;
-  background: #0d151a;
+  color: var(--text, #dbe8ec);
+  background: var(--panel, #0d151a);
+}
+
+.editor:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: -1px;
 }
 
 .header {
@@ -16,31 +21,8 @@
   align-items: center;
   gap: 8px 12px;
   padding: 9px 12px;
-  background: #151f26;
-  border-bottom: 1px solid #334650;
-}
-
-.clipInfo {
-  min-width: 150px;
-  flex: 1 1 180px;
-  display: grid;
-  gap: 3px;
-}
-
-.clipInfo strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #edf7f8;
-  font-size: 12px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.clipInfo small {
-  color: #8da1aa;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
+  background: var(--surface, #151f26);
+  border-bottom: 1px solid var(--border-bright, #334650);
 }
 
 .editorTools {
@@ -51,6 +33,18 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.toolGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.toolButton svg,
+.zoomGroup button svg {
+  width: 13px;
+  height: 13px;
 }
 
 .control {
@@ -108,6 +102,12 @@
   color: #63737b;
 }
 
+.toolButtonActive {
+  color: #f1fbfc;
+  background: #29434d;
+  border-color: #79e0e8;
+}
+
 .velocityControl {
   min-width: 130px;
 }
@@ -118,6 +118,32 @@
   accent-color: var(--cyan);
 }
 
+.editorSurface {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr) 88px;
+  overflow: hidden;
+  background: #080d11;
+}
+
+.rulerViewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #10181d;
+  border-bottom: 1px solid var(--border-bright, #3a4d57);
+}
+
+.rulerContent {
+  position: absolute;
+  top: 0;
+  left: 48px;
+  height: 32px;
+  will-change: transform;
+}
+
 .laneViewport {
   min-width: 0;
   min-height: 0;
@@ -125,6 +151,61 @@
   background: #080d11;
   scrollbar-color: #3b4d57 #0c1216;
   scrollbar-width: thin;
+}
+
+.laneLabel {
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #9aadb5);
+  font-size: var(--font-micro, 9px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #111b21;
+  border-right: 1px solid var(--border-bright, #3a4d57);
+}
+
+.rulerViewport > .laneLabel,
+.velocityRow > .laneLabel {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 48px;
+}
+
+.midiRuler {
+  position: relative;
+  flex: 0 0 auto;
+  height: 32px;
+  cursor: crosshair;
+  background: #10181d;
+}
+
+.editorBarMark {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 1px;
+  background: rgba(211, 232, 235, 0.24);
+}
+
+.editorBarMark strong {
+  position: absolute;
+  top: 7px;
+  left: 5px;
+  color: #c5d7da;
+  font:
+    600 var(--font-micro, 9px) 'DM Mono',
+    Consolas,
+    monospace;
+  white-space: nowrap;
+}
+
+.editorBarMark span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(211, 232, 235, 0.1);
 }
 
 .roll {
@@ -138,7 +219,6 @@
   z-index: 5;
   left: 0;
   flex: 0 0 48px;
-  height: 1536px;
   overflow: hidden;
   background: #111b21;
   border-right: 1px solid #3a4d57;
@@ -148,7 +228,6 @@
   position: absolute;
   left: 0;
   width: 100%;
-  height: 12px;
   font:
     var(--font-micro) 'DM Mono',
     Consolas,
@@ -173,10 +252,8 @@
 .pianoBlackKey {
   position: absolute;
   z-index: 1;
-  top: 1px;
   right: 0;
   width: 70%;
-  height: 9px;
   box-sizing: border-box;
   background: #0b1115;
   border: 1px solid #344650;
@@ -190,6 +267,17 @@
   background: #0a1014;
 }
 
+.editorPlayhead {
+  position: absolute;
+  z-index: 7;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  background: var(--red, #ee5a67);
+  box-shadow: 0 0 5px rgba(238, 90, 103, 0.55);
+}
+
 .marquee {
   position: absolute;
   z-index: 4;
@@ -198,11 +286,21 @@
   pointer-events: none;
 }
 
+.drawPreview {
+  position: absolute;
+  z-index: 4;
+  min-width: 4px;
+  box-sizing: border-box;
+  background: rgba(141, 116, 208, 0.7);
+  border: 1px solid #c5b5f5;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
 .pitchRow {
   position: absolute;
   left: 0;
   right: 0;
-  height: 12px;
   padding-left: 5px;
   overflow: hidden;
   border-bottom: 1px solid rgba(198, 220, 225, 0.07);
@@ -211,7 +309,6 @@
     var(--font-micro) 'DM Mono',
     Consolas,
     monospace;
-  line-height: 12px;
   pointer-events: none;
 }
 
@@ -226,9 +323,9 @@
 }
 
 .barLine,
-.beatLine {
+.beatLine,
+.subdivisionLine {
   position: absolute;
-  z-index: 1;
   top: 0;
   bottom: 0;
   width: 1px;
@@ -236,11 +333,18 @@
 }
 
 .barLine {
+  z-index: 3;
   background: rgba(211, 232, 235, 0.23);
 }
 
 .beatLine {
-  background: rgba(211, 232, 235, 0.1);
+  z-index: 2;
+  background: rgba(211, 232, 235, 0.12);
+}
+
+.subdivisionLine {
+  z-index: 1;
+  background: rgba(211, 232, 235, 0.055);
 }
 
 .note {
@@ -284,6 +388,70 @@
 
 .note.narrow {
   cursor: grab;
+}
+
+.velocityRow {
+  position: relative;
+  min-width: max-content;
+  height: 88px;
+  border-top: 1px solid var(--border, #293840);
+}
+
+.velocityViewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b1318;
+}
+
+.velocityContent {
+  position: absolute;
+  top: 0;
+  left: 48px;
+  height: 88px;
+  will-change: transform;
+}
+
+.velocityLane {
+  position: relative;
+  overflow: hidden;
+  background: #0b1318;
+}
+
+.velocityBarLine,
+.velocityBeatLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
+
+.velocityBarLine {
+  background: rgba(211, 232, 235, 0.17);
+}
+
+.velocityBeatLine {
+  background: rgba(211, 232, 235, 0.07);
+}
+
+.velocityBar {
+  position: absolute;
+  bottom: 4px;
+  z-index: 3;
+  min-width: 4px;
+  padding: 0;
+  background: rgba(78, 142, 255, 0.7);
+  border: 1px solid rgba(133, 181, 255, 0.92);
+  border-radius: 2px 2px 0 0;
+  cursor: ns-resize;
+}
+
+.velocityBar:hover,
+.velocityBar.velocitySelected {
+  background: var(--cyan, #55d9e8);
+  border-color: #d5ffff;
 }
 
 .empty {

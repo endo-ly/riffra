@@ -271,6 +271,22 @@ pub fn add_audio_clip(
     Ok(committed)
 }
 
+/// Creates an empty MIDI Clip through the Core Application boundary.
+pub fn create_midi_clip(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    start_tick: TimelineTick,
+    duration_ticks: u64,
+    name: Option<String>,
+) -> Result<CreativeSession, String> {
+    let committed = commit_core_application(context, |core, store| {
+        core.application(store)
+            .create_midi_clip(track_id, start_tick, duration_ticks, name)
+    })?;
+    sync_arrangement(context)?;
+    Ok(committed)
+}
+
 pub fn update_session_settings(
     context: &SessionContext<'_>,
     patch: SessionSettingsPatch,
@@ -424,6 +440,19 @@ pub fn add_midi_note(
     Ok(committed)
 }
 
+/// Inserts identity-free MIDI notes through one Core Application operation.
+pub fn insert_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    notes: Vec<MidiNoteInput>,
+) -> Result<CreativeSession, String> {
+    let committed = commit_core_application(context, |core, store| {
+        core.application(store).insert_midi_notes(clip_id, notes)
+    })?;
+    sync_arrangement(context)?;
+    Ok(committed)
+}
+
 pub fn update_midi_note(
     context: &SessionContext<'_>,
     clip_id: &str,
@@ -459,6 +488,20 @@ pub fn remove_midi_note(
 ) -> Result<CreativeSession, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_midi_note(clip_id, note_id)
+    })?;
+    sync_arrangement(context)?;
+    Ok(committed)
+}
+
+/// Removes multiple MIDI notes through one Core Application operation.
+pub fn remove_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_ids: &[String],
+) -> Result<CreativeSession, String> {
+    let committed = commit_core_application(context, |core, store| {
+        core.application(store)
+            .remove_midi_notes(clip_id, note_ids.to_owned())
     })?;
     sync_arrangement(context)?;
     Ok(committed)
