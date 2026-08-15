@@ -145,7 +145,7 @@ where
             {
                 let mut clip = source;
                 clip.id = next_id("clip:take-place");
-                clip.muted = false;
+                clip.muted = true;
                 arrangement.audio_clips.push(clip);
             } else if take.raw_audio.is_some() || take.processed_audio.is_some() {
                 let slot_clip_id = arrangement
@@ -186,7 +186,7 @@ where
                     })?;
                 apply_audio_source_to_clip(&mut clip, &source);
                 clip.recording_take_id = Some(take.id);
-                clip.muted = false;
+                clip.muted = true;
                 arrangement.audio_clips.push(clip);
             } else if take.midi_asset_id.is_some() {
                 let mut clip = midi_clip.take().ok_or_else(|| {
@@ -196,6 +196,7 @@ where
                 })?;
                 clip.id = next_id("midi-clip:take-place");
                 clip.recording_take_id = Some(take.id);
+                clip.muted = true;
                 arrangement.midi_clips.push(clip);
             } else {
                 return Err(ApplicationError::InvalidCommand(format!(

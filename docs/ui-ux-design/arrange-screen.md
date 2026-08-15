@@ -624,22 +624,29 @@ Note の Pitch、Velocity、Note 一覧など、演奏内容の編集は MIDI Ed
 
 ### 9.5 Take Inspector
 
-録音 Clip に複数 Take がある場合は、Take Inspector で候補を比較・採用する。
+録音 Clip または Track を選択したとき、Take Inspector は録音候補を確認し、試聴、採用、配置までを一つの領域で完結させる。複数の録音グループがある場合は、Track 選択時にグループを選べる。選択中のグループへ続けて録音する操作もこの領域に置く。
 
 ```text
 TAKES
-────────────────────────
-Take 1    [Preview] [Use]
-Take 2    [Preview] [Use]
-Take 3    [Preview] [Use]
+────────────────────────────────
+              [Record another take]
+Recording group       [Group 2  ]
 
-[Place copy]
+Take 1                         CURRENT
+          Audio source
+          ○ Raw    ○ Processed
+          [Place copy]                         [Preview]
 
-A/B comparison
-A · RAW      B · PROCESSED
+Take 2                         MIDI
+          [Use] [Place copy]
+
+Take 3
+          [Use] [Place copy]                   [Preview]
 ```
 
-Preview は現在の Arrangement 再生とは独立した試聴として扱う。Use は採用 Take を正準状態へ反映し、Place copy は候補を別 Clip として Timeline へ配置する。Raw / Processed の両方を持つ Take は A/B 比較できる。
+Preview は現在の Arrangement 再生とは独立した一回限りの試聴で、再生中は同じボタンが Stop になる。音声の終端に達した場合も、再生中の表示を解除する。Raw / Processed の両方を持つ Take は Source で音源を選び、再生中に切り替えると同じ位置から比較できる。この比較は試聴だけの操作であり、Timeline 上の Clip の音源設定は変更しない。
+
+Use は選択した Take を録音グループの正準 Clip として採用する。現在採用中の Take は `CURRENT` と表示し、Use を無効にする。Place copy は候補を別 Clip として Timeline に配置し、既存の正準 Clip と重なって二重再生しないようミュートした状態で作成する。MIDI Take は音声試聴を表示せず、Use と Place copy を提供する。
 
 ---
 

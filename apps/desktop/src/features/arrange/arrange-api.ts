@@ -19,5 +19,5 @@ export type ArrangeWorkspaceApi = ArrangeApi &
 
 /** Native capabilities required by Arrange inspectors. */
 export type ArrangeInspectorApi = ArrangeApi &
-  Pick<AudioApi, 'previewAsset'> &
+  Pick<AudioApi, 'previewAsset' | 'stopSamplePreview'> &
   Pick<JobApi, 'scanVst3Folder'>;

@@ -19,6 +19,7 @@ import styles from './InspectorPanel.module.css';
 
 interface InspectorPanelProps {
   audio: AudioStatus;
+  recordingCommandPending: boolean;
   boot: BootstrapState;
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
@@ -32,6 +33,7 @@ interface InspectorPanelProps {
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
+  onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
   api: ArrangeInspectorApi;
 }
 
@@ -87,6 +89,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 session={props.session}
                 selection={props.arrangeSelection}
                 setSession={props.setSession}
+                recordingActive={props.audio.recording.active}
+                recordingCommandPending={props.recordingCommandPending}
+                onRecordAnotherTake={props.onRecordAnotherTake}
                 api={props.api}
               />
             </>
@@ -100,13 +105,24 @@ export function InspectorPanel(props: InspectorPanelProps) {
               api={props.api}
             />
           ) : selectedMidiClipCount === 1 ? (
-            <MidiClipInspector
-              session={props.session}
-              setSession={props.setSession}
-              selectedClipIds={selectedMidiClipIds}
-              setSelectedClipIds={setSelectedClipIds}
-              api={props.api}
-            />
+            <>
+              <MidiClipInspector
+                session={props.session}
+                setSession={props.setSession}
+                selectedClipIds={selectedMidiClipIds}
+                setSelectedClipIds={setSelectedClipIds}
+                api={props.api}
+              />
+              <TakeInspector
+                session={props.session}
+                selection={props.arrangeSelection}
+                setSession={props.setSession}
+                recordingActive={props.audio.recording.active}
+                recordingCommandPending={props.recordingCommandPending}
+                onRecordAnotherTake={props.onRecordAnotherTake}
+                api={props.api}
+              />
+            </>
           ) : selectedAudioClipCount === 1 ? (
             <>
               <ArrangeClipInspector
@@ -136,6 +152,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 session={props.session}
                 selection={props.arrangeSelection}
                 setSession={props.setSession}
+                recordingActive={props.audio.recording.active}
+                recordingCommandPending={props.recordingCommandPending}
+                onRecordAnotherTake={props.onRecordAnotherTake}
                 api={props.api}
               />
             </>

@@ -142,6 +142,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     previewPadId,
     transportPlaying,
     recordingCommandPending,
+    startRecordingNow,
     autosaveError,
     audioPreferenceMessage,
     exportMessage,
@@ -509,6 +510,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       {(!isArrange || arrangeInspectorWidth > 0) && (
         <InspectorPanel
           audio={audio}
+          recordingCommandPending={recordingCommandPending}
           boot={boot}
           focusMode={focusMode}
           setFocusMode={setFocusMode}
@@ -522,6 +524,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           onDisableMissingPlugin={disableMissingPluginDevice}
           onReplaceMissingPlugin={replaceMissingPluginDevice}
           onRescanMissingPlugins={rescanMissingPlugins}
+          onRecordAnotherTake={(recordingSessionId) => void startRecordingNow(recordingSessionId)}
           api={nativeApi}
         />
       )}

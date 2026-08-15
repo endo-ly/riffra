@@ -46,6 +46,7 @@ function renderPanel(
   render(
     <InspectorPanel
       audio={fakeAudioStatus()}
+      recordingCommandPending={false}
       boot={boot}
       focusMode={false}
       setFocusMode={() => undefined}
@@ -59,6 +60,7 @@ function renderPanel(
       onDisableMissingPlugin={async () => undefined}
       onReplaceMissingPlugin={async () => undefined}
       onRescanMissingPlugins={async () => undefined}
+      onRecordAnotherTake={() => undefined}
       api={api}
     />,
   );

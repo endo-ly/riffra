@@ -17,7 +17,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
   const recordingCommandLock = useRef(false);
-  const { listRecordings, startArrangeRecording, stopArrangeRecording } = api;
+  const { listRecordings, startArrangeRecording, recordAnotherTake, stopArrangeRecording } = api;
 
   const reloadRecordings = useCallback(async () => {
     const next = await listRecordings();
@@ -31,14 +31,18 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
       recordingCommandLock.current = true;
       setRecordingCommandPending(true);
       try {
-        setAudio(await startArrangeRecording(recordingSessionId));
+        setAudio(
+          await (recordingSessionId
+            ? recordAnotherTake(recordingSessionId)
+            : startArrangeRecording()),
+        );
         await reloadRecordings();
       } finally {
         recordingCommandLock.current = false;
         setRecordingCommandPending(false);
       }
     },
-    [reloadRecordings, setAudio, startArrangeRecording],
+    [recordAnotherTake, reloadRecordings, setAudio, startArrangeRecording],
   );
 
   const toggleRecording = useCallback(async () => {
