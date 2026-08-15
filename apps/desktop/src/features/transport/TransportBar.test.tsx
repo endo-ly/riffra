@@ -16,7 +16,6 @@ function Harness({ api }: { api: FakeNativeApi }) {
   return (
     <TransportBar
       session={session}
-      workspace="arrange"
       setSession={setSession}
       audio={api.audio}
       setAudio={() => undefined}

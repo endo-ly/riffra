@@ -1,7 +1,7 @@
 import type {
   ArrangeApi,
   AudioApi,
-  DesignApi,
+  AnalysisApi,
   JobApi,
   NativeEventApi,
   ProjectApi,
@@ -11,7 +11,7 @@ import type {
 /** Native capabilities required by the Arrange workspace shell. */
 export type ArrangeWorkspaceApi = ArrangeApi &
   Pick<AudioApi, 'getAudioStatus' | 'sendMidiToTrack' | 'panicMidiTrack' | 'previewAsset'> &
-  Pick<DesignApi, 'analyzeAsset'> &
+  Pick<AnalysisApi, 'analyzeAsset'> &
   Pick<JobApi, 'scanVst3Folder'> &
   Pick<NativeEventApi, 'onTransportStatus'> &
   Pick<ProjectApi, 'importMidiBytes'> &

@@ -14,10 +14,10 @@
 //! riffra-core owns the production rules and the canonical Application /
 //! Domain operations. This crate hosts the filesystem, runtime, and OS
 //! integration: recording lifecycle and Inbox management in `recording`,
-//! background-job orchestration in `analysis` / `separation` / `render` /
-//! `plugins`, session command hosting in `session`, library read-model
-//! queries in `library`, asset preview in `asset`, and app-level commands
-//! and native probes in `host_commands`.
+//! background-job orchestration in `render` / `plugins`,
+//! session command hosting in `session`, library read-model queries in
+//! `library`, asset preview in `asset`, and app-level commands and native
+//! probes in `host_commands`.
 
 mod analysis;
 mod asset;
@@ -32,12 +32,10 @@ mod native_audio;
 mod plugin_catalog;
 mod plugin_validation;
 mod plugins;
-mod presentation;
 mod projects;
 mod recording;
 mod render;
 mod runtime;
-mod separation;
 mod session;
 mod startup;
 mod storage;
@@ -70,7 +68,6 @@ static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
     core: AppCore<AudioSupervisor>,
-    view_state: Mutex<presentation::DesktopViewState>,
     command_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
     runtime: Arc<runtime::RuntimeReconciler<AudioSupervisor>>,
@@ -182,12 +179,6 @@ fn bootstrap_recovery_candidates(
         })
 }
 
-fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
-    let message = format!("An internal state lock was poisoned: {error}");
-    eprintln!("[riffra] {message}. Aborting to prevent corrupted state from propagating.");
-    std::process::abort();
-}
-
 fn abort_on_poison<T>(error: std::sync::PoisonError<T>) -> ! {
     eprintln!("[riffra] Internal state lock was poisoned: {error}. Aborting.");
     std::process::abort();
@@ -280,40 +271,7 @@ pub fn run() {
                 runtime_recovery,
             )?);
             let runtime_for_restart = Arc::downgrade(&runtime);
-            let recovery_session = core.shared_session();
-            let recovery_data_root = data_root.clone();
             audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
-                let pads = recovery_session
-                    .snapshot()
-                    .map_err(|error| {
-                        format!("Canonical Session could not be read during Runtime recovery: {error}")
-                    })
-                    .and_then(|session| {
-                        session_adapter::resolve_native_pads(
-                            &recovery_data_root,
-                            &session.play_state.sample_instrument.pads,
-                        )
-                    });
-                match pads {
-                    Ok(pads) => match runtime_audio.configure_sample_pads(&pads) {
-                        Ok(status) if session_adapter::audio_command_succeeded(&status) => {}
-                        Ok(status) => tracing::warn!(
-                            generation,
-                            message = %status.message,
-                            "Sample Pad restoration after Runtime restart was rejected"
-                        ),
-                        Err(error) => tracing::warn!(
-                            generation,
-                            error = %error,
-                            "Sample Pad restoration after Runtime restart failed"
-                        ),
-                    },
-                    Err(error) => tracing::warn!(
-                        generation,
-                        error = %error,
-                        "Sample Pad state could not be prepared after Runtime restart"
-                    ),
-                }
                 if let Some(runtime) = runtime_for_restart.upgrade()
                     && !runtime.requeue_after_runtime_restart(generation)
                     && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
@@ -331,7 +289,6 @@ pub fn run() {
             let startup_session = session.clone();
             app.manage(AppState {
                 core,
-                view_state: Mutex::new(presentation::DesktopViewState::default()),
                 command_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
                 runtime,
@@ -365,16 +322,12 @@ pub fn run() {
             session::commands::send_midi_to_track,
             session::commands::panic_midi_track,
             stop_preview,
-            stop_preview_for_key,
             // Session Application Operations.
             session::commands::undo_session,
             session::commands::redo_session,
             session::commands::get_history_state,
             session::commands::restore_recovery_generation,
             session::commands::import_scratch_session,
-            session::commands::create_sample_pad,
-            session::commands::update_sample_pad,
-            session::commands::remove_sample_pad,
             session::commands::add_audio_clip_to_arrangement,
             session::commands::create_midi_clip,
             session::commands::add_midi_clip_to_arrangement,
@@ -392,7 +345,6 @@ pub fn run() {
             session::commands::paste_timeline_clips,
             session::commands::crossfade_audio_clips,
             session::commands::retry_runtime_projection,
-            session::commands::restore_sample_pads,
             session::commands::play_timeline,
             session::commands::stop_timeline,
             session::commands::go_to_start_timeline,
@@ -400,8 +352,6 @@ pub fn run() {
             session::commands::update_arrangement_timebase,
             session::commands::update_timeline_loop_range,
             session::commands::update_timeline_punch_range,
-            session::commands::open_asset_in_design,
-            session::commands::switch_workspace,
             session::commands::update_session_settings,
             session::commands::add_track,
             session::commands::update_track,
@@ -438,7 +388,6 @@ pub fn run() {
             session::commands::stop_take_comparison,
             session::commands::activate_take,
             session::commands::place_take_as_separate_clip,
-            session::commands::apply_ai_suggestion,
             session::commands::set_master_gain_db,
             audio_preferences::set_audio_driver,
             session::commands::relink_missing_dependency,
@@ -466,10 +415,7 @@ pub fn run() {
             library::commands::related_library_assets,
             // MIDI export.
             // Background-job orchestration per feature.
-            analysis::commands::start_analysis_job,
             analysis::commands::analyze_asset,
-            separation::commands::start_separation_job,
-            separation::commands::list_separations,
             render::commands::render_timeline,
             plugins::commands::scan_vst3_folder,
             plugins::commands::start_scan_job

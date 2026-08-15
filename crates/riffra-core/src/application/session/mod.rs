@@ -82,66 +82,6 @@ where
             if let Some(note) = patch.note {
                 session.settings.note = note.chars().take(16_384).collect();
             }
-            if let Some(permission) = patch.ai_permission {
-                session.settings.ai_permission = permission;
-            }
-            if let Some(context) = patch.ai_context {
-                session.settings.ai_context = context;
-            }
-            Ok(())
-        })
-    }
-
-    /// Applies an allowed AI gain suggestion and records its reversible change set.
-    pub fn apply_ai_suggestion(
-        &self,
-        clip_id: &str,
-        proposed_gain_db: f64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core.commit(self.storage, |session| {
-            if session.settings.ai_permission != AiPermission::Apply {
-                return Err(ApplicationError::InvalidCommand(
-                    "ai suggestion application requires apply permission".into(),
-                ));
-            }
-            let clip = session
-                .arrangement
-                .audio_clips
-                .iter_mut()
-                .find(|clip| clip.id == clip_id)
-                .ok_or_else(|| {
-                    crate::DomainError::InvalidClip(format!(
-                        "audio clip '{clip_id}' is not registered"
-                    ))
-                })?;
-            let current_gain_db = clip.gain_db;
-            clip.gain_db = if proposed_gain_db.is_finite() {
-                proposed_gain_db.clamp(-90.0, 24.0)
-            } else {
-                0.0
-            };
-            let applied_gain_db = clip.gain_db;
-            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-            let created_at_ms = now_ms();
-            session.settings.ai_history.push(AiChangeSet {
-                id: format!("ai:{created_at_ms}"),
-                created_at_ms,
-                permission: session.settings.ai_permission,
-                target: clip_id.to_owned(),
-                current_gain_db,
-                proposed_gain_db: applied_gain_db,
-                reason: "Match the selected reference RMS without changing the source WAV.".into(),
-                expected_effect:
-                    "A closer perceived level while clip position and source remain unchanged."
-                        .into(),
-                risk: "Low · reversible".into(),
-                context: session.settings.ai_context.clone(),
-                applied: true,
-            });
-            if session.settings.ai_history.len() > 128 {
-                let excess = session.settings.ai_history.len() - 128;
-                session.settings.ai_history.drain(..excess);
-            }
             Ok(())
         })
     }

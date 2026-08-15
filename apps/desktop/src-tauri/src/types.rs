@@ -17,21 +17,19 @@ use crate::model::{
     RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
-use crate::presentation::{DesignContext, DesignTool, DesktopViewState, Workspace};
 use crate::projects::ProjectExport;
 use crate::recording::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
 use crate::render::{RenderOptions, RenderRange, RenderResult};
-use crate::separation::SeparationResult;
 use riffra_core::{
-    AiChangeSet, AiPermission, Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch,
-    AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
-    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, PlayState,
-    ProjectTimebase, RackDevice, RackInstance, RackMacro, RecordingPassRecord,
-    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SampleInstrumentState,
-    SamplePad, SessionSettings, TimelineLoopRange, Track, TrackKind,
+    Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
+    AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CreativeSession,
+    DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip, MidiClipMove,
+    MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase, RackDevice,
+    RackInstance, RackMacro, RecordingPassRecord, RecordingSessionRecord,
+    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange, Track,
+    TrackKind,
 };
 use ts_rs::{Config, TS};
 
@@ -47,17 +45,12 @@ fn export_types() {
     FrameRange::export_all(&cfg).expect("FrameRange bindings");
     FrameDuration::export_all(&cfg).expect("FrameDuration bindings");
     Marker::export_all(&cfg).expect("Marker bindings");
-    AiPermission::export_all(&cfg).expect("AiPermission bindings");
     DeviceKind::export_all(&cfg).expect("DeviceKind bindings");
     RackDevice::export_all(&cfg).expect("RackDevice bindings");
     RackMacro::export_all(&cfg).expect("RackMacro bindings");
     RackInstance::export_all(&cfg).expect("RackInstance bindings");
-    DesignTool::export_all(&cfg).expect("DesignTool bindings");
-    Workspace::export_all(&cfg).expect("Workspace bindings");
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
-    DesignContext::export_all(&cfg).expect("DesignContext bindings");
-    DesktopViewState::export_all(&cfg).expect("DesktopViewState bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
@@ -79,10 +72,6 @@ fn export_types() {
     MidiClipMove::export_all(&cfg).expect("MidiClipMove bindings");
     MidiClipPatch::export_all(&cfg).expect("MidiClipPatch bindings");
     Arrangement::export_all(&cfg).expect("Arrangement bindings");
-    SamplePad::export_all(&cfg).expect("SamplePad bindings");
-    SampleInstrumentState::export_all(&cfg).expect("SampleInstrumentState bindings");
-    PlayState::export_all(&cfg).expect("PlayState bindings");
-    AiChangeSet::export_all(&cfg).expect("AiChangeSet bindings");
     SessionSettings::export_all(&cfg).expect("SessionSettings bindings");
     CreativeSession::export_all(&cfg).expect("CreativeSession bindings");
     HistoryState::export_all(&cfg).expect("HistoryState bindings");
@@ -114,7 +103,6 @@ fn export_types() {
     RenderResult::export_all(&cfg).expect("RenderResult bindings");
     ScanIssue::export_all(&cfg).expect("ScanIssue bindings");
     ScanReport::export_all(&cfg).expect("ScanReport bindings");
-    SeparationResult::export_all(&cfg).expect("SeparationResult bindings");
     RecordingCaptureStatus::export_all(&cfg).expect("RecordingCaptureStatus bindings");
     DropoutInformation::export_all(&cfg).expect("DropoutInformation bindings");
     RecordingCapture::export_all(&cfg).expect("RecordingCapture bindings");

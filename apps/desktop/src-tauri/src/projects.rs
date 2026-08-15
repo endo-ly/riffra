@@ -51,7 +51,7 @@ struct ProjectManifestOwned {
     assets: Vec<PackagedAsset>,
 }
 
-/// Collects the distinct asset ids referenced by a session's clips and pads.
+/// Collects the distinct asset ids referenced by a session's clips.
 fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
     let mut seen = HashSet::new();
     let mut ids = Vec::new();
@@ -60,14 +60,6 @@ fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
         .audio_clips
         .iter()
         .map(|clip| &clip.asset_id)
-        .chain(
-            session
-                .play_state
-                .sample_instrument
-                .pads
-                .iter()
-                .map(|pad| &pad.asset_id),
-        )
     {
         if seen.insert(asset_id.clone()) {
             ids.push(asset_id.clone());

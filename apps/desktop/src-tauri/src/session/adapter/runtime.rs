@@ -2,10 +2,9 @@
 
 use super::*;
 
-/// Rebuilds every Runtime that depends on the active audio device after the
-/// Native device has been reopened. The canonical Session remains unchanged;
-/// only the device-dependent Sample Pad buffers and Arrangement projection are
-/// prepared again.
+/// Rebuilds the Runtime graph after the Native device has been reopened. The
+/// canonical Session remains unchanged; only the device-dependent Arrangement
+/// projection is prepared again.
 pub(crate) fn reconcile_runtime_after_audio_device_change(
     context: &SessionContext<'_>,
 ) -> Result<AudioStatus, String> {
@@ -18,33 +17,12 @@ pub(crate) fn reconcile_runtime_after_audio_device_change(
             "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
         );
     }
-    let (pad_warning, pad_error) = match restore_sample_pads(context) {
-        Ok(SamplePadRestoreOutcome::Restored(_)) => (None, None),
-        Ok(SamplePadRestoreOutcome::Disabled { warning, .. }) => (Some(warning), None),
-        Err(error) => (
-            None,
-            Some(format!(
-                "Sample Pad restoration failed after the audio device change: {error}"
-            )),
-        ),
-    };
     let arrangement_error = sync_arrangement_runtime(context).err().map(|error| {
         format!("Arrangement Runtime restoration failed after the audio device change: {error}")
     });
-    let mut status = context.audio.refresh_status().map_err(String::from)?;
-    let errors = [pad_error, arrangement_error]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    if !errors.is_empty() {
-        return Err(errors.join("; "));
-    }
-    if let Some(warning) = pad_warning {
-        status.message = if status.message.is_empty() {
-            warning
-        } else {
-            format!("{} {warning}", status.message)
-        };
+    let status = context.audio.refresh_status().map_err(String::from)?;
+    if let Some(error) = arrangement_error {
+        return Err(error);
     }
     Ok(status)
 }

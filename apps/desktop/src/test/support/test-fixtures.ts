@@ -47,8 +47,6 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     midiInputActive: false,
     midiMessages: 0,
     lastMidiNote: null,
-    midiPadMappings: 0,
-    midiPadTriggers: 0,
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,

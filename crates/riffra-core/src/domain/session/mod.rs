@@ -1,12 +1,11 @@
 //! Canonical CreativeSession and the production state it owns.
 //!
-//! [`CreativeSession`] is the canonical production-state model. It holds live
-//! sample performance state, the [`Arrangement`], and session settings. It
-//! deliberately does not own host view state, audio/MIDI file bodies, the
-//! Library index, recording files, or background-job state.
+//! [`CreativeSession`] is the canonical production-state model. It holds the
+//! [`Arrangement`] and session settings. It deliberately does not own host
+//! view state, audio/MIDI file bodies, the Library index, recording files, or
+//! background-job state.
 
 use crate::domain::arrangement::*;
-use crate::domain::asset::AssetId;
 use crate::domain::rack::{RackDevice, RackInstance};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -102,68 +101,6 @@ pub struct TimelinePunchRange {
     pub end_tick: TimelineTick,
 }
 
-/// A MIDI-triggered pad mapping a key to a slice of a sample [`Asset`]. This is
-/// live *playback* state for sample performance, distinct from a saved
-/// [`crate::domain::asset::AssetKind::Sample`] asset.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SamplePad {
-    pub id: String,
-    pub name: String,
-    pub asset_id: AssetId,
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub midi_key: u8,
-    #[serde(default)]
-    pub gain_db: f64,
-    #[serde(default)]
-    pub loop_enabled: bool,
-}
-
-/// The set of sample pads currently loaded for performance.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SampleInstrumentState {
-    #[serde(default)]
-    pub pads: Vec<SamplePad>,
-}
-
-/// Live sample performance state (instrument and performance configuration).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct PlayState {
-    #[serde(default)]
-    pub sample_instrument: SampleInstrumentState,
-}
-
-/// Permitted scope of AI-proposed changes applied to a session.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize, TS)]
-#[serde(rename_all = "PascalCase")]
-pub enum AiPermission {
-    Explain,
-    #[default]
-    Suggest,
-    Apply,
-}
-
-/// A reversible AI-proposed change record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AiChangeSet {
-    pub id: String,
-    pub created_at_ms: u64,
-    pub permission: AiPermission,
-    pub target: String,
-    pub current_gain_db: f64,
-    pub proposed_gain_db: f64,
-    pub reason: String,
-    pub expected_effect: String,
-    pub risk: String,
-    #[serde(default)]
-    pub context: Vec<String>,
-    pub applied: bool,
-}
-
 /// Session-wide settings that are not clip/track/rack structure.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -177,16 +114,6 @@ pub struct SessionSettings {
     pub metronome_enabled: bool,
     #[serde(default)]
     pub note: String,
-    #[serde(default)]
-    pub ai_permission: AiPermission,
-    #[serde(default = "default_ai_context")]
-    pub ai_context: Vec<String>,
-    #[serde(default)]
-    pub ai_history: Vec<AiChangeSet>,
-}
-
-fn default_ai_context() -> Vec<String> {
-    vec!["analysis".into(), "selectedClip".into()]
 }
 
 /// The canonical production-state model.
@@ -197,8 +124,6 @@ pub struct CreativeSession {
     pub updated_at_ms: u64,
     #[serde(default)]
     pub project_name: Option<String>,
-    #[serde(default)]
-    pub play_state: PlayState,
     #[serde(default)]
     pub arrangement: Arrangement,
     pub settings: SessionSettings,
@@ -220,7 +145,6 @@ impl CreativeSession {
             session_id: format!("scratch-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
-            play_state: PlayState::default(),
             arrangement: Arrangement::default(),
             settings: SessionSettings {
                 master_db: -18.0,
@@ -228,9 +152,6 @@ impl CreativeSession {
                 count_in_beats: 0,
                 metronome_enabled: false,
                 note: String::new(),
-                ai_permission: AiPermission::default(),
-                ai_context: default_ai_context(),
-                ai_history: Vec::new(),
             },
         }
     }
@@ -253,54 +174,10 @@ impl CreativeSession {
             return Err("Count-in must be between 0 and 8 beats.".into());
         }
         settings.note.truncate(16_384);
-        settings.ai_context.truncate(16);
-        settings.ai_context.retain(|item| {
-            !item.trim().is_empty() && item.len() <= 64 && AI_CONTEXT_IDS.contains(&item.as_str())
-        });
-        settings.ai_context.dedup();
-        if settings.ai_history.len() > 128 {
-            return Err("AI history cannot contain more than 128 ChangeSets.".into());
-        }
-        for change_set in &mut settings.ai_history {
-            normalize_ai_change_set(change_set)?;
-        }
 
         normalize_arrangement(&mut self.arrangement)?;
-        normalize_sample_pads(&mut self.play_state.sample_instrument.pads)?;
         Ok(self)
     }
-}
-
-const AI_CONTEXT_IDS: &[&str] = &[
-    "analysis",
-    "selectedClip",
-    "project",
-    "userNote",
-    "previewAudio",
-    "errorLog",
-];
-
-fn normalize_ai_change_set(change_set: &mut AiChangeSet) -> Result<(), String> {
-    if change_set.id.trim().is_empty() || change_set.target.trim().is_empty() {
-        return Err("AI ChangeSets require non-empty ids and targets.".into());
-    }
-    if !change_set.current_gain_db.is_finite() || !change_set.proposed_gain_db.is_finite() {
-        return Err(format!(
-            "AI ChangeSet '{}' has invalid gain values.",
-            change_set.id
-        ));
-    }
-    change_set.current_gain_db = change_set.current_gain_db.clamp(-90.0, 24.0);
-    change_set.proposed_gain_db = change_set.proposed_gain_db.clamp(-90.0, 24.0);
-    change_set.reason.truncate(4_096);
-    change_set.expected_effect.truncate(4_096);
-    change_set.risk.truncate(256);
-    change_set.context.truncate(16);
-    change_set
-        .context
-        .retain(|item| AI_CONTEXT_IDS.contains(&item.as_str()));
-    change_set.context.dedup();
-    Ok(())
 }
 
 fn normalize_rack(rack: &mut RackInstance) -> Result<(), String> {
@@ -722,36 +599,11 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_sample_pads(pads: &mut [SamplePad]) -> Result<(), String> {
-    if pads.len() > 128 {
-        return Err("A sample instrument cannot contain more than 128 pads.".into());
-    }
-    for pad in pads {
-        if pad.id.trim().is_empty()
-            || pad.name.trim().is_empty()
-            || pad.asset_id.as_str().trim().is_empty()
-        {
-            return Err("Sample pads require ids, names and asset ids.".into());
-        }
-        if pad.end_ms <= pad.start_ms {
-            return Err(format!(
-                "Sample pad '{}' has an invalid slice range.",
-                pad.name
-            ));
-        }
-        if !pad.gain_db.is_finite() {
-            return Err(format!("Sample pad '{}' has an invalid gain.", pad.name));
-        }
-        pad.gain_db = pad.gain_db.clamp(-90.0, 24.0);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DomainError;
-    use crate::domain::asset::{Provenance, mint_asset_id};
+    use crate::domain::asset::{AssetId, Provenance, mint_asset_id};
     use crate::domain::recording::{
         RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
         RecordingTakeRecord, TakeAudioSource,
@@ -1338,13 +1190,9 @@ mod tests {
     }
 
     #[test]
-    fn new_session_has_empty_arrangement_and_sample_pads() {
+    fn new_session_has_empty_arrangement() {
         let session = CreativeSession::new(0);
         assert!(session.arrangement.tracks.is_empty());
-        assert_eq!(
-            session.play_state.sample_instrument.pads,
-            Vec::<SamplePad>::new()
-        );
         // An unused provenance reference keeps the asset import meaningful here.
         let _ = Provenance::recorded_root();
     }

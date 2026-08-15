@@ -7,12 +7,11 @@ import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
-  setPreviewPadId: (id: string | null) => void;
 }
 
 export function useLibrary(
   api: LibraryApi & AudioApi & Pick<ProjectApi, 'importMidiFile'>,
-  { setAudio, setPreviewPadId }: UseLibraryOptions,
+  { setAudio }: UseLibraryOptions,
 ) {
   const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
   const [librarySection, setLibrarySection] = useState('Plugins');
@@ -53,8 +52,7 @@ export function useLibrary(
     // Inbox, which carries their Canonical Asset ids directly.
     if (!asset || asset.kind !== 'audio') return;
     setAudio(await previewAsset(toAssetId(asset.id), {}));
-    setPreviewPadId(null);
-  }, [previewAsset, selectedLibraryAsset, setAudio, setPreviewPadId]);
+  }, [previewAsset, selectedLibraryAsset, setAudio]);
 
   // Imports an external Standard MIDI File as a canonical MIDI Asset through the
   // native dialog, then drives the cross-asset search by the file stem so the

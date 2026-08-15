@@ -4,21 +4,19 @@
 //! blocking pool, and builds a
 //! [`SessionContext`](super::adapter::SessionContext) of concrete
 //! dependencies, delegates to the matching Core operation, and returns
-//! the resulting DTO. The production workflow (arrangement edit, design
-//! navigation, sample pad runtime sync, validate/persist) is hosted by
-//! [`super::adapter`], which delegates canonical edits to riffra-core;
-//! nothing here re-implements it.
+//! the resulting DTO. The production workflow (arrangement edit, runtime
+//! sync, validate/persist) is hosted by [`super::adapter`], which delegates
+//! canonical edits to riffra-core; nothing here re-implements it.
 
 use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::missing::MissingDependency;
 use crate::model::{RuntimeProjectionStatus, SessionAudioPair};
-use crate::presentation::{DesignTool, DesktopViewState, Workspace};
 use crate::session::adapter::{self, SessionContext};
 use crate::storage::SessionStore;
 use riffra_core::application::{
-    MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
+    MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SessionSettingsPatch,
 };
 use riffra_core::{
     AssetId, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
@@ -110,13 +108,11 @@ fn validate_target_instrument_track(state: &AppState, track_id: &str) -> Result<
 }
 
 mod arrangement;
-mod presentation;
 mod project;
 mod rack;
 mod transport;
 
 pub(crate) use arrangement::*;
-pub(crate) use presentation::*;
 pub(crate) use project::*;
 pub(crate) use rack::*;
 pub(crate) use transport::*;

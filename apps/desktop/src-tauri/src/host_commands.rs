@@ -35,7 +35,6 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
                 .snapshot()
                 .map_err(|error| error.to_string())?
                 .session,
-            view_state: state.view_state.lock().map_err(lock_error)?.clone(),
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),
             runtime_startup_finished: state.core.audio().startup_finished(),
@@ -468,21 +467,6 @@ pub(crate) async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus
 pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, String> {
     run_blocking(app, |state| {
         state.core.audio().stop_preview().map_err(String::from)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn stop_preview_for_key(
-    voice_key: i32,
-    app: AppHandle,
-) -> Result<AudioStatus, String> {
-    run_blocking(app, move |state| {
-        state
-            .core
-            .audio()
-            .stop_preview_for_key(voice_key)
-            .map_err(String::from)
     })
     .await
 }

@@ -1,45 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession } from '@/model/domain';
+import type { CreativeSession } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { AudioApi, NativeEventApi, RenderApi, TransportApi } from '@/native/native-api';
+import type { NativeEventApi, TransportApi } from '@/native/native-api';
 
 interface TransportControllerOptions {
   api: Pick<
-    AudioApi & RenderApi & NativeEventApi & TransportApi,
-    | 'onTransportStatus'
-    | 'playTimeline'
-    | 'stopTimeline'
-    | 'goToStartTimeline'
-    | 'renderTimeline'
-    | 'previewAsset'
-    | 'stopSamplePreview'
+    NativeEventApi & TransportApi,
+    'onTransportStatus' | 'playTimeline' | 'stopTimeline' | 'goToStartTimeline'
   >;
   sessionRef: { current: CreativeSession | null };
-  playbackMode: PlaybackMode;
-  setAudio: Dispatch<SetStateAction<AudioStatus>>;
 }
-
-export type PlaybackMode = 'timeline' | 'preview';
-
-type PlaybackSource = PlaybackMode;
 
 /**
  * Owns transport intent sequencing and operation cancellation. The actual
- * timeline playing state comes from the native transport-status event; a
- * preview voice has a separate local state because preview_asset does not
- * change the timeline transport state.
+ * timeline playing state comes from the native transport-status event.
  */
-export function useTransportController({
-  api,
-  sessionRef,
-  playbackMode,
-  setAudio,
-}: TransportControllerOptions) {
+export function useTransportController({ api, sessionRef }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
-  const [previewPlaying, setPreviewPlaying] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
-  const playbackSourceRef = useRef<PlaybackSource | null>(null);
   const sequenceRef = useRef(0);
 
   const nextTransportSequence = useCallback(() => {
@@ -82,86 +60,27 @@ export function useTransportController({
     if (pending) return pending;
     const transportSequence = nextTransportSequence();
     return runPlayOperation(async () => {
-      const currentSession = sessionRef.current;
-      if (!currentSession) return;
-      const requestedMode = playbackMode;
-      const isCurrentIntent = () => sequenceRef.current === transportSequence;
-      if (!isCurrentIntent()) return;
-      playbackSourceRef.current = requestedMode;
-      if (requestedMode === 'timeline') {
-        await api.playTimeline(transportSequence);
-        return;
-      }
-
-      const result = await api.renderTimeline({
-        range: { kind: 'entireArrangement' },
-        normalize: false,
-        trackId: null,
-      });
-      if (!result || !isCurrentIntent() || sessionRef.current !== currentSession) return;
-      const nextAudio = await api.previewAsset(result.assetId, {
-        looped: currentSession.settings.loopEnabled,
-      });
-      if (!isCurrentIntent()) {
-        await api.stopSamplePreview();
-        return;
-      }
-      setAudio(nextAudio);
-      setPreviewPlaying(true);
+      if (!sessionRef.current) return;
+      if (sequenceRef.current !== transportSequence) return;
+      await api.playTimeline(transportSequence);
     });
-  }, [api, nextTransportSequence, playbackMode, sessionRef, setAudio, runPlayOperation]);
+  }, [api, nextTransportSequence, runPlayOperation, sessionRef]);
 
   const stopTransport = useCallback(() => {
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      const playbackSource = playbackSourceRef.current;
-      playbackSourceRef.current = null;
-      const stopTimeline = playbackSource === 'timeline' || timelinePlaying;
-      const stopPreview = playbackSource === 'preview' || previewPlaying;
-      if (stopTimeline) {
-        await api.stopTimeline(transportSequence);
-      }
-      if (stopPreview) {
-        setAudio(await api.stopSamplePreview());
-        setPreviewPlaying(false);
-      }
+      await api.stopTimeline(transportSequence);
     });
-  }, [
-    api,
-    cancelPendingPlay,
-    nextTransportSequence,
-    previewPlaying,
-    timelinePlaying,
-    setAudio,
-    runImmediateTransportOperation,
-  ]);
+  }, [api, cancelPendingPlay, nextTransportSequence, runImmediateTransportOperation]);
 
   const goToStart = useCallback(() => {
     const transportSequence = nextTransportSequence();
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
-      const playbackSource = playbackSourceRef.current;
-      playbackSourceRef.current = null;
-      const target = playbackSource ?? (timelinePlaying ? 'timeline' : null);
-      if (target === 'timeline') {
-        await api.goToStartTimeline(transportSequence);
-        return;
-      }
-      if (playbackSource === 'preview' || (playbackSource == null && previewPlaying)) {
-        setAudio(await api.stopSamplePreview());
-        setPreviewPlaying(false);
-      }
+      await api.goToStartTimeline(transportSequence);
     });
-  }, [
-    api,
-    cancelPendingPlay,
-    nextTransportSequence,
-    previewPlaying,
-    timelinePlaying,
-    setAudio,
-    runImmediateTransportOperation,
-  ]);
+  }, [api, cancelPendingPlay, nextTransportSequence, runImmediateTransportOperation]);
 
   useEffect(() => {
     return api.onTransportStatus((status) => {
@@ -170,7 +89,7 @@ export function useTransportController({
   }, [api]);
 
   return {
-    transportPlaying: timelinePlaying || previewPlaying,
+    transportPlaying: timelinePlaying,
     playTransport,
     stopTransport,
     goToStart,
