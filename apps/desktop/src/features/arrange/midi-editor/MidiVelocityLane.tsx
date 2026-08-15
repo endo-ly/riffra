@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { MidiNote } from '@/model/domain';
 import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
 import styles from './MidiEditorPanel.module.css';
+
+const VELOCITY_DRAG_THRESHOLD = 3;
 
 interface MidiVelocityLaneProps {
   notes: MidiNote[];
@@ -24,6 +26,7 @@ interface MidiVelocityLaneProps {
 
 export function MidiVelocityLane(props: MidiVelocityLaneProps) {
   const [preview, setPreview] = useState<Record<string, number>>({});
+  const previewGestureRef = useRef(0);
 
   const beginGesture = (event: React.PointerEvent<HTMLButtonElement>, note: MidiNote) => {
     event.preventDefault();
@@ -31,6 +34,7 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
     props.onFocus?.();
     const targetIds = props.selectedNoteIds.includes(note.id) ? props.selectedNoteIds : [note.id];
     if (!props.selectedNoteIds.includes(note.id)) props.onSelectNoteIds([note.id]);
+    const originY = event.clientY;
     const originValues = new Map(
       props.notes
         .filter((candidate) => targetIds.includes(candidate.id))
@@ -38,33 +42,63 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
     );
     const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
     if (!bounds || originValues.size === 0) return;
-    const valueAt = (clientY: number) =>
-      Math.max(1, Math.min(127, Math.round(127 - ((clientY - bounds.top) / bounds.height) * 127)));
-    const updatePreview = (clientY: number) => {
-      const value = valueAt(clientY);
-      setPreview(Object.fromEntries([...originValues.keys()].map((id) => [id, value])));
-      props.onVelocityChange?.(value);
+    const gestureId = previewGestureRef.current + 1;
+    previewGestureRef.current = gestureId;
+    const clearPreview = () => {
+      if (previewGestureRef.current === gestureId) setPreview({});
     };
-    updatePreview(event.clientY);
+    const valuesAt = (clientY: number) => {
+      const delta = Math.round(((originY - clientY) / bounds.height) * 127);
+      return Object.fromEntries(
+        [...originValues.entries()].map(([id, original]) => [
+          id,
+          Math.max(1, Math.min(127, original + delta)),
+        ]),
+      );
+    };
+    const updatePreview = (clientY: number) => {
+      const values = valuesAt(clientY);
+      setPreview(values);
+      props.onVelocityChange?.(values[note.id] ?? note.velocity);
+    };
+    let dragging = false;
     let finish: (pointer: PointerEvent) => void = () => undefined;
-    const move = (pointer: PointerEvent) => updatePreview(pointer.clientY);
+    const move = (pointer: PointerEvent) => {
+      if (!dragging) {
+        if (Math.abs(pointer.clientY - originY) < VELOCITY_DRAG_THRESHOLD) return;
+        dragging = true;
+      }
+      updatePreview(pointer.clientY);
+    };
     const cancel = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
-      setPreview({});
+      clearPreview();
     };
     finish = (pointer) => {
-      updatePreview(pointer.clientY);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
-      const value = valueAt(pointer.clientY);
+      if (!dragging) {
+        clearPreview();
+        return;
+      }
+      const values = valuesAt(pointer.clientY);
+      updatePreview(pointer.clientY);
       const updates = [...originValues.entries()]
-        .filter(([, original]) => original !== value)
-        .map(([noteId]) => ({ noteId, patch: { velocity: value } }));
-      setPreview({});
-      if (updates.length) void Promise.resolve(props.onUpdateNotes?.(props.clipId, updates));
+        .filter(([noteId, original]) => original !== values[noteId])
+        .map(([noteId]) => ({ noteId, patch: { velocity: values[noteId] } }));
+      if (!updates.length) {
+        clearPreview();
+        return;
+      }
+      const operation = props.onUpdateNotes?.(props.clipId, updates);
+      if (!operation) {
+        clearPreview();
+        return;
+      }
+      void Promise.resolve(operation).then(clearPreview, clearPreview);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);

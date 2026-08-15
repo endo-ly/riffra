@@ -59,6 +59,22 @@ const PITCH_HIGH = 128;
 const PITCH_LOW = 0;
 const EMPTY_NOTES: MidiNote[] = [];
 
+function pitchFromClientY(
+  clientY: number,
+  boundsTop: number,
+  rowHeight: number,
+  clampToRange = false,
+) {
+  const row = Math.floor((clientY - boundsTop) / rowHeight);
+  const pitch = PITCH_HIGH - 1 - row;
+  if (clampToRange) return Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, pitch));
+  return pitch >= PITCH_LOW && pitch < PITCH_HIGH ? pitch : null;
+}
+
+function pitchRowTop(pitch: number, rowHeight: number) {
+  return (PITCH_HIGH - pitch - 1) * rowHeight;
+}
+
 export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const { clip } = props;
   const { onPanicMidi } = props;
@@ -75,6 +91,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const [lastUsedVelocity, setLastUsedVelocity] = useState(96);
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
   const [rowHeight, setRowHeight] = useState(12);
+  const [horizontalScrollLeft, setHorizontalScrollLeft] = useState(0);
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -114,6 +131,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const beatTicks = ticksPerBeat(props.timebase);
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
+  const subdivisionLineTicks = useMemo(() => {
+    if (snapTicks <= 0) return [];
+    const pixelsPerSubdivision = snapTicks * pixelsPerTick;
+    const stride = Math.max(1, Math.ceil(8 / Math.max(1, pixelsPerSubdivision)));
+    const step = snapTicks * stride;
+    return Array.from({ length: Math.ceil(visibleTicks / step) }, (_, index) => index * step)
+      .filter((tick) => tick > 0)
+      .filter((tick) => tick % beatTicks !== 0 && tick % barTicks !== 0);
+  }, [barTicks, beatTicks, pixelsPerTick, snapTicks, visibleTicks]);
 
   const notes = props.clip?.notes ?? EMPTY_NOTES;
   const selectedNotes = useMemo(
@@ -251,11 +277,22 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     return props.onDuplicateNotes?.(clip.id, selectedNoteIds, Math.max(1, end - start));
   };
 
-  const nudgeSelectedNotes = (direction: 'left' | 'right' | 'up' | 'down'): MidiEditResult => {
+  const nudgeSelectedNotes = (
+    direction: 'left' | 'right' | 'up' | 'down',
+    pitchStep = 1,
+  ): MidiEditResult => {
     if (!clip || selectedNotes.length === 0 || !props.onUpdateNotes) return;
     const timeStep = snapTicks || beatTicks;
-    const pitchDelta = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
+    const requestedPitchDelta =
+      direction === 'up' ? pitchStep : direction === 'down' ? -pitchStep : 0;
+    const lowestSelectedPitch = Math.min(...selectedNotes.map((note) => note.note));
+    const highestSelectedPitch = Math.max(...selectedNotes.map((note) => note.note));
+    const pitchDelta =
+      requestedPitchDelta > 0
+        ? Math.min(requestedPitchDelta, PITCH_HIGH - 1 - highestSelectedPitch)
+        : Math.max(requestedPitchDelta, PITCH_LOW - lowestSelectedPitch);
     const timeDelta = direction === 'left' ? -timeStep : direction === 'right' ? timeStep : 0;
+    if (pitchDelta === 0 && timeDelta === 0) return;
     return props.onUpdateNotes(
       clip.id,
       selectedNotes.map((note) => ({
@@ -277,8 +314,8 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     if (!clip || !props.onAddNote) return;
     const bounds = lane.getBoundingClientRect();
     const rawTick = (clientX - bounds.left) / pixelsPerTick;
-    const rawPitch = PITCH_HIGH - 1 - Math.floor((clientY - bounds.top) / rowHeight);
-    if (rawPitch < PITCH_LOW || rawPitch >= PITCH_HIGH) return;
+    const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
+    if (rawPitch === null) return;
     const requestedStartTick = snapTicks
       ? Math.max(0, Math.round(rawTick / snapTicks) * snapTicks)
       : Math.max(0, Math.round(rawTick));
@@ -324,8 +361,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       operation = removeSelectedNotes();
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       operation = nudgeSelectedNotes(event.key === 'ArrowLeft' ? 'left' : 'right');
-    } else if (event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-      operation = nudgeSelectedNotes(event.key === 'ArrowUp' ? 'up' : 'down');
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      operation = nudgeSelectedNotes(
+        event.key === 'ArrowUp' ? 'up' : 'down',
+        event.shiftKey ? 12 : 1,
+      );
     } else if (event.key === 'Escape') {
       setSelectedNoteIds([]);
       setMarquee(null);
@@ -774,10 +814,16 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           </label>
         </div>
       </header>
-      <div ref={laneViewportRef} className={styles.laneViewport}>
-        <div className={styles.canvas} style={{ width: canvasWidth }}>
-          <div className={styles.rulerRow}>
-            <div className={styles.laneLabel}>Ruler</div>
+      <div className={styles.editorSurface}>
+        <div className={styles.rulerViewport}>
+          <div className={styles.laneLabel}>Ruler</div>
+          <div
+            className={styles.rulerContent}
+            style={{
+              width: laneWidth,
+              transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
+            }}
+          >
             <MidiEditorRuler
               timebase={props.timebase}
               clipStartTick={clip!.startTick}
@@ -787,7 +833,14 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               onSeek={props.onSeek}
             />
           </div>
-          <div className={styles.roll}>
+        </div>
+        <div
+          ref={laneViewportRef}
+          className={styles.laneViewport}
+          data-midi-pitch-viewport
+          onScroll={(event) => setHorizontalScrollLeft(event.currentTarget.scrollLeft)}
+        >
+          <div className={styles.roll} style={{ width: canvasWidth }}>
             <div
               className={styles.pitchKeyboard}
               style={{ height: laneHeight }}
@@ -798,7 +851,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   key={pitch}
                   className={styles.pianoKey}
                   style={{
-                    top: (PITCH_HIGH - pitch - 1) * rowHeight,
+                    top: pitchRowTop(pitch, rowHeight),
                     height: rowHeight,
                   }}
                   data-piano-key={pitch}
@@ -865,13 +918,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   draw
                     ? setDrawPreview({
                         left: Math.min(originX, pointer.clientX) - bounds.left,
-                        top: Math.max(
-                          0,
-                          Math.min(
-                            laneHeight - rowHeight,
-                            (PITCH_HIGH - 1 - Math.floor((originY - bounds.top) / rowHeight)) *
-                              rowHeight,
-                          ),
+                        top: pitchRowTop(
+                          pitchFromClientY(originY, bounds.top, rowHeight, true) ?? PITCH_LOW,
+                          rowHeight,
                         ),
                         width: Math.abs(pointer.clientX - originX),
                         height: rowHeight - 1,
@@ -970,12 +1019,20 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   style={{ left: beat * beatTicks * pixelsPerTick }}
                 />
               ))}
+              {subdivisionLineTicks.map((tick) => (
+                <i
+                  key={`subdivision-${tick}`}
+                  className={styles.subdivisionLine}
+                  data-grid-subdivision
+                  style={{ left: tick * pixelsPerTick }}
+                />
+              ))}
               {pitchRows.map((pitch) => (
                 <div
                   key={pitch}
                   className={`${styles.pitchRow} ${isBlackKey(pitch % 12) ? styles.pitchBlack : ''} ${pitch % 12 === 0 ? styles.pitchOctave : ''}`}
                   style={{
-                    top: (PITCH_HIGH - pitch - 1) * rowHeight,
+                    top: pitchRowTop(pitch, rowHeight),
                     height: rowHeight,
                     lineHeight: `${rowHeight}px`,
                   }}
@@ -996,7 +1053,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                       className={`${styles.note} ${isPreviewed ? styles.dragging : ''} ${noteWidth < 12 ? styles.narrow : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
                       style={{
                         left: visibleNote.startTick * pixelsPerTick,
-                        top: (PITCH_HIGH - visibleNote.note - 1) * rowHeight,
+                        top: pitchRowTop(visibleNote.note, rowHeight),
                         width: Math.max(4, noteWidth),
                         height: rowHeight - 1,
                         opacity: Math.max(0.45, 0.4 + (visibleNote.velocity / 127) * 0.6),
@@ -1030,23 +1087,33 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 })}
             </div>
           </div>
-          <div className={styles.velocityRow}>
+        </div>
+        <div className={styles.velocityViewport} data-midi-velocity-viewport>
+          <div className={styles.velocityRow} style={{ width: canvasWidth }}>
             <div className={styles.laneLabel}>Velocity</div>
-            <MidiVelocityLane
-              notes={notes}
-              selectedNoteIds={selectedNoteIds}
-              visibleTicks={visibleTicks}
-              pixelsPerTick={pixelsPerTick}
-              barTicks={barTicks}
-              beatTicks={beatTicks}
-              height={velocityLaneHeight}
-              playheadTick={props.playheadTick}
-              clipId={clip!.id}
-              onSelectNoteIds={setSelectedNoteIds}
-              onUpdateNotes={props.onUpdateNotes}
-              onFocus={() => editorRef.current?.focus()}
-              onVelocityChange={setLastUsedVelocity}
-            />
+            <div
+              className={styles.velocityContent}
+              style={{
+                width: laneWidth,
+                transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
+              }}
+            >
+              <MidiVelocityLane
+                notes={notes}
+                selectedNoteIds={selectedNoteIds}
+                visibleTicks={visibleTicks}
+                pixelsPerTick={pixelsPerTick}
+                barTicks={barTicks}
+                beatTicks={beatTicks}
+                height={velocityLaneHeight}
+                playheadTick={props.playheadTick}
+                clipId={clip!.id}
+                onSelectNoteIds={setSelectedNoteIds}
+                onUpdateNotes={props.onUpdateNotes}
+                onFocus={() => editorRef.current?.focus()}
+                onVelocityChange={setLastUsedVelocity}
+              />
+            </div>
           </div>
         </div>
       </div>

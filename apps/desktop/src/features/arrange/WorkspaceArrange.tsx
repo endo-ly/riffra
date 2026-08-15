@@ -553,6 +553,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       const target = event.target as HTMLElement;
       if (target.closest('[data-time-selection-chip]')) return;
       if (target.closest('[data-arrange-ruler]')) return;
+      if (target.closest('[data-midi-empty-lane]') && !target.closest('[data-clip-id]')) return;
       setTimeSelection(null);
     };
     document.addEventListener('click', onClick);
@@ -1041,12 +1042,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const track = arrangement.tracks.find((item) => item.id === trackId);
     if (!track || track.kind !== 'instrument') return;
     const beforeIds = new Set(arrangement.midiClips.map((clip) => clip.id));
-    const next = await editor.commit(
-      api.createMidiClip(trackId, editor.snapTick(rawTick), Math.max(1, barTicks)),
-    );
+    const startTick = timeSelection ? timeSelection.startTick : editor.snapTick(rawTick);
+    const durationTicks = timeSelection
+      ? Math.max(1, timeSelection.endTick - timeSelection.startTick)
+      : Math.max(1, barTicks);
+    const next = await editor.commit(api.createMidiClip(trackId, startTick, durationTicks));
     if (!next) return;
     const created = next.arrangement.midiClips.find((clip) => !beforeIds.has(clip.id));
     if (!created) return;
+    setTimeSelection(null);
     props.setSelection({ kind: 'clips', clipIds: [created.id] });
     setActiveMidiClipId(created.id);
     setLowerPanelView('midiEditor');
@@ -1387,7 +1391,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onSelect={(clipId, append = false) => {
                     setSelectedRange(null);
                     editor.selectClip(clipId, append);
-                    if (!append && lowerPanelView === 'midiEditor') {
+                    const selectedMidiClip = arrangement.midiClips.find(
+                      (clip) => clip.id === clipId,
+                    );
+                    if (selectedMidiClip && !append && lowerPanelView === 'midiEditor') {
                       setActiveMidiClipId(clipId);
                       setLowerPanelCollapsed(false);
                     }

@@ -755,6 +755,74 @@ mod tests {
     }
 
     #[test]
+    fn midi_note_duplicate_and_paste_extend_the_clip_as_one_edit() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        let created = application
+            .create_midi_clip(&track_id, TimelineTick(0), 1_920, None)
+            .unwrap();
+        let clip_id = created.arrangement.midi_clips[0].id.clone();
+        let inserted = application
+            .insert_midi_notes(
+                &clip_id,
+                vec![crate::application::MidiNoteInput {
+                    pitch: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 1_920,
+                    velocity: 96,
+                    channel: 1,
+                }],
+            )
+            .unwrap();
+        let note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+
+        let duplicated = application
+            .duplicate_midi_notes(&clip_id, vec![note_id], 1_920)
+            .unwrap();
+        let duplicated_clip = &duplicated.arrangement.midi_clips[0];
+        assert_eq!(duplicated_clip.duration_ticks, 3_840);
+        assert_eq!(duplicated_clip.notes.len(), 2);
+        assert_eq!(duplicated_clip.notes[1].start_tick, TimelineTick(1_920));
+        assert_eq!(duplicated_clip.notes[1].duration_ticks, 1_920);
+
+        let undone_duplicate = core.undo(&storage).unwrap();
+        let undone_clip = &undone_duplicate.arrangement.midi_clips[0];
+        assert_eq!(undone_clip.duration_ticks, 1_920);
+        assert_eq!(undone_clip.notes.len(), 1);
+
+        let pasted = application
+            .insert_midi_notes(
+                &clip_id,
+                vec![crate::application::MidiNoteInput {
+                    pitch: 64,
+                    start_tick: TimelineTick(1_920),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                }],
+            )
+            .unwrap();
+        let pasted_clip = &pasted.arrangement.midi_clips[0];
+        assert_eq!(pasted_clip.duration_ticks, 2_400);
+        assert_eq!(pasted_clip.notes.len(), 2);
+
+        let undone_paste = core.undo(&storage).unwrap();
+        assert_eq!(undone_paste.arrangement.midi_clips[0].duration_ticks, 1_920);
+        assert_eq!(undone_paste.arrangement.midi_clips[0].notes.len(), 1);
+    }
+
+    #[test]
     fn prepared_plugin_commit_uses_the_runtime_validated_candidate() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(

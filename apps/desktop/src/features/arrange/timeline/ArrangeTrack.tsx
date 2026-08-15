@@ -409,6 +409,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       </aside>
       <div
         className={`${styles.lane} ${dragOver ? styles.laneDragOver : ''}`}
+        data-midi-empty-lane={props.track.kind === 'instrument' ? true : undefined}
         style={{ width: props.timelineWidth }}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME)) return;

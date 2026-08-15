@@ -704,6 +704,12 @@ impl Arrangement {
                 "midi note identities must be unique.".into(),
             ));
         }
+        let required_duration = notes
+            .iter()
+            .map(|note| note.start_tick.0.saturating_add(note.duration_ticks))
+            .max()
+            .unwrap_or(1);
+        candidate.duration_ticks = candidate.duration_ticks.max(required_duration);
         candidate.notes.extend(notes);
         self.validate_midi_clip(&candidate)?;
         self.midi_clips[index] = candidate;
@@ -963,13 +969,9 @@ impl Arrangement {
         for (index, mut note) in selected.into_iter().enumerate() {
             note.id = format!("note:duplicate:{}:{index}", self.revision);
             note.start_tick = TimelineTick(note.start_tick.0.saturating_add(offset_ticks));
-            if note.start_tick.0 >= clip.duration_ticks {
-                continue;
-            }
-            note.duration_ticks = note
+            clip.duration_ticks = clip
                 .duration_ticks
-                .min(clip.duration_ticks - note.start_tick.0)
-                .max(1);
+                .max(note.start_tick.0.saturating_add(note.duration_ticks.max(1)));
             clip.notes.push(note);
         }
         self.revision = self.revision.saturating_add(1);
