@@ -199,7 +199,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           props.onReorder(sourceTrackId);
         }}
       >
-        <span className={styles.trackColor} />
         <div className={styles.trackIdentity}>
           <div className={styles.trackNameRow}>
             <span
