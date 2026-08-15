@@ -20,7 +20,7 @@
 .panel.maximized {
   position: absolute;
   z-index: 30;
-  inset: 42px 0 0;
+  inset: var(--toolbar-height) 0 0;
   height: auto;
   max-height: none;
   min-height: 0;
@@ -65,39 +65,9 @@
   border-bottom: 1px solid var(--border-bright, #334650);
 }
 
-.tabs {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 3px;
-}
-
-.tabs button {
-  min-height: 28px;
-  padding: 0 8px;
-  color: #9dafb7;
-  font-size: 10px;
-  font-weight: 550;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-}
-
-.tabs button:hover:not(:disabled) {
-  color: #f1fbfc;
-  background: #203039;
-  border-color: #3c535e;
-}
-
-.tabs button:disabled {
-  color: #56656e;
-  cursor: not-allowed;
-}
-
-.tabs .activeTab {
-  color: #baf7f5;
-  background: #1b4149;
-  border-color: #4c8c94;
+.header svg {
+  width: 12px;
+  height: 12px;
 }
 
 .context {
@@ -154,9 +124,5 @@
 
   .context {
     display: none;
-  }
-
-  .tabs button {
-    padding: 0 7px;
   }
 }

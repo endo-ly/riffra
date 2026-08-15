@@ -875,7 +875,7 @@ describe('WorkspaceArrange', () => {
       ),
     ).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pitch zoom in' }));
+    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom in' }));
 
     expect((keyboard.querySelector('[data-piano-key="60"]') as HTMLElement).style.height).toBe(
       '14px',
@@ -1361,7 +1361,7 @@ describe('WorkspaceArrange', () => {
     });
     const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
     Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
     // Act
     fireEvent.pointerDown(ruler, { clientX: 96 });
@@ -1371,7 +1371,7 @@ describe('WorkspaceArrange', () => {
     fireEvent.keyDown(window, { key: 'z' });
 
     // Assert: 960..1260 ticks fitted into 1184 usable px needs zoom > 4, so it clamps to 4.
-    expect(zoom.value).toBe('4');
+    expect(zoom.textContent).toBe('400%');
   });
 
   it('does not zoom with the Z key without a time selection', () => {
@@ -1380,13 +1380,13 @@ describe('WorkspaceArrange', () => {
     const { container } = render(<Harness api={api} />);
     const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
     Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
     // Act
     fireEvent.keyDown(window, { key: 'z' });
 
     // Assert
-    expect(zoom.value).toBe('1');
+    expect(zoom.textContent).toBe('100%');
   });
 
   it('fits all Clips into view with the F key', () => {
@@ -1420,13 +1420,13 @@ describe('WorkspaceArrange', () => {
     const { container } = render(<Harness api={api} initialSession={session} />);
     const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
     Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
     // Act
     fireEvent.keyDown(window, { key: 'f' });
 
     // Assert: 0..3840 ticks fitted into 1184 usable px -> zoom = 1184/3840 * 10 = 3.083...
-    expect(Number(zoom.value)).toBeCloseTo(3.083, 3);
+    expect(zoom.textContent).toBe('308%');
   });
 
   it('does not zoom with the F key when no Clip exists', () => {
@@ -1435,13 +1435,13 @@ describe('WorkspaceArrange', () => {
     const { container } = render(<Harness api={api} />);
     const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
     Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByLabelText('Timeline zoom') as HTMLInputElement;
+    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
     // Act
     fireEvent.keyDown(window, { key: 'f' });
 
     // Assert
-    expect(zoom.value).toBe('1');
+    expect(zoom.textContent).toBe('100%');
   });
 
   it('deletes a marker from its context menu without a success popup', async () => {

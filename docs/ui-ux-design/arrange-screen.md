@@ -130,12 +130,14 @@ Active MIDI Clip 内だけで有効な Note 選択である。Clip を切り替�
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [Select] [Split]   Snap [1/16 ▾]   [Follow] [Automation]   Bars/Time│
-│                                                        Timeline Zoom │
+│ [Select|Split]  Snap [1/16 ▾]  [Follow] [Automation]                │
+│                                       Bars/Time   Zoom [−][＋] 100% │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 Toolbar には Timeline 全体へ作用する頻出操作を置く。状態を持つ操作は、現在の有効状態が画面上で判別できる。
+
+左側に編集操作、右側に表示切り替えを置く。Select / Split / Follow / Automation はアイコンボタンで、名前はツールチップで示す。ボタンはアイコンのみの固定サイズで統一し、ラベル文字列の長さが Toolbar の幅に影響しない。Zoom は段階的な拡大・縮小と現在倍率の表示を持つ。
 
 | 要素          | 挙動                                          |
 | ------------- | --------------------------------------------- |
@@ -145,7 +147,7 @@ Toolbar には Timeline 全体へ作用する頻出操作を置く。状態を�
 | Follow        | 再生中、Playhead を表示範囲へ追従させる       |
 | Automation    | 選択 Track の Automation Lane を開閉する      |
 | Bars / Time   | Ruler の表示形式を切り替える                  |
-| Timeline Zoom | Timeline の時間方向を拡大・縮小する           |
+| Timeline Zoom | Timeline の時間方向を段階的に拡大・縮小する   |
 
 Snap は Clip 移動、Trim、Split、Time Selection、Marker 移動など Timeline 上の時間操作で共通に使う。
 
@@ -323,7 +325,7 @@ Lower Panel は、Timeline を見ながら詳細編集または演奏を行う�
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
-│ [Play Surface] [MIDI Editor]          Synth Lead / Verse MIDI   [—][□]│
+│ [Play Surface | MIDI Editor]       Synth Lead / Verse MIDI    [—][□]│
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
 │                         Active Panel                                  │
@@ -331,7 +333,7 @@ Lower Panel は、Timeline を見ながら詳細編集または演奏を行う�
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Header には View 切替と現在の編集文脈をまとめる。同じ Track 名や Clip 名を各 Panel 内で大きく繰り返さない。
+Header には View 切替と現在の編集文脈をまとめる。View 切替は Segmented Control で Header の左端に置き、MIDI Clip を選択していない間は MIDI Editor を選択できない。同じ Track 名や Clip 名を各 Panel 内で大きく繰り返さない。
 
 Lower Panel は、折りたたみ、リサイズ、集中表示を行える。MIDI Editor を集中表示したあとも、元の Timeline 中心の状態へ戻れる。
 
@@ -362,7 +364,8 @@ Focused Instrument Track
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ [Pointer] [Draw]   Grid [1/16 ▾]   [Preview]   [Quantize]    Zoom        │
+│ [Pointer|Draw]  Snap [1/16 ▾]  [Preview]  [Quantize] [Duplicate]        │
+│ VEL [───●── 96]                  Time [−][＋]   Pitch [−][＋]           │
 ├─────────────┬────────────────────────────────────────────────────────────┤
 │             │  9.1       9.2       9.3       9.4       10.1            │
 │ Piano       ├────────────────────────────────────────────────────────────┤
@@ -382,6 +385,8 @@ Focused Instrument Track
 ```
 
 MIDI Editor は Piano Roll、Musical Ruler、Velocity Lane を一つの時間軸で共有する。横 Scroll / Zoom は三領域で同期する。
+
+Toolbar の構成は Arrange Toolbar と同じ規則に従う。左側に Pointer / Draw、Snap、Preview、Quantize / Duplicate、選択 Note の Velocity を置き、右側に Time / Pitch の Zoom を置く。Pointer / Draw / Preview / Quantize / Duplicate はアイコンボタンで、名前はツールチップで示す。Velocity は選択 Note の値を示し、確定時に選択 Note 全体へ適用する。
 
 ### 8.2 Pointer と Draw
 
@@ -513,7 +518,7 @@ Play Surface の Focused Instrument Track とは別系統として扱う。Clip 
 
 MIDI Editor の Ruler は Clip 内の相対時間だけでなく、Arrangement 上の小節位置を表示する。Timeline で 9 小節目に置かれた Clip を開いた場合、Editor でも 9.1、9.2、9.3… のように位置関係を把握できる。
 
-現在の Grid は Piano Roll 上にも細分線として反映する。Zoom に合わせて線の密度を調整し、Bar、Beat、Subdivision の階層を視認できるようにする。
+現在の Snap Grid は Piano Roll 上にも細分線として反映する。Zoom に合わせて線の密度を調整し、Bar、Beat、Subdivision の階層を視認できるようにする。
 
 Timeline の Playhead は MIDI Editor 上にも表示し、Ruler から Seek できる。
 

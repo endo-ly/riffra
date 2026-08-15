@@ -4,8 +4,16 @@ import {
   type ArrangeTool,
   type SnapGrid,
 } from '@/features/arrange/model/arrange-timeline';
-import { Icon } from '@/shared/ui/primitives';
-import styles from '../WorkspaceArrange.module.css';
+import {
+  Toolbar,
+  ToolbarDivider,
+  ToolbarSegmented,
+  ToolbarSelect,
+  ToolbarStepper,
+  ToolbarToggle,
+} from '@/shared/ui/Toolbar';
+
+const ZOOM_STEP = 1.25;
 
 interface ArrangeToolbarProps {
   tool: ArrangeTool;
@@ -25,47 +33,56 @@ interface ArrangeToolbarProps {
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
   return (
-    <header className={styles.toolbar}>
-      <div className={styles.segmented} aria-label="Arrange tool">
-        <button
-          className={props.tool === 'select' ? styles.active : ''}
-          onClick={() => props.onTool('select')}
-        >
-          <Icon name="pointer" /> Select
-        </button>
-        <button
-          className={props.tool === 'split' ? styles.active : ''}
-          onClick={() => props.onTool('split')}
-        >
-          <Icon name="scissors" /> Split
-        </button>
-      </div>
-
-      <label className={styles.compactField}>
-        <span>SNAP</span>
-        <select
-          value={props.snap}
-          onChange={(event) => props.onSnap(event.target.value as SnapGrid)}
-        >
-          {SNAP_GRID_OPTIONS.map((value) => (
-            <option key={value} value={value}>
-              {snapGridLabel(value)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <button
-        className={`${styles.toggleButton} ${props.follow ? styles.active : ''}`}
-        aria-pressed={props.follow}
+    <Toolbar
+      label="Arrange toolbar"
+      trailing={
+        <>
+          <ToolbarSegmented
+            label="Ruler display"
+            value={props.rulerMode}
+            onChange={props.onRulerMode}
+            options={[
+              { value: 'bars', label: 'Bars' },
+              { value: 'time', label: 'Time' },
+            ]}
+          />
+          <ToolbarStepper
+            ariaLabel="Timeline zoom"
+            valueText={`${Math.round(props.zoom * 100)}%`}
+            onStep={(direction) =>
+              props.onZoom(props.zoom * (direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP))
+            }
+          />
+        </>
+      }
+    >
+      <ToolbarSegmented
+        label="Arrange tool"
+        value={props.tool}
+        onChange={props.onTool}
+        options={[
+          { value: 'select', label: 'Select', icon: 'pointer' },
+          { value: 'split', label: 'Split', icon: 'scissors' },
+        ]}
+      />
+      <ToolbarDivider />
+      <ToolbarSelect
+        label="Snap"
+        value={props.snap}
+        onChange={props.onSnap}
+        options={SNAP_GRID_OPTIONS.map((value) => ({ value, label: snapGridLabel(value) }))}
+      />
+      <ToolbarToggle
+        active={props.follow}
+        icon="follow"
+        ariaLabel="Follow"
         title="Keep the playhead in view during playback"
         onClick={() => props.onFollow(!props.follow)}
-      >
-        Follow
-      </button>
-      <button
-        className={`${styles.toggleButton} ${props.automationOpen ? styles.active : ''}`}
-        aria-pressed={props.automationOpen}
+      />
+      <ToolbarToggle
+        active={props.automationOpen}
+        icon="curve"
+        ariaLabel="Automation"
         disabled={!props.automationAvailable}
         title={
           props.automationAvailable
@@ -73,39 +90,7 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
             : 'Select a Track to edit Automation'
         }
         onClick={props.onToggleAutomation}
-      >
-        Automation
-      </button>
-
-      <div className={styles.toolbarRight}>
-        <div className={styles.segmented} aria-label="Ruler display">
-          <button
-            className={props.rulerMode === 'bars' ? styles.active : ''}
-            onClick={() => props.onRulerMode('bars')}
-          >
-            Bars
-          </button>
-          <button
-            className={props.rulerMode === 'time' ? styles.active : ''}
-            onClick={() => props.onRulerMode('time')}
-          >
-            Time
-          </button>
-        </div>
-        <label className={styles.zoomField}>
-          <span>−</span>
-          <input
-            aria-label="Timeline zoom"
-            type="range"
-            min="0.35"
-            max="4"
-            step="0.05"
-            value={props.zoom}
-            onChange={(event) => props.onZoom(Number(event.target.value))}
-          />
-          <span>＋</span>
-        </label>
-      </div>
-    </header>
+      />
+    </Toolbar>
   );
 }
