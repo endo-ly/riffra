@@ -230,8 +230,7 @@ public:
         lastNote.store(message.getNoteNumber(), std::memory_order_release);
 
         if (message.isNoteOff()) {
-            if (audioCallback != nullptr)
-                audioCallback->stopSynthNote(message.getNoteNumber());
+            if (audioCallback != nullptr) audioCallback->stopSynthNote(message.getNoteNumber());
             return;
         }
 
