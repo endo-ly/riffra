@@ -43,12 +43,12 @@ Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成�
 └───────────────────────┘
 ```
 
-| プロセス             | 役割                                                       | 所有状態                                                      |
-| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
-| Tauri シェル         | アプリ全体の監督。UI、Core接続、永続化、ジョブ管理         | CreativeSession（Core内）、DesktopViewState、SQLite索引、設定 |
-| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視   | ランタイムグラフ（投影される一時状態のみ）                    |
-| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード） | なし                                                          |
-| riffra-render-worker | タイムラインのオフラインレンダリング                       | なし                                                          |
+| プロセス             | 役割                                                       | 所有状態                                    |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------- |
+| Tauri シェル         | アプリ全体の監督。UI、Core接続、永続化、ジョブ管理         | CreativeSession（Core内）、SQLite索引、設定 |
+| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視   | ランタイムグラフ（投影される一時状態のみ）  |
+| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード） | なし                                        |
+| riffra-render-worker | タイムラインのオフラインレンダリング                       | なし                                        |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -60,10 +60,10 @@ Tauriシェルはセーフモード（§7）で起動するとサイドカーの
 
 ```text
 React フロントエンド
-  ├─ 状態: CreativeSession と DesktopViewState を独立して保持・描画する
+  ├─ 状態: CreativeSession を保持・描画する
   ├─ 編集: Feature別の NativeApi capability 経由で Tauri 命令を呼ぶ
   ├─ app: bootstrap / アプリ全体のComposition / グローバルなRuntime lifecycle
-  ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、design、library、plugins、project、recording、transport）
+  ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、library、plugins、project、recording、transport）
   ├─ shared: Feature所有を持たない共通UI・utility（Toast、ContextMenu、audio meters など）
   ├─ native: ReactとTauriの境界（NativeApi capability 定義・invoke実装・FakeNativeApi）
   └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
@@ -74,8 +74,7 @@ Tauri 命令層 (src-tauri/src/**/commands.rs)
 
 Desktop Adapter (apps/desktop/src-tauri/src)
   ├─ SessionStore / AudioSupervisor / RuntimeReconciler を Core の Port に接続
-  ├─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
-  └─ 表示状態（DesktopViewState）を保持し、Coreの正準状態と分離する
+  └─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
 
 riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
   ├─ domain: CreativeSession / Arrangement / Recording / Asset / Rack
@@ -96,7 +95,7 @@ CLI ホスト（apps/cli）
   └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
 ```
 
-制作状態を変更する命令はCoreのApplication層を通り、確定したCreativeSessionが同じ順序でフロントエンドへ返る。ワークスペースやDesign対象などの表示状態はDesktopViewStateとして分離し、Desktop Adapterが保持する。
+制作状態を変更する命令はCoreのApplication層を通り、確定したCreativeSessionが同じ順序でフロントエンドへ返る。
 
 ---
 
@@ -104,7 +103,7 @@ CLI ホスト（apps/cli）
 
 ### 4.1 単一の正準状態
 
-CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。フロントエンドと音声サイドカーはその投影を扱い、DesktopViewStateは制作内容に影響しない表示状態を扱う。
+CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。フロントエンドと音声サイドカーはその投影を扱う。
 
 ### 4.2 Core操作境界
 
@@ -166,7 +165,6 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 │  └─ library/              # ライブラリへ昇格済みテイク
 ├─ assets/
 │  └─ imports/              # 外部ファイルのインポート先（register で登録）
-├─ separations/             # 音源分離の出力先
 └─ exports/
    └─ render-{ms}/          # レンダリング出力（timeline.wav + render.json）
 ```
@@ -222,9 +220,9 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ## 9. バックグラウンドジョブ
 
-時間のかかる処理（音声解析・分離・VST3スキャン）は JobRegistry（`jobs.rs`）のジョブとして実行される。
+時間のかかる処理（音声解析・VST3スキャン）は JobRegistry（`jobs.rs`）のジョブとして実行される。
 
-- **種類**: `Analysis` / `Separation` / `Scan`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
+- **種類**: `Scan`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
 - **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態から `Running` には戻らない
 - ジョブは `progress` / `message` 付きでUIへ状態が配信され、ID重複を避けた登録とクエリで操作される
 - レンダリングは別経路: `OfflineRenderRequest`（riffra-core のポート）を `riffra-render-worker` 子プロセスが処理する
@@ -251,4 +249,4 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 
 フロントエンドはCreativeSessionを描画し、ユーザー操作をFeature別NativeApi capabilityの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決、部分マージ、全体mutation queueを持たない。
 
-選択、パネル幅、ズーム、ダイアログ、ワークスペース、Design対象はPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。
+選択、パネル幅、ズーム、ダイアログはPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。

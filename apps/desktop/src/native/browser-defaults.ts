@@ -6,7 +6,6 @@ export function defaultSession(): CreativeSession {
     sessionId: 'scratch-browser-preview',
     updatedAtMs: Date.now(),
     projectName: null,
-    playState: { sampleInstrument: { pads: [] } },
     arrangement: {
       revision: 0,
       timebase: {
@@ -31,9 +30,6 @@ export function defaultSession(): CreativeSession {
       countInBeats: 0,
       metronomeEnabled: false,
       note: '',
-      aiPermission: 'Suggest',
-      aiContext: ['analysis', 'selectedClip'],
-      aiHistory: [],
     },
   };
 }

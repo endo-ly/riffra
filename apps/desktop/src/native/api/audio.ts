@@ -54,7 +54,6 @@ export async function previewAsset(
         endMs: options.endMs ?? null,
         looped: options.looped ?? false,
         gain: options.gain ?? 1,
-        voiceKey: options.voiceKey ?? null,
       },
     });
   } catch (error) {
@@ -67,14 +66,6 @@ export async function stopSamplePreview(): Promise<AudioStatus> {
     return await invoke<AudioStatus>('stop_preview');
   } catch (error) {
     return await audioCommandError('Stop preview', error);
-  }
-}
-
-export async function stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus> {
-  try {
-    return await invoke<AudioStatus>('stop_preview_for_key', { voiceKey });
-  } catch (error) {
-    return await audioCommandError('Stop mapped preview', error);
   }
 }
 

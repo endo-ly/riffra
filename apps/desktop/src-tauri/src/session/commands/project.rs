@@ -84,18 +84,6 @@ pub async fn update_session_settings(
 }
 
 #[tauri::command]
-pub async fn apply_ai_suggestion(
-    clip_id: String,
-    proposed_gain_db: f64,
-    app: AppHandle,
-) -> Result<CreativeSession, String> {
-    run_blocking(app, move |state| {
-        adapter::apply_ai_suggestion(&app_context(state), &clip_id, proposed_gain_db)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn set_master_gain_db(gain_db: f64, app: AppHandle) -> Result<SessionAudioPair, String> {
     run_blocking(app, move |state| {
         adapter::set_master_gain_db(&app_context(state), gain_db)

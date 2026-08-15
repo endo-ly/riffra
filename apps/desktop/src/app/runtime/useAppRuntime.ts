@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  AudioStatus,
-  BootstrapState,
-  CreativeSession,
-  DesktopViewState,
-  Workspace,
-} from '@/model/domain';
-import { defaultViewState } from '@/app/view-state';
+import type { AudioStatus, BootstrapState, CreativeSession } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import { publishAudioMeters } from '@/shared/audio/audio-meters';
@@ -29,18 +22,15 @@ type AppRuntimeApi = BootstrapApi &
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
 export function useAppRuntime(api: AppRuntimeApi) {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
-  const [viewState, setViewState] = useState<DesktopViewState>(defaultViewState);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [runtimeStarted, setRuntimeStarted] = useState(false);
   const [runtimeStartupFinished, setRuntimeStartupFinished] = useState(false);
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
-  const viewStateRef = useRef<DesktopViewState>(viewState);
   const sessionHook = useProject(api, { setBoot });
   const { setSession: setProjectSession } = sessionHook;
   sessionRef.current = sessionHook.session;
-  viewStateRef.current = viewState;
 
   const setSession = useCallback(
     (nextSession: CreativeSession) => {
@@ -49,17 +39,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
     },
     [setProjectSession],
   );
-  const applyViewState = useCallback((nextViewState: DesktopViewState) => {
-    viewStateRef.current = nextViewState;
-    setViewState(nextViewState);
-  }, []);
-  const setNavigationWorkspace = useCallback((workspace: Workspace) => {
-    setViewState((current) => {
-      const next = { ...current, workspace };
-      viewStateRef.current = next;
-      return next;
-    });
-  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -86,7 +65,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
       .then((state) => {
         if (disposed) return;
         setBoot(state);
-        applyViewState(state.viewState);
         setSession(state.session);
         if (!runtimeStartupEventReceived.current) {
           setRuntimeStarted(state.runtimeStarted);
@@ -132,21 +110,17 @@ export function useAppRuntime(api: AppRuntimeApi) {
       unlistenRuntimeStartupFinished?.();
       unlistenMeters();
     };
-  }, [api, applyViewState, setSession]);
+  }, [api, setSession]);
 
   return {
     ...sessionHook,
     boot,
-    viewState,
-    setViewState: applyViewState,
     audio,
     setAudio,
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
-    viewStateRef,
     setSession,
-    setNavigationWorkspace,
   };
 }
 
@@ -169,8 +143,6 @@ function audioStatusSignature(status: AudioStatus): string {
     status.midiInputActive,
     status.midiMessages,
     status.lastMidiNote,
-    status.midiPadMappings,
-    status.midiPadTriggers,
     status.message,
   ]);
 }

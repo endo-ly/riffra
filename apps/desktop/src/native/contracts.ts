@@ -26,8 +26,6 @@ export interface TransportStatus {
   missingDeviceIds: string[];
 }
 
-export type AnalysisJobStatus = Extract<BackgroundJobStatus, { kind: 'analysis' }>;
-export type SeparationJobStatus = Extract<BackgroundJobStatus, { kind: 'separation' }>;
 export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
 /** Preview tuning sent to the native audio runtime. */
@@ -36,7 +34,6 @@ export interface AssetPreviewOptions {
   endMs?: number | null;
   looped?: boolean;
   gain?: number;
-  voiceKey?: number | null;
 }
 
 export type { AssetId, AudioAnalysis, AudioStatus };

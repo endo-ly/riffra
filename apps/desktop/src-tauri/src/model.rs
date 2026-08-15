@@ -64,7 +64,6 @@ pub struct RecoveryCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub session: riffra_core::CreativeSession,
-    pub view_state: crate::presentation::DesktopViewState,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
@@ -146,8 +145,6 @@ pub struct AudioStatus {
     pub midi_input_active: bool,
     pub midi_messages: u64,
     pub last_midi_note: Option<u8>,
-    pub midi_pad_mappings: u32,
-    pub midi_pad_triggers: u64,
     pub input_peak: f64,
     pub output_peak: f64,
     pub invalid_samples: u64,

@@ -19,12 +19,9 @@ import type {
   RenderOptions,
   RenderResult,
   ScanReport,
-  SeparationResult,
   CreativeSession,
-  DesktopViewState,
   ProjectTimebase,
   RuntimeProjectionStatus,
-  DesignTool,
   SessionAudioPair,
   MonitoringState,
   MidiInputRoute,
@@ -32,16 +29,9 @@ import type {
   AutomationParameter,
   AutomationPoint,
   TrackKind,
-  Workspace,
 } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
-import type {
-  AnalysisJobStatus,
-  AssetPreviewOptions,
-  ScanJobStatus,
-  SeparationJobStatus,
-  TransportStatus,
-} from './contracts';
+import type { AssetPreviewOptions, ScanJobStatus, TransportStatus } from './contracts';
 
 export interface MidiNoteInput {
   pitch: number;
@@ -117,8 +107,6 @@ export interface ProjectApi {
 
 export interface JobApi {
   scanVst3Folder(path?: string): Promise<ScanReport>;
-  startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus>;
-  startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus>;
   startScanJob(path?: string): Promise<ScanJobStatus>;
   getBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
   cancelBackgroundJob(id: string): Promise<BackgroundJobStatus | null>;
@@ -141,10 +129,8 @@ export interface LibraryApi {
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 }
 
-export interface DesignApi {
+export interface AnalysisApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
-  listSeparations(): Promise<SeparationResult[]>;
-  applyAiSuggestion(clipId: string, proposedGainDb: number): Promise<CreativeSession>;
 }
 
 export interface RenderApi {
@@ -167,7 +153,6 @@ export interface AudioApi {
    */
   previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
   stopSamplePreview(): Promise<AudioStatus>;
-  stopSamplePreviewKey(voiceKey: number): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
   getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
@@ -204,27 +189,6 @@ export interface RecordingApi {
   startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
   stopArrangeRecording(): Promise<SessionAudioPair>;
-}
-
-export interface SamplePadApi {
-  /**
-   * Creates a SamplePad from an existing audio Asset as one production
-   * operation: duplicate/MIDI-key rules, session update, runtime pad
-   * configuration, and persistence all happen in Rust. The caller applies the
-   * returned session and audio status directly and does not build the pad or
-   * sync the runtime itself.
-   */
-  createSamplePad(assetId: AssetId, name: string): Promise<SessionAudioPair>;
-  updateSamplePad(
-    padId: string,
-    patch: {
-      startMs?: number;
-      endMs?: number;
-      gainDb?: number;
-      loopEnabled?: boolean;
-    },
-  ): Promise<SessionAudioPair>;
-  removeSamplePad(padId: string): Promise<SessionAudioPair>;
 }
 
 export interface ArrangeApi {
@@ -375,17 +339,6 @@ export interface TransportApi {
   seekTimeline(tick: number): Promise<void>;
 }
 
-export interface PresentationApi {
-  /**
-   * Opens a canonical Asset in a Design workspace. One user intent updates
-   * workspace and target asset together in Rust instead of React assembling
-   * the DesignContext itself.
-   */
-  openAssetInDesign(assetId: AssetId, tool: DesignTool): Promise<DesktopViewState | null>;
-  /** Switches the desktop-owned visible workspace without mutating production state. */
-  switchWorkspace(workspace: Workspace): Promise<DesktopViewState | null>;
-}
-
 export interface ProjectSettingsApi {
   updateSessionSettings(patch: {
     projectName?: string | null;
@@ -393,8 +346,6 @@ export interface ProjectSettingsApi {
     countInBeats?: number;
     metronomeEnabled?: boolean;
     note?: string;
-    aiPermission?: string;
-    aiContext?: string[];
   }): Promise<CreativeSession>;
 }
 
@@ -440,13 +391,11 @@ export interface NativeApi
     ProjectSettingsApi,
     JobApi,
     LibraryApi,
-    DesignApi,
+    AnalysisApi,
     RenderApi,
     AudioApi,
     RecordingApi,
-    SamplePadApi,
     ArrangeApi,
     TransportApi,
-    PresentationApi,
     MissingDependencyApi,
     NativeEventApi {}

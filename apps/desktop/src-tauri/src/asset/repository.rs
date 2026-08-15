@@ -87,8 +87,6 @@ fn kind_to_db(kind: AssetKind) -> &'static str {
     match kind {
         AssetKind::Audio => "audio",
         AssetKind::Midi => "midi",
-        AssetKind::Sample => "sample",
-        AssetKind::GenerationDefinition => "generationDefinition",
     }
 }
 
@@ -96,8 +94,6 @@ fn kind_from_db(value: &str) -> Option<AssetKind> {
     Some(match value {
         "audio" => AssetKind::Audio,
         "midi" => AssetKind::Midi,
-        "sample" => AssetKind::Sample,
-        "generationDefinition" => AssetKind::GenerationDefinition,
         _ => return None,
     })
 }
@@ -106,10 +102,7 @@ fn operation_to_db(operation: ProvenanceOperation) -> &'static str {
     match operation {
         ProvenanceOperation::Recorded => "recorded",
         ProvenanceOperation::Processed => "processed",
-        ProvenanceOperation::Sampled => "sampled",
-        ProvenanceOperation::Separated => "separated",
         ProvenanceOperation::Rendered => "rendered",
-        ProvenanceOperation::Generated => "generated",
         ProvenanceOperation::Imported => "imported",
     }
 }
@@ -118,10 +111,7 @@ fn operation_from_db(value: &str) -> Option<ProvenanceOperation> {
     Some(match value {
         "recorded" => ProvenanceOperation::Recorded,
         "processed" => ProvenanceOperation::Processed,
-        "sampled" => ProvenanceOperation::Sampled,
-        "separated" => ProvenanceOperation::Separated,
         "rendered" => ProvenanceOperation::Rendered,
-        "generated" => ProvenanceOperation::Generated,
         "imported" => ProvenanceOperation::Imported,
         _ => return None,
     })
@@ -443,14 +433,6 @@ pub fn validate_session_references(
         .audio_clips
         .iter()
         .map(|clip| ("arrangement audio clip", clip.id.as_str(), &clip.asset_id))
-        .chain(
-            session
-                .play_state
-                .sample_instrument
-                .pads
-                .iter()
-                .map(|pad| ("sample pad", pad.id.as_str(), &pad.asset_id)),
-        )
         .collect::<Vec<_>>();
     if references.is_empty() {
         return Ok(());
@@ -598,7 +580,7 @@ fn u64_from_i64(value: i64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AudioClip, SamplePad, TimelineTick, Track};
+    use riffra_core::{AudioClip, TimelineTick, Track};
     use riffra_core::{ProvenanceOperation, mint_asset_id};
 
     fn root(label: &str) -> PathBuf {
@@ -714,27 +696,6 @@ mod tests {
 
         let error = validate_session_references(&root, &session).unwrap_err();
         assert!(error.contains("arrangement audio clip 'clip:unknown'"));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn session_reference_validation_rejects_unknown_sample_pad() {
-        let root = root("validate-pad");
-        let asset_id = mint_asset_id();
-        let mut session = CreativeSession::new(1_000);
-        session.play_state.sample_instrument.pads.push(SamplePad {
-            id: "pad:unknown".into(),
-            name: "unknown".into(),
-            asset_id,
-            start_ms: 0,
-            end_ms: 100,
-            midi_key: 36,
-            gain_db: 0.0,
-            loop_enabled: false,
-        });
-
-        let error = validate_session_references(&root, &session).unwrap_err();
-        assert!(error.contains("sample pad 'pad:unknown'"));
         let _ = std::fs::remove_dir_all(root);
     }
 

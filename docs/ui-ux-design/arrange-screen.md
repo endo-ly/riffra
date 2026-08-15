@@ -72,15 +72,15 @@ Timeline が通常の中心領域となる。Library、Inspector、Lower Panel �
 
 ### 3.1 各領域の役割
 
-| 領域            | 役割                                                          |
-| --------------- | ------------------------------------------------------------- |
-| Global Bar      | プロジェクト全体、Undo / Redo、ワークスペース、音声・同期状態 |
-| Library         | Audio / MIDI などの素材を探し、Timeline へ投入する            |
-| Arrange Toolbar | Timeline 全体の編集ツール、Snap、表示・追従設定               |
-| Timeline        | Track、Clip、Ruler、Playhead、Automation を直接編集する       |
-| Lower Panel     | MIDI の詳細編集と Instrument の演奏                           |
-| Inspector       | 現在選択中の Track / Clip / Take の詳細設定                   |
-| Transport Bar   | 再生、停止、録音、テンポ、メーターなど制作進行を制御する      |
+| 領域            | 役割                                                     |
+| --------------- | -------------------------------------------------------- |
+| Global Bar      | プロジェクト全体、Undo / Redo、音声・同期状態            |
+| Library         | Audio / MIDI などの素材を探し、Timeline へ投入する       |
+| Arrange Toolbar | Timeline 全体の編集ツール、Snap、表示・追従設定          |
+| Timeline        | Track、Clip、Ruler、Playhead、Automation を直接編集する  |
+| Lower Panel     | MIDI の詳細編集と Instrument の演奏                      |
+| Inspector       | 現在選択中の Track / Clip / Take の詳細設定              |
+| Transport Bar   | 再生、停止、録音、テンポ、メーターなど制作進行を制御する |
 
 ---
 

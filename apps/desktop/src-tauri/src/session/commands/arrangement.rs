@@ -31,40 +31,6 @@ pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), St
 }
 
 #[tauri::command]
-pub async fn create_sample_pad(
-    asset_id: String,
-    name: String,
-    app: AppHandle,
-) -> Result<SessionAudioPair, String> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    run_blocking(app, move |state| {
-        adapter::create_sample_pad(&app_context(state), asset_id, name)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_sample_pad(
-    pad_id: String,
-    patch: SamplePadPatch,
-    app: AppHandle,
-) -> Result<SessionAudioPair, String> {
-    run_blocking(app, move |state| {
-        adapter::update_sample_pad(&app_context(state), &pad_id, &patch)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn remove_sample_pad(pad_id: String, app: AppHandle) -> Result<SessionAudioPair, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_sample_pad(&app_context(state), &pad_id)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn add_audio_clip_to_arrangement(
     asset_id: String,
     name: String,

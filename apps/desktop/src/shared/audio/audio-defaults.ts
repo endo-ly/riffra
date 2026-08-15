@@ -50,8 +50,6 @@ export function offlineAudioStatus(
     midiInputActive: false,
     midiMessages: 0,
     lastMidiNote: null,
-    midiPadMappings: 0,
-    midiPadTriggers: 0,
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,

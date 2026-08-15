@@ -1,6 +1,4 @@
-use crate::analysis::AudioAnalysis;
 use crate::plugins::ScanReport;
-use crate::separation::SeparationResult;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -31,16 +29,12 @@ pub enum JobState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
-    Analysis,
-    Separation,
     Scan,
 }
 
 impl JobKind {
     fn label(self) -> &'static str {
         match self {
-            Self::Analysis => "analysis",
-            Self::Separation => "separation",
             Self::Scan => "scan",
         }
     }
@@ -65,20 +59,6 @@ pub struct JobStatus {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum BackgroundJobStatus {
-    Analysis {
-        id: String,
-        state: JobState,
-        progress: f32,
-        message: String,
-        result: Option<AudioAnalysis>,
-    },
-    Separation {
-        id: String,
-        state: JobState,
-        progress: f32,
-        message: String,
-        result: Option<SeparationResult>,
-    },
     Scan {
         id: String,
         state: JobState,
@@ -105,26 +85,6 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
         result,
     } = status;
     Ok(match kind {
-        JobKind::Analysis => BackgroundJobStatus::Analysis {
-            id,
-            state,
-            progress,
-            message,
-            result: result
-                .map(serde_json::from_value::<AudioAnalysis>)
-                .transpose()
-                .map_err(|error| format!("analysis result could not be decoded: {error}"))?,
-        },
-        JobKind::Separation => BackgroundJobStatus::Separation {
-            id,
-            state,
-            progress,
-            message,
-            result: result
-                .map(serde_json::from_value::<SeparationResult>)
-                .transpose()
-                .map_err(|error| format!("separation result could not be decoded: {error}"))?,
-        },
         JobKind::Scan => BackgroundJobStatus::Scan {
             id,
             state,
@@ -299,7 +259,7 @@ mod tests {
     #[test]
     fn cancellation_prevents_completion_from_promoting_a_result() {
         let registry = JobRegistry::default();
-        let (id, status) = registry.start(JobKind::Analysis);
+        let (id, status) = registry.start(JobKind::Scan);
         assert_eq!(status.state, JobState::Queued);
         registry.set_running(&id, "running");
         registry.cancel(&id).expect("job should exist");

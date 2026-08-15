@@ -43,7 +43,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 | 規則               | 内容                                                                                                                                                                  |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| serde 直列化       | `rename_all = "camelCase"`（enum は `"lowercase"`、`AiPermission` のみ `"PascalCase"`）                                                                               |
+| serde 直列化       | `rename_all = "camelCase"`（enum は `"lowercase"`）                                                                                                                   |
 | 不透明 ID 型       | `TimelineTick`・`Marker.tick` などは `#[ts(type = "number")]`。`AssetId` は `string & { readonly __brand: 'AssetId' }`（直列化はプレーン文字列 `<-> asset:<UUIDv7>`） |
 | 省略可能フィールド | `skip_serializing_if = "Option::is_none"` + `#[ts(optional)]` を対で使用                                                                                              |
 | 型の欠落           | ts-rs で生成できない型（`serde_json::Map` の `parameters` 等）は該当フィールドを `#[ts(skip)]` せず、生成側の扱いに従う                                               |
@@ -56,13 +56,10 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ### 4.1 セッションと設定
 
-| エンティティ       | 役割                                                                                                           |
-| ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `CreativeSession`  | 永続化される制作状態の単一の正準モデル                                                                         |
-| `DesktopViewState` | Desktopで表示中の領域とDesign対象を保持するPresentation State。永続的な制作状態には含めない                    |
-| `Workspace`        | `arrange` / `design` の固定二領域。`Sample` / `Analyze` / `Separate` は領域ではなく Design から到達するツール  |
-| `DesignContext`    | Design 領域が現在対象としているツールと素材（active_tool, target_asset_id）                                    |
-| `SessionSettings`  | マスターゲイン、ループ、カウントイン、メトロノーム、ノート、AI権限・履歴など、構造ではないセッション全体の設定 |
+| エンティティ      | 役割                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `CreativeSession` | 永続化される制作状態の単一の正準モデル                                                           |
+| `SessionSettings` | マスターゲイン、ループ、カウントイン、メトロノーム、ノートなど、構造ではないセッション全体の設定 |
 
 ### 4.2 アレンジ（時間軸）
 
@@ -96,13 +93,13 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ### 4.4 素材（Asset）
 
-| エンティティ                         | 役割                                                                                                                                                           |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AssetId`                            | `asset:<UUIDv7>` のみ有効な、プロセス跨ぎで一意なID                                                                                                            |
-| `Asset`                              | 正準の制作素材。id、kind、コンテンツの場所（content_location）、作成・更新時刻、provenance、管理メタデータ（tag / note / favorite）                            |
-| `AssetKind`                          | `audio` / `midi` / `sample` / `generationDefinition`                                                                                                           |
-| `Provenance` / `ProvenanceOperation` | 素材がどう生まれたか。operation（recorded / processed / sampled / separated / rendered / generated / imported）と source_asset_ids（消費した素材）、parameters |
-| 生成規則                             | `register`（新規IDを mint）と `derive`（source から派生物を mint）。コンテンツ変更は決して既存IDを上書きしない                                                 |
+| エンティティ                         | 役割                                                                                                                                |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `AssetId`                            | `asset:<UUIDv7>` のみ有効な、プロセス跨ぎで一意なID                                                                                 |
+| `Asset`                              | 正準の制作素材。id、kind、コンテンツの場所（content_location）、作成・更新時刻、provenance、管理メタデータ（tag / note / favorite） |
+| `AssetKind`                          | `audio` / `midi`                                                                                                                    |
+| `Provenance` / `ProvenanceOperation` | 素材がどう生まれたか。operation（recorded / processed / rendered / imported）と source_asset_ids（消費した素材）、parameters        |
+| 生成規則                             | `register`（新規IDを mint）と `derive`（source から派生物を mint）。コンテンツ変更は決して既存IDを上書きしない                      |
 
 ### 4.5 ラック
 
@@ -112,25 +109,11 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `RackDevice`   | チェーンの1スロット。`input` / `plugin` / `utility` / `output`。パス、バイパス、ゲイン、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインのプレースホルダ（disabled_placeholder） |
 | `RackMacro`    | パラメータに割り当てる名前付きマクロコントロール                                                                                                                                                   |
 
-### 4.6 演奏
-
-| エンティティ                          | 役割                                                                       |
-| ------------------------------------- | -------------------------------------------------------------------------- |
-| `PlayState` / `SampleInstrumentState` | ライブ演奏の状態（サンプルインストゥルメント構成）                         |
-| `SamplePad`                           | パフォーマンス用パッド。素材、再生区間（ms）、MIDIキー割当、ゲイン、ループ |
-
-### 4.7 AI提案
-
-| エンティティ   | 役割                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------- |
-| `AiPermission` | AI 提案の許可範囲（Explain / Suggest / Apply）                                         |
-| `AiChangeSet`  | 反転可能なAI提案レコード。対象・現在値・提案値・理由・予想効果・リスク・適用済みフラグ |
-
-### 4.8 バックグラウンドジョブ
+### 4.6 バックグラウンドジョブ
 
 | エンティティ          | 役割                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------- |
-| `JobKind`             | `analysis` / `separation` / `scan`。ジョブの種別は結果ペイロードの型を固定する判別子     |
+| `JobKind`             | `scan`。ジョブの種別は結果ペイロードの型を固定する判別子                                 |
 | `JobState`            | `queued → running → cancelling → cancelled \| completed \| failed`（終端からは戻らない） |
 | `BackgroundJobStatus` | IPC 境界の typed view。kind がタグとなり result の形状を決定                             |
 
@@ -153,12 +136,7 @@ flowchart TD
     MC -->|任意 asset_id| AS
     TR --> RI[RackInstance]
     RI --> RD[RackDevice]
-    CS --> PS[PlayState]
-    PS --> SI[SampleInstrumentState]
-    SI --> SP[SamplePad]
-    SP --> AS
     CS --> SE[SessionSettings]
-    SE --> AI[AiChangeSet]
     RC[RecordingCapture] -->|生成物| AS
     RC -->|ドロップアウト診断| DI[DropoutInformation]
 ```
@@ -173,20 +151,19 @@ flowchart TD
 
 `validate_and_normalize`（`CreativeSession`）と `normalize_fields`（`AudioClip`）が守る規則。ロードと保存の両方の境界で適用される。
 
-| 対象           | ルール                                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| session_id     | 空文字禁止。新規は `scratch-<ms>`                                                                                                    |
-| タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                    |
-| ゲイン         | マスター `-90.0..=0.0`、クリップ・トラック・デバイス・パッド・AI提案 `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化 |
-| パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                                         |
-| フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                              |
-| カウントイン   | `0..=8` 拍                                                                                                                           |
-| AI 文脈        | 既知 ID リストのみ、64文字以下、16件まで、重複除去。履歴は128件まで                                                                  |
-| AssetId        | `asset:<UUIDv7>` のみ有効（旧形式・任意文字列は拒否）                                                                                |
-| 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                |
-| 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                    |
-| 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                |
-| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                               |
+| 対象           | ルール                                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| session_id     | 空文字禁止。新規は `scratch-<ms>`                                                                                    |
+| タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ    |
+| ゲイン         | マスター `-90.0..=0.0`、クリップ・トラック・デバイス `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化 |
+| パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                         |
+| フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                              |
+| カウントイン   | `0..=8` 拍                                                                                                           |
+| AssetId        | `asset:<UUIDv7>` のみ有効（旧形式・任意文字列は拒否）                                                                |
+| 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                |
+| 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）    |
+| 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                |
+| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                               |
 
 ---
 

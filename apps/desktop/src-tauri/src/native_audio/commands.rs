@@ -4,26 +4,9 @@ use super::recovery::{AudioDeviceReopenOutcome, MuteCause};
 use crate::model::AudioStatus;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
-
-/// Sample-pad payload exchanged with the native audio sidecar. The sidecar
-/// consumes resolved filesystem paths, not Asset ids, so this is a distinct
-/// type from the domain [`riffra_core::SamplePad`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeSamplePad {
-    pub id: String,
-    pub name: String,
-    pub asset_path: String,
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub midi_key: u8,
-    pub gain_db: f64,
-    pub loop_enabled: bool,
-}
 
 fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
     if bytes.is_empty() {
@@ -242,7 +225,6 @@ impl AudioSupervisor {
         end_ms: Option<u64>,
         looped: bool,
         gain: f32,
-        voice_key: Option<i32>,
     ) -> NativeAudioResult<AudioStatus> {
         let mut command = serde_json::json!({
             "type": "previewSample",
@@ -254,9 +236,6 @@ impl AudioSupervisor {
         if let Some(end_ms) = end_ms {
             command["endMs"] = serde_json::json!(end_ms);
         }
-        if let Some(voice_key) = voice_key {
-            command["voiceKey"] = serde_json::json!(voice_key);
-        }
         self.send_command(
             command,
             "Sample preview queued through the safety limiter; output remains muted until unmuted.",
@@ -267,13 +246,6 @@ impl AudioSupervisor {
         self.send_command(
             serde_json::json!({"type": "stopPreview"}),
             "Sample preview stopped; the source file remains unchanged.",
-        )
-    }
-
-    pub fn stop_preview_for_key(&self, voice_key: i32) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "stopPreviewForKey", "voiceKey": voice_key}),
-            "Mapped preview voice stopped; other preview voices remain available.",
         )
     }
 
@@ -382,19 +354,6 @@ impl AudioSupervisor {
             serde_json::json!({"type": "panicTrackMidi", "trackId": track_id}),
             "Target Instrument Track MIDI panic requested.",
             Duration::from_secs(3),
-        )
-    }
-
-    pub fn configure_sample_pads(
-        &self,
-        pads: &[NativeSamplePad],
-    ) -> NativeAudioResult<AudioStatus> {
-        let pads = serde_json::to_value(pads).map_err(|error| {
-            NativeAudioError::protocol(format!("Sample pad mapping could not be encoded: {error}"))
-        })?;
-        self.send_command(
-            serde_json::json!({"type": "configureSamplePads", "pads": pads}),
-            "Sample pad mappings were prepared for MIDI-triggered audition.",
         )
     }
 

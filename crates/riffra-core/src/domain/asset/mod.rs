@@ -73,8 +73,6 @@ impl std::fmt::Display for AssetId {
 pub enum AssetKind {
     Audio,
     Midi,
-    Sample,
-    GenerationDefinition,
 }
 
 /// The operation that produced an [`Asset`], recorded by [`Provenance`].
@@ -87,18 +85,15 @@ pub enum AssetKind {
 pub enum ProvenanceOperation {
     Recorded,
     Processed,
-    Sampled,
-    Separated,
     Rendered,
-    Generated,
     Imported,
 }
 
 /// How an [`Asset`] was produced.
 ///
 /// `source_asset_ids` lists the assets consumed to produce this one. A single
-/// source produces `Sampled`/`Processed`/`Separated` results; a render can
-/// consume many. `Imported` and root `Recorded` assets carry an empty list.
+/// source produces `Processed` results; a render can consume many. `Imported`
+/// and root `Recorded` assets carry an empty list.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Provenance {
@@ -196,7 +191,7 @@ impl Asset {
     ///
     /// # Errors
     /// Returns [`DomainError`] when the operation implies sources but none are
-    /// supplied, since an operation such as `Sampled` without a source is a
+    /// supplied, since an operation such as `Processed` without a source is a
     /// modelling error rather than missing data.
     pub fn derive(
         sources: &[&Asset],
@@ -209,11 +204,7 @@ impl Asset {
     ) -> Result<Self, DomainError> {
         let requires_source = matches!(
             operation,
-            ProvenanceOperation::Processed
-                | ProvenanceOperation::Sampled
-                | ProvenanceOperation::Separated
-                | ProvenanceOperation::Rendered
-                | ProvenanceOperation::Generated
+            ProvenanceOperation::Processed | ProvenanceOperation::Rendered
         );
         if requires_source && sources.is_empty() {
             return Err(DomainError::InvalidProvenance(format!(
@@ -368,7 +359,7 @@ mod tests {
             AssetKind::Audio,
             "orphan",
             "C:\\orphan.wav",
-            ProvenanceOperation::Sampled,
+            ProvenanceOperation::Rendered,
             serde_json::Map::new(),
             1_000,
         )

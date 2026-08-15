@@ -51,8 +51,6 @@ export async function updateSessionSettings(patch: {
   countInBeats?: number;
   metronomeEnabled?: boolean;
   note?: string;
-  aiPermission?: string;
-  aiContext?: string[];
 }): Promise<CreativeSession> {
   return await invoke<CreativeSession>('update_session_settings', { patch });
 }
