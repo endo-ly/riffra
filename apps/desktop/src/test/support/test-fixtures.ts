@@ -51,6 +51,7 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     outputPeak: 0,
     invalidSamples: 0,
     feedbackSuspected: false,
+    previewing: false,
     message: '',
     ...overrides,
   };

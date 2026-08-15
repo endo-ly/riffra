@@ -58,6 +58,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
     outputPeak: 0,
     invalidSamples: 0,
     feedbackSuspected: false,
+    previewing: false,
     message: 'Native audio is connected and emergency-muted.',
     ...overrides,
   };

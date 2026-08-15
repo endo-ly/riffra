@@ -565,6 +565,7 @@ juce::var currentMeters(const SafetyAudioCallback& callback) {
                         static_cast<juce::int64>(callback.getInvalidSampleCount()));
     meters->setProperty("emergencyMuted", callback.isEmergencyMuted());
     meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
+    meters->setProperty("previewing", callback.isPreviewing());
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(outputWriter.droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents",

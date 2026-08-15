@@ -13,8 +13,6 @@ interface AuditionState {
   variant: AudioTakeVariant;
 }
 
-const PREVIEW_END_GRACE_MS = 250;
-
 interface TakeInspectorProps {
   session: CreativeSession;
   selection: ArrangeSelection;
@@ -76,16 +74,6 @@ function defaultVariantForTake(
     selectedClip ?? arrangement.audioClips.find((clip) => clip.recordingTakeId === take.id);
   if (relatedClip) return relatedClip.takeVariant;
   return take.processedAudio ? 'processed' : 'raw';
-}
-
-function sourceDurationMs(take: RecordingTakeRecord, variant: AudioTakeVariant) {
-  const source = sourceForVariant(take, variant);
-  if (!source || source.sampleRate <= 0) return PREVIEW_END_GRACE_MS;
-  return Math.max(
-    PREVIEW_END_GRACE_MS,
-    Math.round(((source.sourceEndSample - source.sourceStartSample) / source.sampleRate) * 1000) +
-      PREVIEW_END_GRACE_MS,
-  );
 }
 
 export function TakeInspector(props: TakeInspectorProps) {
@@ -154,15 +142,9 @@ export function TakeInspector(props: TakeInspectorProps) {
 
   const [audition, setAudition] = useState<AuditionState | null>(null);
   const [sourceVariants, setSourceVariants] = useState<Record<string, AudioTakeVariant>>({});
-  const auditionTimer = useRef<number | null>(null);
+  const auditionRef = useRef<AuditionState | null>(null);
   const auditionRequest = useRef(0);
   const { operationMessage, runOperation } = useInspectorOperation();
-
-  const clearAuditionTimer = useCallback(() => {
-    if (auditionTimer.current === null) return;
-    window.clearTimeout(auditionTimer.current);
-    auditionTimer.current = null;
-  }, []);
 
   const stopNativeAudition = useCallback(
     () =>
@@ -172,9 +154,20 @@ export function TakeInspector(props: TakeInspectorProps) {
 
   const resetAudition = useCallback(() => {
     auditionRequest.current += 1;
-    clearAuditionTimer();
+    auditionRef.current = null;
     setAudition(null);
-  }, [clearAuditionTimer]);
+  }, []);
+
+  useEffect(() => {
+    auditionRef.current = audition;
+  }, [audition]);
+
+  useEffect(() => {
+    return props.api.onAudioStatus((status) => {
+      if (status.previewing || auditionRef.current === null) return;
+      resetAudition();
+    });
+  }, [props.api, resetAudition]);
 
   const contextKey = context
     ? `${context.recordingSession.id}:${context.selectedTrackId}`
@@ -193,27 +186,9 @@ export function TakeInspector(props: TakeInspectorProps) {
 
   useEffect(
     () => () => {
-      clearAuditionTimer();
       void stopNativeAudition().catch(() => undefined);
     },
-    [clearAuditionTimer, stopNativeAudition],
-  );
-
-  const scheduleAuditionEnd = useCallback(
-    (take: RecordingTakeRecord, variant: AudioTakeVariant) => {
-      clearAuditionTimer();
-      auditionTimer.current = window.setTimeout(
-        () => {
-          auditionRequest.current += 1;
-          setAudition((current) =>
-            current?.takeId === take.id && current.variant === variant ? null : current,
-          );
-          auditionTimer.current = null;
-        },
-        sourceDurationMs(take, variant),
-      );
-    },
-    [clearAuditionTimer],
+    [stopNativeAudition],
   );
 
   const commit = (promise: Promise<CreativeSession>) => runOperation(promise, props.setSession);
@@ -252,8 +227,9 @@ export function TakeInspector(props: TakeInspectorProps) {
     });
     runOperation(operation, () => {
       if (auditionRequest.current !== requestId) return;
-      setAudition({ takeId: take.id, variant });
-      scheduleAuditionEnd(take, variant);
+      const nextAudition = { takeId: take.id, variant };
+      auditionRef.current = nextAudition;
+      setAudition(nextAudition);
     });
   };
 
@@ -263,8 +239,9 @@ export function TakeInspector(props: TakeInspectorProps) {
     const requestId = auditionRequest.current;
     runOperation(props.api.switchTakeComparisonVariant(variant), () => {
       if (auditionRequest.current !== requestId) return;
-      setAudition({ takeId: take.id, variant });
-      scheduleAuditionEnd(take, variant);
+      const nextAudition = { takeId: take.id, variant };
+      auditionRef.current = nextAudition;
+      setAudition(nextAudition);
     });
   };
 

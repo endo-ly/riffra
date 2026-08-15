@@ -111,13 +111,9 @@ pub async fn tag_recording(
 }
 
 #[tauri::command]
-pub async fn start_arrange_recording(
-    recording_session_id: Option<String>,
-    app: AppHandle,
-) -> Result<AudioStatus, String> {
-    run_blocking(app, move |state| match recording_session_id {
-        Some(id) => application::record_another_take(&app_context(state), &id),
-        None => application::start_recording(&app_context(state)),
+pub async fn start_arrange_recording(app: AppHandle) -> Result<AudioStatus, String> {
+    run_blocking(app, |state| {
+        application::start_recording(&app_context(state))
     })
     .await
 }

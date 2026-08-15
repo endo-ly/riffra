@@ -2,10 +2,8 @@ import type { AudioStatus, SessionAudioPair } from '@/model/domain';
 import { invoke } from '../invoke';
 import { audioCommandError } from './audio-error';
 
-export async function startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('start_arrange_recording', {
-    recordingSessionId: recordingSessionId ?? null,
-  });
+export async function startArrangeRecording(): Promise<AudioStatus> {
+  return await invoke<AudioStatus>('start_arrange_recording');
 }
 
 export async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {

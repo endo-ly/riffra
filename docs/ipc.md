@@ -143,15 +143,15 @@
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                         | ペイロード                            | 意味                                                                                             |
-| -------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `runtime-startup-finished`       | `{ succeeded }`                       | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                 |
-| `audio-status`                   | `AudioStatus`                         | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知） |
-| `audio-meters`                   | `AudioMeters`                         | 入力・出力ピーク、無効サンプル数（高頻度）                                                       |
-| `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                     |
-| `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                       |
-| `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                         |
-| `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                       |
+| イベント                         | ペイロード                            | 意味                                                                                                                    |
+| -------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`       | `{ succeeded }`                       | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                        |
+| `audio-status`                   | `AudioStatus`                         | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知、Preview再生中かどうか） |
+| `audio-meters`                   | `AudioMeters`                         | 入力・出力ピーク、無効サンプル数（高頻度）                                                                              |
+| `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                                            |
+| `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
+| `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                                                |
+| `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                                              |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 
@@ -188,14 +188,14 @@
 
 ### 5.4 サイドカー → Rust イベント
 
-| type                                                      | 内容                                                                               |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・MIDI の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
-| `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知                             |
-| `transportStatus`                                         | トランスポート状態の変化                                                           |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                           |
-| `keepAlive`                                               | 生存確認（Rustは無視）                                                             |
-| `error`                                                   | scope 付き失敗通知                                                                 |
+| type                                                      | 内容                                                                                                 |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview再生状態の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）   |
+| `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知。Preview状態の変化は `audioStatus` として通知 |
+| `transportStatus`                                         | トランスポート状態の変化                                                                             |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                             |
+| `keepAlive`                                               | 生存確認（Rustは無視）                                                                               |
+| `error`                                                   | scope 付き失敗通知                                                                                   |
 
 フィードバック検知（`feedbackSuspected`）は緊急ミュートと連動し、原因表示のために Rust 側の `MuteCause` と突き合わせられる。
 

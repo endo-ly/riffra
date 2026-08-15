@@ -514,6 +514,7 @@ mod tests {
                 output_peak: 0.0,
                 invalid_samples: 0,
                 feedback_suspected: false,
+                previewing: false,
                 message: "fake".into(),
             }
         }

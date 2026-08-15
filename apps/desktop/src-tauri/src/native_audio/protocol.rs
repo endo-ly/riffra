@@ -43,6 +43,7 @@ struct NativeStatus {
     invalid_samples: Option<u64>,
     emergency_muted: Option<bool>,
     feedback_suspected: Option<bool>,
+    previewing: Option<bool>,
     message: Option<String>,
 }
 
@@ -54,6 +55,7 @@ struct NativeMeters {
     invalid_samples: Option<u64>,
     emergency_muted: Option<bool>,
     feedback_suspected: Option<bool>,
+    previewing: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +204,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         output_peak: native.output_peak.unwrap_or_default().clamp(0.0, 1.0),
         invalid_samples: native.invalid_samples.unwrap_or_default(),
         feedback_suspected: native.feedback_suspected.unwrap_or(false),
+        previewing: native.previewing.unwrap_or(false),
         message,
     }
 }
@@ -324,8 +327,14 @@ pub(super) fn handle_native_stdout(
         ParsedNativeLine::Meters { request_id, meters } => {
             let mut status_changed = false;
             if let Ok(mut current) = status.lock() {
+                if let Some(previewing) = meters.previewing
+                    && current.previewing != previewing
+                {
+                    current.previewing = previewing;
+                    status_changed = true;
+                }
                 if let Some(emergency_muted) = meters.emergency_muted {
-                    status_changed = apply_emergency_mute_state(&mut current, emergency_muted);
+                    status_changed |= apply_emergency_mute_state(&mut current, emergency_muted);
                 }
                 current.input_peak = meters.input_peak.unwrap_or_default().clamp(0.0, 1.0);
                 current.output_peak = meters.output_peak.unwrap_or_default().clamp(0.0, 1.0);
@@ -450,6 +459,7 @@ mod tests {
             output_peak: 0.0,
             invalid_samples: 0,
             feedback_suspected: false,
+            previewing: false,
             message: "ready".into(),
         }))
     }
@@ -464,6 +474,27 @@ mod tests {
         let current = status.lock().unwrap();
         assert!(matches!(current.state, AudioState::Ready));
         assert!(current.message.contains("plugin"));
+    }
+
+    #[test]
+    fn preview_meter_transition_emits_audio_status() {
+        let status = test_status();
+
+        let started = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":1,"previewing":true}"#,
+        )
+        .expect("preview start meter reply");
+        assert!(matches!(started.event, NativeEvent::AudioStatus));
+        assert!(status.lock().unwrap().previewing);
+
+        let finished = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":2,"previewing":false}"#,
+        )
+        .expect("preview finish meter reply");
+        assert!(matches!(finished.event, NativeEvent::AudioStatus));
+        assert!(!status.lock().unwrap().previewing);
     }
 
     #[test]

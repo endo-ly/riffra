@@ -2,22 +2,34 @@
   z-index: 10;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   min-height: var(--toolbar-height);
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: 0 12px;
   background: linear-gradient(180deg, #14191f, #101419);
   border-bottom: 1px solid #29313a;
   box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16);
 }
 
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar > * {
+  flex: 0 0 auto;
+}
+
 .trailing {
-  min-width: 0;
+  min-width: max-content;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: inherit;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .divider {

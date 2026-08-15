@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
@@ -216,6 +216,33 @@ describe('Arrange Inspectors', () => {
       expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument(),
     );
     expect(api.calls).toContain('stopTakeComparison');
+  });
+
+  it('clears the audition when Native reports that preview playback ended', async () => {
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'track', trackId: 'track:audio' }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
+        api={api}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
+
+    act(() => {
+      api.emitAudioStatus({ ...api.audio, previewing: false });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument(),
+    );
   });
 
   it('routes Record another take to the selected recording group', () => {
