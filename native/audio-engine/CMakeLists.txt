@@ -90,23 +90,34 @@ target_sources(riffra-render PRIVATE
   src/RenderMain.cpp
 )
 
-set(RIFFRA_AUDIO_JUCE_DEFINITIONS
-  JUCE_ASIO=1
+set(RIFFRA_AUDIO_PLATFORM_DEFINITIONS)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  list(APPEND RIFFRA_AUDIO_PLATFORM_DEFINITIONS JUCE_ASIO=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND RIFFRA_AUDIO_PLATFORM_DEFINITIONS
+    JUCE_ALSA=1
+    JUCE_JACK=0
+  )
+endif()
+
+set(RIFFRA_COMMON_JUCE_DEFINITIONS
   JUCE_PLUGINHOST_VST3=1
+  JUCE_PLUGINHOST_LADSPA=0
   JUCE_USE_CURL=0
   JUCE_WEB_BROWSER=0
+)
+
+set(RIFFRA_AUDIO_JUCE_DEFINITIONS
+  ${RIFFRA_AUDIO_PLATFORM_DEFINITIONS}
+  ${RIFFRA_COMMON_JUCE_DEFINITIONS}
 )
 
 set(RIFFRA_PLUGIN_SCAN_JUCE_DEFINITIONS
-  JUCE_PLUGINHOST_VST3=1
-  JUCE_USE_CURL=0
-  JUCE_WEB_BROWSER=0
+  ${RIFFRA_COMMON_JUCE_DEFINITIONS}
 )
 
 set(RIFFRA_RENDER_JUCE_DEFINITIONS
-  JUCE_PLUGINHOST_VST3=1
-  JUCE_USE_CURL=0
-  JUCE_WEB_BROWSER=0
+  ${RIFFRA_COMMON_JUCE_DEFINITIONS}
 )
 
 target_compile_definitions(riffra-render-core PUBLIC
@@ -114,7 +125,7 @@ target_compile_definitions(riffra-render-core PUBLIC
 )
 
 target_compile_definitions(riffra-audio-core PRIVATE
-  JUCE_ASIO=1
+  ${RIFFRA_AUDIO_PLATFORM_DEFINITIONS}
 )
 
 target_compile_definitions(riffra-audio PRIVATE
@@ -284,17 +295,23 @@ if(BUILD_TESTING)
     target_compile_options(riffra-real-vst-runtime-test PRIVATE ${RIFFRA_MSVC_WARNINGS})
   endif()
 
+  get_target_property(RIFFRA_TEST_EFFECT_BUNDLE
+    riffra-test-effect_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
+  get_target_property(RIFFRA_TEST_INSTRUMENT_BUNDLE
+    riffra-test-instrument_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
+
   add_test(
     NAME PluginScannerTest.RiffraTestEffect
-    COMMAND riffra-plugin-scan --validate-load "$<TARGET_FILE:riffra-test-effect_VST3>")
+    COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_EFFECT_BUNDLE}")
   add_test(
     NAME PluginScannerTest.RiffraTestInstrument
-    COMMAND riffra-plugin-scan --validate-load "$<TARGET_FILE:riffra-test-instrument_VST3>")
+    COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_INSTRUMENT_BUNDLE}")
+
   add_test(
     NAME RealVstRuntimeTest.LoadsMultipleRuntimeRoles
     COMMAND riffra-real-vst-runtime-test
-      "$<TARGET_FILE:riffra-test-effect_VST3>"
-      "$<TARGET_FILE:riffra-test-instrument_VST3>")
+      "${RIFFRA_TEST_EFFECT_BUNDLE}"
+      "${RIFFRA_TEST_INSTRUMENT_BUNDLE}")
 
   FetchContent_Declare(
     googletest
@@ -330,10 +347,35 @@ gtest_discover_tests(riffra-audio-tests)
 endif()
 
 # Sidecar names must match Tauri's externalBin resolution:
-# binaries/<name>-<target-triple>(.exe). Default to Windows MSVC target;
+# binaries/<name>-<target-triple>(.exe). The default follows the host platform;
 # override with -DRIFFRA_TARGET_TRIPLE=<triple> when cross-compiling.
 if(NOT DEFINED RIFFRA_TARGET_TRIPLE)
-    set(RIFFRA_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+    set(RIFFRA_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+    if(NOT RIFFRA_TARGET_PROCESSOR)
+        set(RIFFRA_TARGET_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(RIFFRA_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        if(RIFFRA_TARGET_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+            set(RIFFRA_TARGET_TRIPLE "x86_64-unknown-linux-gnu")
+        elseif(RIFFRA_TARGET_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)$")
+            set(RIFFRA_TARGET_TRIPLE "aarch64-unknown-linux-gnu")
+        else()
+            message(FATAL_ERROR
+                "Set RIFFRA_TARGET_TRIPLE for unsupported Linux processor: ${RIFFRA_TARGET_PROCESSOR}")
+        endif()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        if(RIFFRA_TARGET_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)$")
+            set(RIFFRA_TARGET_TRIPLE "aarch64-apple-darwin")
+        else()
+            set(RIFFRA_TARGET_TRIPLE "x86_64-apple-darwin")
+        endif()
+    else()
+        message(FATAL_ERROR
+            "Set RIFFRA_TARGET_TRIPLE for unsupported platform: ${CMAKE_SYSTEM_NAME}")
+    endif()
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(RIFFRA_BINARY_SUFFIX ".exe")

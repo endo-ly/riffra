@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run knip
+      - run: npm run check
+
+  rust:
+    name: Rust host crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-host-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-host-
+
+      - run: cargo fmt --manifest-path Cargo.toml --all --check
+      - run: cargo clippy --manifest-path Cargo.toml --workspace --exclude riffra-desktop --all-targets -- -D warnings
+      - run: cargo test --manifest-path Cargo.toml --workspace --exclude riffra-desktop
+
+  rust-tauri:
+    name: Rust Tauri
+    needs: native-windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-sidecars-windows
+          path: apps/desktop/src-tauri/binaries
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-tauri-
+
+      - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  native-linux:
+    name: Native audio engine (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ccache \
+            clang-format \
+            libasound2-dev \
+            libegl-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libglu1-mesa-dev \
+            libxi-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            mesa-common-dev \
+            pkg-config
+
+      - uses: actions/cache@v6
+        with:
+          path: native/audio-engine/build/_deps
+          key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-native-deps-
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-native-ccache-${{ hashFiles('native/audio-engine/**') }}
+          restore-keys: |
+            ${{ runner.os }}-native-ccache-
+
+      - name: Check clang-format
+        shell: bash
+        run: |
+          mapfile -t files < <(
+            git ls-files native/audio-engine/src native/audio-engine/tests |
+              grep -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx|mm|m)$'
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo 'No C++ source files were found.' >&2
+            exit 1
+          fi
+          clang-format --style=file --dry-run --Werror "${files[@]}"
+
+      - name: Build and test on Linux
+        shell: bash
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 2
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: ./native/audio-engine/build.sh Debug
+
+  native-windows:
+    name: Native audio engine (Windows)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v6
+        with:
+          path: native/audio-engine/build/_deps
+          key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-native-deps-
+
+      - name: Build and test on Windows
+        shell: pwsh
+        run: .\native\audio-engine\build.ps1 -Configuration Debug
+
+      - name: Upload Windows sidecars
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-sidecars-windows
+          path: apps/desktop/src-tauri/binaries
+          if-no-files-found: error

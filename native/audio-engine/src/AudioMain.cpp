@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -192,6 +193,18 @@ juce::String accessModeForDriver(const juce::String& driver) {
 }
 
 bool driverRequiresSameDevice(const juce::String& driver) { return driver == "ASIO"; }
+
+juce::String defaultAudioDriver() {
+#if JUCE_WINDOWS
+    return "Windows Audio (Low Latency Mode)";
+#elif JUCE_LINUX
+    return "ALSA";
+#elif JUCE_MAC
+    return "CoreAudio";
+#else
+    return {};
+#endif
+}
 
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
@@ -642,7 +655,7 @@ std::unique_ptr<juce::XmlElement> configuredAudioXml(const AudioConfiguration& c
 juce::String initialiseConfiguredAudio(juce::AudioDeviceManager& manager,
                                        const AudioConfiguration& configuration) {
     AudioConfiguration resolved = configuration;
-    if (resolved.driver.isEmpty()) resolved.driver = "Windows Audio (Low Latency Mode)";
+    if (resolved.driver.isEmpty()) resolved.driver = defaultAudioDriver();
     const auto& deviceTypes = manager.getAvailableDeviceTypes();
     auto* deviceType = [&]() -> juce::AudioIODeviceType* {
         for (auto* candidate : deviceTypes)
@@ -768,6 +781,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     if (error.isNotEmpty()) {
         const auto requestedError = error;
         manager.closeAudioDevice();
+#if JUCE_WINDOWS
         AudioConfiguration sharedFallback;
         sharedFallback.driver = "Windows Audio (Low Latency Mode)";
         error = initialiseConfiguredAudio(manager, sharedFallback);
@@ -783,6 +797,10 @@ int serve(const std::optional<std::uint32_t> parentPid,
         }
         startupMessage =
             "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
+#else
+        writeJson(makeError("audioDevice", requestedError));
+        return 2;
+#endif
     }
 
     auto startupInputChannel = startupMessage.isEmpty() ? startupConfiguration.inputChannel : 0;
@@ -1281,7 +1299,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                 path;
                             break;
                         }
-                        const auto length = juce::jmin<juce::int64>(
+                        const auto length = std::min<juce::int64>(
                             reader->lengthInSamples,
                             static_cast<juce::int64>(std::numeric_limits<int>::max()));
                         auto buffer = std::make_shared<juce::AudioBuffer<float>>(
@@ -1455,7 +1473,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     previewError =
                         "Preview source sample rate does not match the active audio device.";
                 } else {
-                    const auto length = juce::jmin<juce::int64>(
+                    const auto length = std::min<juce::int64>(
                         reader->lengthInSamples,
                         static_cast<juce::int64>(std::numeric_limits<int>::max()));
                     juce::AudioBuffer<float> buffer(reader->numChannels, static_cast<int>(length));
