@@ -1,7 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import type { BootstrapState, RecoveryCandidate } from '@/model/domain';
 import { defaultSession } from '../browser-defaults';
-import { defaultViewState } from '@/app/view-state';
 import { invokeOrFallback, isNativeRuntime } from '../invoke';
 import type { RuntimeStartupFinishedEvent } from '../native-api';
 import { defaultVst3Root } from './constants';
@@ -12,7 +11,6 @@ export async function bootstrap(): Promise<BootstrapState> {
     {},
     {
       session: defaultSession(),
-      viewState: defaultViewState(),
       pluginCatalog: [],
       runtimeStarted: false,
       runtimeStartupFinished: false,

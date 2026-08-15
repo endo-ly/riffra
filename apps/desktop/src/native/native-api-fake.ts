@@ -3,17 +3,14 @@ import type {
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
-  DesktopViewState,
   MissingDependency,
   RecordingAsset,
   RecordingStatus,
   RenderResult,
   RuntimeProjectionStatus,
   ScanReport,
-  SeparationResult,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
-import { defaultViewState } from '@/app/view-state';
 import { toAssetId, type TransportStatus } from './contracts';
 import type {
   NativeApi,
@@ -29,7 +26,6 @@ export interface FakeNativeApiOptions {
   audio?: AudioStatus;
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
-  separations?: SeparationResult[];
   missingDependencies?: MissingDependency[];
   responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
   failures?: Partial<Record<keyof NativeApi, Error>>;
@@ -82,8 +78,6 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     midiInputActive: false,
     midiMessages: 0,
     lastMidiNote: null,
-    midiPadMappings: 0,
-    midiPadTriggers: 0,
     inputPeak: 0,
     outputPeak: 0,
     invalidSamples: 0,
@@ -102,7 +96,6 @@ export class FakeNativeApi implements NativeApi {
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
-  separations: SeparationResult[];
   bootstrapState: BootstrapState;
   missing: MissingDependency[];
 
@@ -126,7 +119,6 @@ export class FakeNativeApi implements NativeApi {
     this.audio = options.audio ?? fakeAudioStatus();
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
-    this.separations = options.separations ?? [];
     this.missing = options.missingDependencies ?? [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
     this.runtimeProjection = {
@@ -200,12 +192,6 @@ export class FakeNativeApi implements NativeApi {
   scanVst3Folder(...args: Parameters<NativeApi['scanVst3Folder']>) {
     return this.command('scanVst3Folder', args);
   }
-  startAnalysisJob(...args: Parameters<NativeApi['startAnalysisJob']>) {
-    return this.command('startAnalysisJob', args);
-  }
-  startSeparationJob(...args: Parameters<NativeApi['startSeparationJob']>) {
-    return this.command('startSeparationJob', args);
-  }
   startScanJob(...args: Parameters<NativeApi['startScanJob']>) {
     return this.command('startScanJob', args);
   }
@@ -248,14 +234,8 @@ export class FakeNativeApi implements NativeApi {
   analyzeAsset(...args: Parameters<NativeApi['analyzeAsset']>) {
     return this.command('analyzeAsset', args);
   }
-  listSeparations(...args: Parameters<NativeApi['listSeparations']>) {
-    return this.command('listSeparations', args);
-  }
   renderTimeline(...args: Parameters<NativeApi['renderTimeline']>) {
     return this.command('renderTimeline', args);
-  }
-  applyAiSuggestion(...args: Parameters<NativeApi['applyAiSuggestion']>) {
-    return this.command('applyAiSuggestion', args);
   }
   probeAudioDevices(...args: Parameters<NativeApi['probeAudioDevices']>) {
     return this.command('probeAudioDevices', args);
@@ -266,11 +246,8 @@ export class FakeNativeApi implements NativeApi {
   previewAsset(...args: Parameters<NativeApi['previewAsset']>) {
     return this.command('previewAsset', args);
   }
-  stopSamplePreview(...args: Parameters<NativeApi['stopSamplePreview']>) {
-    return this.command('stopSamplePreview', args);
-  }
-  stopSamplePreviewKey(...args: Parameters<NativeApi['stopSamplePreviewKey']>) {
-    return this.command('stopSamplePreviewKey', args);
+  stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
+    return this.command('stopPreview', args);
   }
   getAudioStatus(...args: Parameters<NativeApi['getAudioStatus']>) {
     return this.command('getAudioStatus', args);
@@ -316,15 +293,6 @@ export class FakeNativeApi implements NativeApi {
   }
   stopArrangeRecording(...args: Parameters<NativeApi['stopArrangeRecording']>) {
     return this.command('stopArrangeRecording', args);
-  }
-  createSamplePad(...args: Parameters<NativeApi['createSamplePad']>) {
-    return this.command('createSamplePad', args);
-  }
-  updateSamplePad(...args: Parameters<NativeApi['updateSamplePad']>) {
-    return this.command('updateSamplePad', args);
-  }
-  removeSamplePad(...args: Parameters<NativeApi['removeSamplePad']>) {
-    return this.command('removeSamplePad', args);
   }
   addAudioClipToArrangement(...args: Parameters<NativeApi['addAudioClipToArrangement']>) {
     return this.command('addAudioClipToArrangement', args);
@@ -503,12 +471,6 @@ export class FakeNativeApi implements NativeApi {
   seekTimeline(...args: Parameters<NativeApi['seekTimeline']>) {
     return this.command('seekTimeline', args);
   }
-  openAssetInDesign(...args: Parameters<NativeApi['openAssetInDesign']>) {
-    return this.command('openAssetInDesign', args);
-  }
-  switchWorkspace(...args: Parameters<NativeApi['switchWorkspace']>) {
-    return this.command('switchWorkspace', args);
-  }
   updateSessionSettings(...args: Parameters<NativeApi['updateSessionSettings']>) {
     return this.command('updateSessionSettings', args);
   }
@@ -642,8 +604,6 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve({ canUndo: false, canRedo: false });
       case 'listRecordings':
         return Promise.resolve(this.recordings);
-      case 'listSeparations':
-        return Promise.resolve(this.separations);
       case 'searchLibrary':
       case 'relatedLibraryAssets':
         return Promise.resolve([]);
@@ -665,31 +625,8 @@ export class FakeNativeApi implements NativeApi {
           state: arguments_[0] ? 'muted' : 'ready',
         };
         return Promise.resolve(this.audio);
-      case 'switchWorkspace': {
-        const next = {
-          ...this.bootstrapState.viewState,
-          workspace: arguments_[0],
-        } as DesktopViewState;
-        this.bootstrapState = { ...this.bootstrapState, viewState: next };
-        return Promise.resolve(next);
-      }
-      case 'openAssetInDesign': {
-        const next: DesktopViewState = {
-          workspace: 'design',
-          designContext: {
-            activeTool: arguments_[1] as DesktopViewState['designContext']['activeTool'],
-            targetAssetId: arguments_[0] as DesktopViewState['designContext']['targetAssetId'],
-          },
-        };
-        this.bootstrapState = { ...this.bootstrapState, viewState: next };
-        return Promise.resolve(next);
-      }
       case 'startScanJob':
         return Promise.resolve(this.completedJob('scan', { plugins: this.plugins, issues: [] }));
-      case 'startAnalysisJob':
-        return Promise.resolve(this.completedJob('analysis', null));
-      case 'startSeparationJob':
-        return Promise.resolve(this.completedJob('separation', this.separations[0] ?? null));
       case 'getBackgroundJob':
         return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
       case 'cancelBackgroundJob':
@@ -747,7 +684,7 @@ export class FakeNativeApi implements NativeApi {
     return () => listeners.delete(callback);
   }
 
-  private completedJob(kind: 'scan' | 'analysis' | 'separation', result: unknown) {
+  private completedJob(kind: 'scan', result: unknown) {
     const id = `job:${kind}:${++this.jobSequence}`;
     const job = {
       kind,
@@ -763,9 +700,6 @@ export class FakeNativeApi implements NativeApi {
 
 const sessionAudioMethodNames = new Set<keyof NativeApi>([
   'setMasterGainDb',
-  'createSamplePad',
-  'updateSamplePad',
-  'removeSamplePad',
   'stopArrangeRecording',
 ]);
 
@@ -826,13 +760,11 @@ const sessionMethodNames = new Set<keyof NativeApi>([
   'updateArrangementTimebase',
   'updateTimelineLoopRange',
   'updateTimelinePunchRange',
-  'applyAiSuggestion',
 ]);
 
 const audioMethodNames = new Set<keyof NativeApi>([
   'previewAsset',
-  'stopSamplePreview',
-  'stopSamplePreviewKey',
+  'stopPreview',
   'recoverAudioDevice',
   'retryStartupRuntime',
   'setAudioDriver',
@@ -858,7 +790,6 @@ const voidMethodNames = new Set<keyof NativeApi>([
 function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState {
   return {
     session: defaultSession(),
-    viewState: defaultViewState(),
     pluginCatalog: [],
     runtimeStarted: true,
     runtimeStartupFinished: true,

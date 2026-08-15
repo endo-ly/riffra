@@ -1,5 +1,5 @@
-import type { AnalysisJobStatus, ScanJobStatus, SeparationJobStatus } from '../contracts';
-import type { AssetId, BackgroundJobStatus, ScanReport } from '@/model/domain';
+import type { ScanJobStatus } from '../contracts';
+import type { BackgroundJobStatus, ScanReport } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 import { defaultVst3Root } from './constants';
 
@@ -20,14 +20,6 @@ export async function scanVst3Folder(path?: string): Promise<ScanReport> {
       ],
     },
   );
-}
-
-export async function startAnalysisJob(assetId: AssetId): Promise<AnalysisJobStatus> {
-  return await invoke<AnalysisJobStatus>('start_analysis_job', { assetId });
-}
-
-export async function startSeparationJob(assetId: AssetId): Promise<SeparationJobStatus> {
-  return await invoke<SeparationJobStatus>('start_separation_job', { assetId });
 }
 
 export async function startScanJob(path?: string): Promise<ScanJobStatus> {

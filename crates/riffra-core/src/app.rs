@@ -453,7 +453,7 @@ mod tests {
     use crate::domain::asset::mint_asset_id;
     use crate::domain::{
         AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, MidiNote, RackDevice,
-        SamplePad, TimelineTick, TrackKind,
+        TimelineTick, TrackKind,
     };
     use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
     use std::sync::{Arc, Barrier, Mutex};
@@ -1048,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn application_facade_owns_sample_pad_and_plugin_state_edits() {
+    fn application_facade_owns_plugin_state_edits() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -1058,44 +1058,6 @@ mod tests {
             false,
         );
         let application = core.application(&storage);
-        let asset_id = mint_asset_id();
-        let pad = SamplePad {
-            id: "pad:one".into(),
-            name: "One".into(),
-            asset_id,
-            start_ms: 0,
-            end_ms: 100,
-            midi_key: 36,
-            gain_db: 0.0,
-            loop_enabled: false,
-        };
-        let added = application.add_sample_pad(pad).unwrap();
-        assert_eq!(added.play_state.sample_instrument.pads.len(), 1);
-        let updated = application
-            .update_sample_pad(
-                "pad:one",
-                crate::application::SamplePadPatch {
-                    start_ms: Some(50),
-                    end_ms: Some(25),
-                    gain_db: Some(3.0),
-                    loop_enabled: Some(true),
-                },
-            )
-            .unwrap();
-        let updated_pad = &updated.play_state.sample_instrument.pads[0];
-        assert_eq!((updated_pad.start_ms, updated_pad.end_ms), (50, 51));
-        assert_eq!(updated_pad.gain_db, 3.0);
-        assert!(updated_pad.loop_enabled);
-        assert_eq!(
-            application
-                .remove_sample_pad("pad:one")
-                .unwrap()
-                .play_state
-                .sample_instrument
-                .pads
-                .len(),
-            0
-        );
 
         let track = application
             .add_track("Synth", TrackKind::Instrument)

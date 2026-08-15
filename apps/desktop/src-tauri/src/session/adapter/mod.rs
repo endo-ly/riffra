@@ -1,13 +1,6 @@
 //! Desktop adapters for Core Session operations and host runtime services.
 //!
-//! The operations use three consistency policies:
-//!
-//! - Sample-pad operations ([`create_sample_pad`], [`update_sample_pad`],
-//!   [`remove_sample_pad`]) touch play state, the Asset registry (existence
-//!   check), and the Audio Runtime (pad configuration).
-//!   Because the runtime and the persisted session must agree, each operation
-//!   applies the new pad set to the runtime, persists the session, and restores
-//!   the previous pad set when persistence fails.
+//! The operations use two consistency policies:
 //!
 //! - Arrangement operations that change plugin topology prepare the proposed
 //!   runtime graph before persisting the canonical Session. A failed candidate
@@ -27,14 +20,12 @@ mod midi_import;
 mod rack;
 mod recording;
 mod runtime;
-mod sample_pad;
 
 pub(crate) use arrangement::*;
 pub(crate) use midi_import::*;
 pub(crate) use rack::*;
 pub(crate) use recording::*;
 pub(crate) use runtime::*;
-pub(crate) use sample_pad::*;
 
 #[cfg(test)]
 use rack::commit_plugin_arrangement;
@@ -50,7 +41,7 @@ use crate::storage::SessionStore;
 use riffra_core::{
     AssetId, AssetKind, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter,
     AutomationPoint, CreativeSession, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind,
-    MidiInputRoute, MidiNote, ProjectTimebase, SamplePad, TimelineTick, TrackKind,
+    MidiInputRoute, MidiNote, ProjectTimebase, TimelineTick, TrackKind,
 };
 
 pub(crate) use crate::session::commit::{
@@ -58,14 +49,13 @@ pub(crate) use crate::session::commit::{
 };
 pub(crate) use crate::session::context::{SessionContext, current_session};
 pub(crate) use crate::session::transport::{
-    SamplePadRestoreOutcome, audio_command_succeeded, go_to_start_timeline, play_timeline,
-    prepare_arrangement_candidate, resolve_native_pads, restore_sample_pads,
+    go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
     runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement,
     sync_arrangement_runtime,
 };
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate, SamplePadPatch, SessionSettingsPatch,
+    MidiNoteUpdate, SessionSettingsPatch,
 };
 use riffra_core::domain::TrackPatch;
 #[cfg(test)]

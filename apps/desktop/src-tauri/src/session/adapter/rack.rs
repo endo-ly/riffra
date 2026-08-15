@@ -351,12 +351,6 @@ pub fn relink_missing_dependency(
         .audio_clips
         .iter()
         .any(|clip| clip.asset_id == asset_id)
-        && !session
-            .play_state
-            .sample_instrument
-            .pads
-            .iter()
-            .any(|pad| pad.asset_id == asset_id)
     {
         return Err(format!(
             "Asset is not referenced by the project: {asset_id}"

@@ -1,25 +1,15 @@
-import type {
-  AudioStatus,
-  CreativeSession,
-  DesktopViewState,
-  HistoryState,
-  Workspace,
-} from '@/model/domain';
-import clsx from 'clsx';
-import { workspaces } from '@/app/workspaces';
+import type { AudioStatus, CreativeSession, HistoryState } from '@/model/domain';
 import { Icon } from '@/shared/ui/primitives';
 import shellStyles from '../AppShell.module.css';
 import styles from './GlobalBar.module.css';
 
 interface GlobalBarProps {
   session: CreativeSession;
-  viewState: DesktopViewState;
   audio: AudioStatus;
   isMuted: boolean;
   historyState: HistoryState;
   onUndo: () => void;
   onRedo: () => void;
-  onSwitchWorkspace: (workspace: Workspace) => void;
   onRenameSession: () => void;
   onToggleMute: () => void;
   onOpenCommand: () => void;
@@ -30,13 +20,11 @@ interface GlobalBarProps {
 export function GlobalBar(props: GlobalBarProps) {
   const {
     session,
-    viewState,
     audio,
     isMuted,
     historyState,
     onUndo,
     onRedo,
-    onSwitchWorkspace,
     onRenameSession,
     onToggleMute,
     onOpenCommand,
@@ -77,24 +65,12 @@ export function GlobalBar(props: GlobalBarProps) {
           ↷
         </button>
       </div>
-      <nav className={styles.workspaceTabs} aria-label="Workspace">
-        {workspaces.map((item) => (
-          <button
-            key={item.id}
-            className={clsx(styles.tab, viewState.workspace === item.id && styles.active)}
-            onClick={() => onSwitchWorkspace(item.id)}
-          >
-            {item.label}
-            <kbd>{item.key}</kbd>
-          </button>
-        ))}
-      </nav>
       <button className={styles.commandTrigger} onClick={onOpenCommand}>
         <Icon name="search" />
         Search or command<kbd>Ctrl K</kbd>
       </button>
       <button
-        className={clsx(styles.enginePill, styles[audio.state], audioSettingsOpen && styles.open)}
+        className={`${styles.enginePill} ${styles[audio.state]} ${audioSettingsOpen ? styles.open : ''}`}
         onClick={onOpenAudioSettings}
         aria-label="Open Audio Settings"
         aria-haspopup="dialog"
@@ -108,7 +84,7 @@ export function GlobalBar(props: GlobalBarProps) {
         <Icon name="chevron" />
       </button>
       <button
-        className={clsx(styles.emergencyButton, isMuted && styles.active)}
+        className={`${styles.emergencyButton} ${isMuted ? styles.active : ''}`}
         onClick={() => void onToggleMute()}
       >
         <Icon name="stop" />

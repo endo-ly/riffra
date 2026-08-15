@@ -12,16 +12,14 @@ use crate::app::AppCore;
 use crate::domain::asset::AssetId;
 use crate::domain::rack::RackDevice;
 use crate::domain::{
-    AiChangeSet, AiPermission, Arrangement, AudioClip, AudioClipMove, AudioClipPatch,
-    AudioInputRoute, AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint,
-    CreativeSession, DeviceKind, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch,
-    MidiEvent, MidiInputRoute, MidiNote, ProjectTimebase, SamplePad, TakeAudioSource, TimelineTick,
-    Track, TrackKind, TrackPatch,
+    Arrangement, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute, AudioTakeVariant,
+    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange,
+    Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
+    ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackKind, TrackPatch,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// Partial update for session-wide production settings.
@@ -34,8 +32,6 @@ pub struct SessionSettingsPatch {
     pub count_in_beats: Option<u8>,
     pub metronome_enabled: Option<bool>,
     pub note: Option<String>,
-    pub ai_permission: Option<AiPermission>,
-    pub ai_context: Option<Vec<String>>,
 }
 
 /// Partial update for one MIDI note.
@@ -46,16 +42,6 @@ pub struct MidiNotePatch {
     pub start_tick: Option<TimelineTick>,
     pub duration_ticks: Option<u64>,
     pub velocity: Option<u8>,
-}
-
-/// Partial update for one Sample Pad.
-#[derive(Clone, Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SamplePadPatch {
-    pub start_ms: Option<u64>,
-    pub end_ms: Option<u64>,
-    pub gain_db: Option<f64>,
-    pub loop_enabled: Option<bool>,
 }
 
 /// One note update within an atomic MIDI edit.
@@ -249,78 +235,6 @@ fn find_track_device_mut<'a>(
         .ok_or_else(|| ApplicationError::InvalidCommand("track device is not registered".into()))
 }
 
-fn find_sample_pad_mut<'a>(
-    session: &'a mut CreativeSession,
-    pad_id: &str,
-) -> Result<&'a mut SamplePad, ApplicationError> {
-    session
-        .play_state
-        .sample_instrument
-        .pads
-        .iter_mut()
-        .find(|pad| pad.id == pad_id)
-        .ok_or_else(|| {
-            ApplicationError::InvalidCommand(format!("sample pad is not registered: {pad_id}"))
-        })
-}
-
-fn validate_sample_pad_add(
-    session: &CreativeSession,
-    pad: &SamplePad,
-) -> Result<(), ApplicationError> {
-    if session.play_state.sample_instrument.pads.len() >= 128 {
-        return Err(ApplicationError::InvalidCommand(
-            "sample instrument cannot contain more than 128 pads".into(),
-        ));
-    }
-    if pad.id.trim().is_empty() || pad.name.trim().is_empty() {
-        return Err(ApplicationError::InvalidCommand(
-            "sample pads require non-empty ids and names".into(),
-        ));
-    }
-    if session
-        .play_state
-        .sample_instrument
-        .pads
-        .iter()
-        .any(|existing| existing.id == pad.id || existing.asset_id == pad.asset_id)
-    {
-        return Err(ApplicationError::InvalidCommand(
-            "sample pad id and asset must be unique".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn apply_sample_pad_patch(pad: &mut SamplePad, patch: &SamplePadPatch) {
-    if let Some(gain_db) = patch.gain_db {
-        pad.gain_db = if gain_db.is_finite() {
-            gain_db.clamp(-90.0, 24.0)
-        } else {
-            0.0
-        };
-    }
-    if let Some(loop_enabled) = patch.loop_enabled {
-        pad.loop_enabled = loop_enabled;
-    }
-    match (patch.start_ms, patch.end_ms) {
-        (Some(start), None) => {
-            pad.start_ms = start;
-            pad.end_ms = pad.end_ms.max(start.saturating_add(1));
-        }
-        (None, Some(end)) => {
-            let end = end.max(1);
-            pad.end_ms = end;
-            pad.start_ms = pad.start_ms.min(end - 1);
-        }
-        (Some(start), Some(end)) => {
-            pad.start_ms = start;
-            pad.end_ms = end.max(start.saturating_add(1));
-        }
-        (None, None) => {}
-    }
-}
-
 fn find_any_track_device_mut<'a>(
     session: &'a mut CreativeSession,
     device_id: &str,
@@ -446,12 +360,4 @@ fn apply_audio_source_to_clip(clip: &mut AudioClip, source: &TakeAudioSource) {
     clip.fade_in.sample_rate = source.sample_rate;
     clip.fade_out.sample_rate = source.sample_rate;
     clip.normalize_fields();
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
-        .min(u128::from(u64::MAX)) as u64
 }

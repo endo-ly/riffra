@@ -535,17 +535,6 @@ pub fn duplicate_midi_notes(
     Ok(committed)
 }
 
-pub fn apply_ai_suggestion(
-    context: &SessionContext<'_>,
-    clip_id: &str,
-    proposed_gain_db: f64,
-) -> Result<CreativeSession, String> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .apply_ai_suggestion(clip_id, proposed_gain_db)
-    })
-}
-
 // Audio + Session coupling operations.
 //
 // `set_master_gain_db` changes an Audio Runtime setting and a session preference

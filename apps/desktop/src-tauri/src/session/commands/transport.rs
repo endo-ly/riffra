@@ -9,14 +9,6 @@ pub async fn retry_runtime_projection(app: AppHandle) -> Result<RuntimeProjectio
 }
 
 #[tauri::command]
-pub async fn restore_sample_pads(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
-    run_blocking(app, |state| {
-        adapter::restore_sample_pads(&app_context(state)).map(|outcome| outcome.into_status())
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn play_timeline(transport_sequence: u64, app: AppHandle) -> Result<(), String> {
     run_runtime_control(app, move |state| {
         adapter::play_timeline(&app_context(state), transport_sequence)

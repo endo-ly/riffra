@@ -87,7 +87,6 @@ const libraryStub = {
   onSelectAsset: vi.fn(),
   onPreviewAsset: vi.fn(),
   onEditAsset: vi.fn(),
-  onOpenInDesign: vi.fn(),
   onImportMidi: vi.fn(),
 };
 
@@ -101,7 +100,6 @@ const rackStub = {
 const recordingsStub = {
   visibleRecordings: [recordingA, recordingB],
   count: 2,
-  onOpenRecording: vi.fn(),
 };
 
 afterEach(() => {
@@ -241,9 +239,6 @@ describe('Inbox preservation zone (LIB-003)', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await user.click(screen.getByLabelText('Delete'));
     expect(inbox.remove).toHaveBeenCalledWith(recordingA.id);
-
-    await user.click(screen.getByLabelText('Analyze'));
-    expect(recordingsStub.onOpenRecording).toHaveBeenCalledWith(recordingA);
   });
 
   it('renames and tags the selected take through prompts', async () => {

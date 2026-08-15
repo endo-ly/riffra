@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundJobStatus, JobState } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
 
@@ -7,6 +7,19 @@ const terminalJobStates: readonly JobState[] = ['completed', 'failed', 'cancelle
 export function useBackgroundJobs(api: Pick<JobApi, 'getBackgroundJob' | 'cancelBackgroundJob'>) {
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
+  const mounted = useRef(false);
+  const clearStatusTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (clearStatusTimer.current !== null) {
+        window.clearTimeout(clearStatusTimer.current);
+        clearStatusTimer.current = null;
+      }
+    };
+  }, []);
 
   const runBackgroundJob = useCallback(
     async <J extends BackgroundJobStatus>(
@@ -23,7 +36,7 @@ export function useBackgroundJobs(api: Pick<JobApi, 'getBackgroundJob' | 'cancel
         return false;
       }
       activeJobId.current = started.id;
-      setBackgroundJob(started);
+      if (mounted.current) setBackgroundJob(started);
       let latest: J = started;
       try {
         while (!terminalJobStates.includes(latest.state)) {
@@ -34,7 +47,7 @@ export function useBackgroundJobs(api: Pick<JobApi, 'getBackgroundJob' | 'cancel
             return false;
           }
           latest = next as J;
-          setBackgroundJob(next);
+          if (mounted.current) setBackgroundJob(next);
         }
         if (latest.state !== 'completed' || latest.result == null) {
           onFailed(
@@ -51,10 +64,17 @@ export function useBackgroundJobs(api: Pick<JobApi, 'getBackgroundJob' | 'cancel
         return false;
       } finally {
         activeJobId.current = null;
-        window.setTimeout(
-          () => setBackgroundJob((current) => (current?.id === started.id ? null : current)),
-          500,
-        );
+        if (mounted.current) {
+          if (clearStatusTimer.current !== null) {
+            window.clearTimeout(clearStatusTimer.current);
+          }
+          clearStatusTimer.current = window.setTimeout(() => {
+            clearStatusTimer.current = null;
+            if (mounted.current) {
+              setBackgroundJob((current) => (current?.id === started.id ? null : current));
+            }
+          }, 500);
+        }
       }
     },
     [api],
@@ -64,7 +84,7 @@ export function useBackgroundJobs(api: Pick<JobApi, 'getBackgroundJob' | 'cancel
     const id = activeJobId.current;
     if (!id) return;
     const status = await api.cancelBackgroundJob(id);
-    if (status) setBackgroundJob(status);
+    if (status && mounted.current) setBackgroundJob(status);
   }, [api]);
 
   return { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob };

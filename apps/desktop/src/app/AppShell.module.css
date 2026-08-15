@@ -87,19 +87,6 @@
   user-select: none !important;
 }
 
-.focusMode {
-  grid-template-columns: 0 minmax(520px, 1fr) 0;
-}
-
-.focusMode .panelResizeHandle {
-  display: none;
-}
-
-.focusMode [data-library-panel],
-.focusMode [data-inspector-panel] {
-  visibility: hidden;
-}
-
 @media (max-width: 1280px) {
   .appShell {
     grid-template-columns: var(--library-width) minmax(0, 1fr) var(--inspector-width);

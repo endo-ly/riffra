@@ -365,23 +365,6 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         data_root: state.core.data_root(),
         safe_mode: false,
     };
-    match session_adapter::restore_sample_pads(&session_context) {
-        Ok(session_adapter::SamplePadRestoreOutcome::Restored(_)) => {}
-        Ok(session_adapter::SamplePadRestoreOutcome::Disabled { warning, .. }) => {
-            tracing::warn!(%warning, "Sample Pads were disabled during startup restoration");
-        }
-        Err(error) => failures.push(format!("sample pad restoration failed: {error}")),
-    }
-    if sidecar_transitioned(state, generation) {
-        return Err(StartupRuntimeError::GenerationChanged(
-            generation_changed_message(state.core.audio(), generation),
-        ));
-    }
-    if !startup_target_is_current(state, &target) {
-        tracing::info!("startup runtime target changed before graph restoration");
-        return Err(StartupRuntimeError::TargetChanged);
-    }
-
     if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
         failures.push(format!("arrangement runtime restoration failed: {error}"));
     }
@@ -527,8 +510,6 @@ mod tests {
                 midi_input_active: false,
                 midi_messages: 0,
                 last_midi_note: None,
-                midi_pad_mappings: 0,
-                midi_pad_triggers: 0,
                 input_peak: 0.0,
                 output_peak: 0.0,
                 invalid_samples: 0,

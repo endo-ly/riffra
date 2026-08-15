@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { InspectorPanel } from './InspectorPanel';
 import { defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
-import type { BootstrapState } from '@/model/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
@@ -30,28 +29,11 @@ function renderPanel(
     rack: { devices: [], macros: [] },
   });
   const api = new FakeNativeApi({ bootstrapState: { session } });
-  const boot: BootstrapState = {
-    session,
-    viewState: { workspace: 'arrange', designContext: { activeTool: 'sample' } },
-    pluginCatalog: [],
-    runtimeStarted: true,
-    runtimeStartupFinished: true,
-    recoveredFromGeneration: false,
-    safeMode: false,
-    nativeAvailable: true,
-    recoveryCandidates: [],
-    dataRoot: 'C:\\Riffra',
-    vst3Root: 'C:\\VST3',
-  };
   render(
     <InspectorPanel
       audio={fakeAudioStatus()}
       recordingCommandPending={false}
-      boot={boot}
-      focusMode={false}
-      setFocusMode={() => undefined}
       session={session}
-      viewState={boot.viewState}
       setSession={() => undefined}
       arrangeSelection={selection}
       setArrangeSelection={() => undefined}

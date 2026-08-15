@@ -1,44 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AssetId, DesignTool } from '@/model/domain';
-import { isUsableRecording } from '@/shared/recordings';
+import { useEffect, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
-import { workspaces } from '@/app/workspaces';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
-import { useWorkspaceNavigation } from '@/app/navigation/useWorkspaceNavigation';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useInbox } from '@/features/library/hooks/useInbox';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
 import { useRecording } from '@/features/recording/hooks/useRecording';
-import { useDesign } from '@/features/design/hooks/useDesign';
 import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
 import { usePluginStatePersistence } from '@/features/plugins/hooks/usePluginStatePersistence';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
-  const { getAudioStatus, openAssetInDesign: openAssetInDesignApi } = api;
+  const { getAudioStatus } = api;
   const [commandOpen, setCommandOpen] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
   const runtime = useAppRuntime(api);
   const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(api);
   const {
     boot,
-    viewState,
-    setViewState,
     audio,
     setAudio,
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
-    viewStateRef,
     setSession,
-    setNavigationWorkspace,
     session: canonicalSession,
     historyState,
     autosaveError,
@@ -85,48 +75,13 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     rescanMissingPlugins,
     ignoreMissing,
   } = missingDependencyState;
-  // UI helper for applying a Rust Session Operation and surfacing a rejected
-  // intent. Production state is never assembled or flushed from React here.
-  const runSessionOp = useCallback(
-    async <T>(op: () => Promise<T | null>, label: string): Promise<T | null> => {
-      const result = await op();
-      if (result == null) {
-        setAutosaveError(`${label} could not be applied.`);
-        return null;
-      }
-      setAutosaveError(null);
-      return result;
-    },
-    [setAutosaveError],
-  );
   useRuntimeRestartNotification({ api });
 
   const { transportPlaying, playTransport, stopTransport, goToStart } = useTransportController({
     api,
     sessionRef,
-    playbackMode: viewState.workspace === 'arrange' ? 'timeline' : 'preview',
-    setAudio,
   });
 
-  const switchWorkspace = useWorkspaceNavigation({
-    api,
-    viewStateRef,
-    setNavigationWorkspace,
-    runSessionOp,
-    setAutosaveError,
-  });
-  const openAssetInDesign = useCallback(
-    async (assetId: AssetId, tool: DesignTool): Promise<void> => {
-      const next = await runSessionOp(
-        () => openAssetInDesignApi(assetId, tool),
-        'Open asset in Design',
-      );
-      if (next) {
-        setViewState(next);
-      }
-    },
-    [openAssetInDesignApi, runSessionOp, setViewState],
-  );
   const audioHook = useAudioSettings(api, {
     audio,
     setAudio,
@@ -150,50 +105,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleRecording,
   } = recording;
 
-  const design = useDesign({
-    api,
-    recordings,
-    session,
-    targetAssetId: viewState.designContext.targetAssetId,
-    setAudio,
-    setSession,
-    openAssetInDesign,
-    runBackgroundJob,
-    runSessionOp,
-  });
-  const {
-    separations,
-    separationBusy,
-    separationMessage,
-    separationPreviewingAssetId,
-    previewPadId,
-    setPreviewPadId,
-    reloadSeparations,
-    analysis,
-    referenceId,
-    referencePreviewingId,
-    referenceSyncPreviewing,
-    referenceLoopPreview,
-    setReferenceLoopPreview,
-    referenceAnalyses,
-    openRecordingAnalysis,
-    openLibraryAssetAnalysis,
-    selectReference,
-    previewReference,
-    previewReferencePair,
-    stopReferencePreview,
-    runSeparation,
-    previewSeparation,
-    stopSeparationPreview,
-    addSeparationToTimeline,
-    previewSamplePad,
-    stopPreview,
-    createSamplePad,
-    updateSamplePad,
-    removeSamplePad,
-  } = design;
-
-  const library = useLibrary(api, { setAudio, setPreviewPadId });
+  const library = useLibrary(api, { setAudio });
   const {
     librarySection,
     setLibrarySection,
@@ -222,21 +134,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     initialDataLoadStarted.current = true;
     const timer = setTimeout(() => {
       void reloadRecordings().catch(logNativeError('listRecordings'));
-      void reloadSeparations().catch(logNativeError('listSeparations'));
       void refreshAudioDevices().catch(logNativeError('probeAudioDevices'));
       void enableMidi().catch(logNativeError('enableMidi'));
       void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
     }, 150);
     return () => clearTimeout(timer);
-  }, [
-    enableMidi,
-    getAudioStatus,
-    reloadSeparations,
-    refreshAudioDevices,
-    reloadRecordings,
-    boot,
-    setAudio,
-  ]);
+  }, [enableMidi, getAudioStatus, refreshAudioDevices, reloadRecordings, boot, setAudio]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -265,13 +168,11 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         void toggleMute();
         return;
       }
-      if (!typing && event.key >= '1' && Number(event.key) <= workspaces.length)
-        void switchWorkspace(workspaces[Number(event.key) - 1].id);
       if (event.key === 'Escape') setCommandOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [redo, switchWorkspace, toggleMute, undo]);
+  }, [redo, toggleMute, undo]);
 
   const visiblePlugins = query
     ? plugins.filter((plugin) =>
@@ -283,10 +184,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         `${recording.name} ${recording.state} ${recording.path}`.toLowerCase().includes(query),
       )
     : recordings;
-  const usableRecordings = recordings.filter(isUsableRecording);
   return {
     boot,
-    viewState,
     session,
     setSession,
     audio,
@@ -301,24 +200,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     rescanMissingPlugins,
     ignoreMissing,
     recordings,
-    separations,
-    separationBusy,
-    separationMessage,
-    separationPreviewingAssetId,
     transportPlaying,
     recordingCommandPending,
-    previewPadId,
     exportMessage,
     deviceProbe,
     refreshAudioDevices,
     probeAudioChannels,
-    analysis,
-    referenceId,
-    referencePreviewingId,
-    referenceSyncPreviewing,
-    referenceLoopPreview,
-    setReferenceLoopPreview,
-    referenceAnalyses,
     librarySection,
     setLibrarySection,
     libraryQuery,
@@ -329,8 +216,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     importMidi,
     commandOpen,
     setCommandOpen,
-    focusMode,
-    setFocusMode,
     backgroundJob,
     cancelActiveJob,
     historyState,
@@ -338,25 +223,9 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     selectAudioDriver,
     undo,
     redo,
-    openRecordingAnalysis,
-    openLibraryAssetAnalysis,
-    selectReference,
-    previewReference,
-    previewReferencePair,
-    stopReferencePreview,
-    runSeparation,
-    previewSeparation,
-    stopSeparationPreview,
-    addSeparationToTimeline,
     playTransport,
     stopTransport,
     goToStart,
-    previewSamplePad,
-    stopPreview,
-    createSamplePad,
-    updateSamplePad,
-    removeSamplePad,
-    switchWorkspace,
     renameSession,
     exportSession,
     importSession,
@@ -366,13 +235,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     editSelectedLibraryAsset,
     previewSelectedLibraryAsset,
     toggleMute,
-    startRecordingNow,
     toggleRecording,
     query,
     visiblePlugins,
     visibleRecordings,
-    usableRecordings,
     inbox,
     api,
+    startRecordingNow,
   };
 }

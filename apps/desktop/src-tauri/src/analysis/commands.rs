@@ -1,41 +1,13 @@
-//! Thin Tauri command boundary for Analysis jobs and the on-demand analyzer.
+//! Thin Tauri command boundary for the on-demand audio analyzer.
 //!
-//! Both commands delegate to [`super::analyze_with_cancel`] / [`super::analyze`]
-//! after resolving the AssetId to a validated audio path. Shared job lifecycle
-//! helpers live in [`crate::jobs`].
+//! [`analyze_asset`] delegates to [`super::analyze`] after resolving the
+//! AssetId to a validated audio path.
 
 use tauri::State;
 
 use crate::AppState;
 use crate::analysis::{self, AudioAnalysis};
 use crate::asset;
-use crate::jobs::{self, BackgroundJobStatus, JobKind};
-
-#[tauri::command]
-pub async fn start_analysis_job(
-    asset_id: String,
-    state: State<'_, AppState>,
-) -> Result<BackgroundJobStatus, String> {
-    let path = asset::resolve_audio_path(state.core.data_root(), &asset_id)?;
-    let (id, status) = state.jobs.start(JobKind::Analysis);
-    let registry = state.jobs.clone();
-    let data_root = state.core.data_root().to_path_buf();
-    tauri::async_runtime::spawn_blocking(move || {
-        registry.set_running(&id, "Analyzing audio in the background.");
-        let Some(cancelled) = registry.cancellation_flag(&id) else {
-            return;
-        };
-        let result = analysis::analyze_with_cancel(&path, Some(cancelled.as_ref()));
-        match result {
-            Ok(result) => match jobs::serialize_result(&result) {
-                Ok(value) => registry.complete(&id, value, "Audio analysis completed."),
-                Err(message) => jobs::fail(&registry, &data_root, &id, message),
-            },
-            Err(message) => jobs::fail(&registry, &data_root, &id, message),
-        }
-    });
-    jobs::to_background_status(status)
-}
 
 #[tauri::command]
 pub async fn analyze_asset(

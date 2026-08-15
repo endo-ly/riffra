@@ -38,8 +38,6 @@ struct NativeStatus {
     midi_input_active: Option<bool>,
     midi_messages: Option<u64>,
     last_midi_note: Option<i32>,
-    midi_pad_mappings: Option<u32>,
-    midi_pad_triggers: Option<u64>,
     input_peak: Option<f64>,
     output_peak: Option<f64>,
     invalid_samples: Option<u64>,
@@ -200,8 +198,6 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         last_midi_note: native
             .last_midi_note
             .and_then(|note| u8::try_from(note).ok()),
-        midi_pad_mappings: native.midi_pad_mappings.unwrap_or_default(),
-        midi_pad_triggers: native.midi_pad_triggers.unwrap_or_default(),
         input_peak: native.input_peak.unwrap_or_default().clamp(0.0, 1.0),
         output_peak: native.output_peak.unwrap_or_default().clamp(0.0, 1.0),
         invalid_samples: native.invalid_samples.unwrap_or_default(),
@@ -450,8 +446,6 @@ mod tests {
             midi_input_active: false,
             midi_messages: 0,
             last_midi_note: None,
-            midi_pad_mappings: 0,
-            midi_pad_triggers: 0,
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,

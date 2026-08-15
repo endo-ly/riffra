@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CreativeSession, Workspace } from '@/model/domain';
+import type { AudioStatus, CreativeSession } from '@/model/domain';
 import clsx from 'clsx';
 import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
@@ -10,7 +10,6 @@ const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'
 
 interface TransportBarProps {
   session: CreativeSession;
-  workspace: Workspace;
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
   setAudio: (audio: AudioStatus) => void;
@@ -28,7 +27,6 @@ interface TransportBarProps {
 export function TransportBar(props: TransportBarProps) {
   const {
     session,
-    workspace,
     setSession,
     audio,
     setAudio,
@@ -103,7 +101,6 @@ export function TransportBar(props: TransportBarProps) {
   };
 
   const commitTimebase = (nextSignature = signatureDraft) => {
-    if (workspace !== 'arrange') return;
     const bpm = Number(tempoDraft);
     const [numerator, denominator] = nextSignature.split('/').map(Number);
     if (
@@ -147,36 +144,22 @@ export function TransportBar(props: TransportBarProps) {
     <footer className={styles.transport}>
       <div className={styles.transportLeft}>
         <button
-          className={
-            (
-              workspace === 'arrange'
-                ? session.arrangement.loopRange.enabled
-                : session.settings.loopEnabled
-            )
-              ? 'active'
-              : ''
-          }
+          className={session.arrangement.loopRange.enabled ? 'active' : ''}
           aria-label="Toggle loop"
           onClick={() => {
-            if (workspace === 'arrange') {
-              const range = session.arrangement.loopRange;
-              const barTicks =
-                (session.arrangement.timebase.ppq *
-                  4 *
-                  session.arrangement.timebase.timeSignatureNumerator) /
-                session.arrangement.timebase.timeSignatureDenominator;
-              void api
-                .updateTimelineLoopRange(
-                  !range.enabled,
-                  range.startTick,
-                  range.endTick > range.startTick ? range.endTick : barTicks * 4,
-                )
-                .then(setSession);
-            } else {
-              void api
-                .updateSessionSettings({ loopEnabled: !session.settings.loopEnabled })
-                .then(setSession);
-            }
+            const range = session.arrangement.loopRange;
+            const barTicks =
+              (session.arrangement.timebase.ppq *
+                4 *
+                session.arrangement.timebase.timeSignatureNumerator) /
+              session.arrangement.timebase.timeSignatureDenominator;
+            void api
+              .updateTimelineLoopRange(
+                !range.enabled,
+                range.startTick,
+                range.endTick > range.startTick ? range.endTick : barTicks * 4,
+              )
+              .then(setSession);
           }}
         >
           <Icon name="loop" />
@@ -222,54 +205,52 @@ export function TransportBar(props: TransportBarProps) {
         </button>
         <button
           className={clsx(styles.countInButton, session.settings.countInBeats > 0 && 'active')}
-          aria-label={`Count-in: ${describeCountIn(session, workspace)}`}
-          title={`Count-in: ${describeCountIn(session, workspace)}`}
+          aria-label={`Count-in: ${describeCountIn(session)}`}
+          title={`Count-in: ${describeCountIn(session)}`}
           onClick={() =>
             void api
-              .updateSessionSettings({ countInBeats: nextCountInBeats(session, workspace) })
+              .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
               .then(setSession)
           }
         >
-          {describeCountIn(session, workspace)}
+          {describeCountIn(session)}
         </button>
       </div>
-      {workspace === 'arrange' && (
-        <div className={styles.timebase} aria-label="Project timebase">
-          <label>
-            <span>BPM</span>
-            <input
-              aria-label="Project BPM"
-              type="number"
-              min="20"
-              max="400"
-              step="0.1"
-              value={tempoDraft}
-              onChange={(event) => setTempoDraft(event.currentTarget.value)}
-              onBlur={() => commitTimebase()}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-            />
-          </label>
-          <label>
-            <span>METER</span>
-            <select
-              aria-label="Project time signature"
-              value={signatureDraft}
-              onChange={(event) => {
-                setSignatureDraft(event.currentTarget.value);
-                commitTimebase(event.currentTarget.value);
-              }}
-            >
-              {TIME_SIGNATURES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
+      <div className={styles.timebase} aria-label="Project timebase">
+        <label>
+          <span>BPM</span>
+          <input
+            aria-label="Project BPM"
+            type="number"
+            min="20"
+            max="400"
+            step="0.1"
+            value={tempoDraft}
+            onChange={(event) => setTempoDraft(event.currentTarget.value)}
+            onBlur={() => commitTimebase()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+          />
+        </label>
+        <label>
+          <span>METER</span>
+          <select
+            aria-label="Project time signature"
+            value={signatureDraft}
+            onChange={(event) => {
+              setSignatureDraft(event.currentTarget.value);
+              commitTimebase(event.currentTarget.value);
+            }}
+          >
+            {TIME_SIGNATURES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className={styles.transportMeter}>
         <span>IN</span>
         <Meter
@@ -328,19 +309,17 @@ export function TransportBar(props: TransportBarProps) {
   );
 }
 
-function describeCountIn(session: CreativeSession, workspace: Workspace): string {
+function describeCountIn(session: CreativeSession): string {
   const beats = session.settings.countInBeats;
   if (!beats) return 'Count-in: Off';
-  const beatsPerBar =
-    workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+  const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
   if (beats >= beatsPerBar * 2) return 'Count-in: 2 Bars';
   if (beats >= beatsPerBar) return 'Count-in: 1 Bar';
   return `Count-in: ${beats}`;
 }
 
-function nextCountInBeats(session: CreativeSession, workspace: Workspace): number {
-  const beatsPerBar =
-    workspace === 'arrange' ? session.arrangement.timebase.timeSignatureNumerator : 4;
+function nextCountInBeats(session: CreativeSession): number {
+  const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
   const current = session.settings.countInBeats;
   if (current === 0) return beatsPerBar;
   if (current < beatsPerBar * 2) return beatsPerBar * 2;

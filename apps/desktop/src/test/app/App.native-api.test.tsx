@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
-import { defaultViewState } from '@/app/view-state';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
@@ -29,19 +28,6 @@ describe('App native boundary', () => {
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
   });
 
-  it('keeps the CreativeSession unchanged while navigating workspaces', async () => {
-    const api = new FakeNativeApi();
-    const initialSession = api.bootstrapState.session;
-
-    await renderApp(api);
-    const navigation = within(screen.getByRole('navigation', { name: 'Workspace' }));
-    await userEvent.click(navigation.getByRole('button', { name: /Design/ }));
-
-    await waitFor(() => expect(api.calls).toContain('switchWorkspace'));
-    expect(api.bootstrapState.session).toBe(initialSession);
-    expect(api.bootstrapState.viewState.workspace).toBe('design');
-  });
-
   it('shows a runtime restart notification without replaying session commands', async () => {
     const api = new FakeNativeApi();
     function RuntimeNotification() {
@@ -56,7 +42,6 @@ describe('App native boundary', () => {
 
     await waitFor(() => expect(screen.getByText(/Audio Runtime restarted/)).toBeInTheDocument());
     expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(0);
-    expect(api.calls.filter((call) => call === 'restoreSamplePads')).toHaveLength(0);
     expect(api.calls.slice(0, callsBeforeRestart.length)).toEqual(callsBeforeRestart);
   });
 
@@ -92,9 +77,7 @@ describe('App native boundary', () => {
   });
 
   it('ignores a cancelled transport failure after a newer status event', async () => {
-    const api = new FakeNativeApi({
-      bootstrapState: { viewState: { ...defaultViewState(), workspace: 'arrange' } },
-    });
+    const api = new FakeNativeApi();
     let rejectPlay: (reason?: unknown) => void = () => undefined;
     api.setResponse(
       'playTimeline',

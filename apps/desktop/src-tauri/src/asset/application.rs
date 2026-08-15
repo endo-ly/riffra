@@ -37,8 +37,6 @@ pub struct AssetPreviewOptions {
     pub looped: bool,
     #[serde(default = "default_gain")]
     pub gain: f32,
-    #[serde(default)]
-    pub voice_key: Option<i32>,
 }
 
 fn default_gain() -> f32 {
@@ -46,10 +44,9 @@ fn default_gain() -> f32 {
 }
 
 /// Returns true when an [`AssetKind`] carries audio content the runtime can
-/// audition. MIDI payloads, rack definitions, and generation definitions are not
-/// previewable here.
+/// audition. MIDI payloads are not previewable here.
 fn is_previewable(kind: AssetKind) -> bool {
-    matches!(kind, AssetKind::Audio | AssetKind::Sample)
+    kind == AssetKind::Audio
 }
 
 /// Starts an Audio Runtime preview for a canonical Asset. The AssetId is the
@@ -88,7 +85,6 @@ pub fn preview_asset(
             options.end_ms,
             options.looped,
             options.gain,
-            options.voice_key,
         )
         .map_err(String::from)
 }

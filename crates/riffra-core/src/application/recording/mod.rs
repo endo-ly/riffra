@@ -222,21 +222,12 @@ where
                     arrangement_changed = true;
                 }
             }
-            let mut play_state_changed = false;
-            for pad in &mut session.play_state.sample_instrument.pads {
-                if pad.asset_id == *old_asset_id {
-                    pad.asset_id = new_asset_id.clone();
-                    play_state_changed = true;
-                }
-            }
-            if !arrangement_changed && !play_state_changed {
+            if !arrangement_changed {
                 return Err(ApplicationError::InvalidCommand(format!(
                     "asset is not referenced by the project: {old_asset_id}"
                 )));
             }
-            if arrangement_changed {
-                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-            }
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
     }

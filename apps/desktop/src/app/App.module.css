@@ -100,19 +100,6 @@
   flex-wrap: wrap;
   gap: 4px 10px;
 }
-.exitFocus {
-  position: fixed;
-  right: 14px;
-  top: 62px;
-  z-index: 8;
-  padding: 8px 10px;
-  color: #aab4be;
-  font-size: 9px;
-  background: #151a20;
-  border: 1px solid var(--border-bright);
-  border-radius: 5px;
-  box-shadow: var(--shadow);
-}
 .muteBanner {
   position: fixed;
   left: 50%;

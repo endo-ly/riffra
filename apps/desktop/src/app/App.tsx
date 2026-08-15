@@ -11,12 +11,6 @@ import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
 import { InspectorPanel } from '@/features/arrange/inspector/InspectorPanel';
-import { WorkspaceAnalyze } from '@/features/design/WorkspaceAnalyze';
-import { WorkspaceSample } from '@/features/design/WorkspaceSample';
-import { SamplePadEditor } from '@/features/design/sample/SamplePadEditor';
-import { SamplePreviewControls } from '@/features/design/sample/SamplePreviewControls';
-import { ReferenceSuggestion } from '@/features/design/reference/ReferenceSuggestion';
-import { WorkspaceSeparate } from '@/features/design/WorkspaceSeparate';
 import { LibraryPanel } from '@/features/library/LibraryPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
@@ -25,7 +19,6 @@ import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalBar } from './layout/GlobalBar';
-import { workspaces } from '@/app/workspaces';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { clearToast, showToast, toast } from '@/shared/toasts';
@@ -112,10 +105,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const {
     boot,
     session,
-    viewState,
     audio,
     setAudio,
-    focusMode,
     libraryQuery,
     librarySection,
     importMidi,
@@ -123,23 +114,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     plugins,
     visiblePlugins,
     visibleRecordings,
-    usableRecordings,
     inbox,
     selectedLibraryAsset,
     relatedAssets,
     query,
     recordings,
-    analysis,
-    referenceAnalyses,
-    referenceId,
-    referencePreviewingId,
-    referenceSyncPreviewing,
-    referenceLoopPreview,
-    separations,
-    separationBusy,
-    separationMessage,
-    separationPreviewingAssetId,
-    previewPadId,
     transportPlaying,
     recordingCommandPending,
     startRecordingNow,
@@ -161,49 +140,29 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     setLibraryQuery,
     setLibrarySection,
     setCommandOpen,
-    setFocusMode,
-    setReferenceLoopPreview,
     refreshAudioDevices,
     probeAudioChannels,
     renameSession,
     undo,
     redo,
-    switchWorkspace,
     toggleMute,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     editSelectedLibraryAsset,
-    openRecordingAnalysis,
-    openLibraryAssetAnalysis,
     recoverAudio,
     exportSession,
     importSession,
     restoreRecovery,
     dismissRecovery,
     selectAudioDriver,
-    createSamplePad,
-    updateSamplePad,
-    removeSamplePad,
-    previewSamplePad,
-    stopPreview,
-    selectReference,
-    previewReference,
-    stopReferencePreview,
-    previewReferencePair,
-    addSeparationToTimeline,
-    runSeparation,
-    previewSeparation,
-    stopSeparationPreview,
-    playTransport,
     stopTransport,
+    playTransport,
     goToStart,
     toggleRecording,
     api: nativeApi,
   } = useAppController(api);
   const arrange = useArrangeShell(nativeApi, session, setSession);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
-
-  const isArrange = viewState.workspace === 'arrange';
 
   useEffect(() => {
     if (!panelResize) return;
@@ -272,27 +231,21 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
   const isMuted = isEmergencyMuteActive(audio);
   const shellStyle = {
-    '--library-width': `${isArrange ? arrangeLibraryWidth : PANEL_WIDTH_LIMITS.library.default}px`,
-    '--inspector-width': `${isArrange ? arrangeInspectorWidth : PANEL_WIDTH_LIMITS.inspector.default}px`,
+    '--library-width': `${arrangeLibraryWidth}px`,
+    '--inspector-width': `${arrangeInspectorWidth}px`,
   } as CSSProperties;
   return (
     <main
-      className={clsx(
-        shellStyles.appShell,
-        focusMode && shellStyles.focusMode,
-        panelResize && shellStyles.isPanelResizing,
-      )}
+      className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
       style={shellStyle}
     >
       <GlobalBar
         session={session}
-        viewState={viewState}
         audio={audio}
         isMuted={isMuted}
         historyState={historyState}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
-        onSwitchWorkspace={(workspace) => void switchWorkspace(workspace)}
         onRenameSession={() => void renameSession()}
         onToggleMute={() => void toggleMute()}
         onOpenCommand={() => setCommandOpen(true)}
@@ -386,7 +339,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      {(!isArrange || arrangeLibraryWidth > 0) && (
+      {arrangeLibraryWidth > 0 && (
         <LibraryPanel
           library={{
             section: librarySection,
@@ -400,7 +353,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             onSelectAsset: (asset) => void selectLibraryAsset(asset),
             onPreviewAsset: () => void previewSelectedLibraryAsset(),
             onEditAsset: () => void editSelectedLibraryAsset(),
-            onOpenInDesign: (asset) => void openLibraryAssetAnalysis(asset),
             onImportMidi: () => void importMidi(),
           }}
           plugins={{
@@ -412,110 +364,42 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           recordings={{
             visibleRecordings,
             count: recordings.length,
-            onOpenRecording: (recording) => void openRecordingAnalysis(recording),
           }}
           inbox={inbox}
         />
       )}
 
-      {isArrange && (
-        <PanelResizeHandle
-          side="library"
-          width={arrangeLibraryWidth}
-          onPointerDown={(event) => startPanelResize('library', event)}
-          onResizeBy={(delta) => resizePanelBy('library', delta)}
-        />
-      )}
+      <PanelResizeHandle
+        side="library"
+        width={arrangeLibraryWidth}
+        onPointerDown={(event) => startPanelResize('library', event)}
+        onResizeBy={(delta) => resizePanelBy('library', delta)}
+      />
 
       <section className={shellStyles.workspace}>
-        {viewState.workspace === 'arrange' && (
-          <WorkspaceArrange
-            session={session}
-            setSession={setSession}
-            selection={arrange.selection}
-            setSelection={arrange.setSelection}
-            api={nativeApi}
-            audio={audio}
-            onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
-            plugins={plugins}
-            focusedTrackId={arrange.focusedTrackId}
-            onFocusTrack={arrange.setFocusedTrackId}
-            canonicalOperationPending={arrange.canonicalOperationPending}
-            missingDeviceIds={missingDependencies
-              .filter((item) => item.kind === 'plugin')
-              .map((item) => item.id)}
-          />
-        )}
-        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'sample' && (
-          <>
-            <WorkspaceSample
-              session={session}
-              recordings={usableRecordings}
-              onCreateSamplePad={(recording) => void createSamplePad(recording)}
-              onPreviewPad={(pad) => void previewSamplePad(pad)}
-            />
-            <SamplePadEditor
-              session={session}
-              updateSamplePad={(padId, patch) => void updateSamplePad(padId, patch)}
-              removeSamplePad={(padId) => void removeSamplePad(padId)}
-            />
-            <SamplePreviewControls
-              session={session}
-              playingId={previewPadId}
-              onPreview={(pad) => void previewSamplePad(pad)}
-              onStop={() => void stopPreview()}
-            />
-          </>
-        )}
-        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'analyze' && (
-          <>
-            <WorkspaceAnalyze analysis={analysis} />
-            <ReferenceSuggestion
-              analysis={analysis}
-              recordings={usableRecordings}
-              references={referenceAnalyses}
-              referenceId={referenceId}
-              session={session}
-              designContext={viewState.designContext}
-              setSession={setSession}
-              api={nativeApi}
-              onSelect={(recording) => void selectReference(recording)}
-              onPreview={(recording) => void previewReference(recording)}
-              onStop={() => void stopReferencePreview()}
-              onSyncPreview={() => void previewReferencePair()}
-              onToggleLoop={() => setReferenceLoopPreview((value) => !value)}
-              previewingId={referencePreviewingId}
-              syncPreviewing={referenceSyncPreviewing}
-              loopPreview={referenceLoopPreview}
-            />
-          </>
-        )}
-        {viewState.workspace === 'design' && viewState.designContext.activeTool === 'separate' && (
-          <WorkspaceSeparate
-            recordings={usableRecordings}
-            results={separations}
-            busyId={separationBusy}
-            message={separationMessage}
-            previewingAssetId={separationPreviewingAssetId}
-            onSeparate={(recording) => void runSeparation(recording)}
-            onPreview={(assetId) => void previewSeparation(assetId)}
-            onStop={() => void stopSeparationPreview()}
-            onAddToTimeline={(assetId, name, durationMs) =>
-              void addSeparationToTimeline(assetId, name, durationMs)
-            }
-          />
-        )}
+        <WorkspaceArrange
+          session={session}
+          setSession={setSession}
+          selection={arrange.selection}
+          setSelection={arrange.setSelection}
+          api={nativeApi}
+          audio={audio}
+          onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
+          plugins={plugins}
+          focusedTrackId={arrange.focusedTrackId}
+          onFocusTrack={arrange.setFocusedTrackId}
+          canonicalOperationPending={arrange.canonicalOperationPending}
+          missingDeviceIds={missingDependencies
+            .filter((item) => item.kind === 'plugin')
+            .map((item) => item.id)}
+        />
       </section>
 
-      {(!isArrange || arrangeInspectorWidth > 0) && (
+      {arrangeInspectorWidth > 0 && (
         <InspectorPanel
           audio={audio}
           recordingCommandPending={recordingCommandPending}
-          boot={boot}
-          focusMode={focusMode}
-          setFocusMode={setFocusMode}
           session={session}
-          viewState={viewState}
           setSession={setSession}
           arrangeSelection={arrange.selection}
           setArrangeSelection={arrange.setSelection}
@@ -529,18 +413,15 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      {isArrange && (
-        <PanelResizeHandle
-          side="inspector"
-          width={arrangeInspectorWidth}
-          onPointerDown={(event) => startPanelResize('inspector', event)}
-          onResizeBy={(delta) => resizePanelBy('inspector', delta)}
-        />
-      )}
+      <PanelResizeHandle
+        side="inspector"
+        width={arrangeInspectorWidth}
+        onPointerDown={(event) => startPanelResize('inspector', event)}
+        onResizeBy={(delta) => resizePanelBy('inspector', delta)}
+      />
 
       <TransportBar
         session={session}
-        workspace={viewState.workspace}
         setSession={setSession}
         audio={audio}
         setAudio={setAudio}
@@ -553,11 +434,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         api={nativeApi}
       />
 
-      {focusMode && (
-        <button className={styles.exitFocus} onClick={() => setFocusMode(false)}>
-          Exit Focus <kbd>Esc</kbd>
-        </button>
-      )}
       {isMuted && (
         <div className={styles.muteBanner}>
           <Icon name="stop" />
@@ -577,20 +453,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               <Icon name="command" />
               <input autoFocus placeholder="Search actions, assets, settings…" />
             </label>
-            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>WORKSPACES</span>
-            {workspaces.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  void switchWorkspace(item.id);
-                  setCommandOpen(false);
-                }}
-              >
-                <span>{item.label}</span>
-                <small>Switch workspace</small>
-                <kbd>{item.key}</kbd>
-              </button>
-            ))}
             <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>PROJECT</span>
             <button
               onClick={() => {

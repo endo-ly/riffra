@@ -23,7 +23,6 @@ interface LibraryPanelProps {
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
     onEditAsset: () => void;
-    onOpenInDesign: (asset: LibraryAsset) => void;
     onImportMidi: () => void;
   };
   plugins: {
@@ -35,7 +34,6 @@ interface LibraryPanelProps {
   recordings: {
     visibleRecordings: RecordingAsset[];
     count: number;
-    onOpenRecording: (recording: RecordingAsset) => void;
   };
   inbox: InboxController;
 }
@@ -141,14 +139,6 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                     >
                       Edit
                     </button>
-                    {library.selectedAsset.kind === 'audio' && (
-                      <button
-                        className={surface.textButton}
-                        onClick={() => void library.onOpenInDesign(library.selectedAsset!)}
-                      >
-                        Analyze in Design
-                      </button>
-                    )}
                   </div>
                 </header>
                 <small>Tag: {library.selectedAsset.tag ?? '—'}</small>
@@ -324,7 +314,6 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
               <InboxOperations
                 recording={inbox.selected}
                 onPreview={() => showHandledError(inbox.preview(inbox.selected!))}
-                onAnalyze={() => recordings.onOpenRecording(inbox.selected!)}
                 onRename={() => {
                   const name = window.prompt('Rename take', inbox.selected!.name);
                   if (name && name.trim()) {

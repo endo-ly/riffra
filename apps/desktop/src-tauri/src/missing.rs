@@ -18,7 +18,7 @@ pub struct MissingDependency {
     #[ts(optional)]
     pub asset_id: Option<AssetId>,
     /// Where the missing dependency is referenced from, so the UI can point the
-    /// user at the exact clip, pad, instrument, or effect slot.
+    /// user at the exact clip, instrument, or effect slot.
     pub used_by: Vec<String>,
 }
 
@@ -78,30 +78,6 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
                 path: location,
                 asset_id: Some(clip.asset_id.clone()),
                 used_by: vec![format!("timeline:{}", clip.id)],
-            });
-        }
-    }
-
-    for pad in &session.play_state.sample_instrument.pads {
-        let Some(location) = resolve_location(data_root, &pad.asset_id) else {
-            missing.push(MissingDependency {
-                kind: "file".into(),
-                id: pad.id.clone(),
-                name: pad.name.clone(),
-                path: pad.asset_id.to_string(),
-                asset_id: Some(pad.asset_id.clone()),
-                used_by: vec![format!("pad:{}", pad.id)],
-            });
-            continue;
-        };
-        if !Path::new(&location).is_file() {
-            missing.push(MissingDependency {
-                kind: "file".into(),
-                id: pad.id.clone(),
-                name: pad.name.clone(),
-                path: location,
-                asset_id: Some(pad.asset_id.clone()),
-                used_by: vec![format!("pad:{}", pad.id)],
             });
         }
     }

@@ -538,8 +538,6 @@ mod tests {
             midi_input_active: false,
             midi_messages: 0,
             last_midi_note: None,
-            midi_pad_mappings: 0,
-            midi_pad_triggers: 0,
             input_peak: 0.0,
             output_peak: 0.0,
             invalid_samples: 0,

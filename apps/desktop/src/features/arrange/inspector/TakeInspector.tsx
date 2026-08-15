@@ -166,9 +166,7 @@ export function TakeInspector(props: TakeInspectorProps) {
 
   const stopNativeAudition = useCallback(
     () =>
-      Promise.all([props.api.stopTakeComparison(), props.api.stopSamplePreview()]).then(
-        () => undefined,
-      ),
+      Promise.all([props.api.stopTakeComparison(), props.api.stopPreview()]).then(() => undefined),
     [props.api],
   );
 
