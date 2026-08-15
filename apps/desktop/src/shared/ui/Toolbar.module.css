@@ -1,0 +1,149 @@
+.toolbar {
+  z-index: 10;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--toolbar-height);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 12px;
+  background: linear-gradient(180deg, #14191f, #101419);
+  border-bottom: 1px solid #29313a;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16);
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar > * {
+  flex: 0 0 auto;
+}
+
+.trailing {
+  min-width: max-content;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: inherit;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 16px;
+  background: #262f38;
+}
+
+.toolbar svg {
+  width: 12px;
+  height: 12px;
+}
+
+.field,
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field > span,
+.stepper > span {
+  color: #58636e;
+  font-size: var(--font-micro);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.control {
+  height: var(--control-dense);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  color: #929da8;
+  font-size: var(--font-small);
+  background: #10151a;
+  border: 1px solid #2b343d;
+  border-radius: 4px;
+}
+
+select.control {
+  width: 62px;
+  padding: 0 6px;
+}
+
+.control:hover:not(:disabled) {
+  color: #e4ebf0;
+  border-color: #3b4854;
+}
+
+.iconOnly {
+  width: var(--control-dense);
+  padding: 0;
+}
+
+.segmented {
+  display: flex;
+  height: var(--control-dense);
+  box-sizing: border-box;
+  padding: 2px;
+  background: #0a0e12;
+  border: 1px solid #252e37;
+  border-radius: 5px;
+}
+
+.segmentedButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  padding: 0 8px;
+  color: #929da8;
+  font-size: var(--font-small);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+
+.segmentedButton:has(> svg:only-child) {
+  padding: 0;
+}
+
+.segmentedButton:hover:not(:disabled) {
+  color: #c9d4dc;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.control.active,
+.segmentedButton.active {
+  color: #dfffff;
+  background: #21333b;
+  border-color: rgba(85, 217, 232, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(85, 217, 232, 0.22);
+}
+
+.field input[type='range'] {
+  width: 82px;
+  height: 3px;
+  accent-color: var(--cyan);
+}
+
+.field .value,
+.stepper .value {
+  min-width: 18px;
+  color: #74808b;
+  font:
+    var(--font-micro) 'DM Mono',
+    Consolas,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

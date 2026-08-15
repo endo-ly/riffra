@@ -186,7 +186,7 @@ export interface AudioApi {
 }
 
 export interface RecordingApi {
-  startArrangeRecording(recordingSessionId?: string): Promise<AudioStatus>;
+  startArrangeRecording(): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
   stopArrangeRecording(): Promise<SessionAudioPair>;
 }

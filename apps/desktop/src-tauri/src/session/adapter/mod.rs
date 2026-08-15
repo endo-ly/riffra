@@ -553,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn take_variant_is_applied_only_to_the_selected_clip() {
+    fn take_variant_is_applied_only_to_the_selected_clip_and_placed_copies_are_muted() {
         let raw_id = riffra_core::mint_asset_id();
         let processed_id = riffra_core::mint_asset_id();
         let mut session = CreativeSession::new(1);
@@ -654,6 +654,13 @@ mod tests {
         assert_eq!(selected.timeline_duration.frames, 1_000);
         assert_eq!(untouched.asset_id, raw_id);
         assert_eq!(untouched.take_variant, AudioTakeVariant::Raw);
+
+        let placed = core
+            .application(&store)
+            .place_take_as_separate_clip("take:1", None)
+            .unwrap();
+        let placed_copy = placed.arrangement.audio_clips.last().unwrap();
+        assert!(placed_copy.muted);
         let _ = std::fs::remove_dir_all(root);
     }
 }

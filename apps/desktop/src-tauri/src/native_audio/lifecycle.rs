@@ -57,6 +57,7 @@ impl AudioSupervisor {
                 output_peak: 0.0,
                 invalid_samples: 0,
                 feedback_suspected: false,
+                previewing: false,
                 message: message.into(),
             })),
             command_bus: Arc::new(CommandBus::new()),
@@ -92,6 +93,7 @@ impl AudioSupervisor {
             output_peak: 0.0,
             invalid_samples: 0,
             feedback_suspected: false,
+            previewing: false,
             message: "Native audio sidecar is starting in emergency-mute state.".into(),
         }));
         let process = Arc::new(SidecarProcess::new(false));

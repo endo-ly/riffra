@@ -130,12 +130,14 @@ Active MIDI Clip 内だけで有効な Note 選択である。Clip を切り替�
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [Select] [Split]   Snap [1/16 ▾]   [Follow] [Automation]   Bars/Time│
-│                                                        Timeline Zoom │
+│ [Select|Split]  Snap [1/16 ▾]  [Follow] [Automation]                │
+│                                       Bars/Time   Zoom [−][＋] 100% │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 Toolbar には Timeline 全体へ作用する頻出操作を置く。状態を持つ操作は、現在の有効状態が画面上で判別できる。
+
+左側に編集操作、右側に表示切り替えを置く。Select / Split / Follow / Automation はアイコンボタンで、名前はツールチップで示す。ボタンはアイコンのみの固定サイズで統一し、ラベル文字列の長さが Toolbar の幅に影響しない。Zoom は段階的な拡大・縮小と現在倍率の表示を持つ。
 
 | 要素          | 挙動                                          |
 | ------------- | --------------------------------------------- |
@@ -145,7 +147,7 @@ Toolbar には Timeline 全体へ作用する頻出操作を置く。状態を�
 | Follow        | 再生中、Playhead を表示範囲へ追従させる       |
 | Automation    | 選択 Track の Automation Lane を開閉する      |
 | Bars / Time   | Ruler の表示形式を切り替える                  |
-| Timeline Zoom | Timeline の時間方向を拡大・縮小する           |
+| Timeline Zoom | Timeline の時間方向を段階的に拡大・縮小する   |
 
 Snap は Clip 移動、Trim、Split、Time Selection、Marker 移動など Timeline 上の時間操作で共通に使う。
 
@@ -323,7 +325,7 @@ Lower Panel は、Timeline を見ながら詳細編集または演奏を行う�
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
-│ [Play Surface] [MIDI Editor]          Synth Lead / Verse MIDI   [—][□]│
+│ [Play Surface | MIDI Editor]       Synth Lead / Verse MIDI    [—][□]│
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
 │                         Active Panel                                  │
@@ -331,7 +333,7 @@ Lower Panel は、Timeline を見ながら詳細編集または演奏を行う�
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Header には View 切替と現在の編集文脈をまとめる。同じ Track 名や Clip 名を各 Panel 内で大きく繰り返さない。
+Header には View 切替と現在の編集文脈をまとめる。View 切替は Segmented Control で Header の左端に置き、MIDI Clip を選択していない間は MIDI Editor を選択できない。同じ Track 名や Clip 名を各 Panel 内で大きく繰り返さない。
 
 Lower Panel は、折りたたみ、リサイズ、集中表示を行える。MIDI Editor を集中表示したあとも、元の Timeline 中心の状態へ戻れる。
 
@@ -362,7 +364,8 @@ Focused Instrument Track
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ [Pointer] [Draw]   Grid [1/16 ▾]   [Preview]   [Quantize]    Zoom        │
+│ [Pointer|Draw]  Snap [1/16 ▾]  [Preview]  [Quantize] [Duplicate]        │
+│ VEL [───●── 96]                  Time [−][＋]   Pitch [−][＋]           │
 ├─────────────┬────────────────────────────────────────────────────────────┤
 │             │  9.1       9.2       9.3       9.4       10.1            │
 │ Piano       ├────────────────────────────────────────────────────────────┤
@@ -382,6 +385,8 @@ Focused Instrument Track
 ```
 
 MIDI Editor は Piano Roll、Musical Ruler、Velocity Lane を一つの時間軸で共有する。横 Scroll / Zoom は三領域で同期する。
+
+Toolbar の構成は Arrange Toolbar と同じ規則に従う。左側に Pointer / Draw、Snap、Preview、Quantize / Duplicate、選択 Note の Velocity を置き、右側に Time / Pitch の Zoom を置く。Pointer / Draw / Preview / Quantize / Duplicate はアイコンボタンで、名前はツールチップで示す。Velocity は選択 Note の値を示し、確定時に選択 Note 全体へ適用する。
 
 ### 8.2 Pointer と Draw
 
@@ -513,7 +518,7 @@ Play Surface の Focused Instrument Track とは別系統として扱う。Clip 
 
 MIDI Editor の Ruler は Clip 内の相対時間だけでなく、Arrangement 上の小節位置を表示する。Timeline で 9 小節目に置かれた Clip を開いた場合、Editor でも 9.1、9.2、9.3… のように位置関係を把握できる。
 
-現在の Grid は Piano Roll 上にも細分線として反映する。Zoom に合わせて線の密度を調整し、Bar、Beat、Subdivision の階層を視認できるようにする。
+現在の Snap Grid は Piano Roll 上にも細分線として反映する。Zoom に合わせて線の密度を調整し、Bar、Beat、Subdivision の階層を視認できるようにする。
 
 Timeline の Playhead は MIDI Editor 上にも表示し、Ruler から Seek できる。
 
@@ -624,22 +629,29 @@ Note の Pitch、Velocity、Note 一覧など、演奏内容の編集は MIDI Ed
 
 ### 9.5 Take Inspector
 
-録音 Clip に複数 Take がある場合は、Take Inspector で候補を比較・採用する。
+録音 Clip または Track を選択したとき、Take Inspector は録音候補を確認し、試聴、採用、配置までを一つの領域で完結させる。複数の録音グループがある場合は、Track 選択時にグループを選べる。選択中のグループへ続けて録音する操作もこの領域に置く。
 
 ```text
 TAKES
-────────────────────────
-Take 1    [Preview] [Use]
-Take 2    [Preview] [Use]
-Take 3    [Preview] [Use]
+────────────────────────────────
+              [Record another take]
+Recording group       [Group 2  ]
 
-[Place copy]
+Take 1                         CURRENT
+          Audio source
+          ○ Raw    ○ Processed
+          [Place copy]                         [Preview]
 
-A/B comparison
-A · RAW      B · PROCESSED
+Take 2                         MIDI
+          [Use] [Place copy]
+
+Take 3
+          [Use] [Place copy]                   [Preview]
 ```
 
-Preview は現在の Arrangement 再生とは独立した試聴として扱う。Use は採用 Take を正準状態へ反映し、Place copy は候補を別 Clip として Timeline へ配置する。Raw / Processed の両方を持つ Take は A/B 比較できる。
+Preview は現在の Arrangement 再生とは独立した一回限りの試聴で、再生中は同じボタンが Stop になる。音声の終端に達した場合も、再生中の表示を解除する。Raw / Processed の両方を持つ Take は Source で音源を選び、再生中に切り替えると同じ位置から比較できる。この比較は試聴だけの操作であり、Timeline 上の Clip の音源設定は変更しない。
+
+Use は選択した Take を録音グループの正準 Clip として採用する。現在採用中の Take は `CURRENT` と表示し、Use を無効にする。Place copy は候補を別 Clip として Timeline に配置し、既存の正準 Clip と重なって二重再生しないようミュートした状態で作成する。MIDI Take は音声試聴を表示せず、Use と Place copy を提供する。
 
 ---
 

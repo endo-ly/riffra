@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { MidiClip } from '@/model/domain';
 import { Icon } from '@/shared/ui/primitives';
+import { ToolbarTabs } from '@/shared/ui/Toolbar';
 import styles from './ArrangeLowerPanel.module.css';
 
 export type ArrangeLowerPanelView = 'closed' | 'playSurface' | 'midiEditor';
@@ -78,27 +79,15 @@ export function ArrangeLowerPanel({
         onPointerDown={startResize}
       />
       <header className={styles.header}>
-        <div className={styles.tabs} role="tablist" aria-label="Arrange lower panel">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'playSurface'}
-            className={view === 'playSurface' ? styles.activeTab : undefined}
-            onClick={() => onViewChange('playSurface')}
-          >
-            Play Surface
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'midiEditor'}
-            className={view === 'midiEditor' ? styles.activeTab : undefined}
-            disabled={!activeMidiClip}
-            onClick={() => onViewChange('midiEditor')}
-          >
-            MIDI Editor
-          </button>
-        </div>
+        <ToolbarTabs
+          label="Arrange lower panel view"
+          value={view}
+          onChange={onViewChange}
+          options={[
+            { value: 'playSurface', label: 'Play Surface' },
+            { value: 'midiEditor', label: 'MIDI Editor', disabled: !activeMidiClip },
+          ]}
+        />
         <div className={styles.context}>
           {view === 'playSurface'
             ? playSurfaceSummary

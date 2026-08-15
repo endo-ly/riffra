@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
@@ -176,12 +176,207 @@ describe('Arrange Inspectors', () => {
         session={session}
         selection={selection}
         setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
         api={api}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'B · PROCESSED' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(api.calls).toContain('startTakeComparison'));
+    fireEvent.click(screen.getByRole('button', { name: 'Processed' }));
+    await waitFor(() => expect(api.calls).toContain('switchTakeComparisonVariant'));
     expect(api.calls).not.toContain('setAudioClipTakeVariant');
+  });
+
+  it('shows the current Take explicitly and provides a stop action for audition', async () => {
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'track', trackId: 'track:audio' }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
+        api={api}
+      />,
+    );
+
+    expect(screen.getByText('CURRENT')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Take 1 is current' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument(),
+    );
+    expect(api.calls).toContain('stopTakeComparison');
+  });
+
+  it('clears the audition when Native reports that preview playback ended', async () => {
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'track', trackId: 'track:audio' }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
+        api={api}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
+
+    act(() => {
+      api.emitAudioStatus({ ...api.audio, previewing: false });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument(),
+    );
+  });
+
+  it('routes Record another take to the selected recording group', () => {
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const onRecordAnotherTake = vi.fn();
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'track', trackId: 'track:audio' }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={onRecordAnotherTake}
+        api={api}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record another take' }));
+
+    expect(onRecordAnotherTake).toHaveBeenCalledWith('recording:1');
+  });
+
+  it('lets a Track selection switch between recording groups', async () => {
+    const session = recordingSession();
+    const firstTake = session.arrangement.takes[0];
+    session.arrangement.takes.push({
+      ...firstTake,
+      id: 'take:2',
+      sessionId: 'recording:2',
+      passId: 'pass:2',
+    });
+    session.arrangement.recordingSessions.push({
+      id: 'recording:2',
+      startTick: 960,
+      passIds: ['pass:2'],
+      trackSlots: [
+        {
+          trackId: 'track:audio',
+          activeTakeId: 'take:2',
+          timelineClipId: 'clip:b',
+        },
+      ],
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'track', trackId: 'track:audio' }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
+        api={api}
+      />,
+    );
+
+    const groupSelector = screen.getByRole('combobox', { name: 'Recording group' });
+    expect(groupSelector).toHaveValue('recording:2');
+    fireEvent.change(groupSelector, { target: { value: 'recording:1' } });
+
+    await waitFor(() => expect(groupSelector).toHaveValue('recording:1'));
+    expect(screen.getByText('CURRENT')).toBeInTheDocument();
+  });
+
+  it('keeps MIDI Takes available without offering an audio preview', () => {
+    const session = defaultSession();
+    const midiTakeId = 'take:midi';
+    const midiSessionId = 'recording:midi';
+    const midiAssetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41c');
+    session.arrangement.tracks.push({
+      id: 'track:midi-take',
+      name: 'MIDI Take',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.takes.push({
+      id: midiTakeId,
+      sessionId: midiSessionId,
+      passId: 'pass:midi',
+      trackId: 'track:midi-take',
+      startTick: 0,
+      durationTicks: 960,
+      sourceStartSample: 0,
+      sourceEndSample: 0,
+      midiAssetId,
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:midi-take',
+      name: 'MIDI Take',
+      trackId: 'track:midi-take',
+      startTick: 0,
+      durationTicks: 960,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+      recordingTakeId: midiTakeId,
+    });
+    session.arrangement.recordingSessions.push({
+      id: midiSessionId,
+      startTick: 0,
+      passIds: ['pass:midi'],
+      trackSlots: [
+        {
+          trackId: 'track:midi-take',
+          activeTakeId: 'take:other',
+          timelineClipId: 'clip:midi-take',
+        },
+      ],
+    });
+
+    render(
+      <TakeInspector
+        session={session}
+        selection={{ kind: 'clips', clipIds: ['clip:midi-take'] }}
+        setSession={() => undefined}
+        recordingActive={false}
+        recordingCommandPending={false}
+        onRecordAnotherTake={() => undefined}
+        api={new FakeNativeApi({ bootstrapState: { session } })}
+      />,
+    );
+
+    expect(screen.getByText('MIDI')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Use Take 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Place copy' })).toBeInTheDocument();
   });
 });

@@ -143,6 +143,7 @@ function audioStatusSignature(status: AudioStatus): string {
     status.midiInputActive,
     status.midiMessages,
     status.lastMidiNote,
+    status.previewing,
     status.message,
   ]);
 }

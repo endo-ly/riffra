@@ -13,7 +13,16 @@ import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musica
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { toast } from '@/shared/toasts';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
-import { Icon } from '@/shared/ui/primitives';
+import {
+  Toolbar,
+  ToolbarButton,
+  ToolbarDivider,
+  ToolbarSegmented,
+  ToolbarSelect,
+  ToolbarSlider,
+  ToolbarStepper,
+  ToolbarToggle,
+} from '@/shared/ui/Toolbar';
 import { MidiEditorRuler } from './MidiEditorRuler';
 import { MidiVelocityLane } from './MidiVelocityLane';
 import styles from './MidiEditorPanel.module.css';
@@ -27,6 +36,8 @@ interface MidiNoteInput {
   velocity: number;
   channel: number;
 }
+
+const ZOOM_STEP = 1.25;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
@@ -438,6 +449,42 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     return <div className={styles.empty} />;
   }
 
+  const runQuantize = () => {
+    if (!props.clip) return;
+    const selected = props.clip.notes.filter((note) => selectedNoteIds.includes(note.id));
+    const offGrid = countOffGridNotes(selected, snapTicks);
+    if (offGrid === 0) {
+      toast('Selected notes are already on the grid.');
+      return;
+    }
+    const operation = props.onQuantize?.(props.clip.id, selectedNoteIds, snapTicks);
+    if (!operation) return;
+    void Promise.resolve(operation).then(
+      (next) => {
+        if (next) {
+          toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to ${snap}.`);
+        }
+      },
+      (error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        toast(`Quantize failed: ${detail}`, { kind: 'error' });
+      },
+    );
+  };
+
+  const handleVelocityChange = (value: number) => {
+    setVelocityDraft(value);
+    setLastUsedVelocity(value);
+  };
+
+  const commitVelocity = (value: number) => {
+    setLastUsedVelocity(value);
+    void props.onUpdateNotes?.(
+      props.clip!.id,
+      selectedNoteIds.map((noteId) => ({ noteId, patch: { velocity: value } })),
+    );
+  };
+
   const contextNote = noteContextMenu
     ? props.clip.notes.find((note) => note.id === noteContextMenu.noteId)
     : null;
@@ -656,164 +703,83 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         }
       }}
     >
-      <header className={styles.header}>
-        <div className={styles.editorTools}>
-          <div className={styles.toolGroup} aria-label="MIDI Editor tool">
-            <button
-              type="button"
-              className={`${styles.toolButton} ${tool === 'pointer' ? styles.toolButtonActive : ''}`}
-              aria-pressed={tool === 'pointer'}
-              onClick={() => setTool('pointer')}
-            >
-              <Icon name="pointer" /> Pointer
-            </button>
-            <button
-              type="button"
-              className={`${styles.toolButton} ${tool === 'draw' ? styles.toolButtonActive : ''}`}
-              aria-pressed={tool === 'draw'}
-              onClick={() => setTool('draw')}
-            >
-              <Icon name="pencil" /> Draw
-            </button>
-          </div>
-          <label className={styles.control}>
-            <span>Snap</span>
-            <select value={snap} onChange={(event) => setSnap(event.target.value as SnapGrid)}>
-              {SNAP_GRID_OPTIONS.map((value) => (
-                <option key={value} value={value}>
-                  {snapGridLabel(value)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className={`${styles.toolButton} ${previewEnabled ? styles.toolButtonActive : ''}`}
-            aria-pressed={previewEnabled}
-            disabled={!props.previewAvailable}
-            title={
-              props.previewAvailable
-                ? 'Preview notes on the active instrument'
-                : 'Audio runtime unavailable'
-            }
-            onClick={() => setPreviewEnabled((enabled) => !enabled)}
-          >
-            <Icon name="play" /> Preview
-          </button>
-          <div className={styles.zoomGroup} aria-label="MIDI Editor zoom">
-            <span>Time</span>
-            <button
-              type="button"
-              aria-label="Zoom out"
-              onClick={() => applyHorizontalZoom(pixelsPerTick / 1.25)}
-            >
-              <Icon name="zoomOut" />
-            </button>
-            <button
-              type="button"
-              aria-label="Zoom in"
-              onClick={() => applyHorizontalZoom(pixelsPerTick * 1.25)}
-            >
-              <Icon name="zoomIn" />
-            </button>
-          </div>
-          <div className={styles.zoomGroup} aria-label="MIDI Editor pitch zoom">
-            <span>Pitch</span>
-            <button
-              type="button"
-              aria-label="Pitch zoom out"
-              onClick={() => applyVerticalZoom(rowHeight - 2)}
-            >
-              <Icon name="zoomOut" />
-            </button>
-            <button
-              type="button"
-              aria-label="Pitch zoom in"
-              onClick={() => applyVerticalZoom(rowHeight + 2)}
-            >
-              <Icon name="zoomIn" />
-            </button>
-          </div>
-          <button
-            type="button"
-            className={styles.toolButton}
-            disabled={!selectedNoteIds.length || snapTicks === 0 || !props.onQuantize}
-            title={snapTicks === 0 ? 'Select a snap grid before quantizing' : undefined}
-            onClick={() => {
-              if (!props.clip) return;
-              const selected = props.clip.notes.filter((note) => selectedNoteIds.includes(note.id));
-              const offGrid = countOffGridNotes(selected, snapTicks);
-              if (offGrid === 0) {
-                toast('Selected notes are already on the grid.');
-                return;
+      <Toolbar
+        label="MIDI Editor toolbar"
+        trailing={
+          <>
+            <ToolbarStepper
+              label="Time"
+              ariaLabel="MIDI Editor zoom"
+              onStep={(direction) =>
+                applyHorizontalZoom(pixelsPerTick * (direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP))
               }
-              const operation = props.onQuantize?.(props.clip.id, selectedNoteIds, snapTicks);
-              if (!operation) return;
-              void Promise.resolve(operation).then(
-                (next) => {
-                  if (next) {
-                    toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to ${snap}.`);
-                  }
-                },
-                (error) => {
-                  const detail = error instanceof Error ? error.message : String(error);
-                  toast(`Quantize failed: ${detail}`, { kind: 'error' });
-                },
-              );
-            }}
-          >
-            Quantize
-          </button>
-          <button
-            type="button"
-            className={styles.toolButton}
-            disabled={!selectedNoteIds.length}
-            onClick={() => void Promise.resolve(duplicateSelectedNotes())}
-          >
-            Duplicate
-          </button>
-          <label className={`${styles.control} ${styles.velocityControl}`}>
-            <span>Velocity</span>
-            <input
-              aria-label="Selected MIDI note velocity"
-              type="range"
-              min="1"
-              max="127"
-              value={velocityDraft}
-              disabled={!selectedNoteIds.length}
-              onChange={(event) => {
-                const value = Number(event.currentTarget.value);
-                setVelocityDraft(value);
-                setLastUsedVelocity(value);
-              }}
-              onKeyUp={(event) => {
-                if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') {
-                  const value = Number(event.currentTarget.value);
-                  setLastUsedVelocity(value);
-                  void props.onUpdateNotes?.(
-                    props.clip!.id,
-                    selectedNoteIds.map((noteId) => ({
-                      noteId,
-                      patch: { velocity: value },
-                    })),
-                  );
-                }
-              }}
-              onPointerUp={(event) => {
-                const value = Number(event.currentTarget.value);
-                setLastUsedVelocity(value);
-                void props.onUpdateNotes?.(
-                  props.clip!.id,
-                  selectedNoteIds.map((noteId) => ({
-                    noteId,
-                    patch: { velocity: value },
-                  })),
-                );
-              }}
             />
-          </label>
-        </div>
-      </header>
+            <ToolbarStepper
+              label="Pitch"
+              ariaLabel="MIDI Editor pitch zoom"
+              onStep={(direction) => applyVerticalZoom(rowHeight + (direction > 0 ? 2 : -2))}
+            />
+          </>
+        }
+      >
+        <ToolbarSegmented
+          label="MIDI Editor tool"
+          value={tool}
+          onChange={setTool}
+          options={[
+            { value: 'pointer', label: 'Pointer', icon: 'pointer' },
+            { value: 'draw', label: 'Draw', icon: 'pencil' },
+          ]}
+        />
+        <ToolbarDivider />
+        <ToolbarSelect
+          label="Snap"
+          value={snap}
+          onChange={setSnap}
+          options={SNAP_GRID_OPTIONS.map((value) => ({ value, label: snapGridLabel(value) }))}
+        />
+        <ToolbarToggle
+          icon="speaker"
+          ariaLabel="Preview"
+          active={previewEnabled}
+          disabled={!props.previewAvailable}
+          title={
+            props.previewAvailable
+              ? 'Preview notes on the active instrument'
+              : 'Audio runtime unavailable'
+          }
+          onClick={() => setPreviewEnabled((enabled) => !enabled)}
+        />
+        <ToolbarDivider />
+        <ToolbarButton
+          icon="magnet"
+          ariaLabel="Quantize"
+          disabled={!selectedNoteIds.length || snapTicks === 0 || !props.onQuantize}
+          title={
+            snapTicks === 0
+              ? 'Select a snap grid before quantizing'
+              : 'Quantize notes to the snap grid'
+          }
+          onClick={runQuantize}
+        />
+        <ToolbarButton
+          icon="copy"
+          ariaLabel="Duplicate"
+          disabled={!selectedNoteIds.length}
+          title="Duplicate the selected notes"
+          onClick={() => void Promise.resolve(duplicateSelectedNotes())}
+        />
+        <ToolbarSlider
+          label="Vel"
+          ariaLabel="Selected MIDI note velocity"
+          value={velocityDraft}
+          min={1}
+          max={127}
+          disabled={!selectedNoteIds.length}
+          onChange={handleVelocityChange}
+          onCommit={commitVelocity}
+        />
+      </Toolbar>
       <div className={styles.editorSurface}>
         <div className={styles.rulerViewport}>
           <div className={styles.laneLabel}>Ruler</div>

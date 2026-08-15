@@ -54,6 +54,7 @@ export function offlineAudioStatus(
     outputPeak: 0,
     invalidSamples: 0,
     feedbackSuspected: false,
+    previewing: false,
     message,
   };
 }

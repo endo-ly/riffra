@@ -97,7 +97,13 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleMute,
   } = audioHook;
   const recording = useRecording(api, { audio, setAudio, setSession });
-  const { recordings, reloadRecordings, recordingCommandPending, toggleRecording } = recording;
+  const {
+    recordings,
+    reloadRecordings,
+    recordingCommandPending,
+    startRecordingNow,
+    toggleRecording,
+  } = recording;
 
   const library = useLibrary(api, { setAudio });
   const {
@@ -235,5 +241,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     visibleRecordings,
     inbox,
     api,
+    startRecordingNow,
   };
 }
