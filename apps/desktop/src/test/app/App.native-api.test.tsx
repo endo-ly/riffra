@@ -58,6 +58,23 @@ describe('App native boundary', () => {
     expect(propertiesHandle).toHaveAttribute('aria-valuenow', '248');
   });
 
+  it('removes a collapsed left column from the interaction tree', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+
+    const leftColumn = screen.getByRole('complementary', { name: 'Left column' });
+    const leftColumnHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse left column',
+    });
+    for (let step = 0; step < 29; step += 1) {
+      fireEvent.keyDown(leftColumnHandle, { key: 'ArrowLeft' });
+    }
+
+    expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '0');
+    expect(leftColumn).toHaveAttribute('aria-hidden', 'true');
+    expect(leftColumn).toHaveAttribute('inert');
+  });
+
   it('shows a runtime restart notification without replaying session commands', async () => {
     const api = new FakeNativeApi();
     function RuntimeNotification() {

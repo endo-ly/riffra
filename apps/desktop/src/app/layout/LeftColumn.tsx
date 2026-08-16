@@ -8,6 +8,7 @@ interface LeftColumnProps {
   onPropertiesHeightChange: (height: number) => void;
   browser: ReactNode;
   properties: ReactNode;
+  collapsed?: boolean;
 }
 
 function resolvePropertiesHeight(height: number, availableHeight: number) {
@@ -26,6 +27,7 @@ export function LeftColumn({
   onPropertiesHeightChange,
   browser,
   properties,
+  collapsed = false,
 }: LeftColumnProps) {
   const columnRef = useRef<HTMLElement>(null);
   const [resize, setResize] = useState<{ startY: number; startHeight: number } | null>(null);
@@ -62,6 +64,8 @@ export function LeftColumn({
       className={styles.column}
       style={{ '--properties-height': `${propertiesHeight}px` } as CSSProperties}
       aria-label="Left column"
+      aria-hidden={collapsed}
+      inert={collapsed}
       data-left-column
     >
       <div className={styles.browser}>{browser}</div>

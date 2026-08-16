@@ -199,10 +199,3 @@
     min-width: 124px;
   }
 }
-
-@media (max-width: 1050px) {
-  .timebase,
-  .master {
-    display: none;
-  }
-}

@@ -42,14 +42,14 @@ Arrange の Main Canvas は Timeline である。Browser と Properties は Left
 │                    │ │ Timeline · Tracks / Clips / Automation              │ │
 │                    │ ├─────────────────────────────────────────────────────┤ │
 │                    │ │ DETAIL AREA                                         │ │
-│ PROPERTIES         │ │ MIDI Editor                                         │ │
+│ PROPERTIES         │ │ MIDI Editor / Devices                              │ │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads / Octave / Velocity         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Detail Area は内部編集、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Instrument を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。
+制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Detail Area は内部編集、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Detail Area の Devices で Instrument を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。
 
 ### 2.2 選択・編集対象・演奏先
 
@@ -175,20 +175,20 @@ Track Header は Track の識別と、演奏・録音中に頻繁に触る操作
 └──────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-| 項目              | 仕様                                          |
-| ----------------- | --------------------------------------------- |
-| Track Name        | 選択と名前変更の入口                          |
-| Track Kind        | Audio / Instrument の識別                     |
-| Mute / Solo / Arm | Header から直接変更                           |
-| Monitoring        | Audio Track の現在状態を表示・変更            |
-| Mix               | 表示密度に応じて Volume / Pan を操作          |
-| Reorder           | Track の並べ替え                              |
-| Height            | Track ごとの表示密度変更                      |
-| Focus             | Instrument Track を演奏先として Focus         |
-| Properties        | Track の Instrument / Effect 編集面を表示する |
-| Play Surface      | Focused Track として Play Surface を開く      |
+| 項目              | 仕様                                     |
+| ----------------- | ---------------------------------------- |
+| Track Name        | 選択と名前変更の入口                     |
+| Track Kind        | Audio / Instrument の識別                |
+| Mute / Solo / Arm | Header から直接変更                      |
+| Monitoring        | Audio Track の現在状態を表示・変更       |
+| Mix               | 表示密度に応じて Volume / Pan を操作     |
+| Reorder           | Track の並べ替え                         |
+| Height            | Track ごとの表示密度変更                 |
+| Focus             | Instrument Track を演奏先として Focus    |
+| Properties        | Track の属性と状態を表示・編集する       |
+| Play Surface      | Focused Track として Play Surface を開く |
 
-Input、Monitoring、名称など Track 自体の詳細属性は Properties が扱う。Instrument と Effect Chain は Track の設定として扱う。Volume / Pan は制作中の確認頻度が高いため Track Header に簡易操作を置き、Properties では数値確認と精密調整を行える。
+Input、Monitoring、名称など Track 自体の詳細属性は Properties が扱う。既存の Track view に含まれる Instrument / Effect Chain の操作項目は Devices の編集面へ移す対象として扱い、Properties は Track 属性へ集中する。Volume / Pan は制作中の確認頻度が高いため Track Header に簡易操作を置き、Properties では数値確認と精密調整を行える。
 
 ### 3.4 Clip 共通操作
 
@@ -311,17 +311,17 @@ Arrange の Left Column は Browser と Properties を上下に常時表示す�
 
 ### 4.1 Browser
 
-Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または Properties へ投入する。
+Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または Track の Devices へ投入する。
 
 ```text
 Browser
 ├─ Audio / MIDI Assets ─────→ Timeline
 ├─ Recordings / Inbox ──────→ Timeline / Take workflow
-├─ Instruments ─────────────→ Track / Properties
-└─ Effects ─────────────────→ Properties
+├─ Instruments ─────────────→ Track / Devices
+└─ Effects ─────────────────→ Devices
 ```
 
-Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、Instrument または Effect として Properties へ追加する。
+Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、Instrument または Effect として Track の Devices へ追加する。
 
 Instrument や Effect の追加ボタンから開く Add Browser は、現在の追加先を引き継いで候補を絞る。
 
@@ -351,7 +351,7 @@ Track 自体の属性を扱う。
 | Mix        | Volume / Pan の数値確認と精密調整                                     |
 | Status     | Input source、recording、missing dependency など Track に関係する状態 |
 
-Instrument と Effect Chain を含む現在の Track 設定を保持し、Track Properties は Track 属性を編集する。
+Track Properties は Track 属性を編集する。Instrument と Effect Chain は Devices の編集面で扱う。
 
 #### Audio Clip Properties
 
@@ -420,9 +420,9 @@ Raw / Processed の両方を持つ Audio Take は同じ位置から切り替え�
 
 ## 5. Detail Area
 
-Detail Area は Timeline で扱う対象へ一段深く入り、演奏内容を編集する。Arrange では MIDI Editor を表示する。
+Detail Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集する。Arrange では MIDI Editor を表示し、Instrument と Effect Chain は Devices としてこの領域に配置する。
 
-Detail Area は、Timeline から明示的に開いた MIDI Editor を表示する。外側に対象名を繰り返す文言ヘッダーは置かず、MIDI Editor 自身の Toolbar と編集対象を保ったまま作業を続けられる。
+Detail Area は、Timeline から明示的に開いた編集面を表示する。Arrange では MIDI Editor を表示し、Devices も同じ領域の責務として扱う。外側に対象名を繰り返す文言ヘッダーは置かず、各編集面自身の Toolbar と編集対象を保ったまま作業を続けられる。
 
 ### 5.1 共通操作
 
@@ -518,9 +518,9 @@ Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節�
 
 Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
-### 5.3 Track の機器設定
+### 5.3 Devices
 
-Instrument と Effect Chain は Track の Properties から扱う。Detail Area の機能タブとして分離せず、Track の選択状態と同じ文脈で編集する。
+Devices は Track Context の Instrument と Effect Chain を扱う。Properties の子ではなく Detail Area の編集面として、Track の選択状態と同じ文脈で編集する。Detail Area に機能選択タブは置かず、対象を開く操作から編集面を表示する。
 
 ```text
 Track: Synth Lead
@@ -545,7 +545,7 @@ Instrument Track では Instrument が信号列の先頭となり、その後へ
 
 #### Add Browser
 
-Track Properties の追加位置にある `+` から Add Browser を開く。
+Devices の追加位置にある `+` から Add Browser を開く。
 
 ```text
 [Instrument] → [+] → [Compressor] → [+] → [Reverb]
@@ -554,14 +554,14 @@ Track Properties の追加位置にある `+` から Add Browser を開く。
           Add Effect Browser
 ```
 
-Instrument slot から開いた場合は Instrument、Effect Chain から開いた場合は Effect を候補として提示する。選択後は同じ Track の Properties へ戻る。
+Instrument slot から開いた場合は Instrument、Effect Chain から開いた場合は Effect を候補として提示する。選択後は同じ Track の Devices へ戻る。
 
 #### Play Surface との連携
 
-Properties と Play Surface は同時に利用できる。
+Devices と Play Surface は同時に利用できる。
 
 ```text
-Track Properties
+Devices
 [Instrument] → [EQ] → [Reverb]
       ▲
       │ parameter editing
@@ -598,10 +598,10 @@ Focused Instrument Track ────────→ Play Surface / Computer MID
 
 ### 6.2 Detail Area との連携
 
-Play Surface と Detail Area は同時に利用できる。特に Track Properties との組み合わせを、Instrument の音作りにおける基本導線とする。
+Play Surface と Detail Area は同時に利用できる。特に Devices との組み合わせを、Instrument の音作りにおける基本導線とする。
 
 ```text
-Track Properties
+Devices
 [Instrument] → [EQ] → [Reverb]
       ▲
       │ parameter editing
@@ -675,7 +675,7 @@ Missing source、Missing Plugin、Audio device fault、runtime out-of-sync な�
 | 問題                   | 主な表示先                     |
 | ---------------------- | ------------------------------ |
 | Audio runtime / device | Global Control Bar + 全体通知  |
-| Missing Plugin         | Properties / Track status      |
+| Missing Plugin         | Devices / Track status         |
 | Missing Audio source   | Clip / Properties              |
 | Runtime sync           | Timeline status + retry action |
 | 一時的な編集結果       | Toast                          |
@@ -757,7 +757,7 @@ Play from Global Transport
 Edit while listening
 ```
 
-Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Track の音色調整は Properties で行い、Clip 編集と Track 設定の意味を分ける。
+Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Track の音色調整は Detail Area の Devices で行い、Clip 編集と Track 属性の意味を分ける。
 
 ### 9.2 Audio 素材からの構成
 
@@ -784,13 +784,13 @@ Play and review
 ```text
 Select / Focus Instrument Track
         ↓
-Open Properties
+Open Devices
         ↓
 Open Play Surface
         ↓
 Play
         ↓
-Edit Instrument / Effect
+Edit Instrument / Effect in Devices
         ↓
 Play again
         ↓
@@ -799,7 +799,7 @@ Reorder / Bypass / Compare
 Return to Timeline
 ```
 
-Track Properties と Play Surface を同時に使うことで、音色変更と演奏確認を画面切替に依存せず往復できる。
+Devices と Play Surface を同時に使うことで、音色変更と演奏確認を画面切替に依存せず往復できる。
 
 ### 9.4 演奏から録音
 

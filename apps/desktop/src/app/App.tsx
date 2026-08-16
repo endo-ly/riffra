@@ -34,6 +34,7 @@ function resolveLeftColumnWidth(width: number) {
 
 function adjustLeftColumnWidth(width: number, delta: number) {
   if (width === 0 && delta > 0) return LEFT_COLUMN_WIDTH.min;
+  if (width === LEFT_COLUMN_WIDTH.min && delta < 0) return 0;
   return resolveLeftColumnWidth(width + delta);
 }
 
@@ -314,6 +315,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
 
       <div className={shellStyles.appBody} data-app-body>
         <LeftColumn
+          collapsed={leftColumnWidth === 0}
           propertiesHeight={propertiesHeight}
           onPropertiesHeightChange={setPropertiesHeight}
           browser={

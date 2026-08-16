@@ -16,7 +16,7 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 ├────────────────────┤                                                         │
 │ PROPERTIES         ├─────────────────────────────────────────────────────────┤
 │ Track / Clip /     │ DETAIL AREA                                             │
-│ Take properties    │ MIDI Editor                                             │
+│ Take properties    │ MIDI Editor / Devices                                  │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads                             │
@@ -39,7 +39,7 @@ Main Canvas は現在の制作領域を表示する。Arrange では Timeline �
 
 ## Detail Area
 
-Detail Area は Timeline から開いた対象の編集場所である。Arrange では MIDI Editor を表示し、Resize、Collapse / Restore、Expand / Restore、Close を提供する。Detail Area に機能選択タブは置かない。
+Detail Area は Timeline から開いた対象の編集場所である。Arrange では MIDI Editor を表示し、Instrument と Effect Chain を扱う Devices もこの領域に配置する。Resize、Collapse / Restore、Expand / Restore、Close を提供し、Properties の子には置かない。Detail Area に機能選択タブは置かず、対象を開く操作が編集面を決める。
 
 ## Play Surface
 
