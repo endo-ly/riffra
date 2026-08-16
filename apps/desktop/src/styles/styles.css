@@ -28,10 +28,10 @@
   --control-normal: 28px;
   --control-important: 32px;
   --toolbar-height: 40px;
-  --library-width: 220px;
-  --inspector-width: 280px;
-  --global-height: 44px;
-  --transport-height: 56px;
+  --left-column-width: 280px;
+  --global-height: 56px;
+  --play-surface-compact-height: 48px;
+  --play-surface-expanded-height: 220px;
 }
 
 * {

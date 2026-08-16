@@ -10,79 +10,54 @@ import { defaultNativeApi } from '@/native/native';
 import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
-import { InspectorPanel } from '@/features/arrange/inspector/InspectorPanel';
+import { PropertiesPanel } from '@/features/arrange/inspector/PropertiesPanel';
 import { LibraryPanel } from '@/features/library/LibraryPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
-import { TransportBar } from '@/features/transport/TransportBar';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
-import { GlobalBar } from './layout/GlobalBar';
+import { GlobalControlBar } from './layout/GlobalControlBar';
+import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import styles from './App.module.css';
 import shellStyles from './AppShell.module.css';
 
-type ArrangePanelSide = 'library' | 'inspector';
+const LEFT_COLUMN_WIDTH = { default: 280, min: 220, max: 380, collapse: 48 } as const;
 
-const PANEL_WIDTH_LIMITS: Record<
-  ArrangePanelSide,
-  { default: number; min: number; max: number; collapse: number }
-> = {
-  library: { default: 220, min: 176, max: 360, collapse: 48 },
-  inspector: { default: 280, min: 220, max: 420, collapse: 48 },
-};
-
-function resolvePanelWidth(side: ArrangePanelSide, width: number) {
-  const limits = PANEL_WIDTH_LIMITS[side];
-  if (width <= limits.collapse) return 0;
-  return Math.min(limits.max, Math.max(limits.min, width));
+function resolveLeftColumnWidth(width: number) {
+  if (width <= LEFT_COLUMN_WIDTH.collapse) return 0;
+  return Math.min(LEFT_COLUMN_WIDTH.max, Math.max(LEFT_COLUMN_WIDTH.min, width));
 }
 
-function adjustPanelWidth(side: ArrangePanelSide, width: number, delta: number) {
-  const limits = PANEL_WIDTH_LIMITS[side];
-  if (width === 0 && delta > 0) return limits.min;
-  return resolvePanelWidth(side, width + delta);
+function adjustLeftColumnWidth(width: number, delta: number) {
+  if (width === 0 && delta > 0) return LEFT_COLUMN_WIDTH.min;
+  if (width === LEFT_COLUMN_WIDTH.min && delta < 0) return 0;
+  return resolveLeftColumnWidth(width + delta);
 }
 
-function PanelResizeHandle(props: {
-  side: ArrangePanelSide;
+function LeftColumnResizeHandle(props: {
   width: number;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizeBy: (delta: number) => void;
 }) {
-  const limits = PANEL_WIDTH_LIMITS[props.side];
   return (
     <div
-      className={clsx(
-        shellStyles.panelResizeHandle,
-        props.side === 'library'
-          ? shellStyles.panelResizeHandleLibrary
-          : shellStyles.panelResizeHandleInspector,
-        props.width === 0 && shellStyles.collapsed,
-      )}
+      className={clsx(shellStyles.panelResizeHandle, props.width === 0 && shellStyles.collapsed)}
       role="separator"
-      aria-label={`Resize or collapse ${props.side} panel`}
+      aria-label="Resize or collapse left column"
       aria-orientation="vertical"
       aria-valuemin={0}
-      aria-valuemax={limits.max}
+      aria-valuemax={LEFT_COLUMN_WIDTH.max}
       aria-valuenow={props.width}
       tabIndex={0}
       onPointerDown={props.onPointerDown}
       onKeyDown={(event) => {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
           event.preventDefault();
-          const direction =
-            props.side === 'library'
-              ? event.key === 'ArrowRight'
-                ? 1
-                : -1
-              : event.key === 'ArrowLeft'
-                ? 1
-                : -1;
-          props.onResizeBy(direction * (event.shiftKey ? 24 : 8));
+          props.onResizeBy((event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 24 : 8));
         }
       }}
     />
@@ -90,14 +65,10 @@ function PanelResizeHandle(props: {
 }
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
-  const [arrangeLibraryWidth, setArrangeLibraryWidth] = useState(
-    PANEL_WIDTH_LIMITS.library.default,
-  );
-  const [arrangeInspectorWidth, setArrangeInspectorWidth] = useState(
-    PANEL_WIDTH_LIMITS.inspector.default,
-  );
+  const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
+  const [propertiesHeight, setPropertiesHeight] = useState(240);
+  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const [panelResize, setPanelResize] = useState<{
-    side: ArrangePanelSide;
     startX: number;
     startWidth: number;
   } | null>(null);
@@ -168,10 +139,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     if (!panelResize) return;
     const onPointerMove = (event: PointerEvent) => {
       const delta = event.clientX - panelResize.startX;
-      const adjustedDelta = panelResize.side === 'library' ? delta : -delta;
-      const nextWidth = adjustPanelWidth(panelResize.side, panelResize.startWidth, adjustedDelta);
-      if (panelResize.side === 'library') setArrangeLibraryWidth(nextWidth);
-      else setArrangeInspectorWidth(nextWidth);
+      setLeftColumnWidth(adjustLeftColumnWidth(panelResize.startWidth, delta));
     };
     const stopResize = () => setPanelResize(null);
     window.addEventListener('pointermove', onPointerMove);
@@ -184,19 +152,17 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     };
   }, [panelResize]);
 
-  const startPanelResize = (side: ArrangePanelSide, event: ReactPointerEvent<HTMLDivElement>) => {
+  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     setPanelResize({
-      side,
       startX: event.clientX,
-      startWidth: side === 'library' ? arrangeLibraryWidth : arrangeInspectorWidth,
+      startWidth: leftColumnWidth,
     });
   };
 
-  const resizePanelBy = (side: ArrangePanelSide, delta: number) => {
-    if (side === 'library') setArrangeLibraryWidth((width) => adjustPanelWidth(side, width, delta));
-    else setArrangeInspectorWidth((width) => adjustPanelWidth(side, width, delta));
+  const resizeLeftColumnBy = (delta: number) => {
+    setLeftColumnWidth((width) => adjustLeftColumnWidth(width, delta));
   };
 
   useEffect(() => {
@@ -231,15 +197,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
   const isMuted = isEmergencyMuteActive(audio);
   const shellStyle = {
-    '--library-width': `${arrangeLibraryWidth}px`,
-    '--inspector-width': `${arrangeInspectorWidth}px`,
+    '--left-column-width': `${leftColumnWidth}px`,
   } as CSSProperties;
   return (
     <main
       className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
       style={shellStyle}
     >
-      <GlobalBar
+      <GlobalControlBar
         session={session}
         audio={audio}
         isMuted={isMuted}
@@ -251,6 +216,15 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}
+        setSession={setSession}
+        setAudio={setAudio}
+        transportPlaying={transportPlaying}
+        onPlay={() => void playTransport()}
+        onStop={() => void stopTransport()}
+        onGoToStart={() => void goToStart()}
+        recordingCommandPending={recordingCommandPending}
+        onToggleRecording={() => void toggleRecording()}
+        transportApi={nativeApi}
       />
 
       <AudioSettingsDialog
@@ -339,110 +313,103 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      {arrangeLibraryWidth > 0 && (
-        <LibraryPanel
-          library={{
-            section: librarySection,
-            setSection: setLibrarySection,
-            query: libraryQuery,
-            setQuery: setLibraryQuery,
-            results: libraryResults,
-            searchQuery: query,
-            selectedAsset: selectedLibraryAsset,
-            relatedAssets,
-            onSelectAsset: (asset) => void selectLibraryAsset(asset),
-            onPreviewAsset: () => void previewSelectedLibraryAsset(),
-            onEditAsset: () => void editSelectedLibraryAsset(),
-            onImportMidi: () => void importMidi(),
-          }}
-          plugins={{
-            plugins,
-            visiblePlugins,
-            selectedTrack: arrange.selectedTrack,
-            onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
-          }}
-          recordings={{
-            visibleRecordings,
-            count: recordings.length,
-          }}
-          inbox={inbox}
+      <div className={shellStyles.appBody} data-app-body>
+        <LeftColumn
+          collapsed={leftColumnWidth === 0}
+          propertiesHeight={propertiesHeight}
+          onPropertiesHeightChange={setPropertiesHeight}
+          browser={
+            <LibraryPanel
+              library={{
+                section: librarySection,
+                setSection: setLibrarySection,
+                query: libraryQuery,
+                setQuery: setLibraryQuery,
+                results: libraryResults,
+                searchQuery: query,
+                selectedAsset: selectedLibraryAsset,
+                relatedAssets,
+                onSelectAsset: (asset) => void selectLibraryAsset(asset),
+                onPreviewAsset: () => void previewSelectedLibraryAsset(),
+                onEditAsset: () => void editSelectedLibraryAsset(),
+                onImportMidi: () => void importMidi(),
+              }}
+              plugins={{
+                plugins,
+                visiblePlugins,
+                selectedTrack: arrange.selectedTrack,
+                onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
+              }}
+              recordings={{
+                visibleRecordings,
+                count: recordings.length,
+              }}
+              inbox={inbox}
+            />
+          }
+          properties={
+            <PropertiesPanel
+              audio={audio}
+              recordingCommandPending={recordingCommandPending}
+              session={session}
+              setSession={setSession}
+              arrangeSelection={arrange.selection}
+              setArrangeSelection={arrange.setSelection}
+              missingDependencies={missingDependencies}
+              plugins={plugins}
+              onDisableMissingPlugin={disableMissingPluginDevice}
+              onReplaceMissingPlugin={replaceMissingPluginDevice}
+              onRescanMissingPlugins={rescanMissingPlugins}
+              onRecordAnotherTake={(recordingSessionId) =>
+                void startRecordingNow(recordingSessionId)
+              }
+              api={nativeApi}
+            />
+          }
         />
-      )}
 
-      <PanelResizeHandle
-        side="library"
-        width={arrangeLibraryWidth}
-        onPointerDown={(event) => startPanelResize('library', event)}
-        onResizeBy={(delta) => resizePanelBy('library', delta)}
-      />
-
-      <section className={shellStyles.workspace}>
-        <WorkspaceArrange
-          session={session}
-          setSession={setSession}
-          selection={arrange.selection}
-          setSelection={arrange.setSelection}
-          api={nativeApi}
-          audio={audio}
-          onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
-          plugins={plugins}
-          focusedTrackId={arrange.focusedTrackId}
-          onFocusTrack={arrange.setFocusedTrackId}
-          canonicalOperationPending={arrange.canonicalOperationPending}
-          missingDeviceIds={missingDependencies
-            .filter((item) => item.kind === 'plugin')
-            .map((item) => item.id)}
+        <LeftColumnResizeHandle
+          width={leftColumnWidth}
+          onPointerDown={startPanelResize}
+          onResizeBy={resizeLeftColumnBy}
         />
-      </section>
 
-      {arrangeInspectorWidth > 0 && (
-        <InspectorPanel
-          audio={audio}
-          recordingCommandPending={recordingCommandPending}
-          session={session}
-          setSession={setSession}
-          arrangeSelection={arrange.selection}
-          setArrangeSelection={arrange.setSelection}
-          missingDependencies={missingDependencies}
-          plugins={plugins}
-          onDisableMissingPlugin={disableMissingPluginDevice}
-          onReplaceMissingPlugin={replaceMissingPluginDevice}
-          onRescanMissingPlugins={rescanMissingPlugins}
-          onRecordAnotherTake={(recordingSessionId) => void startRecordingNow(recordingSessionId)}
-          api={nativeApi}
-        />
-      )}
+        <section className={shellStyles.workspace}>
+          <WorkspaceArrange
+            session={session}
+            setSession={setSession}
+            selection={arrange.selection}
+            setSelection={arrange.setSelection}
+            api={nativeApi}
+            audio={audio}
+            onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
+            plugins={plugins}
+            focusedTrackId={arrange.focusedTrackId}
+            onFocusTrack={arrange.setFocusedTrackId}
+            canonicalOperationPending={arrange.canonicalOperationPending}
+            missingDeviceIds={missingDependencies
+              .filter((item) => item.kind === 'plugin')
+              .map((item) => item.id)}
+            playSurfaceHost={playSurfaceHost}
+          />
+        </section>
 
-      <PanelResizeHandle
-        side="inspector"
-        width={arrangeInspectorWidth}
-        onPointerDown={(event) => startPanelResize('inspector', event)}
-        onResizeBy={(delta) => resizePanelBy('inspector', delta)}
+        {isMuted && (
+          <div className={styles.muteBanner} role="status">
+            <Icon name="stop" />
+            EMERGENCY MUTE ENGAGED —{' '}
+            {feedbackSuspected
+              ? 'acoustic feedback suspected; output silenced automatically'
+              : 'audio output is forced silent'}
+          </div>
+        )}
+      </div>
+
+      <div
+        ref={setPlaySurfaceHost}
+        className={shellStyles.playSurfaceHost}
+        data-play-surface-host
       />
-
-      <TransportBar
-        session={session}
-        setSession={setSession}
-        audio={audio}
-        setAudio={setAudio}
-        transportPlaying={transportPlaying}
-        onPlay={() => void playTransport()}
-        onStop={() => void stopTransport()}
-        onGoToStart={() => void goToStart()}
-        recordingCommandPending={recordingCommandPending}
-        onToggleRecording={() => void toggleRecording()}
-        api={nativeApi}
-      />
-
-      {isMuted && (
-        <div className={styles.muteBanner}>
-          <Icon name="stop" />
-          EMERGENCY MUTE ENGAGED —{' '}
-          {feedbackSuspected
-            ? 'acoustic feedback suspected; output silenced automatically'
-            : 'audio output is forced silent'}
-        </div>
-      )}
       {commandOpen && (
         <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
           <section

@@ -37,7 +37,7 @@ flowchart LR
 | Arrange | 演奏しながら音を決め、曲にする | Track、Input、Rack、Plugin、Instrument    | 録音、音色、ラック、スナップショット、曲 |
 | Design  | 音の材料と構造を作る           | Audio Asset、生成定義、Instrument Mapping | One Shot、Loop、Instrument、派生素材     |
 
-**Arrangeが主画面である。** 演奏、監視、録音はArrangeの機能であり、Focused Instrument Trackを対象に下部のPlay Surfaceで演奏できる。
+**Arrangeが主画面である。** 演奏、監視、録音はArrangeの機能であり、Focused Instrument Trackを対象にPlay Surfaceで演奏できる。
 
 ### 2.1 Arrange
 
@@ -53,11 +53,11 @@ Arrangeは、入力された音を聞きながら音を作り、録音し、時�
 
 #### Play Surface
 
-Play Surfaceは、Timelineを見ながら選択中のInstrument Trackを演奏するArrangeの下部パネルである。Keyboard／Drum Pads、Octave、Velocity、Computer Keyboard入力を提供し、Record Armは自動変更しない。
+Play Surfaceは、Timelineを見ながらFocused Instrument Trackを演奏するための領域である。Keyboard／Drum Pads、Octave、Velocity、Computer Keyboard入力を提供し、Record Armは自動変更しない。
 
 - FocusとObject Selectionを分離し、MIDI Clipを選択しても演奏先を維持する
 - Armedかつ録音中のFocused Trackだけへ演奏MIDIを記録する
-- TimelineとMIDI Editorを同じLower Panelで切り替える
+- MIDI EditorとPlay Surfaceは独立して開閉でき、同時に使える
 
 ### 2.2 Design
 
@@ -168,24 +168,9 @@ flowchart TD
 
 ## 5. 画面構成
 
-制作画面は、Global Bar、Browser、Main Workspace、Inspector、Transportで構成する。
+共通の画面骨格は [共通画面構造](ui-ux-design/application-layout.md) で定義する。Arrange では Browser、Properties、Timeline、Detail Area、Play Surface が同じセッションを参照し、選択・編集・演奏の文脈を保ったまま連携する。
 
-```text
-┌──────────────────────────── Global Bar ─────────────────────────────┐
-│ Session ▾  ● Saved   ↶ ↷     Arrange  Design        Audio ●  ■ │
-├──────────────┬────────────────────────────────────┬─────────────────┤
-│   Browser    │          Main Workspace            │    Inspector    │
-├──────────────┴────────────────────────────────────┴─────────────────┤
-│                         Transport                                   │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-| 画面部分   | 役割                                                   |
-| ---------- | ------------------------------------------------------ |
-| Global Bar | セッション名、保存状態、音声状態、安全操作、検索、設定 |
-| Browser    | 素材とプラグインを探し、制作領域へ投入する             |
-| Inspector  | 選択した対象の詳細と編集項目を表示する                 |
-| Transport  | 再生、停止、録音、位置、テンポ、ループを操作する       |
+Focused Instrument Track は Play Surface から演奏できる。MIDI Editor と Play Surface は同時に利用できるため、MIDI の編集とライブ入力を切り替えずに確認できる。
 
 選択、ドラッグ、試聴、取り消し、エラー表示の意味は、制作領域が変わっても統一する。
 
@@ -193,10 +178,10 @@ flowchart TD
 
 音声設定は、触る頻度と対象で二層に分ける。
 
-| 層               | 内容                                                  | 場所                                  |
-| ---------------- | ----------------------------------------------------- | ------------------------------------- |
-| デバイス設定     | Driver、Sample Rate、Buffer、入出力機器、プローブ診断 | Global BarのAudio状態から開くSettings |
-| 音楽上の入力選択 | どの入力チャンネルをどのトラックで使うか、監視の状態  | トラックヘッダーとインスペクタ        |
+| 層               | 内容                                                  | 場所                                          |
+| ---------------- | ----------------------------------------------------- | --------------------------------------------- |
+| デバイス設定     | Driver、Sample Rate、Buffer、入出力機器、プローブ診断 | Global Control BarのAudio状態から開くSettings |
+| 音楽上の入力選択 | どの入力チャンネルをどのトラックで使うか、監視の状態  | トラックヘッダーとProperties                  |
 
 設定変更時は安全にMuteし、適用された実効値を表示する。入力選択は演奏中に切り替えられる。
 
@@ -207,7 +192,7 @@ flowchart TD
 | 波形編集・信号生成・音源化・分析・参照比較・音源分離 | Design                                            |
 | 録音操作                                             | Arrange（Play Surfaceからも同じ状態で利用できる） |
 | AI支援                                               | 独立領域にせず、選択中のArrange、Designを補助する |
-| Library / Inspector                                  | 二領域で共有する                                  |
+| Browser / Properties                                 | 二領域で共有する                                  |
 | 未完成機能                                           | 利用可能な機能と同じ強さで表示しない              |
 
 ## 6. 原則と範囲

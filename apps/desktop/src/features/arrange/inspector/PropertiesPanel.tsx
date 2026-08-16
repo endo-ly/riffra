@@ -6,9 +6,9 @@ import { MidiClipInspector } from './MidiClipInspector';
 import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
-import styles from './InspectorPanel.module.css';
+import styles from './PropertiesPanel.module.css';
 
-interface InspectorPanelProps {
+interface PropertiesPanelProps {
   audio: AudioStatus;
   recordingCommandPending: boolean;
   session: CreativeSession;
@@ -24,7 +24,7 @@ interface InspectorPanelProps {
   api: ArrangeInspectorApi;
 }
 
-export function InspectorPanel(props: InspectorPanelProps) {
+export function PropertiesPanel(props: PropertiesPanelProps) {
   const selectedTrackId =
     props.arrangeSelection.kind === 'track' ? props.arrangeSelection.trackId : undefined;
   const selectedTrack = props.session.arrangement.tracks.find(
@@ -42,13 +42,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const selectedMidiClipCount = selectedMidiClipIds.length;
   const setSelectedClipIds = (clipIds: string[]) =>
     props.setArrangeSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
-  const title = getInspectorTitle(
+  const title = getPropertiesTitle(
     Boolean(selectedTrack),
     selectedAudioClipCount,
     selectedMidiClipCount,
   );
   return (
-    <aside className={styles.panel} data-inspector-panel>
+    <aside className={styles.panel} aria-label="Properties" data-properties-panel>
       <div className={styles.heading}>
         <span>{title}</span>
       </div>
@@ -148,7 +148,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   );
 }
 
-function getInspectorTitle(
+function getPropertiesTitle(
   hasSelectedTrack: boolean,
   audioClipCount: number,
   midiClipCount: number,
@@ -159,5 +159,5 @@ function getInspectorTitle(
   if (midiClipCount > 0 && audioClipCount === 0)
     return midiClipCount === 1 ? 'MIDI CLIP' : 'MIDI CLIPS';
   if (audioClipCount > 0 || midiClipCount > 0) return 'CLIPS';
-  return 'INSPECTOR';
+  return 'PROPERTIES';
 }

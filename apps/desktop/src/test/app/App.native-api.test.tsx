@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
@@ -21,11 +21,58 @@ describe('App native boundary', () => {
     const api = new FakeNativeApi();
 
     await renderApp(api);
+    expect(
+      screen.getByRole('button', { name: 'Play' }).closest('[data-global-control-bar]'),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^MUTE$/ }));
 
     await waitFor(() => expect(api.emergencyMuteRequests).toEqual([true]));
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+  });
+
+  it('keeps Browser and Properties mounted in the left column', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+
+    expect(screen.getByRole('complementary', { name: 'Browser' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Properties' })).toBeInTheDocument();
+    expect(document.querySelector('[data-navigation-rail]')).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Inspector' })).not.toBeInTheDocument();
+  });
+
+  it('supports both left column resize handles from the keyboard', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+
+    const leftColumnHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse left column',
+    });
+    fireEvent.keyDown(leftColumnHandle, { key: 'ArrowRight' });
+    expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '288');
+
+    const propertiesHandle = screen.getByRole('separator', {
+      name: 'Resize Browser and Properties',
+    });
+    fireEvent.keyDown(propertiesHandle, { key: 'ArrowUp' });
+    expect(propertiesHandle).toHaveAttribute('aria-valuenow', '248');
+  });
+
+  it('removes a collapsed left column from the interaction tree', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+
+    const leftColumn = screen.getByRole('complementary', { name: 'Left column' });
+    const leftColumnHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse left column',
+    });
+    for (let step = 0; step < 29; step += 1) {
+      fireEvent.keyDown(leftColumnHandle, { key: 'ArrowLeft' });
+    }
+
+    expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '0');
+    expect(leftColumn).toHaveAttribute('aria-hidden', 'true');
+    expect(leftColumn).toHaveAttribute('inert');
   });
 
   it('shows a runtime restart notification without replaying session commands', async () => {

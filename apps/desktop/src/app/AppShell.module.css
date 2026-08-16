@@ -1,28 +1,27 @@
-.logoMark {
-  width: 28px;
-  height: 28px;
-  display: inline-grid;
-  place-content: center;
-  border-radius: 7px;
-  color: #071015;
-  font-weight: 800;
-  font-size: 15px;
-  background: linear-gradient(145deg, #9ff6ed, #49b8dd 65%, #477ce1);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.55),
-    0 0 28px rgba(85, 217, 232, 0.18);
-}
-
 .appShell {
   width: 100%;
   height: 100%;
   min-width: 1000px;
   display: grid;
   position: relative;
-  grid-template-columns: var(--library-width) minmax(0, 1fr) var(--inspector-width);
-  grid-template-rows: var(--global-height) minmax(0, 1fr) var(--transport-height);
-  grid-template-areas: 'global global global' 'library workspace inspector' 'transport transport transport';
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--global-height) minmax(0, 1fr) auto;
+  grid-template-areas:
+    'global'
+    'body'
+    'play-surface';
   background: var(--base);
+}
+
+.appBody {
+  grid-area: body;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--left-column-width) minmax(0, 1fr);
+  grid-template-areas: 'left workspace';
+  overflow: hidden;
 }
 
 .workspace {
@@ -34,11 +33,18 @@
   background: radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), #0b0e12;
 }
 
+.playSurfaceHost {
+  grid-area: play-surface;
+  min-width: 0;
+  min-height: 0;
+}
+
 .panelResizeHandle {
   position: absolute;
   z-index: 8;
-  top: var(--global-height);
-  bottom: var(--transport-height);
+  top: 0;
+  bottom: 0;
+  left: var(--left-column-width);
   width: 8px;
   transform: translateX(-50%);
   cursor: col-resize;
@@ -64,21 +70,8 @@
   background: var(--cyan);
 }
 
-.panelResizeHandleLibrary {
-  left: var(--library-width);
-}
-
-.panelResizeHandleInspector {
-  right: var(--inspector-width);
-  transform: translateX(50%);
-}
-
-.panelResizeHandleLibrary.collapsed {
+.panelResizeHandle.collapsed {
   transform: translateX(0);
-}
-
-.panelResizeHandleInspector.collapsed {
-  transform: translateX(-100%);
 }
 
 .isPanelResizing,
@@ -87,8 +80,17 @@
   user-select: none !important;
 }
 
-@media (max-width: 1280px) {
-  .appShell {
-    grid-template-columns: var(--library-width) minmax(0, 1fr) var(--inspector-width);
-  }
+.logoMark {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-content: center;
+  border-radius: 7px;
+  color: #071015;
+  font-weight: 800;
+  font-size: 15px;
+  background: linear-gradient(145deg, #9ff6ed, #49b8dd 65%, #477ce1);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.55),
+    0 0 28px rgba(85, 217, 232, 0.18);
 }

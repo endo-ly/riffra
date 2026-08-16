@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { InspectorPanel } from './InspectorPanel';
+import { PropertiesPanel } from './PropertiesPanel';
 import { defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
@@ -11,7 +11,7 @@ import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 afterEach(cleanup);
 
 function renderPanel(
-  selection: Parameters<typeof InspectorPanel>[0]['arrangeSelection'],
+  selection: Parameters<typeof PropertiesPanel>[0]['arrangeSelection'],
   initialSession = defaultSession(),
 ) {
   const session = initialSession;
@@ -30,7 +30,7 @@ function renderPanel(
   });
   const api = new FakeNativeApi({ bootstrapState: { session } });
   render(
-    <InspectorPanel
+    <PropertiesPanel
       audio={fakeAudioStatus()}
       recordingCommandPending={false}
       session={session}
@@ -48,18 +48,18 @@ function renderPanel(
   );
 }
 
-describe('InspectorPanel', () => {
+describe('PropertiesPanel', () => {
   it('shows the selected Track title without a close button', () => {
     renderPanel({ kind: 'track', trackId: 'track:audio' });
 
     expect(screen.getAllByText('TRACK')[0]).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Close Inspector/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Close Properties/ })).not.toBeInTheDocument();
   });
 
   it('shows the empty Arrange title without a clip selection', () => {
     renderPanel({ kind: 'none' });
 
-    expect(screen.getByText('INSPECTOR')).toBeInTheDocument();
+    expect(screen.getByText('PROPERTIES')).toBeInTheDocument();
   });
 
   it('limits mixed clip selections to shared clip actions', () => {

@@ -15,7 +15,7 @@
 }
 .runtimeBanner {
   position: fixed;
-  top: 58px;
+  top: calc(var(--global-height) + 10px);
   left: 50%;
   z-index: 10;
   display: flex;
@@ -44,7 +44,7 @@
 
 .shellNotice {
   position: fixed;
-  top: 60px;
+  top: calc(var(--global-height) + 4px);
   left: 50%;
   z-index: 10;
   display: grid;
@@ -88,7 +88,7 @@
 }
 
 .safeModeNotice ~ .recoveryNotice {
-  top: 150px;
+  top: calc(var(--global-height) + 94px);
 }
 
 .recoveryNotice strong {
@@ -101,15 +101,14 @@
   gap: 4px 10px;
 }
 .muteBanner {
-  position: fixed;
-  left: 50%;
-  bottom: 91px;
+  position: absolute;
+  top: 12px;
+  right: 16px;
   z-index: 12;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 13px;
-  transform: translateX(-50%);
   color: #fff;
   font-size: 9px;
   font-weight: 700;

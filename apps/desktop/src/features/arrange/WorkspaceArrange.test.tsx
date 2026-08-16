@@ -28,6 +28,8 @@ function Harness({
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
+  const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
+  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   return (
     <>
       <WorkspaceArrange
@@ -37,10 +39,12 @@ function Harness({
         setSelection={setSelection}
         api={api}
         audio={api.audio}
-        focusedTrackId={null}
-        onFocusTrack={() => undefined}
+        focusedTrackId={focusedTrackId}
+        onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
+        playSurfaceHost={playSurfaceHost}
       />
+      <div ref={setPlaySurfaceHost} data-play-surface-host />
       <ToastStack />
     </>
   );
@@ -512,14 +516,23 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(container.querySelector('[data-clip-id="clip:midi-selection-b"]')!, {
       ctrlKey: true,
     });
-    expect(screen.getByText('MIDI Selection · MIDI Selection A')).toBeInTheDocument();
+    expect(screen.getByLabelText('MIDI Editor')).toHaveAttribute(
+      'data-midi-editor-clip-id',
+      'clip:midi-selection-a',
+    );
 
     fireEvent.click(container.querySelector('[data-clip-id="clip:audio-selection"]')!);
     expect(screen.getByLabelText('MIDI Editor')).toBeInTheDocument();
-    expect(screen.getByText('MIDI Selection · MIDI Selection A')).toBeInTheDocument();
+    expect(screen.getByLabelText('MIDI Editor')).toHaveAttribute(
+      'data-midi-editor-clip-id',
+      'clip:midi-selection-a',
+    );
 
     fireEvent.click(container.querySelector('[data-clip-id="clip:midi-selection-b"]')!);
-    expect(screen.getByText('MIDI Selection · MIDI Selection B')).toBeInTheDocument();
+    expect(screen.getByLabelText('MIDI Editor')).toHaveAttribute(
+      'data-midi-editor-clip-id',
+      'clip:midi-selection-b',
+    );
   });
 
   it('uses Pointer blank clicks for selection and Draw drags for note creation', async () => {
@@ -1655,7 +1668,7 @@ describe('WorkspaceArrange', () => {
     expect(api.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(2);
   });
 
-  it('seeks from the MIDI ruler and supports lower panel collapse and maximize', async () => {
+  it('seeks from the MIDI ruler and supports detail area resize, collapse, maximize, and close', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
       id: 'track:navigation',
@@ -1697,21 +1710,74 @@ describe('WorkspaceArrange', () => {
       configurable: true,
       value: 600,
     });
-    const resizeHandle = screen.getByRole('button', { name: 'Resize lower panel' });
+    const resizeHandle = screen.getByRole('button', { name: 'Resize detail area' });
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: -200 });
     fireEvent.pointerUp(window, { clientY: -200 });
-    expect(screen.getByRole('region', { name: 'Arrange lower panel' })).toHaveStyle(
-      '--panel-height: 558px',
+    expect(screen.getByRole('region', { name: 'Arrange detail area' })).toHaveStyle(
+      '--detail-height: 558px',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Maximize lower panel' }));
-    expect(screen.getByRole('button', { name: 'Restore lower panel size' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse lower panel' }));
-    expect(screen.getByRole('button', { name: 'Restore lower panel' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Maximize lower panel' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Restore lower panel' }));
-    expect(screen.getByRole('button', { name: 'Collapse lower panel' })).toBeInTheDocument();
+    const detailArea = screen.getByRole('region', { name: 'Arrange detail area' });
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse detail area' }));
+    expect(screen.getByRole('button', { name: 'Restore detail area' })).toBeInTheDocument();
+    expect(detailArea.querySelector('[hidden]')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore detail area' }));
+    expect(detailArea.querySelector('[hidden]')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Maximize detail area' }));
+    expect(screen.getByRole('button', { name: 'Restore detail area size' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail area' }));
+    expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the Play Surface independent from the MIDI detail area', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:play-surface',
+      name: 'Play Surface Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:play-surface',
+      name: 'Play Surface Clip',
+      trackId: 'track:play-surface',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Play Surface' }));
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Compact Play Surface' }));
+    expect(screen.getByRole('button', { name: 'Expand Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Play Surface' }));
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:play-surface"]')!);
+    expect(screen.getByRole('region', { name: 'Arrange detail area' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Play Surface Instrument · Play Surface Clip'),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail area' }));
+    expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Play Surface' }));
+    expect(screen.queryByRole('region', { name: 'Play Surface' })).not.toBeInTheDocument();
   });
 
   it('routes Space to the shared transport controller from the Arrange editor', async () => {

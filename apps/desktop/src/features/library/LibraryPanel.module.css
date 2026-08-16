@@ -4,9 +4,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  grid-area: library;
   background: var(--panel);
-  border-right: 1px solid var(--border);
   user-select: none;
   overflow: hidden;
 }
@@ -104,6 +102,8 @@
   flex: 1;
   overflow: auto;
   padding: 12px 8px;
+  scrollbar-color: #313b45 #0b0f13;
+  scrollbar-width: thin;
 }
 .librarySearchResults {
   margin: 8px 0 12px;

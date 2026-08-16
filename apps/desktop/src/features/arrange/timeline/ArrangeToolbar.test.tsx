@@ -8,7 +8,7 @@ import { ArrangeToolbar } from './ArrangeToolbar';
 afterEach(cleanup);
 
 describe('ArrangeToolbar', () => {
-  it('keeps side-panel controls and timebase controls out of the toolbar', () => {
+  it('keeps global and track controls out of the timeline toolbar', () => {
     render(
       <ArrangeToolbar
         tool="select"
@@ -27,7 +27,6 @@ describe('ArrangeToolbar', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: /Library|Inspector/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Project BPM')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Time signature')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Track height')).not.toBeInTheDocument();
