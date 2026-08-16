@@ -6,7 +6,7 @@
   grid-template-columns: 44px minmax(0, 1fr);
   gap: 10px;
   padding: 14px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 .art {
   width: 44px;
@@ -23,7 +23,7 @@
   width: 100%;
   margin: 4px 0 3px;
   padding: 0;
-  color: #e3ebf1;
+  color: var(--color-text-primary);
   font-size: 11px;
   font-weight: 650;
   background: transparent;
@@ -33,9 +33,9 @@
 .identity small {
   display: block;
   overflow: hidden;
-  color: var(--faint);
+  color: var(--color-text-muted);
   font:
-    var(--font-micro) 'DM Mono',
+    var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   text-overflow: ellipsis;
@@ -43,7 +43,7 @@
 }
 .section {
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 .section header {
   display: flex;
@@ -52,52 +52,52 @@
   margin-bottom: 11px;
 }
 .section header strong {
-  color: #bac4cd;
+  color: var(--color-text-secondary);
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 .section header span {
-  color: var(--faint);
+  color: var(--color-text-muted);
   font:
-    var(--font-micro) 'DM Mono',
+    var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
 }
 .section label,
 .readout {
-  min-height: var(--control-normal);
+  min-height: var(--size-control-normal);
   display: grid;
   grid-template-columns: 55px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  color: var(--muted);
-  font-size: var(--font-micro);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
 }
 .section input[type='number'] {
   width: 100%;
   min-width: 0;
-  min-height: var(--control-normal);
+  min-height: var(--size-control-normal);
   padding: 5px 7px;
-  color: #cfd8df;
+  color: var(--color-text-primary);
   font:
-    var(--font-small) 'DM Mono',
+    var(--font-size-small) 'DM Mono',
     Consolas,
     monospace;
-  background: #0a0e12;
-  border: 1px solid #28323b;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 .section input[type='range'] {
   width: 100%;
   height: 3px;
-  accent-color: var(--cyan);
+  accent-color: var(--color-accent-primary);
 }
 .section output,
 .readout strong {
-  color: #aeb9c3;
+  color: var(--color-text-secondary);
   font:
-    var(--font-small) 'DM Mono',
+    var(--font-size-small) 'DM Mono',
     Consolas,
     monospace;
   font-weight: 500;
@@ -110,40 +110,40 @@
 }
 .toggles button,
 .actions button {
-  min-height: var(--control-normal);
+  min-height: var(--size-control-normal);
   padding: 0 10px;
-  color: #9ca7b1;
-  font-size: var(--font-micro);
-  background: #141a20;
-  border: 1px solid #2a333d;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 .toggles button {
   flex: 1;
 }
 .toggles .active {
-  color: #071216;
-  background: var(--cyan);
-  border-color: var(--cyan);
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
 }
 .actions {
   flex-wrap: wrap;
   padding-bottom: 14px;
 }
 .actions .primary {
-  color: #d8ffff;
+  color: var(--color-text-primary);
   background: rgba(85, 217, 232, 0.11);
   border-color: rgba(85, 217, 232, 0.45);
 }
 .actions .danger {
-  color: #e89191;
+  color: var(--color-status-danger);
   margin-left: auto;
 }
 .message {
   margin: 0;
   padding: 9px 12px 12px;
-  color: #8a96a0;
-  font-size: var(--font-micro);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
   line-height: 1.5;
   word-break: break-word;
 }

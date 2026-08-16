@@ -1,16 +1,17 @@
 .editor {
+  composes: scope from './MidiEditorTokens.module.css';
   height: 100%;
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  color: var(--text, #dbe8ec);
-  background: var(--panel, #0d151a);
+  color: var(--color-text-primary);
+  background: var(--color-bg-panel);
 }
 
 .editor:focus-visible {
-  outline: 1px solid var(--cyan);
+  outline: 1px solid var(--color-accent-primary);
   outline-offset: -1px;
 }
 
@@ -20,7 +21,7 @@
   display: grid;
   grid-template-rows: 32px minmax(0, 1fr) 88px;
   overflow: hidden;
-  background: #080d11;
+  background: var(--color-bg-app);
 }
 
 .rulerViewport {
@@ -28,8 +29,8 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #10181d;
-  border-bottom: 1px solid var(--border-bright, #3a4d57);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-strong);
 }
 
 .rulerContent {
@@ -44,8 +45,8 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: #080d11;
-  scrollbar-color: #3b4d57 #0c1216;
+  background: var(--color-bg-app);
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
   scrollbar-width: thin;
 }
 
@@ -54,12 +55,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--muted, #9aadb5);
-  font-size: var(--font-micro, 9px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: #111b21;
-  border-right: 1px solid var(--border-bright, #3a4d57);
+  background: var(--color-bg-surface);
+  border-right: 1px solid var(--color-border-strong);
 }
 
 .rulerViewport > .laneLabel,
@@ -74,23 +75,23 @@
   flex: 0 0 auto;
   height: 32px;
   cursor: crosshair;
-  background: #10181d;
+  background: var(--color-bg-panel);
 }
 
 .editorBarMark {
   position: absolute;
   inset: 0 auto 0 0;
   width: 1px;
-  background: rgba(211, 232, 235, 0.24);
+  background: var(--midi-grid-bar);
 }
 
 .editorBarMark strong {
   position: absolute;
   top: 7px;
   left: 5px;
-  color: #c5d7da;
+  color: var(--color-text-primary);
   font:
-    600 var(--font-micro, 9px) 'DM Mono',
+    600 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   white-space: nowrap;
@@ -101,7 +102,7 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(211, 232, 235, 0.1);
+  background: var(--midi-grid-beat);
 }
 
 .roll {
@@ -116,8 +117,8 @@
   left: 0;
   flex: 0 0 48px;
   overflow: hidden;
-  background: #111b21;
-  border-right: 1px solid #3a4d57;
+  background: var(--color-bg-surface);
+  border-right: 1px solid var(--color-border-default);
 }
 
 .pianoKey {
@@ -125,7 +126,7 @@
   left: 0;
   width: 100%;
   font:
-    var(--font-micro) 'DM Mono',
+    var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   font-variant-numeric: tabular-nums;
@@ -160,7 +161,7 @@
 .lane {
   position: relative;
   overflow: hidden;
-  background: #0a1014;
+  background: var(--color-bg-app);
 }
 
 .editorPlayhead {
@@ -170,7 +171,7 @@
   bottom: 0;
   width: 1px;
   pointer-events: none;
-  background: var(--red, #ee5a67);
+  background: var(--color-status-danger);
   box-shadow: 0 0 5px rgba(238, 90, 103, 0.55);
 }
 
@@ -188,7 +189,7 @@
   min-width: 4px;
   box-sizing: border-box;
   background: rgba(141, 116, 208, 0.7);
-  border: 1px solid #c5b5f5;
+  border: 1px solid var(--midi-note-border);
   border-radius: 3px;
   pointer-events: none;
 }
@@ -202,20 +203,20 @@
   border-bottom: 1px solid rgba(198, 220, 225, 0.07);
   color: rgba(187, 211, 216, 0.55);
   font:
-    var(--font-micro) 'DM Mono',
+    var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   pointer-events: none;
 }
 
 .pitchBlack {
-  background: #0d151a;
+  background: var(--color-bg-control);
 }
 
 .pitchOctave {
   background: #17242b;
   border-bottom-color: rgba(198, 220, 225, 0.18);
-  color: #c4e0e3;
+  color: var(--color-text-primary);
 }
 
 .barLine,
@@ -230,17 +231,17 @@
 
 .barLine {
   z-index: 3;
-  background: rgba(211, 232, 235, 0.23);
+  background: var(--midi-grid-bar);
 }
 
 .beatLine {
   z-index: 2;
-  background: rgba(211, 232, 235, 0.12);
+  background: var(--midi-grid-beat);
 }
 
 .subdivisionLine {
   z-index: 1;
-  background: rgba(211, 232, 235, 0.055);
+  background: var(--midi-grid-subdivision);
 }
 
 .note {
@@ -248,8 +249,8 @@
   z-index: 3;
   display: block;
   min-width: 4px;
-  background: #8069c6;
-  border: 1px solid #c5b5f5;
+  background: var(--midi-note);
+  border: 1px solid var(--midi-note-border);
   border-radius: 3px;
   cursor: grab;
   user-select: none;
@@ -266,9 +267,9 @@
 
 .note.selected {
   background: #8d74d0;
-  border-color: #bfeff1;
+  border-color: var(--color-selection-highlight);
   box-shadow:
-    0 0 0 1px #bfeff1,
+    0 0 0 1px var(--color-selection-highlight),
     0 0 8px rgba(85, 217, 232, 0.28);
 }
 
@@ -290,7 +291,7 @@
   position: relative;
   min-width: max-content;
   height: 88px;
-  border-top: 1px solid var(--border, #293840);
+  border-top: 1px solid var(--color-border-default);
 }
 
 .velocityViewport {
@@ -298,7 +299,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #0b1318;
+  background: var(--color-bg-panel);
 }
 
 .velocityContent {
@@ -312,7 +313,7 @@
 .velocityLane {
   position: relative;
   overflow: hidden;
-  background: #0b1318;
+  background: var(--color-bg-panel);
 }
 
 .velocityBarLine,
@@ -325,11 +326,11 @@
 }
 
 .velocityBarLine {
-  background: rgba(211, 232, 235, 0.17);
+  background: var(--midi-grid-velocity-bar);
 }
 
 .velocityBeatLine {
-  background: rgba(211, 232, 235, 0.07);
+  background: var(--midi-grid-velocity-beat);
 }
 
 .velocityBar {
@@ -346,7 +347,7 @@
 
 .velocityBar:hover,
 .velocityBar.velocitySelected {
-  background: var(--cyan, #55d9e8);
+  background: var(--color-accent-primary);
   border-color: #d5ffff;
 }
 
@@ -355,7 +356,7 @@
   display: grid;
   place-content: center;
   padding: 24px;
-  color: #a3b3ba;
+  color: var(--color-text-muted);
   font-size: 11px;
   text-align: center;
 }

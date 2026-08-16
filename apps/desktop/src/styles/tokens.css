@@ -1,0 +1,52 @@
+:root {
+  /* Typography */
+  --font-size-micro: 9px;
+  --font-size-small: 10px;
+  --font-size-control: 11px;
+  --font-size-emphasis: 12px;
+  --font-size-readout: 12px;
+
+  /* Background roles */
+  --color-bg-app: #090b0e;
+  --color-bg-panel: #0f1318;
+  --color-bg-surface: #151a21;
+  --color-bg-surface-raised: #1a2028;
+  --color-bg-control: #0d1216;
+  --color-bg-control-raised: #141a20;
+  --color-bg-control-hover: #1c2b33;
+  --color-bg-overlay: #151f26;
+
+  /* Border roles */
+  --color-border-subtle: #252c35;
+  --color-border-default: #303943;
+  --color-border-strong: #394550;
+
+  /* Text roles */
+  --color-text-primary: #dbe8ec;
+  --color-text-strong: #edf7f8;
+  --color-text-secondary: #aeb9c3;
+  --color-text-muted: #7d8794;
+  --color-text-disabled: #525c68;
+  --color-text-on-accent: #071216;
+
+  /* Accent and status roles */
+  --color-accent-primary: #55d9e8;
+  --color-accent-positive: #45d6b3;
+  --color-status-warning: #e7b55d;
+  --color-status-danger: #ee5a67;
+  --color-selection-accent: #f2a33a;
+  --color-selection-highlight: #bfeff1;
+  --color-scrollbar-thumb: #313b45;
+  --color-scrollbar-track: #0b0f13;
+
+  /* Elevation */
+  --shadow-overlay: 0 18px 52px rgba(0, 0, 0, 0.34);
+
+  /* Application geometry */
+  --size-control-dense: 26px;
+  --size-control-normal: 28px;
+  --size-toolbar: 40px;
+  --size-global-control-bar: 56px;
+  --size-play-surface-compact: 48px;
+  --size-play-surface-expanded: 220px;
+}

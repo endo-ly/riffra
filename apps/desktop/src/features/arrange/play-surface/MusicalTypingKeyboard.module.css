@@ -1,8 +1,8 @@
 .keyboard {
   position: relative;
   padding: 12px 0 0;
-  background: linear-gradient(180deg, #0a1115 0%, #0d151a 100%);
-  border: 1px solid #30414b;
+  background: linear-gradient(180deg, var(--color-bg-app) 0%, var(--color-bg-surface) 100%);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
@@ -108,8 +108,8 @@
     box-shadow 60ms ease-out;
 }
 .active::after {
-  background: var(--teal);
-  box-shadow: 0 0 6px var(--teal);
+  background: var(--color-accent-positive);
+  box-shadow: 0 0 6px var(--color-accent-positive);
 }
 .keyLetter {
   font-size: 10px;
@@ -126,7 +126,7 @@
 .keyNote {
   font-size: 10px;
   font-weight: 600;
-  color: var(--teal);
+  color: var(--color-accent-positive);
   font-variant-numeric: tabular-nums;
   opacity: 0.65;
 }

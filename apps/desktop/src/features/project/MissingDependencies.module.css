@@ -9,11 +9,11 @@
   gap: 10px;
   overflow: auto;
   padding: 12px;
-  color: #d9e4ec;
-  background: #151b22;
-  border: 1px solid #3b4a57;
+  color: var(--color-text-primary);
+  background: var(--color-bg-overlay);
+  border: 1px solid var(--color-border-strong);
   border-radius: 7px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-overlay);
   font-size: 9px;
 }
 .missingDependencies header {
@@ -22,7 +22,7 @@
 }
 .missingDependencies header p {
   margin: 0;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   line-height: 1.45;
 }
 .missingDependencies ul {
@@ -36,8 +36,8 @@
   display: grid;
   gap: 8px;
   padding: 9px;
-  background: #0f141a;
-  border: 1px solid var(--border);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 .missingDetail {
@@ -46,14 +46,14 @@
   min-width: 0;
 }
 .missingDetail strong {
-  color: #edf4f8;
+  color: var(--color-text-strong);
   font-size: 10px;
 }
 .missingKind,
 .missingPath,
 .missingUsedBy {
   overflow-wrap: anywhere;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 8px;
 }
 .missingActions {
@@ -67,10 +67,10 @@
   flex: 1 1 150px;
   height: 28px;
   padding: 0 7px;
-  color: #e7edf2;
+  color: var(--color-text-primary);
   font-size: 8px;
-  background: #0b0f13;
-  border: 1px solid var(--border);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 .missingActions button {

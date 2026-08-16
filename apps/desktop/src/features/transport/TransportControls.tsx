@@ -144,7 +144,8 @@ export function TransportControls(props: TransportControlsProps) {
     <div className={styles.transport}>
       <div className={styles.transportLeft}>
         <button
-          className={session.arrangement.loopRange.enabled ? 'active' : ''}
+          className={session.arrangement.loopRange.enabled ? styles.toggleActive : undefined}
+          aria-pressed={session.arrangement.loopRange.enabled}
           aria-label="Toggle loop"
           onClick={() => {
             const range = session.arrangement.loopRange;
@@ -189,7 +190,7 @@ export function TransportControls(props: TransportControlsProps) {
           <Icon name="record" />
         </button>
         <button
-          className={session.settings.metronomeEnabled ? 'active' : ''}
+          className={session.settings.metronomeEnabled ? styles.toggleActive : undefined}
           aria-pressed={session.settings.metronomeEnabled}
           aria-label="Toggle metronome"
           title="Metronome"
@@ -204,7 +205,11 @@ export function TransportControls(props: TransportControlsProps) {
           <Icon name="metronome" />
         </button>
         <button
-          className={clsx(styles.countInButton, session.settings.countInBeats > 0 && 'active')}
+          className={clsx(
+            styles.countInButton,
+            session.settings.countInBeats > 0 && styles.toggleActive,
+          )}
+          aria-pressed={session.settings.countInBeats > 0}
           aria-label={`Count-in: ${describeCountIn(session)}`}
           title={`Count-in: ${describeCountIn(session)}`}
           onClick={() =>

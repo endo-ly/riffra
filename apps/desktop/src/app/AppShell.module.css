@@ -5,12 +5,12 @@
   display: grid;
   position: relative;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--global-height) minmax(0, 1fr) auto;
+  grid-template-rows: var(--size-global-control-bar) minmax(0, 1fr) auto;
   grid-template-areas:
     'global'
     'body'
     'play-surface';
-  background: var(--base);
+  background: var(--color-bg-app);
 }
 
 .appBody {
@@ -19,7 +19,7 @@
   min-height: 0;
   position: relative;
   display: grid;
-  grid-template-columns: var(--left-column-width) minmax(0, 1fr);
+  grid-template-columns: var(--layout-left-column-width) minmax(0, 1fr);
   grid-template-areas: 'left workspace';
   overflow: hidden;
 }
@@ -30,7 +30,8 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), #0b0e12;
+  background:
+    radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), var(--color-bg-app);
 }
 
 .playSurfaceHost {
@@ -44,7 +45,7 @@
   z-index: 8;
   top: 0;
   bottom: 0;
-  left: var(--left-column-width);
+  left: var(--layout-left-column-width);
   width: 8px;
   transform: translateX(-50%);
   cursor: col-resize;
@@ -67,7 +68,7 @@
 .panelResizeHandle:hover::after,
 .panelResizeHandle:focus-visible::after,
 .isPanelResizing .panelResizeHandle::after {
-  background: var(--cyan);
+  background: var(--color-accent-primary);
 }
 
 .panelResizeHandle.collapsed {
@@ -86,10 +87,15 @@
   display: inline-grid;
   place-content: center;
   border-radius: 7px;
-  color: #071015;
+  color: var(--color-text-on-accent);
   font-weight: 800;
   font-size: 15px;
-  background: linear-gradient(145deg, #9ff6ed, #49b8dd 65%, #477ce1);
+  background: linear-gradient(
+    145deg,
+    var(--color-selection-highlight),
+    var(--color-accent-primary) 65%,
+    var(--color-accent-positive)
+  );
   box-shadow:
     inset 0 1px rgba(255, 255, 255, 0.55),
     0 0 28px rgba(85, 217, 232, 0.18);

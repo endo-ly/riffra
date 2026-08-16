@@ -6,8 +6,8 @@
   gap: 5px;
   margin-top: 8px;
   padding: 10px;
-  background: linear-gradient(180deg, #0a1115 0%, #0d151a 100%);
-  border: 1px solid #30414b;
+  background: linear-gradient(180deg, var(--color-bg-app) 0%, var(--color-bg-surface) 100%);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   box-shadow:
     inset 0 2px 12px rgba(0, 0, 0, 0.6),
@@ -24,9 +24,14 @@
   justify-content: center;
   gap: 3px;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border-default);
   border-radius: 6px;
-  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 70%, #0e1217 100%);
+  background: linear-gradient(
+    180deg,
+    var(--color-bg-surface-raised) 0%,
+    var(--color-bg-surface) 70%,
+    #0e1217 100%
+  );
   color: #d4e1e4;
   cursor: pointer;
   user-select: none;
@@ -42,8 +47,8 @@
     border-color 50ms ease-out;
 }
 .pad:hover {
-  border-color: var(--border-bright);
-  background: linear-gradient(180deg, #283842 0%, var(--surface-2) 70%, #151e24 100%);
+  border-color: var(--color-border-strong);
+  background: linear-gradient(180deg, #283842 0%, var(--color-bg-surface-raised) 70%, #151e24 100%);
 }
 .pad:active {
   transform: translateY(1px);
@@ -52,7 +57,7 @@
   position: absolute;
   top: 4px;
   left: 6px;
-  font-size: var(--font-micro);
+  font-size: var(--font-size-micro);
   opacity: 0.35;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.05em;
@@ -75,7 +80,7 @@
   position: absolute;
   bottom: 3px;
   right: 5px;
-  font-size: var(--font-micro);
+  font-size: var(--font-size-micro);
   opacity: 0.45;
   font-variant-numeric: tabular-nums;
 }
@@ -86,10 +91,10 @@
   --pad-accent: #4e8eff;
 }
 .hihat {
-  --pad-accent: #45d6b3;
+  --pad-accent: var(--color-accent-positive);
 }
 .tom {
-  --pad-accent: #e7b55d;
+  --pad-accent: var(--color-status-warning);
 }
 .cymbal {
   --pad-accent: #a47ce0;
@@ -100,8 +105,8 @@
 .active {
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--pad-accent) 40%, var(--surface-2)) 0%,
-    color-mix(in srgb, var(--pad-accent) 18%, var(--surface)) 60%,
+    color-mix(in srgb, var(--pad-accent) 40%, var(--color-bg-surface-raised)) 0%,
+    color-mix(in srgb, var(--pad-accent) 18%, var(--color-bg-surface)) 60%,
     color-mix(in srgb, var(--pad-accent) 8%, #0e1217) 100%
   );
   border-color: var(--pad-accent);

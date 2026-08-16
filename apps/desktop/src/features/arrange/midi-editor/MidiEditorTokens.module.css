@@ -1,0 +1,9 @@
+.scope {
+  --midi-grid-bar: rgba(211, 232, 235, 0.23);
+  --midi-grid-beat: rgba(211, 232, 235, 0.12);
+  --midi-grid-subdivision: rgba(211, 232, 235, 0.055);
+  --midi-grid-velocity-bar: rgba(211, 232, 235, 0.17);
+  --midi-grid-velocity-beat: rgba(211, 232, 235, 0.07);
+  --midi-note: #8069c6;
+  --midi-note-border: #c5b5f5;
+}

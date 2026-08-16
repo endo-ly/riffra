@@ -13,23 +13,23 @@
   display: grid;
   gap: 12px;
   padding: 18px;
-  color: #dbe8ec;
-  background: #151f26;
-  border: 1px solid #40525d;
+  color: var(--color-text-primary);
+  background: var(--color-bg-overlay);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
 }
 
 .dialog h2 {
   margin: 0;
-  color: #edf7f8;
-  font-size: var(--font-emphasis);
+  color: var(--color-text-strong);
+  font-size: var(--font-size-emphasis);
 }
 
 .dialog p {
   margin: 0;
-  color: #a8bac1;
-  font-size: var(--font-control);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
   line-height: 1.55;
   white-space: pre-line;
 }
@@ -41,23 +41,23 @@
 }
 
 .actions button {
-  min-height: var(--control-normal);
+  min-height: var(--size-control-normal);
   padding: 0 11px;
-  color: #b8c8ce;
-  font-size: var(--font-small);
-  background: #111a20;
-  border: 1px solid #354852;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
 .actions .confirm {
-  color: #071216;
-  background: var(--cyan);
-  border-color: var(--cyan);
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
 }
 
 .actions .danger {
-  color: #ffe8e5;
-  background: #7b2f2c;
-  border-color: #bd5a53;
+  color: var(--color-text-on-accent);
+  background: var(--color-status-danger);
+  border-color: var(--color-status-danger);
 }

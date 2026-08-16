@@ -6,7 +6,7 @@
   display: grid;
   gap: 9px;
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .sectionHeader {
@@ -17,27 +17,27 @@
 }
 
 .sectionHeader strong {
-  color: #bac4cd;
-  font-size: var(--font-micro);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
 }
 
 .field {
   display: grid;
   gap: 5px;
-  color: var(--muted);
-  font-size: var(--font-micro);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
 }
 
 .control {
   width: 100%;
   min-width: 0;
-  min-height: var(--control-normal);
+  min-height: var(--size-control-normal);
   padding: 0 7px;
-  color: #cfd8df;
-  font-size: var(--font-small);
-  background: #0a0e12;
-  border: 1px solid #28323b;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
@@ -48,8 +48,8 @@
   gap: 8px;
   min-width: 0;
   padding: 9px;
-  background: #0d1216;
-  border: 1px solid #28323b;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 
@@ -66,24 +66,24 @@
 }
 
 .instrumentRow strong {
-  color: #d6e0e6;
-  font-size: var(--font-small);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
 }
 
 .instrumentRow small {
   margin-top: 3px;
-  color: var(--faint);
-  font-size: var(--font-micro);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
 }
 
 .instrumentRow button,
 .actions button {
-  min-height: var(--control-dense);
+  min-height: var(--size-control-dense);
   padding: 0 8px;
-  color: #a9e6ea;
-  font-size: var(--font-micro);
-  background: rgba(85, 217, 232, 0.08);
-  border: 1px solid rgba(85, 217, 232, 0.25);
+  color: var(--color-accent-primary);
+  font-size: var(--font-size-micro);
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 25%, transparent);
   border-radius: 4px;
 }
 
@@ -94,14 +94,14 @@
 }
 
 .actions button {
-  color: #aeb9c3;
-  background: #141a20;
-  border-color: #2a333d;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-control-raised);
+  border-color: var(--color-border-default);
 }
 
 .warning {
-  color: #e89a8f;
-  font-size: var(--font-micro);
+  color: var(--color-status-warning);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.06em;
 }
 
@@ -110,36 +110,36 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 1px;
   padding: 2px;
-  background: #0a0e12;
-  border: 1px solid #28323b;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 
 .segmented button {
-  min-height: var(--control-dense);
-  color: var(--muted);
-  font-size: var(--font-micro);
+  min-height: var(--size-control-dense);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
   background: transparent;
   border-radius: 3px;
 }
 
 .segmented button:hover,
 .segmented button.active {
-  color: #dfffff;
+  color: var(--color-text-primary);
   background: rgba(69, 214, 179, 0.16);
 }
 
 .range {
   width: 100%;
   height: 4px;
-  accent-color: var(--cyan);
+  accent-color: var(--color-accent-primary);
 }
 
 .message {
   margin: 0;
   padding: 9px 12px;
-  color: #9cdbe2;
-  font-size: var(--font-micro);
+  color: var(--color-accent-primary);
+  font-size: var(--font-size-micro);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }

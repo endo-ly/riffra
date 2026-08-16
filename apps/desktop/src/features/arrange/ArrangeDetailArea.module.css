@@ -5,16 +5,16 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  color: #dbe8ec;
-  background: #0d151a;
-  border-top: 1px solid #50636d;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border-strong);
   box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.24);
 }
 
 .maximized {
   position: absolute;
   z-index: 30;
-  inset: var(--toolbar-height) 0 0;
+  inset: var(--size-toolbar) 0 0;
   height: auto;
   min-height: 0;
 }
@@ -46,13 +46,13 @@
   width: 58px;
   height: 3px;
   transform: translateX(-50%);
-  background: #708994;
+  background: var(--color-border-strong);
   border-radius: 3px;
 }
 
 .resizeHandle:hover::after,
 .resizeHandle:focus-visible::after {
-  background: var(--cyan);
+  background: var(--color-accent-primary);
 }
 
 .actions {
@@ -66,21 +66,21 @@
 }
 
 .actions button {
-  width: var(--control-dense);
-  height: var(--control-dense);
+  width: var(--size-control-dense);
+  height: var(--size-control-dense);
   display: grid;
   place-items: center;
   padding: 0;
-  color: #9dafb7;
-  background: rgba(13, 21, 26, 0.82);
-  border-color: rgba(80, 99, 109, 0.7);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-control) 82%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
   border-radius: 4px;
 }
 
 .actions button:hover:not(:disabled) {
-  color: var(--cyan);
-  background: #203039;
-  border-color: #3c535e;
+  color: var(--color-accent-primary);
+  background: var(--color-bg-control-hover);
+  border-color: var(--color-border-strong);
 }
 
 .actions svg {
@@ -91,5 +91,5 @@
 .content {
   min-height: 0;
   overflow: auto;
-  background: #0d151a;
+  background: var(--color-bg-surface);
 }

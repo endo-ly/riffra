@@ -5,8 +5,8 @@
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 9px;
   padding: 12px 14px 14px;
-  color: #dbe8ec;
-  background: #0d151a;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
 }
 
 .instrumentInfo {
@@ -19,7 +19,7 @@
 .instrumentInfo strong {
   min-width: 0;
   overflow: hidden;
-  color: #edf7f8;
+  color: var(--color-text-strong);
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -28,7 +28,7 @@
 
 .instrumentInfo span {
   overflow: hidden;
-  color: #8da1aa;
+  color: var(--color-text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -41,8 +41,8 @@
   align-items: center;
   gap: 6px 10px;
   padding: 7px 10px;
-  background: #121d23;
-  border: 1px solid #30414b;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-strong);
   border-radius: 6px;
 }
 
@@ -50,7 +50,7 @@
   display: inline-flex;
   flex: 0 0 auto;
   overflow: hidden;
-  border: 1px solid #3a4c56;
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
@@ -59,11 +59,11 @@
 .state button {
   min-height: 30px;
   padding: 0 10px;
-  color: #b3c3c9;
+  color: var(--color-text-secondary);
   font-size: 10px;
   font-weight: 550;
-  background: #111a20;
-  border: 1px solid #3a4c56;
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
@@ -76,16 +76,20 @@
 .mode button:hover:not(:disabled),
 .controls > button:hover:not(:disabled),
 .state button:hover:not(:disabled) {
-  color: #f1fbfc;
-  background: #1c2b33;
-  border-color: #56717d;
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-hover);
+  border-color: var(--color-border-strong);
 }
 
 .mode .active,
 .computerKeysActive {
-  color: #baf7f5 !important;
-  background: #1b4149 !important;
-  box-shadow: inset 0 0 0 1px rgba(112, 225, 232, 0.42);
+  color: var(--color-text-primary) !important;
+  background: color-mix(
+    in srgb,
+    var(--color-accent-positive) 20%,
+    var(--color-bg-control)
+  ) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
 }
 
 .velocity {
@@ -95,12 +99,12 @@
   grid-template-columns: auto auto;
   align-items: center;
   gap: 4px 7px;
-  color: #9aadb5;
+  color: var(--color-text-secondary);
   font-size: 10px;
 }
 
 .velocity strong {
-  color: #e4f0f2;
+  color: var(--color-text-primary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -110,7 +114,7 @@
   min-width: 90px;
   grid-column: 1 / -1;
   height: 4px;
-  accent-color: var(--cyan);
+  accent-color: var(--color-accent-primary);
 }
 
 .octave {
@@ -118,28 +122,28 @@
   align-items: center;
   gap: 4px;
   padding: 2px;
-  background: #0e171c;
-  border: 1px solid #334650;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
 .octave button {
   min-width: 25px;
-  min-height: var(--control-dense);
+  min-height: var(--size-control-dense);
   padding: 0;
-  color: #d2e3e6;
+  color: var(--color-text-primary);
   background: transparent;
   border: 0;
 }
 
 .octave button:hover:not(:disabled) {
-  color: #ffffff;
-  background: #1d3038;
+  color: var(--color-text-strong);
+  background: var(--color-bg-control-hover);
 }
 
 .octave strong {
   min-width: 31px;
-  color: #79e0e8;
+  color: var(--color-accent-primary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: center;
@@ -156,19 +160,19 @@
   align-items: center;
   gap: 6px 16px;
   padding: 0 2px 2px;
-  color: #9aadb5;
+  color: var(--color-text-secondary);
   font-size: 10px;
-  border-bottom: 1px solid #26353d;
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .sourceLine strong {
-  color: #dbe9eb;
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
 .activeNotes {
   margin-left: auto;
-  color: #b9f0e8;
+  color: var(--color-accent-positive);
   font-variant-numeric: tabular-nums;
 }
 
@@ -185,7 +189,7 @@
 }
 
 .message {
-  color: #ffc0ba;
+  color: var(--color-status-danger);
   font-size: 10px;
 }
 
@@ -196,15 +200,15 @@
   justify-items: center;
   gap: 9px;
   padding: 26px;
-  color: #a3b3ba;
+  color: var(--color-text-muted);
   font-size: 11px;
   line-height: 1.45;
   text-align: center;
-  background: #0d151a;
+  background: var(--color-bg-surface);
 }
 
 .state strong {
-  color: #e8f3f4;
+  color: var(--color-text-primary);
   font-size: 13px;
 }
 
@@ -213,8 +217,8 @@
 }
 
 .state button {
-  color: #baf7f5;
-  border-color: #3d7c84;
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 @media (max-width: 760px) {

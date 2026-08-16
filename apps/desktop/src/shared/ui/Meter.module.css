@@ -4,17 +4,17 @@
   height: 3px;
   min-width: 45px;
   overflow: hidden;
-  background: #242b32;
+  background: var(--color-border-subtle);
   border-radius: 3px;
 }
 
 .meter i {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #48c9ad, #7de0c7);
+  background: var(--color-accent-positive);
   border-radius: inherit;
 }
 
 .danger i {
-  background: var(--red);
+  background: var(--color-status-danger);
 }

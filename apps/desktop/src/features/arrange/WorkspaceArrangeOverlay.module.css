@@ -1,0 +1,170 @@
+.markerDialog {
+  position: fixed;
+  z-index: 90;
+  top: 48px;
+  left: 50%;
+  width: min(300px, calc(100vw - 32px));
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  transform: translateX(-50%);
+  color: var(--color-text-primary);
+  background: var(--color-bg-overlay);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.44);
+}
+
+.markerDialog > strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-control);
+}
+
+.markerDialog label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
+.markerDialog input {
+  min-height: var(--size-control-normal);
+  padding: 0 7px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-control);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+}
+
+.markerDialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.markerDialog button {
+  min-height: var(--size-control-dense);
+  padding: 0 9px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+}
+
+.markerDialog button[type='submit'] {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+}
+
+.pluginPickerOverlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.pluginPicker {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 80px);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  background: var(--color-bg-overlay);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.pluginPicker header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.pluginPicker header strong {
+  color: var(--color-text-primary);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.pluginPickerCancel {
+  padding: 2px 5px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.pluginPickerCancel:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-hover);
+  border-color: var(--color-border-default);
+}
+
+.pluginPicker input {
+  padding: 9px 12px;
+  color: var(--color-text-primary);
+  font-size: 9px;
+  background: var(--color-bg-control);
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  outline: none;
+}
+
+.pluginPicker input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.pluginPickerList {
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.pluginPickerItem {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pluginPickerItem:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-hover);
+}
+
+.pluginPickerItem small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.pluginPickerEmpty,
+.pluginPickerError {
+  padding: 18px 12px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  text-align: center;
+}
+
+.pluginPickerError {
+  color: var(--color-status-danger);
+}

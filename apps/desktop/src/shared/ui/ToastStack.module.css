@@ -15,12 +15,12 @@
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  color: #dfe5ea;
+  color: var(--color-text-primary);
   font-size: 12px;
   line-height: 1.4;
   background: linear-gradient(180deg, rgba(28, 34, 40, 0.97), rgba(17, 21, 25, 0.97));
-  border: 1px solid #313c46;
-  border-left: 3px solid var(--cyan);
+  border: 1px solid var(--color-border-default);
+  border-left: 3px solid var(--color-accent-primary);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
   pointer-events: auto;
@@ -33,17 +33,17 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 6px var(--cyan);
+  background: var(--color-accent-primary);
+  box-shadow: 0 0 6px var(--color-accent-primary);
 }
 
 .toast.error {
-  border-left-color: #d6534a;
+  border-left-color: var(--color-status-danger);
 }
 
 .toast.error::before {
-  background: #d6534a;
-  box-shadow: 0 0 6px #d6534a;
+  background: var(--color-status-danger);
+  box-shadow: 0 0 6px var(--color-status-danger);
 }
 
 .text {
@@ -54,7 +54,7 @@
 .action {
   flex: none;
   padding: 4px 9px;
-  color: var(--cyan);
+  color: var(--color-accent-primary);
   font-size: 11px;
   font-weight: 600;
   background: rgba(45, 212, 191, 0.08);
@@ -72,7 +72,7 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  color: #7c8894;
+  color: var(--color-text-muted);
   font-size: 14px;
   line-height: 1;
   background: transparent;
@@ -82,7 +82,7 @@
 }
 
 .dismiss:hover {
-  color: #dfe5ea;
+  color: var(--color-text-primary);
   background: rgba(255, 255, 255, 0.06);
 }
 

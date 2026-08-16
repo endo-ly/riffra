@@ -4,7 +4,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--color-bg-panel);
   user-select: none;
   overflow: hidden;
 }
@@ -15,20 +15,20 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 13px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .panelHeading > span {
   font-size: 9px;
   letter-spacing: 0.18em;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-weight: 700;
 }
 
 .nav {
   display: grid;
   padding: 0 7px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .navButton {
@@ -37,7 +37,7 @@
   align-items: center;
   gap: 9px;
   padding: 0 8px;
-  color: #929ca8;
+  color: var(--color-text-secondary);
   font-size: 10px;
   text-align: left;
   background: transparent;
@@ -45,13 +45,17 @@
 }
 
 .navButton:hover {
-  color: #e4e9ef;
-  background: #141920;
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-raised);
 }
 
 .navButton.active {
-  color: #eafcff;
-  background: linear-gradient(90deg, rgba(85, 217, 232, 0.13), rgba(85, 217, 232, 0.03));
+  color: var(--color-text-primary);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent-primary) 13%, transparent),
+    color-mix(in srgb, var(--color-accent-primary) 3%, transparent)
+  );
 }
 
 .navButton small {
@@ -61,13 +65,13 @@
 .navGlyph {
   width: 10px;
   height: 10px;
-  border: 1px solid #62707c;
+  border: 1px solid var(--color-border-default);
   border-radius: 2px;
 }
 
 .navButton.active .navGlyph {
-  border-color: var(--cyan);
-  box-shadow: inset 0 0 0 2px rgba(85, 217, 232, 0.12);
+  border-color: var(--color-accent-primary);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
 }
 
 .panelSearch {
@@ -77,9 +81,9 @@
   gap: 7px;
   margin: 10px 11px 8px;
   padding: 0 8px;
-  color: var(--faint);
-  background: #0b0e12;
-  border: 1px solid var(--border);
+  color: var(--color-text-muted);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 .panelSearch svg {
@@ -88,7 +92,7 @@
 .panelSearch input {
   width: 100%;
   min-width: 0;
-  color: #dbe1e8;
+  color: var(--color-text-primary);
   font-size: 10px;
   background: transparent;
   border: 0;
@@ -102,14 +106,14 @@
   flex: 1;
   overflow: auto;
   padding: 12px 8px;
-  scrollbar-color: #313b45 #0b0f13;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
   scrollbar-width: thin;
 }
 .librarySearchResults {
   margin: 8px 0 12px;
   padding: 8px;
-  background: rgba(85, 217, 232, 0.045);
-  border: 1px solid rgba(85, 217, 232, 0.18);
+  background: color-mix(in srgb, var(--color-accent-primary) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
   border-radius: 5px;
 }
 .librarySearchRow {
@@ -118,7 +122,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 0;
-  border-top: 1px solid rgba(85, 217, 232, 0.1);
+  border-top: 1px solid color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
 }
 .librarySearchRow {
   width: 100%;
@@ -131,7 +135,7 @@
   cursor: pointer;
 }
 .librarySearchRow:hover {
-  background: rgba(85, 217, 232, 0.08);
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
 }
 
 .librarySearchRow[draggable='true']:active,
@@ -159,14 +163,14 @@
   white-space: nowrap;
 }
 .librarySearchRow strong {
-  color: #cbd3dc;
+  color: var(--color-text-secondary);
   font-size: 9px;
   font-weight: 500;
 }
 .librarySearchRow small,
 .librarySearchEmpty {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 8px;
 }
 .libraryAssetDetail {
@@ -186,14 +190,14 @@
   display: block;
   margin-top: 3px;
   overflow: hidden;
-  color: #d9e4ea;
+  color: var(--color-text-primary);
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .libraryAssetDetail > small,
 .libraryAssetDetail p {
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 8px;
 }
 .libraryAssetDetail p {
@@ -203,24 +207,24 @@
 .relatedAsset {
   display: block;
   margin-top: 4px;
-  color: #8ccbd6;
+  color: var(--color-accent-primary);
   font-size: 8px;
 }
 .scanMessage {
   display: block;
   margin: 6px 3px 10px;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 9px;
 }
 .inboxMessage {
   display: block;
   margin: 6px 3px 10px;
-  color: #8ccbd6;
+  color: var(--color-accent-primary);
   font-size: 9px;
   line-height: 1.4;
 }
 .inboxMessage.error {
-  color: #ef7b78;
+  color: var(--color-status-danger);
 }
 .pluginArea {
   min-width: 0;
@@ -244,11 +248,11 @@
   height: 28px;
   display: grid;
   place-content: center;
-  color: #9cdbe2;
+  color: var(--color-accent-primary);
   font-size: 10px;
   font-weight: 700;
-  background: linear-gradient(140deg, #27333d, #171d24);
-  border: 1px solid #35424e;
+  background: linear-gradient(140deg, var(--color-bg-surface-raised), var(--color-bg-panel));
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 .pluginRow div {
@@ -262,13 +266,13 @@
   white-space: nowrap;
 }
 .pluginRow strong {
-  color: #cbd3dc;
+  color: var(--color-text-secondary);
   font-size: 10px;
   font-weight: 500;
 }
 .pluginRow small {
   margin-top: 2px;
-  color: #626c77;
+  color: var(--color-text-muted);
   font-size: 8px;
 }
 .pluginAdd {
@@ -277,7 +281,7 @@
   display: grid;
   place-items: center;
   padding: 0;
-  color: #69818b;
+  color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1;
   background: transparent;
@@ -287,8 +291,8 @@
 }
 .pluginAdd:hover,
 .pluginAdd:focus-visible {
-  color: var(--cyan);
-  background: rgba(85, 217, 232, 0.08);
+  color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
 }
 .pluginAdd:disabled {
   cursor: not-allowed;
@@ -302,10 +306,10 @@
 }
 .recordingRow:hover,
 .recordingRow.selected {
-  background: var(--surface-2);
+  background: var(--color-bg-surface-raised);
 }
 .recordingRow.duplicate {
-  box-shadow: inset 2px 0 0 var(--amber);
+  box-shadow: inset 2px 0 0 var(--color-status-warning);
 }
 .recordingSelect {
   flex: 1;
@@ -330,11 +334,11 @@
   flex: 0 0 28px;
   display: grid;
   place-content: center;
-  color: #9cdbe2;
+  color: var(--color-accent-primary);
   font-size: 10px;
   font-weight: 700;
-  background: linear-gradient(140deg, #27333d, #171d24);
-  border: 1px solid #35424e;
+  background: linear-gradient(140deg, var(--color-bg-surface-raised), var(--color-bg-panel));
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 .recordingSelect > div {
@@ -350,44 +354,44 @@
 }
 .assetGrip {
   flex: 0 0 auto;
-  color: #53616d;
+  color: var(--color-text-disabled);
   font-size: 10px;
   font-weight: 400;
 }
 .recordingSelect strong {
-  color: #cbd3dc;
+  color: var(--color-text-secondary);
   font-size: 10px;
   font-weight: 500;
 }
 .recordingSelect small {
   margin-top: 2px;
-  color: #626c77;
+  color: var(--color-text-muted);
   font-size: 8px;
 }
 .stability {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--amber);
+  background: var(--color-status-warning);
 }
 .stability.validated {
-  background: var(--teal);
+  background: var(--color-accent-positive);
 }
 .stability.failed,
 .stability.quarantined {
-  background: var(--red);
+  background: var(--color-status-danger);
 }
 .libraryEmpty {
   display: grid;
   justify-items: center;
   gap: 6px;
   padding: 34px 18px;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 10px;
   text-align: center;
 }
 .libraryEmpty small {
-  color: var(--faint);
+  color: var(--color-text-muted);
   line-height: 1.6;
 }
 .inboxButton {
@@ -398,9 +402,9 @@
   margin: 8px;
   padding: 0 9px;
   text-align: left;
-  color: #b5bec8;
-  background: #131820;
-  border: 1px solid var(--border);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
   border-radius: 6px;
 }
 .inboxIcon {
@@ -408,9 +412,9 @@
   height: 25px;
   display: grid;
   place-content: center;
-  color: var(--cyan);
-  background: rgba(85, 217, 232, 0.08);
-  border: 1px solid rgba(85, 217, 232, 0.2);
+  color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
   border-radius: 5px;
 }
 .inboxButton strong,
@@ -422,6 +426,6 @@
 }
 .inboxButton small {
   margin-top: 2px;
-  color: var(--faint);
+  color: var(--color-text-muted);
   font-size: 8px;
 }

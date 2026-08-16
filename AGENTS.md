@@ -32,6 +32,12 @@
     - `ctest --test-dir native/audio-engine/build -C Debug --output-on-failure`
     - `clang-format --style=file -i <changed C++ files>`
 
+### CSSデザイントークン
+
+- 共通の背景・文字・境界線・アクセント・状態色は、`apps/desktop/src/styles/tokens.css` のRootトークンを正本とし、共通UIから直接参照する。機能別の中継・再定義は作らない。
+- 機能固有の色や配色レシピだけを機能別トークンにする。Rootと同じ・近似色や透明度違いの重複定義は作らず、必要なら`color-mix()`を使う。
+- 追加・変更時は参照箇所を確認し、未使用・未定義のデザイントークンを残さない。不要になった定義は同じ変更で削除する。
+
 ## 規約
 
 ### コーディング

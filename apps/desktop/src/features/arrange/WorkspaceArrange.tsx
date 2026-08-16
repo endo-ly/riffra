@@ -55,6 +55,7 @@ import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hook
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
+import overlayStyles from './WorkspaceArrangeOverlay.module.css';
 
 interface WorkspaceArrangeProps {
   session: CreativeSession;
@@ -1193,7 +1194,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
 
       {markerRename && (
         <form
-          className={styles.markerDialog}
+          className={overlayStyles.markerDialog}
           aria-label="Rename marker"
           onSubmit={(event) => {
             event.preventDefault();

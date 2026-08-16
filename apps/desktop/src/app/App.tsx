@@ -197,7 +197,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
   const isMuted = isEmergencyMuteActive(audio);
   const shellStyle = {
-    '--left-column-width': `${leftColumnWidth}px`,
+    '--layout-left-column-width': `${leftColumnWidth}px`,
   } as CSSProperties;
   return (
     <main

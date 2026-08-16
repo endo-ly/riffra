@@ -1,37 +1,9 @@
 :root {
   font-family: 'Segoe UI Variable', 'Yu Gothic UI', 'Segoe UI', sans-serif;
-  color: #d8dde5;
-  background: #090b0e;
+  color: var(--color-text-primary);
+  background: var(--color-bg-app);
   font-synthesis: none;
   text-rendering: geometricPrecision;
-  --base: #090b0e;
-  --panel: #0f1318;
-  --surface: #151a21;
-  --surface-2: #1a2028;
-  --border: #252c35;
-  --border-bright: #353f4b;
-  --muted: #7d8794;
-  --faint: #525c68;
-  --cyan: #55d9e8;
-  --blue: #4e8eff;
-  --teal: #45d6b3;
-  --amber: #e7b55d;
-  --red: #ee5a67;
-  --shadow: 0 18px 52px rgba(0, 0, 0, 0.34);
-  --font-micro: 9px;
-  --font-small: 10px;
-  --font-control: 11px;
-  --font-body: 11px;
-  --font-emphasis: 12px;
-  --font-readout: 12px;
-  --control-dense: 26px;
-  --control-normal: 28px;
-  --control-important: 32px;
-  --toolbar-height: 40px;
-  --left-column-width: 280px;
-  --global-height: 56px;
-  --play-surface-compact-height: 48px;
-  --play-surface-expanded-height: 220px;
 }
 
 * {
@@ -69,7 +41,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--cyan);
+  outline: 2px solid var(--color-accent-primary);
   outline-offset: 2px;
 }
 
@@ -82,9 +54,9 @@ svg {
 
 kbd {
   font-family: 'DM Mono', Consolas, monospace;
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--color-text-disabled);
 }
 
 h1,

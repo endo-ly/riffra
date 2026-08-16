@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PluginEntry } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
-import styles from '../WorkspaceArrange.module.css';
+import styles from '../WorkspaceArrangeOverlay.module.css';
 
 interface PluginPickerProps {
   api?: Pick<JobApi, 'scanVst3Folder'>;

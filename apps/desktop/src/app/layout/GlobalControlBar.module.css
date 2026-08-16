@@ -6,8 +6,8 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  background: #0c0f13;
-  border-bottom: 1px solid var(--border);
+  background: var(--color-bg-app);
+  border-bottom: 1px solid var(--color-border-default);
   user-select: none;
   z-index: 4;
 }
@@ -47,7 +47,7 @@
 }
 
 .brand strong {
-  color: #f0f4f8;
+  color: var(--color-text-strong);
   font-size: 11px;
   letter-spacing: 0.18em;
 }
@@ -57,7 +57,7 @@
   height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: var(--teal);
+  background: var(--color-accent-positive);
   box-shadow: 0 0 8px rgba(69, 214, 179, 0.5);
 }
 
@@ -74,13 +74,13 @@
   padding: 4px 8px;
   overflow: hidden;
   text-align: left;
-  color: #dbe1e8;
+  color: var(--color-text-primary);
   background: transparent;
   border-radius: 7px;
 }
 
 .sessionTitle:hover {
-  background: var(--surface);
+  background: var(--color-bg-surface);
 }
 
 .sessionTitle > :not(svg) {
@@ -91,7 +91,7 @@
 
 .sessionTitle small {
   grid-column: 2;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 9px;
 }
 
@@ -99,7 +99,7 @@
   grid-column: 3;
   grid-row: 1 / 3;
   width: 13px;
-  color: var(--faint);
+  color: var(--color-text-muted);
   transform: rotate(90deg);
 }
 
@@ -113,7 +113,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 17px;
   line-height: 1;
   background: transparent;
@@ -121,8 +121,8 @@
 }
 
 .historyControls button:hover:not(:disabled) {
-  color: #e4ebf0;
-  background: var(--surface-2);
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface-raised);
 }
 
 .audioControls {
@@ -137,15 +137,15 @@
   place-items: center;
   flex: 0 0 auto;
   padding: 0;
-  color: var(--muted);
-  background: #12171d;
-  border: 1px solid var(--border);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
   border-radius: 6px;
 }
 
 .commandTrigger:hover {
-  color: #e4ebf0;
-  border-color: var(--border-bright);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .commandTrigger svg {
@@ -165,7 +165,7 @@
   padding: 3px 6px;
   overflow: hidden;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--color-text-secondary);
   font-size: 8px;
   background: transparent;
   border-radius: 6px;
@@ -176,8 +176,8 @@
 }
 
 .enginePill.open {
-  background: #182329;
-  border: 1px solid var(--border-bright);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border-strong);
 }
 
 .enginePill > span {
@@ -185,22 +185,22 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--amber);
+  background: var(--color-status-warning);
 }
 
 .enginePill.ready > span {
-  background: var(--teal);
-  box-shadow: 0 0 8px var(--teal);
+  background: var(--color-accent-positive);
+  box-shadow: 0 0 8px var(--color-accent-positive);
 }
 
 .enginePill.muted > span,
 .enginePill.faulted > span {
-  background: var(--red);
+  background: var(--color-status-danger);
 }
 
 .enginePill small {
   grid-column: 2;
-  color: var(--faint);
+  color: var(--color-text-muted);
   font-size: 7px;
   text-transform: none;
 }
@@ -208,7 +208,7 @@
 .enginePill strong {
   min-width: 0;
   overflow: hidden;
-  color: #cbd3dc;
+  color: var(--color-text-secondary);
   font-size: 8px;
   font-weight: 500;
   text-align: left;
@@ -222,7 +222,7 @@
   grid-row: 1 / 3;
   width: 10px;
   height: 10px;
-  color: var(--faint);
+  color: var(--color-text-muted);
   transform: rotate(90deg);
 }
 
@@ -233,25 +233,25 @@
   place-items: center;
   flex: 0 0 auto;
   padding: 0;
-  color: #b5bdc7;
-  background: #161a1f;
-  border: 1px solid #3b3034;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-control-raised);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
 
 .emergencyButton svg {
   width: 12px;
-  color: var(--red);
+  color: var(--color-status-danger);
 }
 
 .emergencyButton:hover {
-  border-color: #a75b62;
+  border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent);
 }
 
 .emergencyButton.active {
-  color: #fff;
-  background: #9c2833;
-  border-color: #ff7580;
+  color: var(--color-text-on-accent);
+  background: var(--color-status-danger);
+  border-color: var(--color-status-danger);
 }
 
 @media (max-width: 1180px) {

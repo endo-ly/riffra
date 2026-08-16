@@ -2,7 +2,7 @@
   display: grid;
   gap: 8px;
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .sectionHeader {
@@ -13,8 +13,8 @@
 }
 
 .sectionHeader strong {
-  color: var(--muted);
-  font-size: var(--font-micro);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
 }
 
@@ -23,18 +23,18 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  color: var(--faint);
-  font-size: var(--font-micro);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
 }
 
 .groupSelector select {
   min-width: 0;
-  min-height: var(--control-dense);
+  min-height: var(--size-control-dense);
   padding: 0 7px;
-  color: var(--muted);
-  font-size: var(--font-small);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
@@ -42,7 +42,7 @@
   display: grid;
   gap: 7px;
   padding: 10px 0 11px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--color-border-default);
 }
 
 .takeHeader {
@@ -53,8 +53,8 @@
 }
 
 .takeHeader strong {
-  color: var(--muted);
-  font-size: var(--font-small);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
 }
 
 .takeMeta {
@@ -64,14 +64,14 @@
 }
 
 .typeLabel {
-  color: var(--faint);
-  font-size: var(--font-micro);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
 }
 
 .currentBadge {
-  color: var(--teal);
-  font-size: var(--font-micro);
+  color: var(--color-accent-positive);
+  font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.08em;
 }
@@ -82,8 +82,8 @@
 }
 
 .sourceLabel {
-  color: var(--faint);
-  font-size: var(--font-micro);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
 }
 
@@ -95,19 +95,19 @@
 }
 
 .sourceControl button {
-  min-height: var(--control-dense);
+  min-height: var(--size-control-dense);
   padding: 0;
-  color: var(--muted);
-  font-size: var(--font-small);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
   background: transparent;
 }
 
 .sourceControl button:hover {
-  color: var(--cyan);
+  color: var(--color-accent-primary);
 }
 
 .sourceControl button[aria-pressed='true'] {
-  color: var(--cyan);
+  color: var(--color-accent-primary);
   font-weight: 600;
 }
 
@@ -121,40 +121,40 @@
 
 .actionButton {
   flex: 0 0 auto;
-  min-height: var(--control-dense);
+  min-height: var(--size-control-dense);
   padding: 0 8px;
-  color: var(--muted);
-  font-size: var(--font-micro);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
 
 .actionButton:hover {
-  border-color: var(--border-bright);
+  border-color: var(--color-border-strong);
 }
 
 .previewButton {
   margin-left: auto;
-  color: var(--cyan);
+  color: var(--color-accent-primary);
 }
 
 .useButton {
-  color: var(--teal);
+  color: var(--color-accent-positive);
 }
 
 .copyButton {
-  color: var(--muted);
+  color: var(--color-text-secondary);
 }
 
 .stopButton {
   margin-left: auto;
-  color: var(--red);
+  color: var(--color-status-danger);
 }
 
 .message {
   margin: 0;
-  color: var(--muted);
-  font-size: var(--font-micro);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
   line-height: 1.45;
 }
