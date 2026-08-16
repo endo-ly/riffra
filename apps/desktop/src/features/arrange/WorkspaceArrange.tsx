@@ -25,11 +25,13 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import { MidiEditorPanel } from './midi-editor/MidiEditorPanel';
-import { ArrangeLowerPanel, type ArrangeLowerPanelView } from './play-surface/ArrangeLowerPanel';
+import { ArrangeDetailArea, type ArrangeDetailView } from './ArrangeDetailArea';
 import { PlaySurfacePanel } from './play-surface/PlaySurfacePanel';
+import { PerformancePanel, type PerformancePanelMode } from './play-surface/PerformancePanel';
 import { PluginPicker } from './inspector/PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
+import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import {
   BASE_PIXELS_PER_QUARTER,
@@ -68,6 +70,7 @@ interface WorkspaceArrangeProps {
   canonicalOperationPending?: boolean;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
+  performanceHost: HTMLElement | null;
 }
 
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
@@ -114,10 +117,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeMidiClipId, setActiveMidiClipId] = useState<string | null>(null);
-  const [lowerPanelView, setLowerPanelView] = useState<ArrangeLowerPanelView>('closed');
-  const [lowerPanelCollapsed, setLowerPanelCollapsed] = useState(false);
-  const [lowerPanelMaximized, setLowerPanelMaximized] = useState(false);
-  const [lowerPanelHeight, setLowerPanelHeight] = useState(260);
+  const [detailView, setDetailView] = useState<ArrangeDetailView>('closed');
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
+  const [detailMaximized, setDetailMaximized] = useState(false);
+  const [detailHeight, setDetailHeight] = useState(280);
+  const [performancePanelMode, setPerformancePanelMode] = useState<PerformancePanelMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<{
@@ -195,10 +199,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   );
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
   const commitMidiEdit = (operation: Promise<CreativeSession | null>) => commit(operation);
-  const handleLowerPanelCollapsedChange = (collapsed: boolean) => {
-    setLowerPanelCollapsed(collapsed);
-    if (collapsed) setLowerPanelMaximized(false);
-  };
   const canonicalOperationPending =
     editor.canonicalOperationPending || Boolean(props.canonicalOperationPending);
   // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
@@ -329,23 +329,62 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   useEffect(() => {
     if (activeMidiClipId !== null && !activeMidiClip) {
       setActiveMidiClipId(null);
-      if (lowerPanelView === 'midiEditor') setLowerPanelView('closed');
+      if (detailView === 'midiEditor') {
+        setDetailView('closed');
+        setDetailCollapsed(false);
+        setDetailMaximized(false);
+      }
     }
-  }, [activeMidiClip, activeMidiClipId, lowerPanelView]);
+  }, [activeMidiClip, activeMidiClipId, detailView]);
 
   const openPlaySurface = (trackId: string) => {
     props.setSelection({ kind: 'track', trackId });
     props.onFocusTrack(trackId);
-    setLowerPanelView('playSurface');
-    setLowerPanelCollapsed(false);
+    setPerformancePanelMode('expanded');
   };
 
   const openMidiEditor = (clip: MidiClip) => {
     editor.selectClip(clip.id);
     setActiveMidiClipId(clip.id);
-    setLowerPanelView('midiEditor');
-    setLowerPanelCollapsed(false);
+    setDetailView('midiEditor');
+    setDetailCollapsed(false);
   };
+
+  const closeDetailArea = () => {
+    setDetailView('closed');
+    setDetailCollapsed(false);
+    setDetailMaximized(false);
+  };
+
+  const detailControls = (
+    <>
+      <ToolbarButton
+        icon={detailCollapsed ? 'expand' : 'collapse'}
+        ariaLabel={detailCollapsed ? 'Restore detail area' : 'Collapse detail area'}
+        title={detailCollapsed ? 'Restore detail area' : 'Collapse detail area'}
+        onClick={() => {
+          const nextCollapsed = !detailCollapsed;
+          setDetailCollapsed(nextCollapsed);
+          if (nextCollapsed) setDetailMaximized(false);
+        }}
+      />
+      <ToolbarButton
+        icon={detailMaximized ? 'restore' : 'maximize'}
+        ariaLabel={detailMaximized ? 'Restore detail area size' : 'Maximize detail area'}
+        title={detailMaximized ? 'Restore detail area size' : 'Maximize detail area'}
+        onClick={() => {
+          setDetailCollapsed(false);
+          setDetailMaximized(!detailMaximized);
+        }}
+      />
+      <ToolbarButton
+        icon="close"
+        ariaLabel="Close detail area"
+        title="Close detail area"
+        onClick={closeDetailArea}
+      />
+    </>
+  );
 
   const applyZoom = (next: number, clientX?: number) => {
     const bounded = Math.min(4, Math.max(0.35, next));
@@ -1053,8 +1092,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     setTimeSelection(null);
     props.setSelection({ kind: 'clips', clipIds: [created.id] });
     setActiveMidiClipId(created.id);
-    setLowerPanelView('midiEditor');
-    setLowerPanelCollapsed(false);
+    setDetailView('midiEditor');
+    setDetailCollapsed(false);
   };
 
   const openTrackLaneContextMenu = (event: React.MouseEvent, trackId: string, tick: number) => {
@@ -1114,6 +1153,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     <section
       className={styles.workspace}
       aria-label="Arrange timeline"
+      data-arrange-workspace
       style={{ '--header-width': `${TRACK_HEADER_WIDTH}px` } as CSSProperties}
     >
       <ArrangeToolbar
@@ -1394,9 +1434,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     const selectedMidiClip = arrangement.midiClips.find(
                       (clip) => clip.id === clipId,
                     );
-                    if (selectedMidiClip && !append && lowerPanelView === 'midiEditor') {
+                    if (selectedMidiClip && !append && detailView === 'midiEditor') {
                       setActiveMidiClipId(clipId);
-                      setLowerPanelCollapsed(false);
+                      setDetailCollapsed(false);
                     }
                   }}
                   onTrim={editor.beginTrim}
@@ -1454,41 +1494,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         </div>
       </div>
 
-      <ArrangeLowerPanel
-        view={lowerPanelView}
-        collapsed={lowerPanelCollapsed}
-        maximized={lowerPanelMaximized}
-        height={lowerPanelHeight}
-        activeMidiClip={activeMidiClip}
-        midiEditorContext={
-          activeMidiClip
-            ? `${activeMidiTrack?.name ?? 'Instrument'} · ${activeMidiClip.name}`
-            : 'No MIDI Clip'
-        }
-        onViewChange={(view) => {
-          setLowerPanelView(view);
-          setLowerPanelCollapsed(false);
-        }}
-        onCollapsedChange={handleLowerPanelCollapsedChange}
-        onMaximizedChange={setLowerPanelMaximized}
-        onHeightChange={setLowerPanelHeight}
-        playSurfaceSummary={playSurfaceSummary}
-        playSurface={
-          <PlaySurfacePanel
-            track={focusedTrack}
-            audio={props.audio}
-            api={props.api}
-            runtimeReady={runtimeReady}
-            missingDeviceIds={[
-              ...(props.missingDeviceIds ?? []),
-              ...(transport?.missingDeviceIds ?? []),
-            ]}
-            onChooseInstrument={() => {
-              if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
-            }}
-            onSummaryChange={setPlaySurfaceSummary}
-          />
-        }
+      <ArrangeDetailArea
+        view={detailView}
+        height={detailHeight}
+        collapsed={detailCollapsed}
+        maximized={detailMaximized}
+        onCollapsedChange={setDetailCollapsed}
+        onMaximizedChange={setDetailMaximized}
+        onHeightChange={setDetailHeight}
+        collapsedControls={detailControls}
         midiEditor={
           <MidiEditorPanel
             clip={activeMidiClip}
@@ -1498,6 +1512,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             previewAvailable={midiPreviewAvailable}
             onSendMidi={sendMidiPreview}
             onPanicMidi={panicMidiPreview}
+            toolbarTrailing={detailCollapsed ? null : detailControls}
             onAddNote={(clipId, startTick, pitch, durationTicks, velocity, channel) =>
               commitMidiEdit(
                 props.api.addMidiNote(
@@ -1548,6 +1563,30 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
               editor.commit(props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks))
             }
+          />
+        }
+      />
+
+      <PerformancePanel
+        host={props.performanceHost}
+        mode={performancePanelMode}
+        track={focusedTrack}
+        summary={playSurfaceSummary}
+        onModeChange={setPerformancePanelMode}
+        playSurface={
+          <PlaySurfacePanel
+            track={focusedTrack}
+            audio={props.audio}
+            api={props.api}
+            runtimeReady={runtimeReady}
+            missingDeviceIds={[
+              ...(props.missingDeviceIds ?? []),
+              ...(transport?.missingDeviceIds ?? []),
+            ]}
+            onChooseInstrument={() => {
+              if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
+            }}
+            onSummaryChange={setPlaySurfaceSummary}
           />
         }
       />

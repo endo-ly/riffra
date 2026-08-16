@@ -2,7 +2,7 @@
   position: fixed;
   z-index: 60;
   right: 14px;
-  bottom: calc(var(--transport-height) + 12px);
+  bottom: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;

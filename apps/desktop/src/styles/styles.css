@@ -28,10 +28,11 @@
   --control-normal: 28px;
   --control-important: 32px;
   --toolbar-height: 40px;
-  --library-width: 220px;
-  --inspector-width: 280px;
-  --global-height: 44px;
-  --transport-height: 56px;
+  --rail-width: 48px;
+  --side-panel-width: 280px;
+  --global-height: 56px;
+  --performance-compact-height: 48px;
+  --performance-expanded-height: 220px;
 }
 
 * {

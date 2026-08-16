@@ -1,5 +1,5 @@
 .transport {
-  grid-area: transport;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -151,4 +151,59 @@
 .statusDot.faulted,
 .statusDot.recording {
   background: var(--red);
+}
+
+@media (max-width: 1500px) {
+  .transportMeter {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .transport {
+    gap: 4px;
+  }
+
+  .transportLeft {
+    gap: 1px;
+  }
+
+  .transportLeft button {
+    width: 26px;
+    height: 28px;
+  }
+
+  .transportLeft .playButton {
+    width: 32px;
+    height: 32px;
+  }
+
+  .transportLeft .countInButton {
+    min-width: 54px;
+    padding: 0 5px;
+  }
+
+  .timebase {
+    gap: 4px;
+    padding-left: 4px;
+  }
+
+  .timebase input {
+    width: 52px;
+  }
+
+  .timebase select {
+    width: 54px;
+  }
+
+  .master {
+    min-width: 124px;
+  }
+}
+
+@media (max-width: 1050px) {
+  .timebase,
+  .master {
+    display: none;
+  }
 }

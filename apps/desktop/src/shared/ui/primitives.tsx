@@ -10,6 +10,8 @@ export function Icon({ name }: { name: string }) {
     loop: 'M7 7h10V4l4 4-4 4V9H7a3 3 0 0 0-3 3v1H2v-1a5 5 0 0 1 5-5Zm10 10H7v3l-4-4 4-4v3h10a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5Z',
     plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6Z',
     chevron: 'm9 18 6-6-6-6',
+    close:
+      'M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z',
     bolt: 'm13 2-9 12h7l-1 8 9-12h-7Z',
     sliders:
       'M4 7h10v2H4V7Zm14 0h2v2h-2V7Zm-3-2h2v6h-2V5ZM4 15h2v2H4v-2Zm6 0h10v2H10v-2Zm-3-2h2v6H7v-6Z',

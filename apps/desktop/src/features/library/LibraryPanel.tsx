@@ -48,7 +48,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
   return (
     <aside className={styles.libraryPanel} data-library-panel>
       <div className={styles.panelHeading}>
-        <span>LIBRARY</span>
+        <span>BROWSER</span>
       </div>
       <label className={styles.panelSearch}>
         <Icon name="search" />

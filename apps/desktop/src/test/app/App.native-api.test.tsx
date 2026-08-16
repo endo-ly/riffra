@@ -21,11 +21,32 @@ describe('App native boundary', () => {
     const api = new FakeNativeApi();
 
     await renderApp(api);
+    expect(
+      screen.getByRole('contentinfo').closest('[data-global-control-bar]'),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^MUTE$/ }));
 
     await waitFor(() => expect(api.emergencyMuteRequests).toEqual([true]));
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+  });
+
+  it('uses the Navigation Rail to toggle one side panel at a time', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+
+    expect(screen.getByRole('region', { name: 'Browser panel' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Browser' }));
+    expect(screen.queryByRole('region', { name: 'Browser panel' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+    expect(screen.queryByRole('region', { name: 'Browser panel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Inspector panel' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+    expect(screen.queryByRole('region', { name: 'Inspector panel' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Browser' }));
+    expect(screen.getByRole('region', { name: 'Browser panel' })).toBeInTheDocument();
   });
 
   it('shows a runtime restart notification without replaying session commands', async () => {
