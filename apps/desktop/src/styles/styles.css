@@ -28,11 +28,10 @@
   --control-normal: 28px;
   --control-important: 32px;
   --toolbar-height: 40px;
-  --rail-width: 48px;
-  --side-panel-width: 280px;
+  --left-column-width: 280px;
   --global-height: 56px;
-  --performance-compact-height: 48px;
-  --performance-expanded-height: 220px;
+  --play-surface-compact-height: 48px;
+  --play-surface-expanded-height: 220px;
 }
 
 * {

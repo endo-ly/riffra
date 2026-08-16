@@ -46,7 +46,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
   };
 
   return (
-    <aside className={styles.libraryPanel} data-library-panel>
+    <aside className={styles.libraryPanel} aria-label="Browser" data-library-panel>
       <div className={styles.panelHeading}>
         <span>BROWSER</span>
       </div>

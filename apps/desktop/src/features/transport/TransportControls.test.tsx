@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { TransportBar } from './TransportBar';
+import { TransportControls } from './TransportControls';
 import { defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
@@ -14,7 +14,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
   const initial = defaultSession();
   const [session, setSession] = useState(initial);
   return (
-    <TransportBar
+    <TransportControls
       session={session}
       setSession={setSession}
       audio={api.audio}
@@ -30,7 +30,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
   );
 }
 
-describe('TransportBar', () => {
+describe('TransportControls', () => {
   it('commits BPM and meter changes from the Arrange transport', async () => {
     const api = new FakeNativeApi({
       bootstrapState: { session: defaultSession() },

@@ -10,7 +10,7 @@ import { defaultNativeApi } from '@/native/native';
 import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
-import { InspectorPanel } from '@/features/arrange/inspector/InspectorPanel';
+import { PropertiesPanel } from '@/features/arrange/inspector/PropertiesPanel';
 import { LibraryPanel } from '@/features/library/LibraryPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
@@ -18,27 +18,26 @@ import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalControlBar } from './layout/GlobalControlBar';
-import { NavigationRail } from './layout/NavigationRail';
-import { SidePanel, type SidePanelView } from './layout/SidePanel';
+import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import styles from './App.module.css';
 import shellStyles from './AppShell.module.css';
 
-const SIDE_PANEL_WIDTH = { default: 280, min: 220, max: 380, collapse: 48 } as const;
+const LEFT_COLUMN_WIDTH = { default: 280, min: 220, max: 380, collapse: 48 } as const;
 
-function resolveSidePanelWidth(width: number) {
-  if (width <= SIDE_PANEL_WIDTH.collapse) return 0;
-  return Math.min(SIDE_PANEL_WIDTH.max, Math.max(SIDE_PANEL_WIDTH.min, width));
+function resolveLeftColumnWidth(width: number) {
+  if (width <= LEFT_COLUMN_WIDTH.collapse) return 0;
+  return Math.min(LEFT_COLUMN_WIDTH.max, Math.max(LEFT_COLUMN_WIDTH.min, width));
 }
 
-function adjustSidePanelWidth(width: number, delta: number) {
-  if (width === 0 && delta > 0) return SIDE_PANEL_WIDTH.min;
-  return resolveSidePanelWidth(width + delta);
+function adjustLeftColumnWidth(width: number, delta: number) {
+  if (width === 0 && delta > 0) return LEFT_COLUMN_WIDTH.min;
+  return resolveLeftColumnWidth(width + delta);
 }
 
-function PanelResizeHandle(props: {
+function LeftColumnResizeHandle(props: {
   width: number;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizeBy: (delta: number) => void;
@@ -47,10 +46,10 @@ function PanelResizeHandle(props: {
     <div
       className={clsx(shellStyles.panelResizeHandle, props.width === 0 && shellStyles.collapsed)}
       role="separator"
-      aria-label="Resize or collapse side panel"
+      aria-label="Resize or collapse left column"
       aria-orientation="vertical"
       aria-valuemin={0}
-      aria-valuemax={SIDE_PANEL_WIDTH.max}
+      aria-valuemax={LEFT_COLUMN_WIDTH.max}
       aria-valuenow={props.width}
       tabIndex={0}
       onPointerDown={props.onPointerDown}
@@ -65,10 +64,9 @@ function PanelResizeHandle(props: {
 }
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
-  const [sidePanelView, setSidePanelView] = useState<SidePanelView>('browser');
-  const [sidePanelOpen, setSidePanelOpen] = useState(true);
-  const [sidePanelWidth, setSidePanelWidth] = useState<number>(SIDE_PANEL_WIDTH.default);
-  const [performanceHost, setPerformanceHost] = useState<HTMLDivElement | null>(null);
+  const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
+  const [propertiesHeight, setPropertiesHeight] = useState(240);
+  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const [panelResize, setPanelResize] = useState<{
     startX: number;
     startWidth: number;
@@ -140,9 +138,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     if (!panelResize) return;
     const onPointerMove = (event: PointerEvent) => {
       const delta = event.clientX - panelResize.startX;
-      const nextWidth = adjustSidePanelWidth(panelResize.startWidth, delta);
-      setSidePanelWidth(nextWidth);
-      setSidePanelOpen(nextWidth > 0);
+      setLeftColumnWidth(adjustLeftColumnWidth(panelResize.startWidth, delta));
     };
     const stopResize = () => setPanelResize(null);
     window.addEventListener('pointermove', onPointerMove);
@@ -160,24 +156,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     event.preventDefault();
     setPanelResize({
       startX: event.clientX,
-      startWidth: sidePanelOpen ? sidePanelWidth : 0,
+      startWidth: leftColumnWidth,
     });
   };
 
-  const resizeSidePanelBy = (delta: number) => {
-    const nextWidth = adjustSidePanelWidth(sidePanelOpen ? sidePanelWidth : 0, delta);
-    setSidePanelWidth(nextWidth);
-    setSidePanelOpen(nextWidth > 0);
-  };
-
-  const selectSidePanel = (view: SidePanelView) => {
-    if (sidePanelOpen && sidePanelView === view) {
-      setSidePanelOpen(false);
-      return;
-    }
-    setSidePanelView(view);
-    setSidePanelOpen(true);
-    setSidePanelWidth((width) => Math.max(SIDE_PANEL_WIDTH.min, width));
+  const resizeLeftColumnBy = (delta: number) => {
+    setLeftColumnWidth((width) => adjustLeftColumnWidth(width, delta));
   };
 
   useEffect(() => {
@@ -212,7 +196,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const feedbackSuspected = liveFeedbackSuspected || audio.feedbackSuspected;
   const isMuted = isEmergencyMuteActive(audio);
   const shellStyle = {
-    '--side-panel-width': `${sidePanelOpen ? sidePanelWidth : 0}px`,
+    '--left-column-width': `${leftColumnWidth}px`,
   } as CSSProperties;
   return (
     <main
@@ -328,69 +312,64 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
       )}
 
-      <div className={shellStyles.appBody}>
-        <NavigationRail
-          activeView={sidePanelView}
-          open={sidePanelOpen}
-          onSelect={selectSidePanel}
+      <div className={shellStyles.appBody} data-app-body>
+        <LeftColumn
+          propertiesHeight={propertiesHeight}
+          onPropertiesHeightChange={setPropertiesHeight}
+          browser={
+            <LibraryPanel
+              library={{
+                section: librarySection,
+                setSection: setLibrarySection,
+                query: libraryQuery,
+                setQuery: setLibraryQuery,
+                results: libraryResults,
+                searchQuery: query,
+                selectedAsset: selectedLibraryAsset,
+                relatedAssets,
+                onSelectAsset: (asset) => void selectLibraryAsset(asset),
+                onPreviewAsset: () => void previewSelectedLibraryAsset(),
+                onEditAsset: () => void editSelectedLibraryAsset(),
+                onImportMidi: () => void importMidi(),
+              }}
+              plugins={{
+                plugins,
+                visiblePlugins,
+                selectedTrack: arrange.selectedTrack,
+                onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
+              }}
+              recordings={{
+                visibleRecordings,
+                count: recordings.length,
+              }}
+              inbox={inbox}
+            />
+          }
+          properties={
+            <PropertiesPanel
+              audio={audio}
+              recordingCommandPending={recordingCommandPending}
+              session={session}
+              setSession={setSession}
+              arrangeSelection={arrange.selection}
+              setArrangeSelection={arrange.setSelection}
+              missingDependencies={missingDependencies}
+              plugins={plugins}
+              onDisableMissingPlugin={disableMissingPluginDevice}
+              onReplaceMissingPlugin={replaceMissingPluginDevice}
+              onRescanMissingPlugins={rescanMissingPlugins}
+              onRecordAnotherTake={(recordingSessionId) =>
+                void startRecordingNow(recordingSessionId)
+              }
+              api={nativeApi}
+            />
+          }
         />
 
-        {sidePanelOpen && (
-          <SidePanel view={sidePanelView}>
-            {sidePanelView === 'browser' ? (
-              <LibraryPanel
-                library={{
-                  section: librarySection,
-                  setSection: setLibrarySection,
-                  query: libraryQuery,
-                  setQuery: setLibraryQuery,
-                  results: libraryResults,
-                  searchQuery: query,
-                  selectedAsset: selectedLibraryAsset,
-                  relatedAssets,
-                  onSelectAsset: (asset) => void selectLibraryAsset(asset),
-                  onPreviewAsset: () => void previewSelectedLibraryAsset(),
-                  onEditAsset: () => void editSelectedLibraryAsset(),
-                  onImportMidi: () => void importMidi(),
-                }}
-                plugins={{
-                  plugins,
-                  visiblePlugins,
-                  selectedTrack: arrange.selectedTrack,
-                  onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
-                }}
-                recordings={{
-                  visibleRecordings,
-                  count: recordings.length,
-                }}
-                inbox={inbox}
-              />
-            ) : (
-              <InspectorPanel
-                audio={audio}
-                recordingCommandPending={recordingCommandPending}
-                session={session}
-                setSession={setSession}
-                arrangeSelection={arrange.selection}
-                setArrangeSelection={arrange.setSelection}
-                missingDependencies={missingDependencies}
-                plugins={plugins}
-                onDisableMissingPlugin={disableMissingPluginDevice}
-                onReplaceMissingPlugin={replaceMissingPluginDevice}
-                onRescanMissingPlugins={rescanMissingPlugins}
-                onRecordAnotherTake={(recordingSessionId) =>
-                  void startRecordingNow(recordingSessionId)
-                }
-                api={nativeApi}
-              />
-            )}
-          </SidePanel>
-        )}
-
-        <PanelResizeHandle
-          width={sidePanelOpen ? sidePanelWidth : 0}
+        <LeftColumnResizeHandle
+          width={leftColumnWidth}
           onPointerDown={startPanelResize}
-          onResizeBy={resizeSidePanelBy}
+          onResizeBy={resizeLeftColumnBy}
         />
 
         <section className={shellStyles.workspace}>
@@ -409,22 +388,26 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}
-            performanceHost={performanceHost}
+            playSurfaceHost={playSurfaceHost}
           />
         </section>
+
+        {isMuted && (
+          <div className={styles.muteBanner} role="status">
+            <Icon name="stop" />
+            EMERGENCY MUTE ENGAGED —{' '}
+            {feedbackSuspected
+              ? 'acoustic feedback suspected; output silenced automatically'
+              : 'audio output is forced silent'}
+          </div>
+        )}
       </div>
 
-      <div ref={setPerformanceHost} className={shellStyles.performanceHost} data-performance-host />
-
-      {isMuted && (
-        <div className={styles.muteBanner}>
-          <Icon name="stop" />
-          EMERGENCY MUTE ENGAGED —{' '}
-          {feedbackSuspected
-            ? 'acoustic feedback suspected; output silenced automatically'
-            : 'audio output is forced silent'}
-        </div>
-      )}
+      <div
+        ref={setPlaySurfaceHost}
+        className={shellStyles.playSurfaceHost}
+        data-play-surface-host
+      />
       {commandOpen && (
         <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
           <section

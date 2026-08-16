@@ -1,0 +1,230 @@
+.surface {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 12px 14px 14px;
+  color: #dbe8ec;
+  background: #0d151a;
+}
+
+.instrumentInfo {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.instrumentInfo strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #edf7f8;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instrumentInfo span {
+  overflow: hidden;
+  color: #8da1aa;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controls {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  background: #121d23;
+  border: 1px solid #30414b;
+  border-radius: 6px;
+}
+
+.mode {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid #3a4c56;
+  border-radius: 4px;
+}
+
+.mode button,
+.controls > button,
+.state button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: #b3c3c9;
+  font-size: 10px;
+  font-weight: 550;
+  background: #111a20;
+  border: 1px solid #3a4c56;
+  border-radius: 4px;
+}
+
+.mode button {
+  min-width: 58px;
+  border: 0;
+  border-radius: 0;
+}
+
+.mode button:hover:not(:disabled),
+.controls > button:hover:not(:disabled),
+.state button:hover:not(:disabled) {
+  color: #f1fbfc;
+  background: #1c2b33;
+  border-color: #56717d;
+}
+
+.mode .active,
+.computerKeysActive {
+  color: #baf7f5 !important;
+  background: #1b4149 !important;
+  box-shadow: inset 0 0 0 1px rgba(112, 225, 232, 0.42);
+}
+
+.velocity {
+  min-width: 150px;
+  flex: 0 0 150px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 4px 7px;
+  color: #9aadb5;
+  font-size: 10px;
+}
+
+.velocity strong {
+  color: #e4f0f2;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.velocity input {
+  width: 100%;
+  min-width: 90px;
+  grid-column: 1 / -1;
+  height: 4px;
+  accent-color: var(--cyan);
+}
+
+.octave {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  background: #0e171c;
+  border: 1px solid #334650;
+  border-radius: 4px;
+}
+
+.octave button {
+  min-width: 25px;
+  min-height: var(--control-dense);
+  padding: 0;
+  color: #d2e3e6;
+  background: transparent;
+  border: 0;
+}
+
+.octave button:hover:not(:disabled) {
+  color: #ffffff;
+  background: #1d3038;
+}
+
+.octave strong {
+  min-width: 31px;
+  color: #79e0e8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.toggleButton {
+  flex: 0 0 auto;
+}
+
+.sourceLine {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 0 2px 2px;
+  color: #9aadb5;
+  font-size: 10px;
+  border-bottom: 1px solid #26353d;
+}
+
+.sourceLine strong {
+  color: #dbe9eb;
+  font-weight: 600;
+}
+
+.activeNotes {
+  margin-left: auto;
+  color: #b9f0e8;
+  font-variant-numeric: tabular-nums;
+}
+
+.instrumentSurface {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  overflow: auto;
+}
+
+.instrumentSurface > * {
+  width: min(100%, 720px);
+  max-width: 100%;
+}
+
+.message {
+  color: #ffc0ba;
+  font-size: 10px;
+}
+
+.state {
+  min-height: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 26px;
+  color: #a3b3ba;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+  background: #0d151a;
+}
+
+.state strong {
+  color: #e8f3f4;
+  font-size: 13px;
+}
+
+.state span {
+  max-width: 480px;
+}
+
+.state button {
+  color: #baf7f5;
+  border-color: #3d7c84;
+}
+
+@media (max-width: 760px) {
+  .velocity {
+    min-width: 130px;
+    flex-basis: 130px;
+  }
+
+  .activeNotes {
+    width: 100%;
+    margin-left: 0;
+  }
+}

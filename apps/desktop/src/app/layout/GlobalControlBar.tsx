@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import type { AudioStatus, CreativeSession, HistoryState } from '@/model/domain';
 import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
-import { TransportBar } from '@/features/transport/TransportBar';
+import { TransportControls } from '@/features/transport/TransportControls';
 import { Icon } from '@/shared/ui/primitives';
 import shellStyles from '../AppShell.module.css';
 import styles from './GlobalControlBar.module.css';
@@ -70,7 +70,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       </div>
 
       <div className={styles.transportControls}>
-        <TransportBar
+        <TransportControls
           session={props.session}
           setSession={props.setSession}
           audio={props.audio}

@@ -26,8 +26,7 @@ import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import { MidiEditorPanel } from './midi-editor/MidiEditorPanel';
 import { ArrangeDetailArea, type ArrangeDetailView } from './ArrangeDetailArea';
-import { PlaySurfacePanel } from './play-surface/PlaySurfacePanel';
-import { PerformancePanel, type PerformancePanelMode } from './play-surface/PerformancePanel';
+import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
 import { PluginPicker } from './inspector/PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
@@ -70,7 +69,7 @@ interface WorkspaceArrangeProps {
   canonicalOperationPending?: boolean;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
-  performanceHost: HTMLElement | null;
+  playSurfaceHost: HTMLElement | null;
 }
 
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
@@ -121,7 +120,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [detailMaximized, setDetailMaximized] = useState(false);
   const [detailHeight, setDetailHeight] = useState(280);
-  const [performancePanelMode, setPerformancePanelMode] = useState<PerformancePanelMode>('closed');
+  const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<{
@@ -340,7 +339,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const openPlaySurface = (trackId: string) => {
     props.setSelection({ kind: 'track', trackId });
     props.onFocusTrack(trackId);
-    setPerformancePanelMode('expanded');
+    setPlaySurfaceMode('expanded');
   };
 
   const openMidiEditor = (clip: MidiClip) => {
@@ -1567,28 +1566,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
       />
 
-      <PerformancePanel
-        host={props.performanceHost}
-        mode={performancePanelMode}
+      <PlaySurfacePanel
+        host={props.playSurfaceHost}
+        mode={playSurfaceMode}
         track={focusedTrack}
         summary={playSurfaceSummary}
-        onModeChange={setPerformancePanelMode}
-        playSurface={
-          <PlaySurfacePanel
-            track={focusedTrack}
-            audio={props.audio}
-            api={props.api}
-            runtimeReady={runtimeReady}
-            missingDeviceIds={[
-              ...(props.missingDeviceIds ?? []),
-              ...(transport?.missingDeviceIds ?? []),
-            ]}
-            onChooseInstrument={() => {
-              if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
-            }}
-            onSummaryChange={setPlaySurfaceSummary}
-          />
-        }
+        onModeChange={setPlaySurfaceMode}
+        audio={props.audio}
+        api={props.api}
+        runtimeReady={runtimeReady}
+        missingDeviceIds={[
+          ...(props.missingDeviceIds ?? []),
+          ...(transport?.missingDeviceIds ?? []),
+        ]}
+        onChooseInstrument={() => {
+          if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
+        }}
+        onSummaryChange={setPlaySurfaceSummary}
       />
 
       {contextMenu && (

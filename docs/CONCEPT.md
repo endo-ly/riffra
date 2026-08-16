@@ -37,7 +37,7 @@ flowchart LR
 | Arrange | 演奏しながら音を決め、曲にする | Track、Input、Rack、Plugin、Instrument    | 録音、音色、ラック、スナップショット、曲 |
 | Design  | 音の材料と構造を作る           | Audio Asset、生成定義、Instrument Mapping | One Shot、Loop、Instrument、派生素材     |
 
-**Arrangeが主画面である。** 演奏、監視、録音はArrangeの機能であり、Focused Instrument Trackを対象に下部のPerformance Panelで演奏できる。
+**Arrangeが主画面である。** 演奏、監視、録音はArrangeの機能であり、Focused Instrument Trackを対象にPlay Surfaceで演奏できる。
 
 ### 2.1 Arrange
 
@@ -51,13 +51,13 @@ Arrangeは、入力された音を聞きながら音を作り、録音し、時�
 | 構成       | Audio / MIDI Clip、トラック、タイムライン編集、テンポ・拍子・マーカー・ループ・自動変化 |
 | 書出し     | マスター、トラック、ステム、MIDI                                                        |
 
-#### Performance Panel
+#### Play Surface
 
-Performance Panelは、Timelineを見ながら選択中のInstrument Trackを演奏するArrangeの下部パネルである。Keyboard／Drum Pads、Octave、Velocity、Computer Keyboard入力を提供し、Record Armは自動変更しない。
+Play Surfaceは、Timelineを見ながらFocused Instrument Trackを演奏するための領域である。Keyboard／Drum Pads、Octave、Velocity、Computer Keyboard入力を提供し、Record Armは自動変更しない。
 
 - FocusとObject Selectionを分離し、MIDI Clipを選択しても演奏先を維持する
 - Armedかつ録音中のFocused Trackだけへ演奏MIDIを記録する
-- MIDI EditorとPerformance Panelは独立して開閉でき、同時に使える
+- MIDI EditorとPlay Surfaceは独立して開閉でき、同時に使える
 
 ### 2.2 Design
 
@@ -107,7 +107,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    P["演奏・音作り<br/>Arrange / Performance Panel"] --> R["録音<br/>Raw / Processed"]
+    P["演奏・音作り<br/>Arrange / Play Surface"] --> R["録音<br/>Raw / Processed"]
     R --> I["Inbox / Library"]
     I --> D["Design<br/>加工・音源化"]
     D --> A["Arrange<br/>曲の中に置く"]
@@ -120,7 +120,7 @@ flowchart TD
 | 演奏から   | 音を作る → 録音 → 切出し・音源化 → 曲の中に置く                                       |
 | 数式から   | 合成・変調・包絡を組む → 鍵盤やMIDIで演奏しながら調整 → 音色として保存 → 組み合わせる |
 | 素材から   | 加工・分離・割当 → Arrangeで楽器として演奏 → 曲に置く                                 |
-| 曲から音へ | 問題を見つける → Performance Panelで弾き直す、またはDesignで加工し直す → 差し替える   |
+| 曲から音へ | 問題を見つける → Play Surfaceで弾き直す、またはDesignで加工し直す → 差し替える        |
 
 ### 3.1 共有する制作基盤
 
@@ -168,27 +168,9 @@ flowchart TD
 
 ## 5. 画面構成
 
-制作画面は、Global Control Bar、Navigation Rail、Side Panel、Main Canvas、Performance Panelで構成する。TransportはGlobal Control Barに含まれる。
+共通の画面骨格は [共通画面構造](ui-ux-design/application-layout.md) で定義する。Arrange では Browser、Properties、Timeline、Detail Area、Play Surface が同じセッションを参照し、選択・編集・演奏の文脈を保ったまま連携する。
 
-```text
-┌──────────────────────── Global Control Bar ─────────────────────────┐
-│ Project / History       Transport                 Audio / Safety     │
-├──────┬──────────────────┬───────────────────────────────────────────┤
-│ NAV  │ Side Panel       │ Main Canvas                               │
-│      │ Browser          │ Arrange Timeline / Detail Area            │
-│      │ Inspector        │                                           │
-├──────┴──────────────────┴───────────────────────────────────────────┤
-│ Performance Panel (optional)                                        │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-| 画面部分           | 役割                                                        |
-| ------------------ | ----------------------------------------------------------- |
-| Global Control Bar | セッション、履歴、Transport、音声状態、安全操作、検索、設定 |
-| Navigation Rail    | Browser と Inspector の表示先を切り替える                   |
-| Side Panel         | 素材とプラグインを探し、選択対象の詳細を表示する            |
-| Main Canvas        | Arrange の Timeline と Detail Area を表示する               |
-| Performance Panel  | Focused Instrument Track への演奏入力を表示する             |
+Focused Instrument Track は Play Surface から演奏できる。MIDI Editor と Play Surface は同時に利用できるため、MIDI の編集とライブ入力を切り替えずに確認できる。
 
 選択、ドラッグ、試聴、取り消し、エラー表示の意味は、制作領域が変わっても統一する。
 
@@ -205,13 +187,13 @@ flowchart TD
 
 ### 4.2 補助機能の位置
 
-| 機能                                                 | 位置                                                   |
-| ---------------------------------------------------- | ------------------------------------------------------ |
-| 波形編集・信号生成・音源化・分析・参照比較・音源分離 | Design                                                 |
-| 録音操作                                             | Arrange（Performance Panelからも同じ状態で利用できる） |
-| AI支援                                               | 独立領域にせず、選択中のArrange、Designを補助する      |
-| Library / Inspector                                  | 二領域で共有する                                       |
-| 未完成機能                                           | 利用可能な機能と同じ強さで表示しない                   |
+| 機能                                                 | 位置                                              |
+| ---------------------------------------------------- | ------------------------------------------------- |
+| 波形編集・信号生成・音源化・分析・参照比較・音源分離 | Design                                            |
+| 録音操作                                             | Arrange（Play Surfaceからも同じ状態で利用できる） |
+| AI支援                                               | 独立領域にせず、選択中のArrange、Designを補助する |
+| Browser / Properties                                 | 二領域で共有する                                  |
+| 未完成機能                                           | 利用可能な機能と同じ強さで表示しない              |
 
 ## 6. 原則と範囲
 
@@ -266,10 +248,10 @@ Riffraは外部DAWとの競合だけを目的とせず、作った音をWAV、�
 
 五つのシナリオが同じセッション、素材、履歴の上で成立することが、Riffraの製品価値である。
 
-| シナリオ       | 主な手順                                                                                                                                                   | 成果                                                 |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| ギター         | 起動 → トラックで入力と監視を確認 → VST3をトラックラックへ → Performance Panelで弾きながら調整 → Raw / Processed録音 → 必要ならDesignで加工 → 時間軸で確認 | アンプを通した音と録音が文脈ごと残り、曲の中で試せる |
-| 歌声           | トラックでマイク入力を選ぶ → 処理の順序と量を調整 → 録音 → 良い部分をDesignで切出す → 伴奏と組み合わせる                                                   | 歌いながら整えた声がそのまま素材になる               |
-| 数式から       | Designで数式・波形・ノイズから作る → 変調・包絡・フィルターを組む → Arrangeで鍵盤やMIDIから演奏 → 音色として保存 → 音声素材化して組み合わせる              | 生成した音が演奏可能な音源になり、曲に使える         |
-| 素材から       | 録音・音声ファイルをDesignへ → 波形を切り、整え、加工 → ループ・パッド・鍵盤用音源として保存 → Arrangeで演奏 → 曲に置く                                    | 既存の音が再利用できる素材として蓄積される           |
-| AIエージェント | CLIでプロジェクト作成 → トラック追加 → MIDIクリップ配置 → レンダリング → 状態取得                                                                          | 指示だけで曲の骨組みと音声が作られる                 |
+| シナリオ       | 主な手順                                                                                                                                              | 成果                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| ギター         | 起動 → トラックで入力と監視を確認 → VST3をトラックラックへ → Play Surfaceで弾きながら調整 → Raw / Processed録音 → 必要ならDesignで加工 → 時間軸で確認 | アンプを通した音と録音が文脈ごと残り、曲の中で試せる |
+| 歌声           | トラックでマイク入力を選ぶ → 処理の順序と量を調整 → 録音 → 良い部分をDesignで切出す → 伴奏と組み合わせる                                              | 歌いながら整えた声がそのまま素材になる               |
+| 数式から       | Designで数式・波形・ノイズから作る → 変調・包絡・フィルターを組む → Arrangeで鍵盤やMIDIから演奏 → 音色として保存 → 音声素材化して組み合わせる         | 生成した音が演奏可能な音源になり、曲に使える         |
+| 素材から       | 録音・音声ファイルをDesignへ → 波形を切り、整え、加工 → ループ・パッド・鍵盤用音源として保存 → Arrangeで演奏 → 曲に置く                               | 既存の音が再利用できる素材として蓄積される           |
+| AIエージェント | CLIでプロジェクト作成 → トラック追加 → MIDIクリップ配置 → レンダリング → 状態取得                                                                     | 指示だけで曲の骨組みと音声が作られる                 |

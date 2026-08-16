@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
@@ -22,7 +22,7 @@ describe('App native boundary', () => {
 
     await renderApp(api);
     expect(
-      screen.getByRole('contentinfo').closest('[data-global-control-bar]'),
+      screen.getByRole('button', { name: 'Play' }).closest('[data-global-control-bar]'),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^MUTE$/ }));
 
@@ -31,22 +31,31 @@ describe('App native boundary', () => {
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
   });
 
-  it('uses the Navigation Rail to toggle one side panel at a time', async () => {
+  it('keeps Browser and Properties mounted in the left column', async () => {
     const api = new FakeNativeApi();
     await renderApp(api);
 
-    expect(screen.getByRole('region', { name: 'Browser panel' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Browser' }));
-    expect(screen.queryByRole('region', { name: 'Browser panel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Browser' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Properties' })).toBeInTheDocument();
+    expect(document.querySelector('[data-navigation-rail]')).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Inspector' })).not.toBeInTheDocument();
+  });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
-    expect(screen.queryByRole('region', { name: 'Browser panel' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Inspector panel' })).toBeInTheDocument();
+  it('supports both left column resize handles from the keyboard', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
-    expect(screen.queryByRole('region', { name: 'Inspector panel' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Browser' }));
-    expect(screen.getByRole('region', { name: 'Browser panel' })).toBeInTheDocument();
+    const leftColumnHandle = screen.getByRole('separator', {
+      name: 'Resize or collapse left column',
+    });
+    fireEvent.keyDown(leftColumnHandle, { key: 'ArrowRight' });
+    expect(leftColumnHandle).toHaveAttribute('aria-valuenow', '288');
+
+    const propertiesHandle = screen.getByRole('separator', {
+      name: 'Resize Browser and Properties',
+    });
+    fireEvent.keyDown(propertiesHandle, { key: 'ArrowUp' });
+    expect(propertiesHandle).toHaveAttribute('aria-valuenow', '248');
   });
 
   it('shows a runtime restart notification without replaying session commands', async () => {

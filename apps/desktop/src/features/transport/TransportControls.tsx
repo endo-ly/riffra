@@ -4,11 +4,11 @@ import clsx from 'clsx';
 import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Icon, Meter } from '@/shared/ui/primitives';
-import styles from './TransportBar.module.css';
+import styles from './TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
 
-interface TransportBarProps {
+interface TransportControlsProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
   audio: AudioStatus;
@@ -24,7 +24,7 @@ interface TransportBarProps {
     Pick<ProjectSettingsApi, 'updateSessionSettings'>;
 }
 
-export function TransportBar(props: TransportBarProps) {
+export function TransportControls(props: TransportControlsProps) {
   const {
     session,
     setSession,
@@ -141,7 +141,7 @@ export function TransportBar(props: TransportBarProps) {
 
   const statusDotState = audio.recording.active ? 'recording' : audio.state;
   return (
-    <footer className={styles.transport}>
+    <div className={styles.transport}>
       <div className={styles.transportLeft}>
         <button
           className={session.arrangement.loopRange.enabled ? 'active' : ''}
@@ -305,7 +305,7 @@ export function TransportBar(props: TransportBarProps) {
           ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`
           : audio.message}
       </div>
-    </footer>
+    </div>
   );
 }
 

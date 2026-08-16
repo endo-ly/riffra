@@ -9,7 +9,7 @@
   grid-template-areas:
     'global'
     'body'
-    'performance';
+    'play-surface';
   background: var(--base);
 }
 
@@ -19,8 +19,8 @@
   min-height: 0;
   position: relative;
   display: grid;
-  grid-template-columns: var(--rail-width) var(--side-panel-width) minmax(0, 1fr);
-  grid-template-areas: 'rail side workspace';
+  grid-template-columns: var(--left-column-width) minmax(0, 1fr);
+  grid-template-areas: 'left workspace';
   overflow: hidden;
 }
 
@@ -33,8 +33,8 @@
   background: radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), #0b0e12;
 }
 
-.performanceHost {
-  grid-area: performance;
+.playSurfaceHost {
+  grid-area: play-surface;
   min-width: 0;
   min-height: 0;
 }
@@ -44,7 +44,7 @@
   z-index: 8;
   top: 0;
   bottom: 0;
-  left: calc(var(--rail-width) + var(--side-panel-width));
+  left: var(--left-column-width);
   width: 8px;
   transform: translateX(-50%);
   cursor: col-resize;

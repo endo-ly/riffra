@@ -29,7 +29,7 @@ function Harness({
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
-  const [performanceHost, setPerformanceHost] = useState<HTMLDivElement | null>(null);
+  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   return (
     <>
       <WorkspaceArrange
@@ -42,9 +42,9 @@ function Harness({
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
-        performanceHost={performanceHost}
+        playSurfaceHost={playSurfaceHost}
       />
-      <div ref={setPerformanceHost} data-performance-host />
+      <div ref={setPlaySurfaceHost} data-play-surface-host />
       <ToastStack />
     </>
   );
@@ -1731,11 +1731,11 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
   });
 
-  it('keeps the Performance panel independent from the MIDI detail area', async () => {
+  it('keeps the Play Surface independent from the MIDI detail area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
-      id: 'track:performance',
-      name: 'Performance Instrument',
+      id: 'track:play-surface',
+      name: 'Play Surface Instrument',
       kind: 'instrument',
       gainDb: 0,
       pan: 0,
@@ -1747,9 +1747,9 @@ describe('WorkspaceArrange', () => {
       rack: { devices: [], macros: [] },
     });
     session.arrangement.midiClips.push({
-      id: 'clip:performance',
-      name: 'Performance Clip',
-      trackId: 'track:performance',
+      id: 'clip:play-surface',
+      name: 'Play Surface Clip',
+      trackId: 'track:play-surface',
       startTick: 0,
       durationTicks: 1_920,
       notes: [],
@@ -1761,21 +1761,23 @@ describe('WorkspaceArrange', () => {
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Play Surface' }));
-    expect(screen.getByRole('region', { name: 'Performance panel' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Compact performance panel' }));
-    expect(screen.getByRole('button', { name: 'Expand performance panel' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand performance panel' }));
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Compact Play Surface' }));
+    expect(screen.getByRole('button', { name: 'Expand Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Play Surface' }));
 
-    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:performance"]')!);
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:play-surface"]')!);
     expect(screen.getByRole('region', { name: 'Arrange detail area' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Performance panel' })).toBeInTheDocument();
-    expect(screen.queryByText('Performance Instrument · Performance Clip')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Play Surface Instrument · Play Surface Clip'),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close detail area' }));
     expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Performance panel' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close performance panel' }));
-    expect(screen.queryByRole('region', { name: 'Performance panel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Play Surface' }));
+    expect(screen.queryByRole('region', { name: 'Play Surface' })).not.toBeInTheDocument();
   });
 
   it('routes Space to the shared transport controller from the Arrange editor', async () => {
