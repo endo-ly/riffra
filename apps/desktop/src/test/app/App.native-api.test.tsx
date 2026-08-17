@@ -24,11 +24,13 @@ describe('App native boundary', () => {
     expect(
       screen.getByRole('button', { name: 'Play' }).closest('[data-global-control-bar]'),
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /^MUTE$/ }));
+    const emergencyMuteButton = screen.getByRole('button', { name: /^MUTE$/ });
+    expect(emergencyMuteButton).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(emergencyMuteButton);
 
     await waitFor(() => expect(api.emergencyMuteRequests).toEqual([true]));
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /UNMUTE/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('keeps Browser and Properties mounted in the left column', async () => {

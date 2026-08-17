@@ -2,193 +2,166 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 15px;
-  background: var(--color-bg-app);
+  gap: 10px;
   user-select: none;
-  z-index: 4;
 }
 
-.statusLine {
-  max-width: 170px;
+.transportActions {
+  height: 32px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-size: 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 1280px) {
-  .statusLine {
-    display: none;
-  }
-}
-
-.transportLeft {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.transportLeft button {
-  width: 31px;
-  height: 31px;
-  display: grid;
-  place-content: center;
-  color: var(--color-text-secondary);
-  background: transparent;
+  gap: 1px;
+  box-sizing: border-box;
+  padding: 2px;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 5px;
 }
-.transportLeft button:hover {
+
+.transportActions button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+
+.transportActions button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-surface-raised);
+  background: var(--color-bg-control-hover);
 }
-.transportLeft button.toggleActive {
+
+.transportActions button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+.transportActions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.transportActions button.toggleActive {
   color: var(--color-accent-primary);
-  background: var(--color-bg-surface-raised);
+  background: color-mix(in srgb, var(--color-accent-primary) 12%, var(--color-bg-control));
 }
-.transportLeft .countInButton {
-  width: auto;
-  min-width: 78px;
-  padding: 0 8px;
-  font-size: var(--font-size-micro);
-  white-space: nowrap;
+
+.transportActions button.toggleActive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-primary) 18%, var(--color-bg-control));
 }
-.transportLeft .playButton {
-  width: 37px;
-  height: 37px;
+
+.transportActions .playButton {
+  width: 28px;
+  height: 28px;
+  margin: -1px 2px;
   color: var(--color-text-on-accent);
   background: var(--color-accent-primary);
   border-radius: 50%;
 }
-.transportLeft .recordButton svg {
+
+.transportActions .playButton:hover:not(:disabled) {
+  color: var(--color-text-on-accent);
+  background: color-mix(in srgb, var(--color-accent-primary) 84%, var(--color-text-strong));
+}
+
+.transportActions .playButton svg {
   width: 14px;
+  height: 14px;
+}
+
+.transportActions .recordButton.active {
   color: var(--color-status-danger);
+  background: color-mix(in srgb, var(--color-status-danger) 13%, var(--color-bg-control));
 }
-.transportLeft .recordButton.active {
-  background: color-mix(in srgb, var(--color-status-danger) 18%, transparent);
-  border-color: color-mix(in srgb, var(--color-status-danger) 70%, transparent);
+
+.transportActions .recordButton.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-status-danger) 19%, var(--color-bg-control));
 }
+
+.transportActions .countInButton {
+  width: auto;
+  min-width: 78px;
+  padding: 0 7px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+
+.transportActions .countInButton.toggleActive {
+  color: var(--color-accent-primary);
+}
+
 .timebase {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding-left: 10px;
-  border-left: 1px solid var(--color-border-default);
+  border-left: 1px solid var(--color-border-subtle);
 }
+
 .timebase label {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
+
 .timebase label > span {
-  color: var(--color-text-muted);
+  color: var(--color-text-disabled);
   font-size: var(--font-size-micro);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
+  line-height: 1;
 }
+
 .timebase input,
 .timebase select {
-  height: var(--size-control-normal);
+  height: var(--size-control-dense);
+  box-sizing: border-box;
   padding: 0 6px;
   color: var(--color-text-secondary);
   font-family: 'DM Mono', Consolas, monospace;
   font-size: var(--font-size-small);
+  font-variant-numeric: tabular-nums;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
   border-radius: 4px;
 }
+
+.timebase input:hover,
+.timebase select:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.timebase input:focus-visible,
+.timebase select:focus-visible {
+  border-color: var(--color-accent-primary);
+}
+
 .timebase input {
-  width: 64px;
+  width: 58px;
 }
+
 .timebase select {
-  width: 66px;
-}
-.transportMeter {
-  flex: 1;
-  display: grid;
-  grid-template-columns: auto minmax(50px, 1fr) auto minmax(50px, 1fr);
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
+  width: 62px;
 }
 
-.transportMeter .meter {
-  height: 4px;
-}
-
-.master {
-  min-width: 178px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  column-gap: 7px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-}
-.master strong {
-  color: var(--color-text-secondary);
-  font-family: 'DM Mono', monospace;
-  font-size: var(--font-size-micro);
-}
-.master input {
-  grid-column: 1 / 3;
-  width: 100%;
-  height: 3px;
-  margin-top: 7px;
-  accent-color: var(--color-accent-primary);
-}
-.statusDot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-status-warning);
-}
-.statusDot.ready {
-  background: var(--color-status-success);
-}
-.statusDot.muted,
-.statusDot.faulted,
-.statusDot.recording {
-  background: var(--color-status-danger);
-}
-
-@media (max-width: 1500px) {
-  .transportMeter {
-    display: none;
-  }
-}
-
-@media (max-width: 1180px) {
+@media (max-width: 1280px) {
   .transport {
-    gap: 4px;
+    gap: 7px;
   }
 
-  .transportLeft {
-    gap: 1px;
-  }
-
-  .transportLeft button {
-    width: 26px;
-    height: 28px;
-  }
-
-  .transportLeft .playButton {
-    width: 32px;
-    height: 32px;
-  }
-
-  .transportLeft .countInButton {
-    min-width: 54px;
+  .transportActions .countInButton {
+    min-width: 70px;
     padding: 0 5px;
   }
 
   .timebase {
     gap: 4px;
-    padding-left: 4px;
+    padding-left: 7px;
   }
 
   .timebase input {
@@ -196,10 +169,21 @@
   }
 
   .timebase select {
-    width: 54px;
+    width: 56px;
+  }
+}
+
+@media (max-width: 1120px) {
+  .transportActions .countInButton {
+    min-width: 28px;
+    padding: 0;
+    overflow: hidden;
+    font-size: 0;
   }
 
-  .master {
-    min-width: 124px;
+  .transportActions .countInButton::after {
+    content: 'CI';
+    color: currentColor;
+    font-size: var(--font-size-small);
   }
 }

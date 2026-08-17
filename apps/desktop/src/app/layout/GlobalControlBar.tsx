@@ -1,9 +1,10 @@
 import clsx from 'clsx';
 import type { AudioStatus, CreativeSession, HistoryState } from '@/model/domain';
-import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
+import { AudioMonitor } from '@/features/audio/AudioMonitor';
+import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
+import type { TransportControlsApi } from '@/features/transport/transport-api';
 import { Icon } from '@/shared/ui/primitives';
-import shellStyles from '../AppShell.module.css';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
@@ -26,45 +27,60 @@ interface GlobalControlBarProps {
   onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
-  transportApi: Pick<ArrangeApi, 'updateArrangementTimebase' | 'updateTimelineLoopRange'> &
-    Pick<AudioApi, 'previewMasterGainDb' | 'setMasterGainDb'> &
-    Pick<ProjectSettingsApi, 'updateSessionSettings'>;
+  transportControlsApi: TransportControlsApi;
+  audioMonitorApi: AudioMonitorApi;
 }
 
 export function GlobalControlBar(props: GlobalControlBarProps) {
+  const audioStateLabel = getAudioStateLabel(props.audio.state);
+  const audioDetail = props.audio.feedbackSuspected
+    ? props.audio.message
+    : [
+        props.audio.driver,
+        props.audio.roundTripMs !== null ? `${props.audio.roundTripMs.toFixed(1)} ms` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
   return (
-    <header className={styles.controlBar} data-global-control-bar>
+    <header className={styles.controlBar} aria-label="Global controls" data-global-control-bar>
       <div className={styles.projectControls}>
-        <div className={styles.brand}>
-          <span className={shellStyles.logoMark}>R</span>
-          <strong>RIFFRA</strong>
-        </div>
+        <span className={styles.appMark} aria-hidden="true">
+          R
+        </span>
         <button
+          type="button"
           className={styles.sessionTitle}
           onClick={props.onRenameSession}
           title="Rename Scratch Session"
         >
-          <span className={styles.saveLight} />
-          {props.session.projectName ?? 'Untitled Scratch'}
-          <small>Auto-saved</small>
+          <span className={styles.sessionName}>
+            {props.session.projectName ?? 'Untitled Scratch'}
+          </span>
+          <span className={styles.sessionStatus}>
+            <span className={styles.saveLight} />
+            Auto-saved
+          </span>
           <Icon name="chevron" />
         </button>
-        <div className={styles.historyControls}>
+        <div className={styles.historyControls} role="group" aria-label="History">
           <button
+            type="button"
             aria-label="Undo"
             title="Undo (Ctrl+Z)"
             disabled={!props.historyState.canUndo}
             onClick={props.onUndo}
           >
-            ↶
+            <Icon name="undo" />
           </button>
           <button
+            type="button"
             aria-label="Redo"
             title="Redo (Ctrl+Y)"
             disabled={!props.historyState.canRedo}
             onClick={props.onRedo}
           >
-            ↷
+            <Icon name="redo" />
           </button>
         </div>
       </div>
@@ -73,20 +89,26 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         <TransportControls
           session={props.session}
           setSession={props.setSession}
-          audio={props.audio}
-          setAudio={props.setAudio}
+          recordingActive={props.audio.recording.active}
           transportPlaying={props.transportPlaying}
           onPlay={props.onPlay}
           onStop={props.onStop}
           onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}
           onToggleRecording={props.onToggleRecording}
-          api={props.transportApi}
+          api={props.transportControlsApi}
         />
       </div>
 
       <div className={styles.audioControls}>
+        <AudioMonitor
+          session={props.session}
+          setSession={props.setSession}
+          setAudio={props.setAudio}
+          api={props.audioMonitorApi}
+        />
         <button
+          type="button"
           className={styles.commandTrigger}
           onClick={props.onOpenCommand}
           aria-label="Search or command"
@@ -95,27 +117,32 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           <Icon name="search" />
         </button>
         <button
+          type="button"
           className={clsx(
-            styles.enginePill,
+            styles.audioStatus,
             styles[props.audio.state],
             props.audioSettingsOpen && styles.open,
           )}
           onClick={props.onOpenAudioSettings}
-          aria-label="Open Audio Settings"
+          aria-label={`Open Audio Settings: ${audioStateLabel}`}
           aria-haspopup="dialog"
           aria-expanded={props.audioSettingsOpen}
           title="Open Audio Settings"
           data-audio-settings-trigger
         >
-          <span />
-          <strong>{props.audio.state === 'ready' ? props.audio.driver : props.audio.state}</strong>
-          <small>{props.audio.roundTripMs ? `${props.audio.roundTripMs} ms` : 'Audio'}</small>
+          <span className={styles.audioStatusDot} />
+          <span className={styles.audioStatusText}>
+            <strong>{audioStateLabel}</strong>
+            <small>{audioDetail || 'Audio device'}</small>
+          </span>
           <Icon name="chevron" />
         </button>
         <button
+          type="button"
           className={clsx(styles.emergencyButton, props.isMuted && styles.active)}
           onClick={() => void props.onToggleMute()}
           aria-label={props.isMuted ? 'UNMUTE' : 'MUTE'}
+          aria-pressed={props.isMuted}
           title={props.isMuted ? 'Unmute' : 'Emergency mute'}
         >
           <Icon name="stop" />
@@ -123,4 +150,19 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       </div>
     </header>
   );
+}
+
+function getAudioStateLabel(state: AudioStatus['state']) {
+  switch (state) {
+    case 'ready':
+      return 'Ready';
+    case 'starting':
+      return 'Starting';
+    case 'muted':
+      return 'Muted';
+    case 'faulted':
+      return 'Fault';
+    case 'offline':
+      return 'Offline';
+  }
 }

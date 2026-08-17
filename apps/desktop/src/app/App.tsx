@@ -224,7 +224,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onGoToStart={() => void goToStart()}
         recordingCommandPending={recordingCommandPending}
         onToggleRecording={() => void toggleRecording()}
-        transportApi={nativeApi}
+        transportControlsApi={nativeApi}
+        audioMonitorApi={nativeApi}
       />
 
       <AudioSettingsDialog

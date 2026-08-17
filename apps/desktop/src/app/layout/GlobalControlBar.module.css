@@ -2,12 +2,15 @@
   grid-area: global;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(390px, 1.6fr) minmax(132px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  height: var(--size-global-control-bar);
   padding: 0 12px;
-  background: var(--color-bg-app);
-  border-bottom: 1px solid var(--color-border-default);
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--color-bg-surface), var(--color-bg-panel));
+  border-bottom: 1px solid var(--color-border-subtle);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16);
   user-select: none;
   z-index: 4;
 }
@@ -18,87 +21,85 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
 }
 
 .projectControls {
+  gap: 6px;
   overflow: hidden;
 }
 
-.transportControls {
-  overflow: hidden;
-}
-
-.transportControls > div {
-  width: 100%;
-  min-width: 0;
-  gap: 8px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
+.appMark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
   flex: 0 0 auto;
-  margin-right: 2px;
-}
-
-.brand strong {
-  color: var(--color-text-strong);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-}
-
-.saveLight {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-status-success);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--color-status-success) 50%, transparent);
+  color: var(--color-text-on-accent);
+  font-size: 14px;
+  font-weight: 800;
+  background: var(--color-accent-primary);
+  border-radius: 5px;
 }
 
 .sessionTitle {
-  height: 36px;
-  min-width: 100px;
-  max-width: 210px;
+  min-width: 0;
+  max-width: 220px;
+  height: 34px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: 18px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 17px 11px;
   align-items: center;
-  column-gap: 7px;
-  flex: 1 1 150px;
-  padding: 4px 8px;
+  column-gap: 8px;
+  flex: 1 1 160px;
+  padding: 3px 6px;
   overflow: hidden;
   text-align: left;
   color: var(--color-text-primary);
   background: transparent;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
 }
 
 .sessionTitle:hover {
-  background: var(--color-bg-surface);
+  background: var(--color-bg-surface-raised);
+  border-color: var(--color-border-default);
 }
 
-.sessionTitle > :not(svg) {
+.sessionName,
+.sessionStatus {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sessionTitle small {
-  grid-column: 2;
-  color: var(--color-text-secondary);
+.sessionName {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-emphasis);
+  font-weight: 600;
+}
+
+.sessionStatus {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
   font-size: var(--font-size-micro);
 }
 
+.saveLight {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
 .sessionTitle svg {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1 / 3;
-  width: 13px;
+  width: 11px;
   color: var(--color-text-muted);
   transform: rotate(90deg);
 }
@@ -107,80 +108,95 @@
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
+  padding-left: 6px;
+  border-left: 1px solid var(--color-border-subtle);
 }
 
 .historyControls button {
-  width: 28px;
-  height: 28px;
+  width: var(--size-control-dense);
+  height: var(--size-control-dense);
+  display: grid;
+  place-items: center;
   padding: 0;
-  color: var(--color-text-secondary);
-  font-size: 17px;
-  line-height: 1;
+  color: var(--color-text-muted);
   background: transparent;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .historyControls button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-surface-raised);
+  background: var(--color-bg-control-hover);
 }
 
-.audioControls {
-  justify-content: flex-end;
-  gap: 4px;
-}
-
-.commandTrigger {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  padding: 0;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-control-raised);
-  border: 1px solid var(--color-border-default);
-  border-radius: 6px;
-}
-
-.commandTrigger:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-}
-
-.commandTrigger svg {
+.historyControls svg {
   width: 13px;
   height: 13px;
 }
 
-.enginePill {
-  height: 34px;
-  min-width: 78px;
+.transportControls {
+  justify-content: center;
+  overflow: visible;
+}
+
+.audioControls {
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.commandTrigger,
+.audioStatus,
+.emergencyButton {
+  flex: 0 0 auto;
+}
+
+.commandTrigger {
+  width: var(--size-control-dense);
+  height: var(--size-control-dense);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+}
+
+.commandTrigger:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-hover);
+  border-color: var(--color-border-strong);
+}
+
+.commandTrigger svg {
+  width: 12px;
+  height: 12px;
+}
+
+.audioStatus {
+  min-width: 116px;
+  max-width: 158px;
+  height: 30px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: 17px 11px;
+  grid-template-rows: 14px 10px;
   align-items: center;
-  column-gap: 5px;
-  flex: 1 1 92px;
-  padding: 3px 6px;
+  column-gap: 6px;
+  padding: 2px 5px;
   overflow: hidden;
-  text-transform: uppercase;
   color: var(--color-text-secondary);
-  font-size: 8px;
   background: transparent;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
 }
 
-.enginePill:hover {
-  background: rgba(255, 255, 255, 0.045);
+.audioStatus:hover,
+.audioStatus.open {
+  background: var(--color-bg-control-hover);
+  border-color: var(--color-border-default);
 }
 
-.enginePill.open {
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border-strong);
-}
-
-.enginePill > span {
+.audioStatusDot {
   grid-row: 1 / 3;
   width: 6px;
   height: 6px;
@@ -188,64 +204,68 @@
   background: var(--color-status-warning);
 }
 
-.enginePill.ready > span {
+.audioStatus.ready .audioStatusDot {
   background: var(--color-status-success);
-  box-shadow: 0 0 8px var(--color-status-success);
 }
 
-.enginePill.muted > span,
-.enginePill.faulted > span {
+.audioStatus.muted .audioStatusDot,
+.audioStatus.faulted .audioStatusDot {
   background: var(--color-status-danger);
 }
 
-.enginePill small {
-  grid-column: 2;
-  color: var(--color-text-muted);
-  font-size: 7px;
-  text-transform: none;
+.audioStatusText {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  text-align: left;
 }
 
-.enginePill strong {
-  min-width: 0;
+.audioStatusText strong,
+.audioStatusText small {
   overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 8px;
-  font-weight: 500;
-  text-align: left;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.enginePill svg {
+.audioStatusText strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.audioStatusText small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.audioStatus svg {
   grid-column: 3;
   grid-row: 1 / 3;
   width: 10px;
-  height: 10px;
   color: var(--color-text-muted);
   transform: rotate(90deg);
 }
 
 .emergencyButton {
-  width: 30px;
-  height: 30px;
+  width: var(--size-control-dense);
+  height: var(--size-control-dense);
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
   padding: 0;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-control-raised);
+  color: var(--color-status-danger);
+  background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
-  border-radius: 5px;
+  border-radius: 4px;
+}
+
+.emergencyButton:hover {
+  background: color-mix(in srgb, var(--color-status-danger) 8%, var(--color-bg-control));
+  border-color: color-mix(in srgb, var(--color-status-danger) 55%, var(--color-border-default));
 }
 
 .emergencyButton svg {
   width: 12px;
-  color: var(--color-status-danger);
-}
-
-.emergencyButton:hover {
-  border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent);
+  height: 12px;
 }
 
 .emergencyButton.active {
@@ -254,37 +274,57 @@
   border-color: var(--color-status-danger);
 }
 
-@media (max-width: 1180px) {
-  .controlBar {
-    grid-template-columns: minmax(200px, 0.8fr) minmax(390px, 1.5fr) minmax(120px, 0.4fr);
-    gap: 4px;
-    padding: 0 8px;
-  }
-
-  .brand strong {
-    display: none;
-  }
-
-  .projectControls,
-  .audioControls {
-    gap: 3px;
-  }
-
-  .transportControls > div {
-    gap: 4px;
-  }
-}
-
 @media (prefers-reduced-motion: no-preference) {
   .saveLight,
-  .enginePill.starting > span {
+  .audioStatus.starting .audioStatusDot {
     animation: softPulse 1.8s ease-in-out infinite;
   }
 
   @keyframes softPulse {
     50% {
       opacity: 0.45;
-      box-shadow: 0 0 3px currentColor;
     }
+  }
+}
+
+@media (max-width: 1180px) {
+  .controlBar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .sessionTitle {
+    max-width: 170px;
+  }
+
+  .audioControls {
+    gap: 4px;
+  }
+
+  .audioStatus {
+    min-width: 96px;
+  }
+
+  .audioStatusText small {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .sessionStatus {
+    display: none;
+  }
+
+  .audioStatus {
+    min-width: 28px;
+    width: 28px;
+    padding: 0;
+    grid-template-columns: auto;
+    justify-content: center;
+  }
+
+  .audioStatusText,
+  .audioStatus svg {
+    display: none;
   }
 }

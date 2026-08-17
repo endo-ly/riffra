@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CreativeSession } from '@/model/domain';
+import { useEffect, useState } from 'react';
+import type { CreativeSession } from '@/model/domain';
 import clsx from 'clsx';
-import type { ArrangeApi, AudioApi, ProjectSettingsApi } from '@/native/native-api';
-import { useAudioMeters } from '@/shared/audio/audio-meters';
-import { Icon, Meter } from '@/shared/ui/primitives';
+import { TransportIcon } from './TransportIcon';
+import type { TransportControlsApi } from './transport-api';
 import styles from './TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
@@ -11,25 +10,21 @@ const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'
 interface TransportControlsProps {
   session: CreativeSession;
   setSession: (session: CreativeSession) => void;
-  audio: AudioStatus;
-  setAudio: (audio: AudioStatus) => void;
+  recordingActive: boolean;
   transportPlaying: boolean;
   onPlay: () => void;
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
   onToggleRecording: () => void;
-  api: Pick<ArrangeApi, 'updateArrangementTimebase' | 'updateTimelineLoopRange'> &
-    Pick<AudioApi, 'previewMasterGainDb' | 'setMasterGainDb'> &
-    Pick<ProjectSettingsApi, 'updateSessionSettings'>;
+  api: TransportControlsApi;
 }
 
 export function TransportControls(props: TransportControlsProps) {
   const {
     session,
     setSession,
-    audio,
-    setAudio,
+    recordingActive,
     transportPlaying,
     onPlay,
     onStop,
@@ -38,22 +33,10 @@ export function TransportControls(props: TransportControlsProps) {
     onToggleRecording,
     api,
   } = props;
-  const meters = useAudioMeters();
-  const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
   const [tempoDraft, setTempoDraft] = useState(String(session.arrangement.timebase.bpm));
   const [signatureDraft, setSignatureDraft] = useState(
     `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
   );
-  const masterEditing = useRef(false);
-  const previewTimer = useRef<number | null>(null);
-  const previewChain = useRef<Promise<void>>(Promise.resolve());
-  const lastCommittedMasterDb = useRef(session.settings.masterDb);
-
-  useEffect(() => {
-    lastCommittedMasterDb.current = session.settings.masterDb;
-    if (!masterEditing.current) setMasterDraftDb(session.settings.masterDb);
-  }, [session.settings.masterDb]);
-
   useEffect(() => {
     setTempoDraft(String(session.arrangement.timebase.bpm));
     setSignatureDraft(
@@ -64,41 +47,6 @@ export function TransportControls(props: TransportControlsProps) {
     session.arrangement.timebase.timeSignatureDenominator,
     session.arrangement.timebase.timeSignatureNumerator,
   ]);
-
-  useEffect(
-    () => () => {
-      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    },
-    [],
-  );
-
-  const previewMaster = (gainDb: number) => {
-    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => {
-      previewTimer.current = null;
-      previewChain.current = previewChain.current
-        .catch(() => undefined)
-        .then(() => api.previewMasterGainDb(gainDb));
-    }, 40);
-  };
-
-  const commitMaster = async (gainDb: number) => {
-    if (previewTimer.current !== null) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
-    await previewChain.current.catch(() => undefined);
-    if (gainDb === lastCommittedMasterDb.current) return;
-    lastCommittedMasterDb.current = gainDb;
-    try {
-      const result = await api.setMasterGainDb(gainDb);
-      setSession(result.session);
-      setAudio(result.audio);
-    } catch {
-      lastCommittedMasterDb.current = session.settings.masterDb;
-      setMasterDraftDb(session.settings.masterDb);
-    }
-  };
 
   const commitTimebase = (nextSignature = signatureDraft) => {
     const bpm = Number(tempoDraft);
@@ -139,11 +87,11 @@ export function TransportControls(props: TransportControlsProps) {
       });
   };
 
-  const statusDotState = audio.recording.active ? 'recording' : audio.state;
   return (
     <div className={styles.transport}>
-      <div className={styles.transportLeft}>
+      <div className={styles.transportActions}>
         <button
+          type="button"
           className={session.arrangement.loopRange.enabled ? styles.toggleActive : undefined}
           aria-pressed={session.arrangement.loopRange.enabled}
           aria-label="Toggle loop"
@@ -163,33 +111,36 @@ export function TransportControls(props: TransportControlsProps) {
               .then(setSession);
           }}
         >
-          <Icon name="loop" />
+          <TransportIcon name="loop" />
         </button>
         <button
+          type="button"
           className={styles.playButton}
           aria-label={transportPlaying ? 'Stop playback' : 'Play'}
           onClick={() => void (transportPlaying ? onStop() : onPlay())}
         >
-          <Icon name={transportPlaying ? 'stop' : 'play'} />
+          <TransportIcon name={transportPlaying ? 'stop' : 'play'} />
         </button>
-        <button aria-label="Stop and go to start" onClick={() => void onGoToStart()}>
-          <Icon name="stop" />
+        <button type="button" aria-label="Stop and go to start" onClick={() => void onGoToStart()}>
+          <TransportIcon name="rewind" />
         </button>
         <button
+          type="button"
           disabled={recordingCommandPending}
-          className={clsx(styles.recordButton, audio.recording.active && styles.active)}
+          className={clsx(styles.recordButton, recordingActive && styles.active)}
           onClick={() => void onToggleRecording()}
           aria-label={
             recordingCommandPending
               ? 'Recording command pending'
-              : audio.recording.active
+              : recordingActive
                 ? 'Stop recording'
                 : 'Start recording'
           }
         >
-          <Icon name="record" />
+          <TransportIcon name="record" />
         </button>
         <button
+          type="button"
           className={session.settings.metronomeEnabled ? styles.toggleActive : undefined}
           aria-pressed={session.settings.metronomeEnabled}
           aria-label="Toggle metronome"
@@ -202,9 +153,10 @@ export function TransportControls(props: TransportControlsProps) {
               .then(setSession)
           }
         >
-          <Icon name="metronome" />
+          <TransportIcon name="metronome" />
         </button>
         <button
+          type="button"
           className={clsx(
             styles.countInButton,
             session.settings.countInBeats > 0 && styles.toggleActive,
@@ -218,7 +170,7 @@ export function TransportControls(props: TransportControlsProps) {
               .then(setSession)
           }
         >
-          {describeCountIn(session)}
+          Count-in: {describeCountIn(session)}
         </button>
       </div>
       <div className={styles.timebase} aria-label="Project timebase">
@@ -256,71 +208,17 @@ export function TransportControls(props: TransportControlsProps) {
           </select>
         </label>
       </div>
-      <div className={styles.transportMeter}>
-        <span>IN</span>
-        <Meter
-          value={meters.inputPeak * 100}
-          danger={meters.inputPeak >= 0.98}
-          className={styles.meter}
-        />
-        <span>OUT</span>
-        <Meter
-          value={meters.outputPeak * 100}
-          danger={meters.outputPeak >= 0.98}
-          className={styles.meter}
-        />
-      </div>
-      <div className={styles.master}>
-        <span>MASTER</span>
-        <strong>{masterDraftDb.toFixed(1)} dB</strong>
-        <input
-          aria-label="Master volume"
-          type="range"
-          min="-60"
-          max="0"
-          step="0.5"
-          value={masterDraftDb}
-          onPointerDown={() => {
-            masterEditing.current = true;
-          }}
-          onPointerUp={(event) => {
-            masterEditing.current = false;
-            void commitMaster(Number(event.currentTarget.value));
-          }}
-          onBlur={(event) => {
-            masterEditing.current = false;
-            void commitMaster(Number(event.currentTarget.value));
-          }}
-          onKeyUp={(event) => {
-            if (
-              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-            )
-              void commitMaster(Number(event.currentTarget.value));
-          }}
-          onChange={(event) => {
-            const gainDb = Number(event.target.value);
-            setMasterDraftDb(gainDb);
-            previewMaster(gainDb);
-          }}
-        />
-      </div>
-      <div className={styles.statusLine}>
-        <span className={clsx(styles.statusDot, styles[statusDotState])} />
-        {audio.recording.active
-          ? `Recording · ${audio.recording.samplesWritten.toLocaleString()} samples`
-          : audio.message}
-      </div>
     </div>
   );
 }
 
 function describeCountIn(session: CreativeSession): string {
   const beats = session.settings.countInBeats;
-  if (!beats) return 'Count-in: Off';
+  if (!beats) return 'Off';
   const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
-  if (beats >= beatsPerBar * 2) return 'Count-in: 2 Bars';
-  if (beats >= beatsPerBar) return 'Count-in: 1 Bar';
-  return `Count-in: ${beats}`;
+  if (beats >= beatsPerBar * 2) return '2 Bars';
+  if (beats >= beatsPerBar) return '1 Bar';
+  return String(beats);
 }
 
 function nextCountInBeats(session: CreativeSession): number {

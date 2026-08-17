@@ -17,8 +17,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
     <TransportControls
       session={session}
       setSession={setSession}
-      audio={api.audio}
-      setAudio={() => undefined}
+      recordingActive={api.audio.recording.active}
       transportPlaying={false}
       onPlay={() => undefined}
       onStop={() => undefined}
