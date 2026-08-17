@@ -126,7 +126,7 @@
 .segmented button:hover,
 .segmented button.active {
   color: var(--color-text-primary);
-  background: rgba(69, 214, 179, 0.16);
+  background: color-mix(in srgb, var(--color-status-success) 16%, transparent);
 }
 
 .range {

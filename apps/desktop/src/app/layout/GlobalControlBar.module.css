@@ -57,8 +57,8 @@
   height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: var(--color-accent-positive);
-  box-shadow: 0 0 8px rgba(69, 214, 179, 0.5);
+  background: var(--color-status-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-status-success) 50%, transparent);
 }
 
 .sessionTitle {
@@ -92,7 +92,7 @@
 .sessionTitle small {
   grid-column: 2;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .sessionTitle svg {
@@ -189,8 +189,8 @@
 }
 
 .enginePill.ready > span {
-  background: var(--color-accent-positive);
-  box-shadow: 0 0 8px var(--color-accent-positive);
+  background: var(--color-status-success);
+  box-shadow: 0 0 8px var(--color-status-success);
 }
 
 .enginePill.muted > span,

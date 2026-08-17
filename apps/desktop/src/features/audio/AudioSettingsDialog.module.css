@@ -60,8 +60,8 @@
   align-items: center;
   gap: 7px;
   margin-bottom: 18px;
-  color: var(--color-accent-positive);
-  font-size: 10px;
+  color: var(--color-status-success);
+  font-size: var(--font-size-small);
 }
 
 .status > span:first-child {
@@ -76,7 +76,7 @@
 .statusCopy {
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -98,7 +98,7 @@
 .empty {
   margin: 0;
   color: var(--color-status-warning);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
 }
 
@@ -130,7 +130,7 @@
   align-items: center;
   gap: 12px;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .field + .field {
@@ -145,7 +145,7 @@
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
   border-radius: 4px;
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .field select:hover:not(:disabled) {
@@ -156,7 +156,7 @@
   margin: 0;
   padding: 0 20px 13px;
   color: var(--color-status-danger);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
 }
 

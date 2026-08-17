@@ -13,7 +13,7 @@
 .menu button {
   padding: 7px 10px;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   letter-spacing: 0.03em;
   text-align: left;
   background: transparent;

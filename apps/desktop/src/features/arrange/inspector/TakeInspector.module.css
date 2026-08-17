@@ -70,7 +70,7 @@
 }
 
 .currentBadge {
-  color: var(--color-accent-positive);
+  color: var(--color-status-success);
   font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -140,7 +140,7 @@
 }
 
 .useButton {
-  color: var(--color-accent-positive);
+  color: var(--color-status-success);
 }
 
 .copyButton {

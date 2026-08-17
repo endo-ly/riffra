@@ -14,7 +14,7 @@
   border: 1px solid var(--color-border-strong);
   border-radius: 7px;
   box-shadow: var(--shadow-overlay);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 .missingDependencies header {
   display: grid;
@@ -47,7 +47,7 @@
 }
 .missingDetail strong {
   color: var(--color-text-strong);
-  font-size: 10px;
+  font-size: var(--font-size-small);
 }
 .missingKind,
 .missingPath,

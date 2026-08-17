@@ -1,9 +1,9 @@
 .scope {
-  --midi-grid-bar: rgba(211, 232, 235, 0.23);
-  --midi-grid-beat: rgba(211, 232, 235, 0.12);
-  --midi-grid-subdivision: rgba(211, 232, 235, 0.055);
-  --midi-grid-velocity-bar: rgba(211, 232, 235, 0.17);
-  --midi-grid-velocity-beat: rgba(211, 232, 235, 0.07);
+  --midi-grid-bar: color-mix(in srgb, var(--color-text-primary) 23%, transparent);
+  --midi-grid-beat: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+  --midi-grid-subdivision: color-mix(in srgb, var(--color-text-primary) 5.5%, transparent);
+  --midi-grid-velocity-bar: color-mix(in srgb, var(--color-text-primary) 17%, transparent);
+  --midi-grid-velocity-beat: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
   --midi-note: #8069c6;
   --midi-note-border: #c5b5f5;
 }

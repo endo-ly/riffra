@@ -51,7 +51,7 @@
 
 .deviceHeading span {
   flex: 0 0 auto;
-  color: var(--color-accent-positive);
+  color: var(--color-status-success);
   font-size: var(--font-size-micro);
   letter-spacing: 0.06em;
 }

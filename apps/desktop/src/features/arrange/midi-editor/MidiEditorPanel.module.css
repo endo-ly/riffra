@@ -172,14 +172,14 @@
   width: 1px;
   pointer-events: none;
   background: var(--color-status-danger);
-  box-shadow: 0 0 5px rgba(238, 90, 103, 0.55);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-status-danger) 55%, transparent);
 }
 
 .marquee {
   position: absolute;
   z-index: 4;
   border: 1px solid #79e0e8;
-  background: rgba(112, 225, 232, 0.16);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
   pointer-events: none;
 }
 
@@ -262,7 +262,7 @@
   background: #a394e1;
   box-shadow:
     0 0 0 1px #d0fff5,
-    0 0 12px rgba(112, 225, 232, 0.55);
+    0 0 12px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
 }
 
 .note.selected {
@@ -270,7 +270,7 @@
   border-color: var(--color-selection-highlight);
   box-shadow:
     0 0 0 1px var(--color-selection-highlight),
-    0 0 8px rgba(85, 217, 232, 0.28);
+    0 0 8px color-mix(in srgb, var(--color-accent-primary) 28%, transparent);
 }
 
 .resizeHandle {

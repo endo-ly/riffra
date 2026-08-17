@@ -15,7 +15,7 @@
   gap: 7px;
   padding: 0 14px;
   border-radius: 6px;
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 600;
 }
 
@@ -23,7 +23,7 @@
   color: var(--color-text-on-accent);
   background: linear-gradient(
     135deg,
-    var(--color-selection-highlight),
+    color-mix(in srgb, var(--color-accent-primary) 75%, white),
     var(--color-accent-primary)
   );
   box-shadow:
@@ -71,15 +71,15 @@
 }
 
 .statusSuccess {
-  color: var(--color-accent-positive);
-  background: rgba(72, 201, 173, 0.1);
-  border: 1px solid rgba(72, 201, 173, 0.28);
+  color: var(--color-status-success);
+  background: color-mix(in srgb, var(--color-status-success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-status-success) 28%, transparent);
 }
 
 .textButton {
   padding: 5px;
   color: var(--color-accent-primary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   background: transparent;
 }
 
@@ -90,6 +90,6 @@
 .inspectorCopy {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   line-height: 1.55;
 }

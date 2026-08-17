@@ -63,14 +63,14 @@
   letter-spacing: 0.05em;
 }
 .padName {
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 600;
   text-align: center;
   line-height: 1.15;
   letter-spacing: 0.01em;
 }
 .padKey {
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   color: #a6bac1;
   opacity: 0.8;
@@ -91,7 +91,7 @@
   --pad-accent: #4e8eff;
 }
 .hihat {
-  --pad-accent: var(--color-accent-positive);
+  --pad-accent: var(--color-status-success);
 }
 .tom {
   --pad-accent: var(--color-status-warning);

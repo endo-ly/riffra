@@ -31,7 +31,7 @@
 
   /* Accent and status roles */
   --color-accent-primary: #55d9e8;
-  --color-accent-positive: #45d6b3;
+  --color-status-success: #45d6b3;
   --color-status-warning: #e7b55d;
   --color-status-danger: #ee5a67;
   --color-selection-accent: #f2a33a;

@@ -19,7 +19,7 @@
 }
 
 .panelHeading > span {
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   letter-spacing: 0.18em;
   color: var(--color-text-secondary);
   font-weight: 700;
@@ -38,7 +38,7 @@
   gap: 9px;
   padding: 0 8px;
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   text-align: left;
   background: transparent;
   border-radius: 5px;
@@ -93,7 +93,7 @@
   width: 100%;
   min-width: 0;
   color: var(--color-text-primary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   background: transparent;
   border: 0;
   outline: 0;
@@ -164,7 +164,7 @@
 }
 .librarySearchRow strong {
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
 }
 .librarySearchRow small,
@@ -178,7 +178,7 @@
   gap: 5px;
   margin-top: 9px;
   padding-top: 9px;
-  border-top: 1px solid rgba(85, 217, 232, 0.18);
+  border-top: 1px solid color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
 }
 .libraryAssetDetail header {
   display: flex;
@@ -191,7 +191,7 @@
   margin-top: 3px;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -214,13 +214,13 @@
   display: block;
   margin: 6px 3px 10px;
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 .inboxMessage {
   display: block;
   margin: 6px 3px 10px;
   color: var(--color-accent-primary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   line-height: 1.4;
 }
 .inboxMessage.error {
@@ -249,7 +249,7 @@
   display: grid;
   place-content: center;
   color: var(--color-accent-primary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 700;
   background: linear-gradient(140deg, var(--color-bg-surface-raised), var(--color-bg-panel));
   border: 1px solid var(--color-border-default);
@@ -267,7 +267,7 @@
 }
 .pluginRow strong {
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 500;
 }
 .pluginRow small {
@@ -335,7 +335,7 @@
   display: grid;
   place-content: center;
   color: var(--color-accent-primary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 700;
   background: linear-gradient(140deg, var(--color-bg-surface-raised), var(--color-bg-panel));
   border: 1px solid var(--color-border-default);
@@ -355,12 +355,12 @@
 .assetGrip {
   flex: 0 0 auto;
   color: var(--color-text-disabled);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 400;
 }
 .recordingSelect strong {
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   font-weight: 500;
 }
 .recordingSelect small {
@@ -375,7 +375,7 @@
   background: var(--color-status-warning);
 }
 .stability.validated {
-  background: var(--color-accent-positive);
+  background: var(--color-status-success);
 }
 .stability.failed,
 .stability.quarantined {
@@ -387,7 +387,7 @@
   gap: 6px;
   padding: 34px 18px;
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   text-align: center;
 }
 .libraryEmpty small {
@@ -422,7 +422,7 @@
   display: block;
 }
 .inboxButton strong {
-  font-size: 10px;
+  font-size: var(--font-size-small);
 }
 .inboxButton small {
   margin-top: 2px;

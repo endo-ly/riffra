@@ -148,7 +148,7 @@
   background: var(--color-status-warning);
 }
 .statusDot.ready {
-  background: var(--color-accent-positive);
+  background: var(--color-status-success);
 }
 .statusDot.muted,
 .statusDot.faulted,
