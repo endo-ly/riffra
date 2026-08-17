@@ -86,7 +86,7 @@
   color: var(--color-text-primary) !important;
   background: color-mix(
     in srgb,
-    var(--color-status-success) 20%,
+    var(--color-accent-secondary) 20%,
     var(--color-bg-control)
   ) !important;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
@@ -172,7 +172,7 @@
 
 .activeNotes {
   margin-left: auto;
-  color: var(--color-status-success);
+  color: var(--color-accent-secondary);
   font-variant-numeric: tabular-nums;
 }
 

@@ -55,16 +55,16 @@
   flex: none;
   padding: 4px 9px;
   color: var(--color-accent-primary);
-  font-size: 11px;
+  font-size: var(--font-size-control);
   font-weight: 600;
-  background: color-mix(in srgb, var(--color-status-success) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-status-success) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-secondary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-secondary) 45%, transparent);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .action:hover {
-  background: color-mix(in srgb, var(--color-status-success) 16%, transparent);
+  background: color-mix(in srgb, var(--color-accent-secondary) 16%, transparent);
 }
 
 .dismiss {

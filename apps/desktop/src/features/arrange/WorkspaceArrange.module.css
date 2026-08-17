@@ -618,8 +618,8 @@
 }
 .trackSwitches .monOn {
   color: var(--color-text-on-accent);
-  background: var(--color-status-success);
-  border-color: var(--color-status-success);
+  background: var(--color-accent-secondary);
+  border-color: var(--color-accent-secondary);
 }
 
 .trackControl {
