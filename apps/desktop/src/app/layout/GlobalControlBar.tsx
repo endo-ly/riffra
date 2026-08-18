@@ -26,6 +26,7 @@ interface GlobalControlBarProps {
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
+  recordingRequestPending: boolean;
   onToggleRecording: () => void;
   transportControlsApi: TransportControlsApi;
   audioMonitorApi: AudioMonitorApi;
@@ -45,9 +46,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
   return (
     <header className={styles.controlBar} aria-label="Global controls" data-global-control-bar>
       <div className={styles.projectControls}>
-        <span className={styles.appMark} aria-hidden="true">
-          R
-        </span>
         <button
           type="button"
           className={styles.sessionTitle}
@@ -95,6 +93,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onStop={props.onStop}
           onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}
+          recordingRequestPending={props.recordingRequestPending}
           onToggleRecording={props.onToggleRecording}
           api={props.transportControlsApi}
         />

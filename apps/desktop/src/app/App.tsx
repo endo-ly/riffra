@@ -92,6 +92,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     recordings,
     transportPlaying,
     recordingCommandPending,
+    recordingRequestPending,
     startRecordingNow,
     autosaveError,
     audioPreferenceMessage,
@@ -223,6 +224,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onStop={() => void stopTransport()}
         onGoToStart={() => void goToStart()}
         recordingCommandPending={recordingCommandPending}
+        recordingRequestPending={recordingRequestPending}
         onToggleRecording={() => void toggleRecording()}
         transportControlsApi={nativeApi}
         audioMonitorApi={nativeApi}

@@ -96,11 +96,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     enableMidi,
     toggleMute,
   } = audioHook;
-  const recording = useRecording(api, { audio, setAudio, setSession });
+  const recording = useRecording(api, { audio, session, setAudio, setSession });
   const {
     recordings,
     reloadRecordings,
     recordingCommandPending,
+    recordingRequestPending,
     startRecordingNow,
     toggleRecording,
   } = recording;
@@ -202,6 +203,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     recordings,
     transportPlaying,
     recordingCommandPending,
+    recordingRequestPending,
     exportMessage,
     deviceProbe,
     refreshAudioDevices,

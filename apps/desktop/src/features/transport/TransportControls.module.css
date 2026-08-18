@@ -11,11 +11,21 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  box-sizing: border-box;
-  padding: 2px;
-  background: var(--color-bg-control);
-  border: 1px solid var(--color-border-default);
-  border-radius: 5px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.transportGroup {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.transportGroup + .transportGroup {
+  margin-left: 5px;
+  padding-left: 7px;
+  border-left: 1px solid var(--color-border-subtle);
 }
 
 .transportActions button {
@@ -47,25 +57,28 @@
 
 .transportActions button.toggleActive {
   color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 12%, var(--color-bg-control));
+  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
 }
 
 .transportActions button.toggleActive:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent-primary) 18%, var(--color-bg-control));
+  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
 }
 
 .transportActions .playButton {
-  width: 28px;
-  height: 28px;
-  margin: -1px 2px;
-  color: var(--color-text-on-accent);
-  background: var(--color-accent-primary);
-  border-radius: 50%;
+  color: var(--color-accent-primary);
 }
 
 .transportActions .playButton:hover:not(:disabled) {
-  color: var(--color-text-on-accent);
-  background: color-mix(in srgb, var(--color-accent-primary) 84%, var(--color-text-strong));
+  color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
+}
+
+.transportActions .playButton.playing {
+  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+}
+
+.transportActions .playButton.playing:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
 }
 
 .transportActions .playButton svg {
@@ -75,11 +88,20 @@
 
 .transportActions .recordButton.active {
   color: var(--color-status-danger);
-  background: color-mix(in srgb, var(--color-status-danger) 13%, var(--color-bg-control));
+  background: color-mix(in srgb, var(--color-status-danger) 13%, transparent);
 }
 
 .transportActions .recordButton.active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-status-danger) 19%, var(--color-bg-control));
+  background: color-mix(in srgb, var(--color-status-danger) 19%, transparent);
+}
+
+.transportActions .recordButton.requestPending {
+  color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
+}
+
+.transportActions .recordButton.requestPending:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
 }
 
 .transportActions .countInButton {
@@ -93,6 +115,11 @@
 
 .transportActions .countInButton.toggleActive {
   color: var(--color-accent-primary);
+  background: transparent;
+}
+
+.transportActions .countInButton.toggleActive:hover:not(:disabled) {
+  background: var(--color-bg-control-hover);
 }
 
 .timebase {

@@ -16,6 +16,7 @@ interface TransportControlsProps {
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
+  recordingRequestPending: boolean;
   onToggleRecording: () => void;
   api: TransportControlsApi;
 }
@@ -30,6 +31,7 @@ export function TransportControls(props: TransportControlsProps) {
     onStop,
     onGoToStart,
     recordingCommandPending,
+    recordingRequestPending,
     onToggleRecording,
     api,
   } = props;
@@ -87,97 +89,119 @@ export function TransportControls(props: TransportControlsProps) {
       });
   };
 
+  const recordingControlLabel = recordingCommandPending
+    ? 'Recording command pending'
+    : recordingActive
+      ? 'Stop recording'
+      : recordingRequestPending
+        ? 'Cancel recording request'
+        : 'Start recording';
+
   return (
     <div className={styles.transport}>
       <div className={styles.transportActions}>
-        <button
-          type="button"
-          className={session.arrangement.loopRange.enabled ? styles.toggleActive : undefined}
-          aria-pressed={session.arrangement.loopRange.enabled}
-          aria-label="Toggle loop"
-          onClick={() => {
-            const range = session.arrangement.loopRange;
-            const barTicks =
-              (session.arrangement.timebase.ppq *
-                4 *
-                session.arrangement.timebase.timeSignatureNumerator) /
-              session.arrangement.timebase.timeSignatureDenominator;
-            void api
-              .updateTimelineLoopRange(
-                !range.enabled,
-                range.startTick,
-                range.endTick > range.startTick ? range.endTick : barTicks * 4,
-              )
-              .then(setSession);
-          }}
-        >
-          <TransportIcon name="loop" />
-        </button>
-        <button
-          type="button"
-          className={styles.playButton}
-          aria-label={transportPlaying ? 'Stop playback' : 'Play'}
-          onClick={() => void (transportPlaying ? onStop() : onPlay())}
-        >
-          <TransportIcon name={transportPlaying ? 'stop' : 'play'} />
-        </button>
-        <button type="button" aria-label="Stop and go to start" onClick={() => void onGoToStart()}>
-          <TransportIcon name="rewind" />
-        </button>
-        <button
-          type="button"
-          disabled={recordingCommandPending}
-          className={clsx(styles.recordButton, recordingActive && styles.active)}
-          onClick={() => void onToggleRecording()}
-          aria-label={
-            recordingCommandPending
-              ? 'Recording command pending'
-              : recordingActive
-                ? 'Stop recording'
-                : 'Start recording'
-          }
-        >
-          <TransportIcon name="record" />
-        </button>
-        <button
-          type="button"
-          className={session.settings.metronomeEnabled ? styles.toggleActive : undefined}
-          aria-pressed={session.settings.metronomeEnabled}
-          aria-label="Toggle metronome"
-          title="Metronome"
-          onClick={() =>
-            void api
-              .updateSessionSettings({
-                metronomeEnabled: !session.settings.metronomeEnabled,
-              })
-              .then(setSession)
-          }
-        >
-          <TransportIcon name="metronome" />
-        </button>
-        <button
-          type="button"
-          className={clsx(
-            styles.countInButton,
-            session.settings.countInBeats > 0 && styles.toggleActive,
-          )}
-          aria-pressed={session.settings.countInBeats > 0}
-          aria-label={`Count-in: ${describeCountIn(session)}`}
-          title={`Count-in: ${describeCountIn(session)}`}
-          onClick={() =>
-            void api
-              .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
-              .then(setSession)
-          }
-        >
-          Count-in: {describeCountIn(session)}
-        </button>
+        <div className={styles.transportGroup}>
+          <button
+            type="button"
+            className={session.arrangement.loopRange.enabled ? styles.toggleActive : undefined}
+            aria-pressed={session.arrangement.loopRange.enabled}
+            aria-label="Toggle loop"
+            title={session.arrangement.loopRange.enabled ? 'Disable loop' : 'Enable loop'}
+            onClick={() => {
+              const range = session.arrangement.loopRange;
+              const barTicks =
+                (session.arrangement.timebase.ppq *
+                  4 *
+                  session.arrangement.timebase.timeSignatureNumerator) /
+                session.arrangement.timebase.timeSignatureDenominator;
+              void api
+                .updateTimelineLoopRange(
+                  !range.enabled,
+                  range.startTick,
+                  range.endTick > range.startTick ? range.endTick : barTicks * 4,
+                )
+                .then(setSession);
+            }}
+          >
+            <TransportIcon name="loop" />
+          </button>
+        </div>
+        <div className={styles.transportGroup}>
+          <button
+            type="button"
+            className={clsx(styles.playButton, transportPlaying && styles.playing)}
+            aria-label={transportPlaying ? 'Stop playback' : 'Play'}
+            title={transportPlaying ? 'Stop playback' : 'Play'}
+            onClick={() => void (transportPlaying ? onStop() : onPlay())}
+          >
+            <TransportIcon name={transportPlaying ? 'stop' : 'play'} />
+          </button>
+          <button
+            type="button"
+            aria-label="Stop and go to start"
+            title="Stop and go to start"
+            onClick={() => void onGoToStart()}
+          >
+            <TransportIcon name="rewind" />
+          </button>
+          <button
+            type="button"
+            disabled={recordingCommandPending}
+            className={clsx(
+              styles.recordButton,
+              recordingActive && styles.active,
+              recordingRequestPending && styles.requestPending,
+            )}
+            aria-pressed={recordingActive || recordingRequestPending}
+            onClick={() => void onToggleRecording()}
+            aria-label={recordingControlLabel}
+            title={recordingControlLabel}
+          >
+            <TransportIcon name="record" />
+          </button>
+        </div>
+        <div className={styles.transportGroup}>
+          <button
+            type="button"
+            className={session.settings.metronomeEnabled ? styles.toggleActive : undefined}
+            aria-pressed={session.settings.metronomeEnabled}
+            aria-label="Toggle metronome"
+            title={session.settings.metronomeEnabled ? 'Disable metronome' : 'Enable metronome'}
+            onClick={() =>
+              void api
+                .updateSessionSettings({
+                  metronomeEnabled: !session.settings.metronomeEnabled,
+                })
+                .then(setSession)
+            }
+          >
+            <TransportIcon name="metronome" />
+          </button>
+          <button
+            type="button"
+            className={clsx(
+              styles.countInButton,
+              session.settings.countInBeats > 0 && styles.toggleActive,
+            )}
+            aria-pressed={session.settings.countInBeats > 0}
+            aria-label={`Count-in: ${describeCountIn(session)}`}
+            title={`Count-in: ${describeCountIn(session)}`}
+            onClick={() =>
+              void api
+                .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
+                .then(setSession)
+            }
+          >
+            Count-in: {describeCountIn(session)}
+          </button>
+        </div>
       </div>
       <div className={styles.timebase} aria-label="Project timebase">
         <label>
           <span>BPM</span>
           <input
             aria-label="Project BPM"
+            title="Project BPM"
             type="number"
             min="20"
             max="400"
@@ -194,6 +218,7 @@ export function TransportControls(props: TransportControlsProps) {
           <span>METER</span>
           <select
             aria-label="Project time signature"
+            title="Project time signature"
             value={signatureDraft}
             onChange={(event) => {
               setSignatureDraft(event.currentTarget.value);
