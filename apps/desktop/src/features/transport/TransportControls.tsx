@@ -16,7 +16,6 @@ interface TransportControlsProps {
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
-  recordingRequestPending: boolean;
   onToggleRecording: () => void;
   api: TransportControlsApi;
 }
@@ -31,7 +30,6 @@ export function TransportControls(props: TransportControlsProps) {
     onStop,
     onGoToStart,
     recordingCommandPending,
-    recordingRequestPending,
     onToggleRecording,
     api,
   } = props;
@@ -93,9 +91,7 @@ export function TransportControls(props: TransportControlsProps) {
     ? 'Recording command pending'
     : recordingActive
       ? 'Stop recording'
-      : recordingRequestPending
-        ? 'Cancel recording request'
-        : 'Start recording';
+      : 'Start recording';
 
   return (
     <div className={styles.transport}>
@@ -147,12 +143,8 @@ export function TransportControls(props: TransportControlsProps) {
           <button
             type="button"
             disabled={recordingCommandPending}
-            className={clsx(
-              styles.recordButton,
-              recordingActive && styles.active,
-              recordingRequestPending && styles.requestPending,
-            )}
-            aria-pressed={recordingActive || recordingRequestPending}
+            className={clsx(styles.recordButton, recordingActive && styles.active)}
+            aria-pressed={recordingActive}
             onClick={() => void onToggleRecording()}
             aria-label={recordingControlLabel}
             title={recordingControlLabel}

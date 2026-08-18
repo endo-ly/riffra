@@ -13,7 +13,6 @@ afterEach(cleanup);
 function Harness({
   api,
   onToggleRecording = () => undefined,
-  recordingRequestPending = false,
   transportPlaying = false,
   onPlay = () => undefined,
   onStop = () => undefined,
@@ -21,7 +20,6 @@ function Harness({
 }: {
   api: FakeNativeApi;
   onToggleRecording?: () => void;
-  recordingRequestPending?: boolean;
   transportPlaying?: boolean;
   onPlay?: () => void;
   onStop?: () => void;
@@ -39,7 +37,6 @@ function Harness({
       onStop={onStop}
       onGoToStart={onGoToStart}
       recordingCommandPending={false}
-      recordingRequestPending={recordingRequestPending}
       onToggleRecording={onToggleRecording}
       api={api}
     />
@@ -85,18 +82,6 @@ describe('TransportControls', () => {
       'title',
       'Project time signature',
     );
-  });
-
-  it('shows a pending recording request as an active, cancellable control', () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    const onToggleRecording = vi.fn();
-    render(<Harness api={api} onToggleRecording={onToggleRecording} recordingRequestPending />);
-
-    const recordButton = screen.getByRole('button', { name: 'Cancel recording request' });
-    expect(recordButton).toHaveAttribute('aria-pressed', 'true');
-    expect(recordButton).not.toBeDisabled();
-    fireEvent.click(recordButton);
-    expect(onToggleRecording).toHaveBeenCalledOnce();
   });
 
   it('delegates Play, Stop, and Go to start to the transport controller', () => {

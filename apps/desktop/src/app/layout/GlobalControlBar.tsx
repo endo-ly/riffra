@@ -26,7 +26,6 @@ interface GlobalControlBarProps {
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
-  recordingRequestPending: boolean;
   onToggleRecording: () => void;
   transportControlsApi: TransportControlsApi;
   audioMonitorApi: AudioMonitorApi;
@@ -93,7 +92,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onStop={props.onStop}
           onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}
-          recordingRequestPending={props.recordingRequestPending}
           onToggleRecording={props.onToggleRecording}
           api={props.transportControlsApi}
         />

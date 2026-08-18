@@ -95,15 +95,6 @@
   background: color-mix(in srgb, var(--color-status-danger) 19%, transparent);
 }
 
-.transportActions .recordButton.requestPending {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
-}
-
-.transportActions .recordButton.requestPending:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
-}
-
 .transportActions .countInButton {
   width: auto;
   min-width: 78px;
