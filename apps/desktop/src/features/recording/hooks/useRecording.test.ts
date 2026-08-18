@@ -53,6 +53,29 @@ describe('useRecording', () => {
     expect(result.current.recordingCommandPending).toBe(false);
   });
 
+  it('keeps a successful start separate from a failed Inbox refresh', async () => {
+    const api = new FakeNativeApi({ recordings: [] });
+    api.setFailure('listRecordings', new Error('Inbox unavailable'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(true)));
+
+    try {
+      await act(async () => {
+        await expect(result.current.startRecordingNow()).resolves.toBe(true);
+      });
+
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith('[native] listRecordings failed:', expect.any(Error)),
+      );
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        '[native] startRecording failed:',
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('does not start again when the session changes after a failed command', async () => {
     const api = new FakeNativeApi({ recordings: [] });
     api.setFailure('startArrangeRecording', new Error('track is not armed'));
@@ -184,6 +207,41 @@ describe('useRecording', () => {
         await result.current.toggleRecording();
       });
       expect(result.current.audio.recording.active).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('keeps a successful stop separate from a failed Inbox refresh', async () => {
+    const activeAudio = fakeAudioStatus();
+    activeAudio.recording.active = true;
+    const api = new FakeNativeApi({
+      recordings: [],
+      audio: activeAudio,
+    });
+    api.setFailure('listRecordings', new Error('Inbox unavailable'));
+    api.setResponse('stopArrangeRecording', {
+      session: defaultSession(),
+      audio: fakeAudioStatus(),
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { result } = renderHook(() =>
+      useRecordingHarness(api, sessionWithTrack(true), api.audio),
+    );
+
+    try {
+      await act(async () => {
+        await result.current.toggleRecording();
+      });
+
+      expect(result.current.audio.recording.active).toBe(false);
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith('[native] listRecordings failed:', expect.any(Error)),
+      );
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        '[native] stopRecording failed:',
+        expect.any(Error),
+      );
     } finally {
       errorSpy.mockRestore();
     }

@@ -27,6 +27,10 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     return next;
   }, [listRecordings]);
 
+  const refreshRecordings = useCallback(() => {
+    void reloadRecordings().catch(logNativeError('listRecordings'));
+  }, [reloadRecordings]);
+
   const runRecordingCommand = useCallback(
     async (command: RecordingCommand, errorLabel: string): Promise<boolean> => {
       if (recordingCommandLock.current) return false;
@@ -47,36 +51,38 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   );
 
   const startRecordingNow = useCallback(
-    (recordingSessionId?: string) =>
-      runRecordingCommand(
+    async (recordingSessionId?: string) => {
+      const succeeded = await runRecordingCommand(
         async () => {
           setAudio(
             await (recordingSessionId
               ? recordAnotherTake(recordingSessionId)
               : startArrangeRecording()),
           );
-          await reloadRecordings();
         },
         recordingSessionId ? 'recordAnotherTake' : 'startRecording',
-      ),
-    [recordAnotherTake, reloadRecordings, runRecordingCommand, setAudio, startArrangeRecording],
+      );
+      if (succeeded) refreshRecordings();
+      return succeeded;
+    },
+    [recordAnotherTake, refreshRecordings, runRecordingCommand, setAudio, startArrangeRecording],
   );
 
   const toggleRecording = useCallback(async () => {
     if (audio.recording.active) {
-      await runRecordingCommand(async () => {
+      const succeeded = await runRecordingCommand(async () => {
         const result = await stopArrangeRecording();
         setAudio(result.audio);
         setSession(result.session);
-        await reloadRecordings();
       }, 'stopRecording');
+      if (succeeded) refreshRecordings();
       return;
     }
 
     await startRecordingNow();
   }, [
     audio.recording.active,
-    reloadRecordings,
+    refreshRecordings,
     runRecordingCommand,
     setAudio,
     setSession,
