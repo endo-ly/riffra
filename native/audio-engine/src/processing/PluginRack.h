@@ -58,6 +58,10 @@ private:
     friend class PluginEditorHost;
     friend class PluginRackTestPeer;
 
+    static constexpr std::size_t kMaximumPanicMidiEvents = 16 * 3;
+    static constexpr std::size_t kMaximumTimelineMidiEvents = 256;
+    static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
+
     struct CachedParameter {
         int index = 0;
         juce::String name;
@@ -85,7 +89,8 @@ private:
 
         void reset();
         void add(const juce::MidiMessage& message) noexcept;
-        void appendTo(juce::MidiBuffer& destination, int sampleCount);
+        void appendTo(juce::MidiBuffer& destination, int sampleCount) noexcept;
+        void recordDropped() noexcept;
         [[nodiscard]] std::uint64_t droppedEvents() const noexcept;
 
     private:
@@ -95,7 +100,7 @@ private:
         };
 
         BoundedMpmcQueue<Event, kCapacity> messages;
-        std::atomic<std::uint64_t> droppedOversized{0};
+        std::atomic<std::uint64_t> droppedEventsCount{0};
     };
 
     juce::AudioPluginFormatManager formatManager;
