@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
+  ArrangementMutationResult,
   CreativeSession,
   MidiClip,
   MonitoringState,
@@ -34,7 +35,9 @@ interface ArrangeTrackProps {
   pixelsPerTick: number;
   trackSize: TrackSize;
   api: ArrangeApi;
-  onCommit: (operation: Promise<CreativeSession | null>) => Promise<CreativeSession | null>;
+  onCommit: (
+    operation: Promise<ArrangementMutationResult | null>,
+  ) => Promise<CreativeSession | null>;
   onDrop: (event: React.DragEvent, trackId: string, trackKind: Track['kind']) => void;
   onContextMenu?: (event: React.MouseEvent, trackId: string, tick: number) => void;
   onMove: (event: React.PointerEvent<HTMLButtonElement>, clip: AudioClip) => void;

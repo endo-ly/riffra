@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
-import { type CreativeSession, type Track } from '@/model/domain';
+import { type ArrangementMutationResult, type CreativeSession, type Track } from '@/model/domain';
 import { defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
@@ -48,6 +48,10 @@ function Harness({
       <ToastStack />
     </>
   );
+}
+
+function mutationResult(session: CreativeSession): ArrangementMutationResult {
+  return { session, projection: { state: 'notRequired' } };
 }
 
 describe('WorkspaceArrange', () => {
@@ -163,10 +167,10 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
-    let finishQuantize: ((next: CreativeSession) => void) | undefined;
+    let finishQuantize: ((next: ArrangementMutationResult) => void) | undefined;
     api.quantizeMidiNotes = async (_clipId, _noteIds, _gridTicks) => {
       api.calls.push('quantizeMidiNotes');
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         finishQuantize = resolve;
       });
     };
@@ -182,7 +186,7 @@ describe('WorkspaceArrange', () => {
     // Assert
     await waitFor(() => expect(finishQuantize).toBeDefined());
     expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
-    finishQuantize!(session);
+    finishQuantize!(mutationResult(session));
     await screen.findByText('Quantized 1 note to 1/16.');
     await waitFor(() => expect(api.calls).toContain('quantizeMidiNotes'));
   });
@@ -289,7 +293,7 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return createdSession;
+      return mutationResult(createdSession);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const lane = container.querySelector(`[data-track-id="${track.id}"] > div[class*="lane_"]`)!;
@@ -349,7 +353,7 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return createdSession;
+      return mutationResult(createdSession);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const ruler = screen.getByLabelText('Timeline ruler');
@@ -421,7 +425,7 @@ describe('WorkspaceArrange', () => {
     api.updateMidiNotes = async (...args) => {
       updateArgs = args;
       api.calls.push('updateMidiNotes');
-      return session;
+      return mutationResult(session);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
 
@@ -566,7 +570,7 @@ describe('WorkspaceArrange', () => {
     api.addMidiNote = async (...args) => {
       addArgs = args;
       api.calls.push('addMidiNote');
-      return session;
+      return mutationResult(session);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:draw"]')!);
@@ -718,23 +722,26 @@ describe('WorkspaceArrange', () => {
     let releaseUpdate!: () => void;
     api.updateMidiNote = (...args) => {
       const canonical = originalUpdateMidiNote(...args);
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         releaseUpdate = () => {
           void canonical.then((next) =>
             resolve({
               ...next,
-              arrangement: {
-                ...next.arrangement,
-                midiClips: next.arrangement.midiClips.map((clip) =>
-                  clip.id === 'clip:midi-move'
-                    ? {
-                        ...clip,
-                        notes: clip.notes.map((note) =>
-                          note.id === 'note:move' ? { ...note, startTick: 120 } : note,
-                        ),
-                      }
-                    : clip,
-                ),
+              session: {
+                ...next.session,
+                arrangement: {
+                  ...next.session.arrangement,
+                  midiClips: next.session.arrangement.midiClips.map((clip) =>
+                    clip.id === 'clip:midi-move'
+                      ? {
+                          ...clip,
+                          notes: clip.notes.map((note) =>
+                            note.id === 'note:move' ? { ...note, startTick: 120 } : note,
+                          ),
+                        }
+                      : clip,
+                  ),
+                },
               },
             }),
           );
@@ -813,7 +820,7 @@ describe('WorkspaceArrange', () => {
     let releaseUpdate!: () => void;
     api.updateMidiNotes = (...args) => {
       const canonical = originalUpdateMidiNotes(...args);
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         releaseUpdate = () => {
           void canonical.then(resolve);
         };
@@ -1253,7 +1260,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.loopRange = { enabled: true, startTick: 960, endTick: 3840 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelineLoopRange: canonical },
+      responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1274,7 +1281,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelineLoopRange: canonical },
+      responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1295,7 +1302,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.punchRange = { startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelinePunchRange: canonical },
+      responses: { updateTimelinePunchRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1316,7 +1323,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.markers = [];
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { removeMarker: canonical },
+      responses: { removeMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1332,7 +1339,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const canonical = defaultSession();
     canonical.arrangement.markers.push({ id: 'marker:1', name: 'Marker 1', tick: 960 });
-    const api = new FakeNativeApi({ responses: { addMarker: canonical } });
+    const api = new FakeNativeApi({ responses: { addMarker: mutationResult(canonical) } });
     render(<Harness api={api} />);
     const ruler = screen.getByLabelText('Timeline ruler');
     Object.defineProperty(ruler, 'getBoundingClientRect', {
@@ -1478,7 +1485,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.markers[0].name = 'Verse';
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateMarker: canonical },
+      responses: { updateMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1612,8 +1619,8 @@ describe('WorkspaceArrange', () => {
         ),
       },
     };
-    let resolveUpdate!: (next: CreativeSession) => void;
-    const pendingUpdate = new Promise<CreativeSession>((resolve) => {
+    let resolveUpdate!: (next: ArrangementMutationResult) => void;
+    const pendingUpdate = new Promise<ArrangementMutationResult>((resolve) => {
       resolveUpdate = resolve;
     });
     let updateArgs: Parameters<FakeNativeApi['updateMidiNotes']> | undefined;
@@ -1659,7 +1666,7 @@ describe('WorkspaceArrange', () => {
     expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76');
     expect(secondaryBar).toHaveAttribute('aria-label', 'E4 velocity 92');
 
-    resolveUpdate(committedSession);
+    resolveUpdate(mutationResult(committedSession));
     await waitFor(() => expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76'));
 
     const pianoKey = velocityLane.querySelector('[data-piano-key="60"]') as HTMLElement;

@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AudioStatus, CreativeSession, PluginEntry, Track } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  AudioStatus,
+  CreativeSession,
+  PluginEntry,
+  Track,
+} from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './TrackInspector.module.css';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface TrackInspectorProps {
   track: Track;
@@ -25,15 +32,17 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [pan, setPan] = useState(props.track.pan);
   const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
   const [replaceTarget, setReplaceTarget] = useState<{ deviceId: string } | null>(null);
-  const { operationMessage, runOperation } = useInspectorOperation();
+  const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
   useEffect(() => setPan(props.track.pan), [props.track.id, props.track.pan]);
   const commit = useCallback(
-    (operation: Promise<CreativeSession>) => {
-      runOperation(operation, props.setSession);
+    (operation: Promise<ArrangementMutationResult>) => {
+      runOperation(operation, (result) =>
+        applyArrangementMutation(result, props.setSession, setOperationMessage),
+      );
     },
-    [props.setSession, runOperation],
+    [props.setSession, runOperation, setOperationMessage],
   );
   const setInstrument = (plugin: PluginEntry) => {
     commit(props.api.setTrackInstrument(props.track.id, plugin.path));

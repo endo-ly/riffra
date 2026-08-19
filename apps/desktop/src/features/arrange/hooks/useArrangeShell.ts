@@ -3,6 +3,8 @@ import type { CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import type { ArrangeSelection } from './useArrangeEditor';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { toast } from '@/shared/toasts';
 
 export function useArrangeShell(
   api: Pick<ArrangeApi, 'setTrackInstrument' | 'addTrackEffect'>,
@@ -37,7 +39,7 @@ export function useArrangeShell(
         target === 'instrument'
           ? await api.setTrackInstrument(selectedTrack.id, plugin.path)
           : await api.addTrackEffect(selectedTrack.id, plugin.path);
-      setSession(next);
+      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
     } finally {

@@ -55,6 +55,14 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   const { arrangement } = session;
   const { timebase } = arrangement;
   const commands = useArrangeCommands({ api, setSession });
+  const {
+    commit,
+    message,
+    pendingCanonicalOperations,
+    retryRuntimeSync,
+    runtimeOutOfSync,
+    setMessage,
+  } = commands;
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -62,13 +70,10 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     width: number;
     height: number;
   } | null>(null);
-  const setMessage = commands.setMessage;
   const clipboardRef = useRef<{ audioIds: string[]; midiIds: string[] }>({
     audioIds: [],
     midiIds: [],
   });
-  const { commit, retryRuntimeSync } = commands;
-
   const edgeTicks = useMemo(
     () => [
       ...arrangement.audioClips.flatMap((clip) => [
@@ -155,6 +160,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     setSnapGuide,
     onSplitToolUsed: options.onSplitToolUsed,
   });
+  const { splitClip, splitMidiClip } = clipInteractions;
+  const { pasteTimelineClips, removeTimelineClips } = api;
 
   const selectClip = useCallback(
     (clipId: string, append = false) => {
@@ -246,7 +253,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
           ...arrangement.midiClips.map((clip) => clip.id),
         ]);
         void commit(
-          api.pasteTimelineClips(
+          pasteTimelineClips(
             clipboardRef.current.audioIds,
             clipboardRef.current.midiIds,
             snapTick(displayTick),
@@ -268,7 +275,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         );
         const target = Math.max(...clips.map((clip) => timelineObjectEndTick(clip, timebase)));
         void commit(
-          api.pasteTimelineClips(
+          pasteTimelineClips(
             arrangement.audioClips
               .filter((clip) => selectedClipIds.includes(clip.id))
               .map((clip) => clip.id),
@@ -286,12 +293,12 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
         const midiTargets = arrangement.midiClips.filter((clip) =>
           selectedClipIds.includes(clip.id),
         );
-        for (const clip of audioTargets) void clipInteractions.splitClip(clip, displayTick);
-        for (const clip of midiTargets) void clipInteractions.splitMidiClip(clip, displayTick);
+        for (const clip of audioTargets) void splitClip(clip, displayTick);
+        for (const clip of midiTargets) void splitMidiClip(clip, displayTick);
       } else if (selectedClipIds.length && event.key === 'Delete') {
         event.preventDefault();
         void commit(
-          api.removeTimelineClips(
+          removeTimelineClips(
             arrangement.audioClips
               .filter((clip) => selectedClipIds.includes(clip.id))
               .map((clip) => clip.id),
@@ -305,25 +312,25 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [
-    api,
     arrangement.audioClips,
     arrangement.midiClips,
-    arrangement.markers,
-    clipInteractions,
     commit,
-    commands,
     displayTick,
+    pasteTimelineClips,
+    removeTimelineClips,
     selectedClipIds,
     setMessage,
     setSelectedClipIds,
     snapTick,
+    splitClip,
+    splitMidiClip,
     timebase,
   ]);
 
   return {
-    message: commands.message,
-    runtimeOutOfSync: commands.runtimeOutOfSync,
-    canonicalOperationPending: commands.pendingCanonicalOperations > 0,
+    message,
+    runtimeOutOfSync,
+    canonicalOperationPending: pendingCanonicalOperations > 0,
     retryRuntimeSync,
     snapGuide,
     marquee,

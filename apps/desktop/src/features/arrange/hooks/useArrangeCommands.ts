@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 
 interface ArrangeCommandOptions {
@@ -14,21 +14,27 @@ export function useArrangeCommands({ api, setSession }: ArrangeCommandOptions) {
   const [pendingCanonicalOperations, setPendingCanonicalOperations] = useState(0);
 
   const commit = useCallback(
-    async (operation: Promise<CreativeSession | null>) => {
+    async (operation: Promise<ArrangementMutationResult | null>) => {
       setMessage('');
       setPendingCanonicalOperations((count) => count + 1);
       try {
         const next = await operation;
-        if (next) {
-          setSession(next);
-          setRuntimeOutOfSync(false);
+        if (!next) {
+          setMessage('The edit was not applied.');
+          return null;
         }
-        setMessage(next ? '' : 'The edit was not applied.');
-        return next;
+        setSession(next.session);
+        if (next.projection.state === 'failed') {
+          setRuntimeOutOfSync(true);
+          setMessage(next.projection.message);
+        } else {
+          setRuntimeOutOfSync(false);
+          setMessage('');
+        }
+        return next.session;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         setMessage(detail);
-        if (detail.includes('Playback runtime is out of sync')) setRuntimeOutOfSync(true);
         return null;
       } finally {
         setPendingCanonicalOperations((count) => Math.max(0, count - 1));

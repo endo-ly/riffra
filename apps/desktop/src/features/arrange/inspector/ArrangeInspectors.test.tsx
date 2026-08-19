@@ -137,7 +137,12 @@ describe('Arrange Inspectors', () => {
     canonical.arrangement.audioClips[0].takeVariant = 'processed';
     const api = new FakeNativeApi({
       bootstrapState: { session: initial },
-      responses: { setAudioClipTakeVariant: canonical },
+      responses: {
+        setAudioClipTakeVariant: {
+          session: canonical,
+          projection: { state: 'notRequired' as const },
+        },
+      },
     });
     function Harness() {
       const [session, setSession] = useState(initial);

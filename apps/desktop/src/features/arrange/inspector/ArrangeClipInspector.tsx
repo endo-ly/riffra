@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { AudioClip, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './ArrangeClipInspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface ArrangeClipInspectorProps {
   session: CreativeSession;
@@ -12,7 +13,7 @@ interface ArrangeClipInspectorProps {
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
   api: ArrangeInspectorApi;
-  onSetLoopToClip?: (clip: AudioClip) => Promise<CreativeSession>;
+  onSetLoopToClip?: (clip: AudioClip) => Promise<ArrangementMutationResult>;
 }
 
 interface Drafts {
@@ -59,13 +60,13 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   }, [clip?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const commit = (
-    operation: Promise<CreativeSession | null>,
+    operation: Promise<ArrangementMutationResult | null>,
     label: string,
     afterSuccess?: () => void,
   ) => {
     runOperation(operation, (next) => {
       if (next) {
-        props.setSession(next);
+        applyArrangementMutation(next, props.setSession, setMessage);
         afterSuccess?.();
       } else {
         setMessage(`${label} was not applied.`);

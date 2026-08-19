@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { CreativeSession, PluginEntry, Track } from '@/model/domain';
+import type { ArrangementMutationResult, PluginEntry, Track } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { PluginPicker } from './PluginPicker';
 import styles from './TrackPluginChainEditor.module.css';
@@ -8,7 +8,7 @@ interface TrackPluginChainEditorProps {
   track: Track;
   api: ArrangeInspectorApi;
   plugins: PluginEntry[];
-  commit: (operation: Promise<CreativeSession>) => void;
+  commit: (operation: Promise<ArrangementMutationResult>) => void;
   missingDeviceIds: string[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;

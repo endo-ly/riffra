@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './ArrangeClipInspector.module.css';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface MidiClipInspectorProps {
   session: CreativeSession;
@@ -21,6 +22,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
   const [name, setName] = useState(clip?.name ?? '');
   const [startTick, setStartTick] = useState(String(clip?.startTick ?? 0));
   const [durationTicks, setDurationTicks] = useState(String(clip?.durationTicks ?? 1));
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setName(clip?.name ?? '');
@@ -28,9 +30,9 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     setDurationTicks(String(clip?.durationTicks ?? 1));
   }, [clip?.durationTicks, clip?.id, clip?.name, clip?.startTick]);
 
-  const commit = async (operation: Promise<CreativeSession | null>) => {
+  const commit = async (operation: Promise<ArrangementMutationResult | null>) => {
     const next = await operation;
-    if (next) props.setSession(next);
+    if (next) applyArrangementMutation(next, props.setSession, setMessage);
   };
 
   if (!clip) {
@@ -117,6 +119,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
           Delete
         </button>
       </div>
+      {message && <p className={styles.message}>{message}</p>}
     </div>
   );
 }

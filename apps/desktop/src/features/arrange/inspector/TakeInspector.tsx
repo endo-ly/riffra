@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioTakeVariant, CreativeSession, RecordingTakeRecord } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  AudioTakeVariant,
+  CreativeSession,
+  RecordingTakeRecord,
+} from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import surface from '@/shared/ui/Surface.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './TakeInspector.module.css';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
 
@@ -144,7 +150,7 @@ export function TakeInspector(props: TakeInspectorProps) {
   const [sourceVariants, setSourceVariants] = useState<Record<string, AudioTakeVariant>>({});
   const auditionRef = useRef<AuditionState | null>(null);
   const auditionRequest = useRef(0);
-  const { operationMessage, runOperation } = useInspectorOperation();
+  const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
 
   const stopNativeAudition = useCallback(
     () =>
@@ -191,7 +197,10 @@ export function TakeInspector(props: TakeInspectorProps) {
     [stopNativeAudition],
   );
 
-  const commit = (promise: Promise<CreativeSession>) => runOperation(promise, props.setSession);
+  const commit = (promise: Promise<ArrangementMutationResult>) =>
+    runOperation(promise, (result) =>
+      applyArrangementMutation(result, props.setSession, setOperationMessage),
+    );
 
   const preview = (take: RecordingTakeRecord) => {
     const variant =
