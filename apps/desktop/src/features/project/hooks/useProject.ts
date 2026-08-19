@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BootstrapState, CreativeSession, HistoryState } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface UseSessionOptions {
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
@@ -46,9 +47,13 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const undo = useCallback(async () => {
     if (!historyState.canUndo) return;
     try {
-      applyNativeSession(await undoSession());
+      const projectionFailed = applyArrangementMutation(
+        await undoSession(),
+        applyNativeSession,
+        setAutosaveError,
+      );
       await refreshHistory();
-      setAutosaveError(null);
+      if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -57,9 +62,13 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const redo = useCallback(async () => {
     if (!historyState.canRedo) return;
     try {
-      applyNativeSession(await redoSession());
+      const projectionFailed = applyArrangementMutation(
+        await redoSession(),
+        applyNativeSession,
+        setAutosaveError,
+      );
       await refreshHistory();
-      setAutosaveError(null);
+      if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -74,7 +83,12 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
     if (next == null) return;
     const name = next.trim().slice(0, 160);
-    applyNativeSession(await updateSessionSettings({ projectName: name || null }));
+    const projectionFailed = applyArrangementMutation(
+      await updateSessionSettings({ projectName: name || null }),
+      applyNativeSession,
+      setAutosaveError,
+    );
+    if (!projectionFailed) setAutosaveError(null);
   }, [applyNativeSession, session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
@@ -94,12 +108,19 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
       setExportMessage('Import failed; the current session remains safe.');
       return;
     }
-    setSession(imported);
-    setBoot((current) =>
-      current ? { ...current, session: imported, recoveredFromGeneration: false } : current,
+    const projectionFailed = applyArrangementMutation(
+      imported,
+      applyNativeSession,
+      setAutosaveError,
     );
-    setExportMessage(`Imported session: ${imported.projectName ?? imported.sessionId}`);
-  }, [importSessionApi, setBoot]);
+    setBoot((current) =>
+      current ? { ...current, session: imported.session, recoveredFromGeneration: false } : current,
+    );
+    if (!projectionFailed) setAutosaveError(null);
+    setExportMessage(
+      `Imported session: ${imported.session.projectName ?? imported.session.sessionId}`,
+    );
+  }, [applyNativeSession, importSessionApi, setBoot]);
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
@@ -116,13 +137,22 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
         );
         return;
       }
-      setSession(restored);
-      setBoot((current) =>
-        current ? { ...current, session: restored, recoveredFromGeneration: false } : current,
+      const projectionFailed = applyArrangementMutation(
+        restored,
+        applyNativeSession,
+        setAutosaveError,
       );
-      setExportMessage(`Restored stable generation: ${restored.projectName ?? restored.sessionId}`);
+      setBoot((current) =>
+        current
+          ? { ...current, session: restored.session, recoveredFromGeneration: false }
+          : current,
+      );
+      if (!projectionFailed) setAutosaveError(null);
+      setExportMessage(
+        `Restored stable generation: ${restored.session.projectName ?? restored.session.sessionId}`,
+      );
     },
-    [restoreRecoveryGeneration, setBoot],
+    [applyNativeSession, restoreRecoveryGeneration, setBoot],
   );
 
   const dismissRecovery = useCallback(() => {

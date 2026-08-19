@@ -36,8 +36,16 @@ function useRecordingHarness(
 ) {
   const [audio, setAudio] = useState(initialAudio);
   const [session, setSession] = useState(initialSession);
-  const recording = useRecording(api, { audio, setAudio, setSession });
-  return { ...recording, audio, setAudio, session, setSession };
+  const [error, setError] = useState<string | null>(null);
+  const [finalizationError, setFinalizationError] = useState<string | null>(null);
+  const recording = useRecording(api, {
+    audio,
+    setAudio,
+    setSession,
+    onProjectionFailure: setError,
+    onFinalizationFailure: setFinalizationError,
+  });
+  return { ...recording, audio, setAudio, session, setSession, error, finalizationError };
 }
 
 describe('useRecording', () => {
@@ -202,6 +210,8 @@ describe('useRecording', () => {
       api.setResponse('stopArrangeRecording', {
         session: defaultSession(),
         audio: fakeAudioStatus(),
+        projection: { state: 'notRequired' },
+        finalization: { state: 'notRequired' },
       });
       await act(async () => {
         await result.current.toggleRecording();
@@ -223,6 +233,8 @@ describe('useRecording', () => {
     api.setResponse('stopArrangeRecording', {
       session: defaultSession(),
       audio: fakeAudioStatus(),
+      projection: { state: 'notRequired' },
+      finalization: { state: 'notRequired' },
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() =>
@@ -245,5 +257,72 @@ describe('useRecording', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('publishes the committed session before exposing projection failure', async () => {
+    const activeAudio = fakeAudioStatus();
+    activeAudio.recording.active = true;
+    const api = new FakeNativeApi({ recordings: [], audio: activeAudio });
+    const committedSession = sessionWithTrack(false);
+    api.setResponse('stopArrangeRecording', {
+      session: committedSession,
+      audio: fakeAudioStatus(),
+      projection: {
+        state: 'failed',
+        status: {
+          state: 'failed',
+          operationId: 2,
+          runningOperationId: null,
+          targetProjectionSequence: 3,
+          targetSessionRevision: 4,
+          preparedSessionRevision: null,
+          activeProjectionSequence: 2,
+          activeSessionRevision: 3,
+          runtimeGeneration: 1,
+          queuedAtMs: null,
+          startedAtMs: null,
+          completedAtMs: null,
+          lastNativeResponseAtMs: null,
+          discardedPreparationCount: 0,
+          lastError: 'projection failed',
+        },
+        message: 'projection failed',
+      },
+      finalization: { state: 'completed' },
+    });
+    const { result } = renderHook(() =>
+      useRecordingHarness(api, sessionWithTrack(true), api.audio),
+    );
+
+    await act(async () => {
+      await result.current.toggleRecording();
+    });
+
+    expect(result.current.session).toBe(committedSession);
+    expect(result.current.error).toBe('projection failed');
+  });
+
+  it('keeps a stopped take visible when finalization requires Inbox recovery', async () => {
+    const activeAudio = fakeAudioStatus();
+    activeAudio.recording.active = true;
+    const api = new FakeNativeApi({ recordings: [], audio: activeAudio });
+    const stoppedSession = sessionWithTrack(false);
+    api.setResponse('stopArrangeRecording', {
+      session: stoppedSession,
+      audio: fakeAudioStatus(),
+      projection: { state: 'notRequired' },
+      finalization: { state: 'recoveryRequired', message: 'manifest invalid' },
+    });
+    const { result } = renderHook(() =>
+      useRecordingHarness(api, sessionWithTrack(true), api.audio),
+    );
+
+    await act(async () => {
+      await result.current.toggleRecording();
+    });
+
+    expect(result.current.audio.recording.active).toBe(false);
+    expect(result.current.session).toBe(stoppedSession);
+    expect(result.current.finalizationError).toBe('manifest invalid');
   });
 });

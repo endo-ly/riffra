@@ -22,6 +22,7 @@ const completedRecording = (): RecordingAsset => ({
   midiFile: null,
   sampleRate: 48_000,
   samplesWritten: 96_000,
+  droppedMidiEvents: 0,
   droppedBlocks: 0,
   missingSamples: 0,
   dropoutStartSample: null,

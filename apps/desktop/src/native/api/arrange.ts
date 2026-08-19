@@ -1,8 +1,8 @@
 import type {
   AudioClipMove,
   AudioStatus,
+  ArrangementMutationResult,
   AssetId,
-  CreativeSession,
   ProjectTimebase,
   MonitoringState,
   RackInstance,
@@ -16,19 +16,38 @@ import type {
   MidiInputRoute,
 } from '@/model/domain';
 import type { MidiNoteInput } from '../native-api';
-import { invokeLatest, invokeOrFallback, invoke } from '../invoke';
+import {
+  invokeLatest,
+  invokeOrFallback as invokeOrFallbackRaw,
+  invoke as invokeRaw,
+} from '../invoke';
+
+async function invokeArrangement(
+  command: string,
+  args: Record<string, unknown>,
+): Promise<ArrangementMutationResult> {
+  return invokeRaw<ArrangementMutationResult>(command, args);
+}
+
+async function invokeArrangementOrFallback(
+  command: string,
+  args: Record<string, unknown>,
+): Promise<ArrangementMutationResult | null> {
+  return invokeOrFallbackRaw<ArrangementMutationResult | null>(command, args, null);
+}
 
 export async function addAudioClipToArrangement(
   assetId: AssetId,
   name: string,
   startTick?: number,
   trackId?: string,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'add_audio_clip_to_arrangement',
-    { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('add_audio_clip_to_arrangement', {
+    assetId,
+    name,
+    startTick: startTick ?? null,
+    trackId: trackId ?? null,
+  });
 }
 
 export async function addMidiClipToArrangement(
@@ -36,12 +55,13 @@ export async function addMidiClipToArrangement(
   name: string,
   startTick?: number,
   trackId?: string,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'add_midi_clip_to_arrangement',
-    { assetId, name, startTick: startTick ?? null, trackId: trackId ?? null },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('add_midi_clip_to_arrangement', {
+    assetId,
+    name,
+    startTick: startTick ?? null,
+    trackId: trackId ?? null,
+  });
 }
 
 export async function createMidiClip(
@@ -49,118 +69,109 @@ export async function createMidiClip(
   startTick: number,
   durationTicks: number,
   name?: string,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'create_midi_clip',
-    { trackId, startTick, durationTicks, name: name ?? null },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('create_midi_clip', {
+    trackId,
+    startTick,
+    durationTicks,
+    name: name ?? null,
+  });
 }
 
 export async function updateAudioClip(
   clipId: string,
   patch: AudioClipPatch,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('update_audio_clip', { clipId, patch }, null);
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('update_audio_clip', { clipId, patch });
 }
 
 export async function updateMidiClip(
   clipId: string,
   patch: MidiClipPatch,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('update_midi_clip', { clipId, patch }, null);
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('update_midi_clip', { clipId, patch });
 }
 
 export async function removeTimelineClips(
   audioClipIds: string[],
   midiClipIds: string[],
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'remove_timeline_clips',
-    { audioClipIds, midiClipIds },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('remove_timeline_clips', { audioClipIds, midiClipIds });
 }
 
 export async function trimAudioClip(
   clipId: string,
   startTick: number,
   sourceRange: { start: number; end: number },
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'trim_audio_clip',
-    { clipId, startTick, sourceRange },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('trim_audio_clip', { clipId, startTick, sourceRange });
 }
 
 export async function splitAudioClip(
   clipId: string,
   splitTick: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('split_audio_clip', { clipId, splitTick }, null);
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('split_audio_clip', { clipId, splitTick });
 }
 
-export async function duplicateAudioClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('duplicate_audio_clip', { clipId }, null);
+export async function duplicateAudioClip(
+  clipId: string,
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('duplicate_audio_clip', { clipId });
 }
 
-export async function moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('move_audio_clips', { moves }, null);
+export async function moveAudioClips(
+  moves: AudioClipMove[],
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('move_audio_clips', { moves });
 }
 
-export async function moveMidiClips(moves: MidiClipMove[]): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('move_midi_clips', { moves }, null);
+export async function moveMidiClips(
+  moves: MidiClipMove[],
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('move_midi_clips', { moves });
 }
 
 export async function trimMidiClip(
   clipId: string,
   startTick: number,
   durationTicks: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'trim_midi_clip',
-    { clipId, startTick, durationTicks },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('trim_midi_clip', { clipId, startTick, durationTicks });
 }
 
 export async function splitMidiClip(
   clipId: string,
   splitTick: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('split_midi_clip', { clipId, splitTick }, null);
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('split_midi_clip', { clipId, splitTick });
 }
 
-export async function duplicateMidiClip(clipId: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('duplicate_midi_clip', { clipId }, null);
+export async function duplicateMidiClip(clipId: string): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('duplicate_midi_clip', { clipId });
 }
 
 export async function pasteTimelineClips(
   audioClipIds: string[],
   midiClipIds: string[],
   startTick: number,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'paste_timeline_clips',
-    { audioClipIds, midiClipIds, startTick },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('paste_timeline_clips', {
+    audioClipIds,
+    midiClipIds,
+    startTick,
+  });
 }
 
 export async function crossfadeAudioClips(
   firstId: string,
   secondId: string,
-): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
-    'crossfade_audio_clips',
-    { firstId, secondId },
-    null,
-  );
+): Promise<ArrangementMutationResult | null> {
+  return invokeArrangementOrFallback('crossfade_audio_clips', { firstId, secondId });
 }
 
-export async function addTrack(name: string, kind: TrackKind): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track', { name, kind });
+export async function addTrack(name: string, kind: TrackKind): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('add_track', { name, kind });
 }
 
 export async function updateTrack(
@@ -175,28 +186,29 @@ export async function updateTrack(
     monitoring?: MonitoringState;
     rack?: RackInstance;
   },
-): Promise<CreativeSession> {
+): Promise<ArrangementMutationResult> {
   const fields = Object.keys(patch);
   const latestField =
     fields.length === 1 && ['muted', 'solo', 'armed', 'monitoring'].includes(fields[0] ?? '')
       ? fields[0]
       : null;
   if (latestField) {
-    return await invokeLatest<CreativeSession>(
+    const result = await invokeLatest<ArrangementMutationResult>(
       'update_track',
       { trackId, patch },
       `update_track:${trackId}:${latestField}`,
     );
+    return result;
   }
-  return await invoke<CreativeSession>('update_track', { trackId, patch });
+  return await invokeArrangement('update_track', { trackId, patch });
 }
 
 export async function setTrackAutomation(
   trackId: string,
   parameter: AutomationParameter,
   points: AutomationPoint[],
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_automation', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('set_track_automation', {
     trackId,
     parameter,
     points,
@@ -206,42 +218,45 @@ export async function setTrackAutomation(
 export async function setTrackAudioInput(
   trackId: string,
   channelIndex: number | null,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_audio_input', { trackId, channelIndex });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('set_track_audio_input', { trackId, channelIndex });
 }
 
 export async function setTrackMidiInput(
   trackId: string,
   route: MidiInputRoute,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_midi_input', { trackId, route });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('set_track_midi_input', { trackId, route });
 }
 
-export async function removeTrack(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_track', { trackId });
+export async function removeTrack(trackId: string): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('remove_track', { trackId });
 }
 
-export async function duplicateTrack(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('duplicate_track', { trackId });
+export async function duplicateTrack(trackId: string): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('duplicate_track', { trackId });
 }
 
-export async function reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('reorder_track', { trackId, targetIndex });
+export async function reorderTrack(
+  trackId: string,
+  targetIndex: number,
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('reorder_track', { trackId, targetIndex });
 }
 
-export async function addMarker(tick: number, name: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_marker', { tick, name });
+export async function addMarker(tick: number, name: string): Promise<ArrangementMutationResult> {
+  return invokeRaw<ArrangementMutationResult>('add_marker', { tick, name });
 }
 
 export async function updateMarker(
   markerId: string,
   patch: { name?: string; tick?: number },
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_marker', { markerId, ...patch });
+): Promise<ArrangementMutationResult> {
+  return invokeRaw<ArrangementMutationResult>('update_marker', { markerId, ...patch });
 }
 
-export async function removeMarker(markerId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_marker', { markerId });
+export async function removeMarker(markerId: string): Promise<ArrangementMutationResult> {
+  return invokeRaw<ArrangementMutationResult>('remove_marker', { markerId });
 }
 
 export async function addMidiNote(
@@ -251,8 +266,8 @@ export async function addMidiNote(
   durationTicks: number,
   velocity: number,
   channel: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_midi_note', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('add_midi_note', {
     clipId,
     startTick,
     pitch,
@@ -265,16 +280,16 @@ export async function addMidiNote(
 export async function insertMidiNotes(
   clipId: string,
   notes: MidiNoteInput[],
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('insert_midi_notes', { clipId, notes });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('insert_midi_notes', { clipId, notes });
 }
 
 export async function updateMidiNote(
   clipId: string,
   noteId: string,
   patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_midi_note', { clipId, noteId, patch });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('update_midi_note', { clipId, noteId, patch });
 }
 
 export async function updateMidiNotes(
@@ -283,24 +298,30 @@ export async function updateMidiNotes(
     noteId: string;
     patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
   }[],
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_midi_notes', { clipId, updates });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('update_midi_notes', { clipId, updates });
 }
 
-export async function removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_midi_note', { clipId, noteId });
+export async function removeMidiNote(
+  clipId: string,
+  noteId: string,
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('remove_midi_note', { clipId, noteId });
 }
 
-export async function removeMidiNotes(clipId: string, noteIds: string[]): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_midi_notes', { clipId, noteIds });
+export async function removeMidiNotes(
+  clipId: string,
+  noteIds: string[],
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('remove_midi_notes', { clipId, noteIds });
 }
 
 export async function quantizeMidiNotes(
   clipId: string,
   noteIds: string[],
   gridTicks: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('quantize_midi_notes', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('quantize_midi_notes', {
     clipId,
     noteIds,
     gridTicks,
@@ -311,8 +332,8 @@ export async function duplicateMidiNotes(
   clipId: string,
   noteIds: string[],
   offsetTicks: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('duplicate_midi_notes', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('duplicate_midi_notes', {
     clipId,
     noteIds,
     offsetTicks,
@@ -322,42 +343,45 @@ export async function duplicateMidiNotes(
 export async function setAudioClipTakeVariant(
   clipId: string,
   variant: AudioTakeVariant,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_audio_clip_take_variant', { clipId, variant });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('set_audio_clip_take_variant', { clipId, variant });
 }
 
 export async function startTakeComparison(takeId: string): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('start_take_comparison', { takeId });
+  return await invokeRaw<AudioStatus>('start_take_comparison', { takeId });
 }
 
 export async function switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('switch_take_comparison_variant', { variant });
+  return await invokeRaw<AudioStatus>('switch_take_comparison_variant', { variant });
 }
 
 export async function stopTakeComparison(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('stop_take_comparison');
+  return await invokeRaw<AudioStatus>('stop_take_comparison');
 }
 
-export async function activateTake(sessionId: string, takeId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('activate_take', { sessionId, takeId });
+export async function activateTake(
+  sessionId: string,
+  takeId: string,
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('activate_take', { sessionId, takeId });
 }
 
-export async function placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('place_take_as_separate_clip', { takeId });
+export async function placeTakeAsSeparateClip(takeId: string): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('place_take_as_separate_clip', { takeId });
 }
 
 export async function updateArrangementTimebase(
   timebase: ProjectTimebase,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_arrangement_timebase', { timebase });
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('update_arrangement_timebase', { timebase });
 }
 
 export async function updateTimelineLoopRange(
   enabled: boolean,
   startTick: number,
   endTick: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_timeline_loop_range', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('update_timeline_loop_range', {
     enabled,
     startTick,
     endTick,
@@ -368,8 +392,8 @@ export async function updateTimelinePunchRange(
   enabled: boolean,
   startTick: number,
   endTick: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_timeline_punch_range', {
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('update_timeline_punch_range', {
     enabled,
     startTick,
     endTick,

@@ -1,13 +1,32 @@
-import type { AssetId, HistoryState, ProjectExport, CreativeSession } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  AssetId,
+  HistoryState,
+  ProjectExport,
+} from '@/model/domain';
 import { defaultSession } from '../browser-defaults';
 import { invokeOrFallback, invoke } from '../invoke';
 
-export async function undoSession(): Promise<CreativeSession> {
-  return invokeOrFallback<CreativeSession>('undo_session', {}, defaultSession());
+export async function undoSession(): Promise<ArrangementMutationResult> {
+  return invokeOrFallback<ArrangementMutationResult>(
+    'undo_session',
+    {},
+    {
+      session: defaultSession(),
+      projection: { state: 'notRequired' },
+    },
+  );
 }
 
-export async function redoSession(): Promise<CreativeSession> {
-  return invokeOrFallback<CreativeSession>('redo_session', {}, defaultSession());
+export async function redoSession(): Promise<ArrangementMutationResult> {
+  return invokeOrFallback<ArrangementMutationResult>(
+    'redo_session',
+    {},
+    {
+      session: defaultSession(),
+      projection: { state: 'notRequired' },
+    },
+  );
 }
 
 export async function getHistoryState(): Promise<HistoryState> {
@@ -21,8 +40,10 @@ export async function getHistoryState(): Promise<HistoryState> {
   );
 }
 
-export async function restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>(
+export async function restoreRecoveryGeneration(
+  fileName: string,
+): Promise<ArrangementMutationResult | null> {
+  return invokeOrFallback<ArrangementMutationResult | null>(
     'restore_recovery_generation',
     { fileName },
     null,
@@ -33,8 +54,12 @@ export async function exportSession(): Promise<ProjectExport | null> {
   return invokeOrFallback<ProjectExport | null>('export_scratch_session', {}, null);
 }
 
-export async function importSession(path: string): Promise<CreativeSession | null> {
-  return invokeOrFallback<CreativeSession | null>('import_scratch_session', { path }, null);
+export async function importSession(path: string): Promise<ArrangementMutationResult | null> {
+  return invokeOrFallback<ArrangementMutationResult | null>(
+    'import_scratch_session',
+    { path },
+    null,
+  );
 }
 
 export async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {
@@ -51,6 +76,7 @@ export async function updateSessionSettings(patch: {
   countInBeats?: number;
   metronomeEnabled?: boolean;
   note?: string;
-}): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('update_session_settings', { patch });
+}): Promise<ArrangementMutationResult> {
+  const result = await invoke<ArrangementMutationResult>('update_session_settings', { patch });
+  return result;
 }

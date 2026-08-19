@@ -1,7 +1,7 @@
 use super::*;
 
 #[tauri::command]
-pub async fn undo_session(app: AppHandle) -> Result<CreativeSession, String> {
+pub async fn undo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, |state| {
         let store = SessionStore::new(state.core.data_root());
         let session = state
@@ -10,16 +10,16 @@ pub async fn undo_session(app: AppHandle) -> Result<CreativeSession, String> {
             .undo()
             .map_err(|error| error.to_string())?;
         crate::library::index::queue(state.core.data_root(), &session);
-        if !state.core.safe_mode() {
-            adapter::sync_arrangement_runtime(&app_context(state))?;
-        }
-        Ok(session)
+        let context = app_context(state);
+        Ok(crate::session::commit::arrangement_mutation_result(
+            &context, session,
+        ))
     })
     .await
 }
 
 #[tauri::command]
-pub async fn redo_session(app: AppHandle) -> Result<CreativeSession, String> {
+pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, |state| {
         let store = SessionStore::new(state.core.data_root());
         let session = state
@@ -28,10 +28,10 @@ pub async fn redo_session(app: AppHandle) -> Result<CreativeSession, String> {
             .redo()
             .map_err(|error| error.to_string())?;
         crate::library::index::queue(state.core.data_root(), &session);
-        if !state.core.safe_mode() {
-            adapter::sync_arrangement_runtime(&app_context(state))?;
-        }
-        Ok(session)
+        let context = app_context(state);
+        Ok(crate::session::commit::arrangement_mutation_result(
+            &context, session,
+        ))
     })
     .await
 }
@@ -53,7 +53,7 @@ pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
 pub async fn restore_recovery_generation(
     file_name: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::restore_generation(&app_context(state), &file_name)
     })
@@ -64,7 +64,7 @@ pub async fn restore_recovery_generation(
 pub async fn import_scratch_session(
     path: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         let path = std::path::PathBuf::from(path);
         adapter::import_session(&app_context(state), &path)
@@ -76,7 +76,7 @@ pub async fn import_scratch_session(
 pub async fn update_session_settings(
     patch: SessionSettingsPatch,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_session_settings(&app_context(state), patch)
     })
@@ -96,7 +96,7 @@ pub async fn relink_missing_dependency(
     asset_id: String,
     new_path: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
@@ -109,7 +109,7 @@ pub async fn relink_missing_dependency(
 pub async fn disable_missing_plugin(
     device_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::disable_missing_plugin(&app_context(state), &device_id)
     })
@@ -121,7 +121,7 @@ pub async fn replace_missing_track_plugin(
     device_id: String,
     new_path: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking_without_command_gate(app, move |state| {
         adapter::replace_missing_track_plugin(&app_context(state), &device_id, &new_path)
     })

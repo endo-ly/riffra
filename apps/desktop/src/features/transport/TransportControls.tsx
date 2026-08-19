@@ -3,6 +3,8 @@ import type { CreativeSession } from '@/model/domain';
 import clsx from 'clsx';
 import { TransportIcon } from './TransportIcon';
 import type { TransportControlsApi } from './transport-api';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { toast } from '@/shared/toasts';
 import styles from './TransportControls.module.css';
 
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'];
@@ -80,7 +82,11 @@ export function TransportControls(props: TransportControlsProps) {
         timeSignatureNumerator: numerator,
         timeSignatureDenominator: denominator,
       })
-      .then(setSession)
+      .then((result) =>
+        applyArrangementMutation(result, setSession, (message) =>
+          toast(message, { kind: 'error' }),
+        ),
+      )
       .catch(() => {
         setTempoDraft(String(current.bpm));
         setSignatureDraft(`${current.timeSignatureNumerator}/${current.timeSignatureDenominator}`);
@@ -116,7 +122,11 @@ export function TransportControls(props: TransportControlsProps) {
                   range.startTick,
                   range.endTick > range.startTick ? range.endTick : barTicks * 4,
                 )
-                .then(setSession);
+                .then((result) =>
+                  applyArrangementMutation(result, setSession, (message) =>
+                    toast(message, { kind: 'error' }),
+                  ),
+                );
             }}
           >
             <TransportIcon name="loop" />
@@ -164,7 +174,11 @@ export function TransportControls(props: TransportControlsProps) {
                 .updateSessionSettings({
                   metronomeEnabled: !session.settings.metronomeEnabled,
                 })
-                .then(setSession)
+                .then((result) =>
+                  applyArrangementMutation(result, setSession, (message) =>
+                    toast(message, { kind: 'error' }),
+                  ),
+                )
             }
           >
             <TransportIcon name="metronome" />
@@ -181,7 +195,11 @@ export function TransportControls(props: TransportControlsProps) {
             onClick={() =>
               void api
                 .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
-                .then(setSession)
+                .then((result) =>
+                  applyArrangementMutation(result, setSession, (message) =>
+                    toast(message, { kind: 'error' }),
+                  ),
+                )
             }
           >
             Count-in: {describeCountIn(session)}

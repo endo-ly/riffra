@@ -80,7 +80,7 @@
 | 命令                                                                   | 責務                                                    |
 | ---------------------------------------------------------------------- | ------------------------------------------------------- |
 | `get_bootstrap_state`                                                  | CreativeSession・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                      |
+| `get_audio_status`                                                     | 音声状態の照会                                          |
 | `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）         |
 | `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                |
 | `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                      |

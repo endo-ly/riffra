@@ -6,13 +6,14 @@ pub fn set_audio_clip_take_variant(
     context: &SessionContext<'_>,
     clip_id: &str,
     variant: AudioTakeVariant,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .set_audio_clip_take_variant(clip_id, variant)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn start_take_comparison(
@@ -74,7 +75,7 @@ pub fn activate_take(
     context: &SessionContext<'_>,
     session_id: &str,
     take_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let session = current_session(context)?;
     let target_take = session
         .arrangement
@@ -87,7 +88,7 @@ pub fn activate_take(
         .midi_asset_id
         .is_some()
         .then(|| {
-            crate::recording::application::midi_clip_for_take(
+            crate::recording::materialize::midi_clip_for_take(
                 context.data_root,
                 &target_take,
                 session.arrangement.timebase,
@@ -99,14 +100,15 @@ pub fn activate_take(
         core.application(store)
             .activate_take(session_id, take_id, midi_clip)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn place_take_as_separate_clip(
     context: &SessionContext<'_>,
     take_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let session = current_session(context)?;
     let take = session
         .arrangement
@@ -119,7 +121,7 @@ pub fn place_take_as_separate_clip(
         .midi_asset_id
         .is_some()
         .then(|| {
-            crate::recording::application::midi_clip_for_take(
+            crate::recording::materialize::midi_clip_for_take(
                 context.data_root,
                 &take,
                 session.arrangement.timebase,
@@ -131,6 +133,7 @@ pub fn place_take_as_separate_clip(
         core.application(store)
             .place_take_as_separate_clip(take_id, midi_clip)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }

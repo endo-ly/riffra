@@ -3,9 +3,7 @@ import type { AudioStatus } from "./AudioStatus";
 import type { CreativeSession } from "./CreativeSession";
 
 /**
- * A paired session and audio status returned by Application Operations that
- * change the Audio Runtime and the persisted `CreativeSession` in one atomic
- * step. The caller applies both fields directly instead of re-deriving either
- * side, so the runtime and the persisted session never diverge.
+ * A paired session and audio status returned by operations that update both
+ * the Audio Runtime and the persisted `CreativeSession`.
  */
 export type SessionAudioPair = { session: CreativeSession, audio: AudioStatus, };

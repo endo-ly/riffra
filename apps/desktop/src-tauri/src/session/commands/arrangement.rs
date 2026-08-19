@@ -37,7 +37,7 @@ pub async fn add_audio_clip_to_arrangement(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
@@ -53,7 +53,7 @@ pub async fn create_midi_clip(
     duration_ticks: u64,
     name: Option<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::create_midi_clip(
             &app_context(state),
@@ -73,7 +73,7 @@ pub async fn add_midi_clip_to_arrangement(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     let asset_id = AssetId::from_normalized(asset_id)
         .map_err(|error| format!("Asset id is invalid: {error}"))?;
     run_blocking(app, move |state| {
@@ -87,7 +87,7 @@ pub async fn update_audio_clip(
     clip_id: String,
     patch: AudioClipPatch,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_audio_clip(&app_context(state), &clip_id, patch)
     })
@@ -99,7 +99,7 @@ pub async fn remove_timeline_clips(
     audio_clip_ids: Vec<String>,
     midi_clip_ids: Vec<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_timeline_clips(&app_context(state), &audio_clip_ids, &midi_clip_ids)
     })
@@ -112,7 +112,7 @@ pub async fn trim_audio_clip(
     start_tick: TimelineTick,
     source_range: FrameRange,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::trim_audio_clip(&app_context(state), &clip_id, start_tick, source_range)
     })
@@ -124,7 +124,7 @@ pub async fn split_audio_clip(
     clip_id: String,
     split_tick: TimelineTick,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::split_audio_clip(&app_context(state), &clip_id, split_tick)
     })
@@ -135,7 +135,7 @@ pub async fn split_audio_clip(
 pub async fn duplicate_audio_clip(
     clip_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::duplicate_audio_clip(&app_context(state), &clip_id)
     })
@@ -146,7 +146,7 @@ pub async fn duplicate_audio_clip(
 pub async fn move_audio_clips(
     moves: Vec<AudioClipMove>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::move_audio_clips(&app_context(state), moves)
     })
@@ -158,7 +158,7 @@ pub async fn update_midi_clip(
     clip_id: String,
     patch: MidiClipPatch,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_midi_clip(&app_context(state), &clip_id, patch)
     })
@@ -169,7 +169,7 @@ pub async fn update_midi_clip(
 pub async fn move_midi_clips(
     moves: Vec<MidiClipMove>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::move_midi_clips(&app_context(state), moves)
     })
@@ -182,7 +182,7 @@ pub async fn trim_midi_clip(
     start_tick: TimelineTick,
     duration_ticks: u64,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::trim_midi_clip(&app_context(state), &clip_id, start_tick, duration_ticks)
     })
@@ -194,7 +194,7 @@ pub async fn split_midi_clip(
     clip_id: String,
     split_tick: TimelineTick,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::split_midi_clip(&app_context(state), &clip_id, split_tick)
     })
@@ -205,7 +205,7 @@ pub async fn split_midi_clip(
 pub async fn duplicate_midi_clip(
     clip_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::duplicate_midi_clip(&app_context(state), &clip_id)
     })
@@ -218,7 +218,7 @@ pub async fn paste_timeline_clips(
     midi_clip_ids: Vec<String>,
     start_tick: TimelineTick,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::paste_timeline_clips(
             &app_context(state),
@@ -235,7 +235,7 @@ pub async fn crossfade_audio_clips(
     first_id: String,
     second_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::crossfade_audio_clips(&app_context(state), &first_id, &second_id)
     })
@@ -246,7 +246,7 @@ pub async fn crossfade_audio_clips(
 pub async fn update_arrangement_timebase(
     timebase: ProjectTimebase,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_timebase(&app_context(state), timebase)
     })
@@ -259,7 +259,7 @@ pub async fn update_timeline_loop_range(
     start_tick: TimelineTick,
     end_tick: TimelineTick,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_loop_range(&app_context(state), enabled, start_tick, end_tick)
     })
@@ -272,7 +272,7 @@ pub async fn update_timeline_punch_range(
     start_tick: TimelineTick,
     end_tick: TimelineTick,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_punch_range(&app_context(state), enabled, start_tick, end_tick)
     })
@@ -284,7 +284,7 @@ pub async fn add_track(
     name: String,
     kind: TrackKind,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::add_track(&app_context(state), name, kind)
     })
@@ -296,7 +296,7 @@ pub async fn update_track(
     track_id: String,
     patch: riffra_core::TrackPatch,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_track(&app_context(state), &track_id, patch)
     })
@@ -309,7 +309,7 @@ pub async fn set_track_automation(
     parameter: AutomationParameter,
     points: Vec<AutomationPoint>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_track_automation(&app_context(state), &track_id, parameter, points)
     })
@@ -321,7 +321,7 @@ pub async fn set_track_audio_input(
     track_id: String,
     channel_index: Option<u32>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_track_audio_input(&app_context(state), &track_id, channel_index)
     })
@@ -333,7 +333,7 @@ pub async fn set_track_midi_input(
     track_id: String,
     route: MidiInputRoute,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_track_midi_input(&app_context(state), &track_id, route)
     })
@@ -341,7 +341,10 @@ pub async fn set_track_midi_input(
 }
 
 #[tauri::command]
-pub async fn remove_track(track_id: String, app: AppHandle) -> Result<CreativeSession, String> {
+pub async fn remove_track(
+    track_id: String,
+    app: AppHandle,
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_track(&app_context(state), &track_id)
     })
@@ -349,7 +352,10 @@ pub async fn remove_track(track_id: String, app: AppHandle) -> Result<CreativeSe
 }
 
 #[tauri::command]
-pub async fn duplicate_track(track_id: String, app: AppHandle) -> Result<CreativeSession, String> {
+pub async fn duplicate_track(
+    track_id: String,
+    app: AppHandle,
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::duplicate_track(&app_context(state), &track_id)
     })
@@ -361,7 +367,7 @@ pub async fn reorder_track(
     track_id: String,
     target_index: usize,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::reorder_track(&app_context(state), &track_id, target_index)
     })
@@ -373,7 +379,7 @@ pub async fn add_marker(
     tick: TimelineTick,
     name: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::add_marker(&app_context(state), tick, name)
     })
@@ -386,7 +392,7 @@ pub async fn update_marker(
     name: Option<String>,
     tick: Option<TimelineTick>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_marker(&app_context(state), &marker_id, name, tick)
     })
@@ -394,7 +400,10 @@ pub async fn update_marker(
 }
 
 #[tauri::command]
-pub async fn remove_marker(marker_id: String, app: AppHandle) -> Result<CreativeSession, String> {
+pub async fn remove_marker(
+    marker_id: String,
+    app: AppHandle,
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_marker(&app_context(state), &marker_id)
     })
@@ -410,7 +419,7 @@ pub async fn add_midi_note(
     velocity: u8,
     channel: u8,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::add_midi_note(
             &app_context(state),
@@ -430,7 +439,7 @@ pub async fn insert_midi_notes(
     clip_id: String,
     notes: Vec<MidiNoteInput>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::insert_midi_notes(&app_context(state), &clip_id, notes)
     })
@@ -443,7 +452,7 @@ pub async fn update_midi_note(
     note_id: String,
     patch: MidiNotePatch,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_midi_note(&app_context(state), &clip_id, &note_id, patch)
     })
@@ -455,7 +464,7 @@ pub async fn update_midi_notes(
     clip_id: String,
     updates: Vec<MidiNoteUpdate>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::update_midi_notes(&app_context(state), &clip_id, updates)
     })
@@ -467,7 +476,7 @@ pub async fn remove_midi_note(
     clip_id: String,
     note_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_midi_note(&app_context(state), &clip_id, &note_id)
     })
@@ -479,7 +488,7 @@ pub async fn remove_midi_notes(
     clip_id: String,
     note_ids: Vec<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_midi_notes(&app_context(state), &clip_id, &note_ids)
     })
@@ -492,7 +501,7 @@ pub async fn quantize_midi_notes(
     note_ids: Vec<String>,
     grid_ticks: u64,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::quantize_midi_notes(&app_context(state), &clip_id, &note_ids, grid_ticks)
     })
@@ -505,7 +514,7 @@ pub async fn duplicate_midi_notes(
     note_ids: Vec<String>,
     offset_ticks: u64,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::duplicate_midi_notes(&app_context(state), &clip_id, &note_ids, offset_ticks)
     })
@@ -517,7 +526,7 @@ pub async fn set_audio_clip_take_variant(
     clip_id: String,
     variant: AudioTakeVariant,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_audio_clip_take_variant(&app_context(state), &clip_id, variant)
     })
@@ -559,7 +568,7 @@ pub async fn activate_take(
     session_id: String,
     take_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::activate_take(&app_context(state), &session_id, &take_id)
     })
@@ -570,7 +579,7 @@ pub async fn activate_take(
 pub async fn place_take_as_separate_clip(
     take_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::place_take_as_separate_clip(&app_context(state), &take_id)
     })

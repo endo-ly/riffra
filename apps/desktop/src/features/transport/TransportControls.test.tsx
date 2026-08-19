@@ -113,8 +113,12 @@ describe('TransportControls', () => {
 
   it('delegates loop, metronome, and count-in edits to NativeApi', async () => {
     const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
-    const updateLoop = vi.fn(() => defaultSession());
-    const updateSettings = vi.fn(() => defaultSession());
+    const mutation = () => ({
+      session: defaultSession(),
+      projection: { state: 'notRequired' as const },
+    });
+    const updateLoop = vi.fn(mutation);
+    const updateSettings = vi.fn(mutation);
     api.setResponse('updateTimelineLoopRange', updateLoop);
     api.setResponse('updateSessionSettings', updateSettings);
     render(<Harness api={api} />);

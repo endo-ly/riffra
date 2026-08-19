@@ -1,4 +1,4 @@
-import type { AssetId, MissingDependency, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, AssetId, MissingDependency } from '@/model/domain';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function getMissingDependencies(): Promise<MissingDependency[]> {
@@ -8,19 +8,20 @@ export async function getMissingDependencies(): Promise<MissingDependency[]> {
 export async function relinkMissingDependency(
   assetId: AssetId,
   newPath: string,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('relink_missing_dependency', { assetId, newPath });
+): Promise<ArrangementMutationResult> {
+  return await invoke<ArrangementMutationResult>('relink_missing_dependency', { assetId, newPath });
 }
 
-export async function disableMissingPlugin(deviceId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('disable_missing_plugin', { deviceId });
+export async function disableMissingPlugin(deviceId: string): Promise<ArrangementMutationResult> {
+  const result = await invoke<ArrangementMutationResult>('disable_missing_plugin', { deviceId });
+  return result;
 }
 
 export async function replaceMissingTrackPlugin(
   deviceId: string,
   newPath: string,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('replace_missing_track_plugin', {
+): Promise<ArrangementMutationResult> {
+  return await invoke<ArrangementMutationResult>('replace_missing_track_plugin', {
     deviceId,
     newPath,
   });

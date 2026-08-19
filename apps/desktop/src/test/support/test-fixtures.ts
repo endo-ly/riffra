@@ -26,6 +26,7 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       rawChannels: null,
       processedChannels: null,
       samplesWritten: 0,
+      droppedMidiEvents: 0,
       droppedBlocks: 0,
       missingSamples: 0,
       dropoutStartSample: null,

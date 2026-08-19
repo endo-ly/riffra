@@ -28,18 +28,24 @@ use std::path::{Path, PathBuf};
 
 use crate::asset;
 use crate::library;
-use crate::model::{AudioStatus, SessionAudioPair};
+use crate::model::{
+    ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus,
+    RecordingFinalizationOutcome, RecordingStopResult,
+};
 use crate::native_audio::AudioSupervisor;
+use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
 use crate::storage::now_ms;
 use riffra_core::AppCore;
 use riffra_core::{
-    AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, MidiEvent,
-    MidiEventKind, MidiNote, Provenance, ProvenanceOperation, RecordingPassRecord,
-    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, TakeAudioSource,
-    TimelineTick, TrackKind,
+    AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, Provenance,
+    ProvenanceOperation, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
+    RecordingTakeRecord, TakeAudioSource, TimelineTick, TrackKind,
 };
+
+#[cfg(test)]
+use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
 
 /// Concrete dependencies a Recording Application Operation needs. Bundling them
 /// keeps the operation signatures small without pulling in `tauri::State`.
@@ -105,9 +111,6 @@ fn start_recording_in_session(
             "Recording Session is not registered: {recording_session_id}"
         ));
     }
-    let midi_only = armed_tracks
-        .iter()
-        .all(|track| track.kind == TrackKind::Instrument);
     context.runtime.apply_and_wait(
         crate::session::adapter::runtime_snapshot_for_recording(context.data_root, &session),
         riffra_core::ProjectionKey {
@@ -118,11 +121,9 @@ fn start_recording_in_session(
         // control-state restoration, the retry, and the publish boundary.
         std::time::Duration::from_secs(60),
     )?;
-    let status = context.audio.start_arrange_recording(
-        &directory,
-        midi_only,
-        session.settings.count_in_beats,
-    )?;
+    let status = context
+        .audio
+        .start_arrange_recording(&directory, session.settings.count_in_beats)?;
     let capture = Some(build_startup_capture(
         &directory,
         &session,
@@ -201,47 +202,93 @@ fn build_startup_capture(
 /// buffers, and the resulting raw / processed / MIDI outputs are registered as
 /// canonical Assets. The take manifest's nested `RecordingCapture` is updated
 /// to point at those Asset IDs so the canonical state is the source of truth.
-pub fn stop_recording(context: &RecordingContext<'_>) -> Result<SessionAudioPair, String> {
-    let before = context.audio.refresh_status()?;
+pub fn stop_recording(context: &RecordingContext<'_>) -> Result<RecordingStopResult, String> {
+    let before = context.audio.refresh_status().ok();
     let status = context.audio.stop_arrange_recording()?;
     if status.recording.cancelled {
-        return session_audio_pair(context, status);
+        return recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired);
     }
     let directory = status
         .recording
         .directory
         .clone()
-        .or(before.recording.directory);
+        .or_else(|| before.and_then(|status| status.recording.directory));
     if let Some(directory) = directory {
         let directory_path = PathBuf::from(directory);
-        if native_arrange_manifest(&directory_path)?.is_some() {
-            finalize_arrange_recording(context, &directory_path).map_err(|error| {
-                format!(
-                    "Recording stopped and files were preserved, but canonical finalization failed: {error}"
-                )
-            })?;
-            return session_audio_pair(context, status);
+        match native_arrange_manifest(&directory_path) {
+            Err(error) => {
+                return recording_stop_result(
+                    context,
+                    status,
+                    RecordingFinalizationOutcome::RecoveryRequired { message: error },
+                );
+            }
+            Ok(Some(manifest)) => {
+                return match finalize_arrange_recording(context, &directory_path, &manifest) {
+                    Ok(mutation) => Ok(recording_stop_result_from_mutation(
+                        status,
+                        mutation,
+                        RecordingFinalizationOutcome::Completed,
+                    )),
+                    Err(error) => recording_stop_result(
+                        context,
+                        status,
+                        RecordingFinalizationOutcome::RecoveryRequired { message: error },
+                    ),
+                };
+            }
+            Ok(None) => {}
         }
-        let outputs = register_recording_outputs(context.data_root, &directory_path).map_err(|error| {
-            format!(
-                "Recording stopped and files were preserved, but canonical finalization failed: {error}"
-            )
-        })?;
-        place_recording_on_timeline(context, &directory_path, outputs)?;
+        return match register_recording_outputs(context.data_root, &directory_path)
+            .and_then(|outputs| place_recording_on_timeline(context, &directory_path, outputs))
+        {
+            Ok(Some(mutation)) => Ok(recording_stop_result_from_mutation(
+                status,
+                mutation,
+                RecordingFinalizationOutcome::Completed,
+            )),
+            Ok(None) => {
+                recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired)
+            }
+            Err(error) => recording_stop_result(
+                context,
+                status,
+                RecordingFinalizationOutcome::RecoveryRequired { message: error },
+            ),
+        };
     }
-    session_audio_pair(context, status)
+    recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired)
 }
 
-fn session_audio_pair(
+fn recording_stop_result(
     context: &RecordingContext<'_>,
     audio: AudioStatus,
-) -> Result<SessionAudioPair, String> {
+    finalization: RecordingFinalizationOutcome,
+) -> Result<RecordingStopResult, String> {
     let session = context
         .core
         .snapshot()
         .map_err(|error| error.to_string())?
         .session;
-    Ok(SessionAudioPair { session, audio })
+    Ok(RecordingStopResult {
+        session,
+        audio,
+        projection: ArrangementProjectionOutcome::NotRequired,
+        finalization,
+    })
+}
+
+fn recording_stop_result_from_mutation(
+    audio: AudioStatus,
+    mutation: ArrangementMutationResult,
+    finalization: RecordingFinalizationOutcome,
+) -> RecordingStopResult {
+    RecordingStopResult {
+        session: mutation.session,
+        audio,
+        projection: mutation.projection,
+        finalization,
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -316,6 +363,17 @@ struct RegisteredTrackOutput {
     capture_segments: Vec<NativeTrackCaptureSegment>,
     plugin_latency_samples: u64,
     plugin_tail_samples: u64,
+    midi_source: Option<MidiClip>,
+}
+
+#[derive(Clone)]
+struct TrackOutputPreflight {
+    raw_path: Option<PathBuf>,
+    processed_path: Option<PathBuf>,
+    midi_path: Option<PathBuf>,
+    raw_metadata: Option<(u32, u64)>,
+    processed_metadata: Option<(u32, u64)>,
+    midi_source: Option<MidiClip>,
 }
 
 fn native_arrange_manifest(directory: &Path) -> Result<Option<NativeArrangeManifest>, String> {
@@ -332,169 +390,120 @@ fn native_arrange_manifest(directory: &Path) -> Result<Option<NativeArrangeManif
         .map_err(|error| format!("Arrange recording manifest is invalid: {error}"))
 }
 
-fn register_track_outputs(
-    data_root: &Path,
+fn preflight_track_outputs(
     directory: &Path,
     manifest: &NativeArrangeManifest,
-) -> Result<Vec<RegisteredTrackOutput>, String> {
-    let mut outputs = Vec::with_capacity(manifest.tracks.len());
-    for track in &manifest.tracks {
-        let raw_path = track.raw_file.as_ref().map(|path| directory.join(path));
-        let processed_path = track
-            .processed_file
-            .as_ref()
-            .map(|path| directory.join(path));
-        let midi_path = track.midi_file.as_ref().map(|path| directory.join(path));
-        let raw_asset_id = raw_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .map(|path| {
-                asset::register(
-                    data_root,
-                    AssetKind::Audio,
-                    &format!("{} Raw", track.track_id),
-                    path.to_string_lossy().as_ref(),
-                    Some(Provenance::recorded_root()),
-                )
-            })
-            .transpose()?;
-        let processed_asset_id = processed_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .map(|path| {
-                if let Some(source) = raw_asset_id.as_ref() {
-                    asset::register_derived(
-                        data_root,
-                        std::slice::from_ref(source),
-                        AssetKind::Audio,
-                        &format!("{} Processed", track.track_id),
-                        path.to_string_lossy().as_ref(),
-                        ProvenanceOperation::Processed,
-                        serde_json::Map::new(),
-                    )
-                } else {
-                    asset::register(
-                        data_root,
-                        AssetKind::Audio,
-                        &format!("{} Processed", track.track_id),
-                        path.to_string_lossy().as_ref(),
-                        Some(Provenance::recorded_root()),
-                    )
-                }
-            })
-            .transpose()?;
-        let midi_asset_id = midi_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .map(|path| {
-                asset::register(
-                    data_root,
-                    AssetKind::Midi,
-                    &format!("{} MIDI", track.track_id),
-                    path.to_string_lossy().as_ref(),
-                    Some(Provenance::recorded_root()),
-                )
-            })
-            .transpose()?;
-        let read_frames = |path: &Path| {
-            let bytes = std::fs::read(path)
-                .map_err(|error| format!("Recorded Track audio could not be read: {error}"))?;
-            let wav = crate::analysis::parse_wav(&bytes)?;
-            let frame_bytes = usize::from(wav.bits_per_sample / 8) * usize::from(wav.channels);
-            if frame_bytes == 0 {
-                return Err("Recorded Track audio has an invalid frame format.".to_string());
-            }
-            if wav.sample_rate == 0 {
-                return Err("Recorded Track audio has no sample rate.".to_string());
-            }
-            Ok(((wav.data_len / frame_bytes) as u64, wav.sample_rate))
-        };
-        let (raw_frames, raw_sample_rate) = raw_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .map(read_frames)
-            .transpose()?
-            .unwrap_or((0, 0));
-        let (processed_frames, processed_sample_rate) = processed_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .map(read_frames)
-            .transpose()?
-            .unwrap_or((0, 0));
-        outputs.push(RegisteredTrackOutput {
-            track_id: track.track_id.clone(),
-            kind: track.kind.clone(),
-            raw_asset_id,
-            processed_asset_id,
-            midi_asset_id,
-            raw_frames,
-            raw_sample_rate,
-            processed_frames,
-            processed_sample_rate,
-            capture_segments: track.capture_segments.clone(),
-            plugin_latency_samples: track.plugin_latency_samples,
-            plugin_tail_samples: track.plugin_tail_samples,
-        });
-    }
-    if let Some(representative) = outputs
+    segments: &[NativeCaptureSegment],
+    timebase: riffra_core::ProjectTimebase,
+    start_tick: TimelineTick,
+) -> Result<Vec<TrackOutputPreflight>, String> {
+    manifest
+        .tracks
         .iter()
-        .find(|output| output.raw_asset_id.is_some() || output.processed_asset_id.is_some())
-    {
-        crate::recording::save_asset_ids(
-            directory,
-            representative.raw_asset_id.clone(),
-            representative.processed_asset_id.clone(),
-            outputs
-                .iter()
-                .find_map(|output| output.midi_asset_id.clone()),
-        )
-        .map_err(|error| format!("Arrange recording Asset IDs could not be saved: {error}"))?;
-    } else if let Some(midi_asset_id) = outputs
-        .iter()
-        .find_map(|output| output.midi_asset_id.clone())
-    {
-        crate::recording::save_asset_ids(directory, None, None, Some(midi_asset_id)).map_err(
-            |error| format!("Arrange recording MIDI Asset ID could not be saved: {error}"),
-        )?;
-    }
-    Ok(outputs)
+        .map(|track| {
+            if track.capture_segments.iter().any(|segment| {
+                segment.audio_clock_end_sample <= segment.audio_clock_start_sample
+                    || segment.timeline_end_sample <= segment.timeline_start_sample
+                    || segment.raw_file_end_sample <= segment.raw_file_start_sample
+                    || segment.processed_file_end_sample <= segment.processed_file_start_sample
+            }) {
+                return Err(format!(
+                    "Arrange recording track capture segments are invalid: {}",
+                    track.track_id
+                ));
+            }
+            let resolve =
+                |kind: &str, relative: &Option<String>| -> Result<Option<PathBuf>, String> {
+                    let Some(relative) = relative else {
+                        return Ok(None);
+                    };
+                    let path = directory.join(relative);
+                    if !path.is_file() {
+                        return Err(format!(
+                            "Arrange recording {kind} output is missing: {}",
+                            path.display()
+                        ));
+                    }
+                    Ok(Some(path))
+                };
+            let raw_path = resolve("raw audio", &track.raw_file)?;
+            let processed_path = resolve("processed audio", &track.processed_file)?;
+            let midi_path = resolve("MIDI", &track.midi_file)?;
+            let raw_metadata = raw_path
+                .as_deref()
+                .map(materialize::wav_metadata)
+                .transpose()?;
+            let processed_metadata = processed_path
+                .as_deref()
+                .map(materialize::wav_metadata)
+                .transpose()?;
+            let midi_source = midi_path
+                .as_deref()
+                .map(|path| {
+                    materialize::validate_recorded_midi(path)?;
+                    materialize::parse_recorded_midi(path, &track.track_id, start_tick, timebase)
+                })
+                .transpose()?;
+            let has_audio_take = segments.iter().any(|segment| {
+                let mapped = track.capture_segments.iter().find(|mapped| {
+                    mapped.audio_clock_start_sample == segment.audio_clock_start_sample
+                        && mapped.audio_clock_end_sample == segment.audio_clock_end_sample
+                        && mapped.timeline_start_sample == segment.timeline_start_sample
+                        && mapped.timeline_end_sample == segment.timeline_end_sample
+                });
+                let raw_frames = raw_metadata.map(|(_, frames)| frames).unwrap_or_default();
+                let processed_frames = processed_metadata
+                    .map(|(_, frames)| frames)
+                    .unwrap_or_default();
+                let raw_start = mapped
+                    .map(|mapped| mapped.raw_file_start_sample)
+                    .unwrap_or(segment.file_start_sample)
+                    .min(raw_frames);
+                let raw_end = mapped
+                    .map(|mapped| mapped.raw_file_end_sample)
+                    .unwrap_or(segment.file_end_sample)
+                    .min(raw_frames);
+                let processed_start = mapped
+                    .map(|mapped| mapped.processed_file_start_sample)
+                    .unwrap_or_else(|| {
+                        segment
+                            .file_start_sample
+                            .saturating_add(track.plugin_latency_samples)
+                    })
+                    .min(processed_frames);
+                let processed_end = mapped
+                    .map(|mapped| mapped.processed_file_end_sample)
+                    .unwrap_or_else(|| {
+                        segment
+                            .file_end_sample
+                            .saturating_add(track.plugin_latency_samples)
+                    })
+                    .min(processed_frames);
+                raw_end > raw_start || processed_end > processed_start
+            });
+            if (track.kind == "instrument" && midi_source.is_none() && !has_audio_take)
+                || (track.kind != "instrument" && !has_audio_take)
+            {
+                return Err(format!(
+                    "Arrange recording track has no usable capture segment: {}",
+                    track.track_id
+                ));
+            }
+            Ok(TrackOutputPreflight {
+                raw_path,
+                processed_path,
+                midi_path,
+                raw_metadata,
+                processed_metadata,
+                midi_source,
+            })
+        })
+        .collect()
 }
 
-fn finalize_arrange_recording(
-    context: &RecordingContext<'_>,
-    directory: &Path,
-) -> Result<(), String> {
-    let manifest = native_arrange_manifest(directory)?
-        .ok_or_else(|| "Arrange recording manifest is missing.".to_string())?;
-    if !manifest.sample_rate.is_finite()
-        || manifest.sample_rate <= 0.0
-        || manifest.record_end_audio_sample <= manifest.record_start_audio_sample
-    {
-        return Err("Arrange recording manifest contains an invalid Native Clock range.".into());
-    }
-    let outputs = register_track_outputs(context.data_root, directory, &manifest)?;
-    let session_context = crate::session::adapter::SessionContext {
-        core: context.core,
-        audio: context.audio,
-        runtime: context.runtime,
-        data_root: context.data_root,
-        safe_mode: context.safe_mode,
-    };
-    let mut session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
-    let base_session = session.clone();
-    let timebase = session.arrangement.timebase;
-    let sample_to_ticks = |samples: u64| {
-        ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
-            .round() as u64
-    };
-    let effective_start_tick = manifest
-        .record_start_timeline_sample
-        .map(&sample_to_ticks)
-        .unwrap_or(manifest.timeline_start_tick);
+fn capture_segments_for_manifest(
+    manifest: &NativeArrangeManifest,
+) -> Result<Vec<NativeCaptureSegment>, String> {
     let start_sample = manifest.record_start_audio_sample;
     let end_sample = manifest.record_end_audio_sample;
     let mut segments = manifest.capture_segments.clone();
@@ -534,6 +543,49 @@ fn finalize_arrange_recording(
             .collect();
     }
     validate_capture_segments(&segments)?;
+    Ok(segments)
+}
+
+struct PreparedArrangeFinalization {
+    manifest: NativeArrangeManifest,
+    segments: Vec<NativeCaptureSegment>,
+    files: Vec<TrackOutputPreflight>,
+    session: CreativeSession,
+    base_session: CreativeSession,
+    timebase: riffra_core::ProjectTimebase,
+    effective_start_tick: u64,
+    recording_id: String,
+    capture_id: String,
+}
+
+fn prepare_arrange_finalization(
+    context: &RecordingContext<'_>,
+    directory: &Path,
+    source_manifest: &NativeArrangeManifest,
+) -> Result<PreparedArrangeFinalization, String> {
+    let manifest = source_manifest.clone();
+    if !manifest.sample_rate.is_finite()
+        || manifest.sample_rate <= 0.0
+        || manifest.record_end_audio_sample <= manifest.record_start_audio_sample
+    {
+        return Err("Arrange recording manifest contains an invalid Native Clock range.".into());
+    }
+    let segments = capture_segments_for_manifest(&manifest)?;
+    let session = context
+        .core
+        .snapshot()
+        .map_err(|error| error.to_string())?
+        .session;
+    let base_session = session.clone();
+    let timebase = session.arrangement.timebase;
+    let sample_to_ticks = |samples: u64| {
+        ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
+            .round() as u64
+    };
+    let effective_start_tick = manifest
+        .record_start_timeline_sample
+        .map(sample_to_ticks)
+        .unwrap_or(manifest.timeline_start_tick);
     let listed = crate::recording::list(context.data_root, None)?
         .into_iter()
         .find(|recording| recording.path == directory.to_string_lossy());
@@ -545,7 +597,188 @@ fn finalize_arrange_recording(
     let capture_id = directory
         .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or("capture");
+        .unwrap_or("capture")
+        .to_string();
+    for manifest_track in &manifest.tracks {
+        let expected_kind = match manifest_track.kind.as_str() {
+            "audio" => TrackKind::Audio,
+            "instrument" => TrackKind::Instrument,
+            other => {
+                return Err(format!(
+                    "Arrange recording manifest has an unsupported Track kind: {other}"
+                ));
+            }
+        };
+        let track = session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|item| item.id == manifest_track.track_id)
+            .ok_or_else(|| {
+                format!(
+                    "Arrange recording manifest references a missing Track: {}",
+                    manifest_track.track_id
+                )
+            })?;
+        if track.kind != expected_kind {
+            return Err(format!(
+                "Arrange recording manifest Track kind does not match canonical Track: {}",
+                manifest_track.track_id
+            ));
+        }
+    }
+    let files = preflight_track_outputs(
+        directory,
+        &manifest,
+        &segments,
+        timebase,
+        TimelineTick(effective_start_tick),
+    )?;
+    if !files.iter().any(|file| {
+        file.raw_metadata.is_some_and(|(_, frames)| frames > 0)
+            || file
+                .processed_metadata
+                .is_some_and(|(_, frames)| frames > 0)
+            || file.midi_source.is_some()
+    }) {
+        return Err("Arrange recording produced no usable Track output.".into());
+    }
+    Ok(PreparedArrangeFinalization {
+        manifest,
+        segments,
+        files,
+        session,
+        base_session,
+        timebase,
+        effective_start_tick,
+        recording_id,
+        capture_id,
+    })
+}
+
+fn register_track_outputs(
+    data_root: &Path,
+    directory: &Path,
+    manifest: &NativeArrangeManifest,
+    preflight: &[TrackOutputPreflight],
+) -> Result<Vec<RegisteredTrackOutput>, String> {
+    let mut outputs = Vec::with_capacity(manifest.tracks.len());
+    for (track, files) in manifest.tracks.iter().zip(preflight.iter()) {
+        let raw_asset_id = files
+            .raw_path
+            .as_deref()
+            .map(|path| {
+                asset::register(
+                    data_root,
+                    AssetKind::Audio,
+                    &format!("{} Raw", track.track_id),
+                    path.to_string_lossy().as_ref(),
+                    Some(Provenance::recorded_root()),
+                )
+            })
+            .transpose()?;
+        let processed_asset_id = files
+            .processed_path
+            .as_deref()
+            .map(|path| {
+                if let Some(source) = raw_asset_id.as_ref() {
+                    asset::register_derived(
+                        data_root,
+                        std::slice::from_ref(source),
+                        AssetKind::Audio,
+                        &format!("{} Processed", track.track_id),
+                        path.to_string_lossy().as_ref(),
+                        ProvenanceOperation::Processed,
+                        serde_json::Map::new(),
+                    )
+                } else {
+                    asset::register(
+                        data_root,
+                        AssetKind::Audio,
+                        &format!("{} Processed", track.track_id),
+                        path.to_string_lossy().as_ref(),
+                        Some(Provenance::recorded_root()),
+                    )
+                }
+            })
+            .transpose()?;
+        let midi_asset_id = files
+            .midi_path
+            .as_deref()
+            .map(|path| {
+                asset::register(
+                    data_root,
+                    AssetKind::Midi,
+                    &format!("{} MIDI", track.track_id),
+                    path.to_string_lossy().as_ref(),
+                    Some(Provenance::recorded_root()),
+                )
+            })
+            .transpose()?;
+        let (raw_sample_rate, raw_frames) = files.raw_metadata.unwrap_or((0, 0));
+        let (processed_sample_rate, processed_frames) = files.processed_metadata.unwrap_or((0, 0));
+        outputs.push(RegisteredTrackOutput {
+            track_id: track.track_id.clone(),
+            kind: track.kind.clone(),
+            raw_asset_id,
+            processed_asset_id,
+            midi_asset_id,
+            raw_frames,
+            raw_sample_rate,
+            processed_frames,
+            processed_sample_rate,
+            capture_segments: track.capture_segments.clone(),
+            plugin_latency_samples: track.plugin_latency_samples,
+            plugin_tail_samples: track.plugin_tail_samples,
+            midi_source: files.midi_source.clone(),
+        });
+    }
+    if let Some(representative) = outputs
+        .iter()
+        .find(|output| output.raw_asset_id.is_some() || output.processed_asset_id.is_some())
+    {
+        crate::recording::save_asset_ids(
+            directory,
+            representative.raw_asset_id.clone(),
+            representative.processed_asset_id.clone(),
+            outputs
+                .iter()
+                .find_map(|output| output.midi_asset_id.clone()),
+        )
+        .map_err(|error| format!("Arrange recording Asset IDs could not be saved: {error}"))?;
+    } else if let Some(midi_asset_id) = outputs
+        .iter()
+        .find_map(|output| output.midi_asset_id.clone())
+    {
+        crate::recording::save_asset_ids(directory, None, None, Some(midi_asset_id)).map_err(
+            |error| format!("Arrange recording MIDI Asset ID could not be saved: {error}"),
+        )?;
+    }
+    Ok(outputs)
+}
+
+/// Materializes the canonical Arrangement candidate from preflight values and
+/// registered Asset IDs. This function performs no filesystem, Asset, Core,
+/// or runtime I/O; failures indicate an internal preflight invariant breach.
+fn materialize_arrange_candidate(
+    prepared: PreparedArrangeFinalization,
+    outputs: Vec<RegisteredTrackOutput>,
+) -> Result<(CreativeSession, CreativeSession), String> {
+    let PreparedArrangeFinalization {
+        manifest,
+        segments,
+        mut session,
+        base_session,
+        timebase,
+        effective_start_tick,
+        recording_id,
+        capture_id,
+        ..
+    } = prepared;
+    let sample_to_ticks = |samples: u64| {
+        ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
+            .round() as u64
+    };
     let next_pass_ordinal = next_recording_pass_ordinal(&session.arrangement, &recording_id);
     let mut pass_ids = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
@@ -578,28 +811,21 @@ fn finalize_arrange_recording(
     }
     let mut slots = Vec::new();
     for output in outputs {
-        let Some(track) = session
+        let track = session
             .arrangement
             .tracks
             .iter()
             .find(|track| track.id == output.track_id)
             .cloned()
-        else {
-            continue;
-        };
+            .ok_or_else(|| format!("Prepared Arrange Track disappeared: {}", output.track_id))?;
         if output.kind == "instrument" {
             let Some(midi_asset_id) = output.midi_asset_id.clone() else {
                 continue;
             };
-            let midi_path = crate::asset::load(context.data_root, &midi_asset_id)
-                .map(|asset| PathBuf::from(asset.content_location))
-                .ok_or_else(|| format!("Recorded MIDI Asset is missing: {midi_asset_id:?}"))?;
-            let source = parse_recorded_midi(
-                &midi_path,
-                &output.track_id,
-                TimelineTick(effective_start_tick),
-                timebase,
-            )?;
+            let source = output
+                .midi_source
+                .clone()
+                .ok_or_else(|| format!("Recorded MIDI source is missing: {midi_asset_id:?}"))?;
             let mut active_take_id = None;
             let mut active_segment = None;
             for (index, segment) in segments.iter().enumerate() {
@@ -626,7 +852,7 @@ fn finalize_arrange_recording(
                 });
                 attach_take_to_pass(&mut session.arrangement, &pass_ids[index], take_id.clone())?;
                 active_take_id = Some(take_id);
-                active_segment = Some(RecordingSegment {
+                active_segment = Some(materialize::RecordingSegment {
                     start_tick,
                     duration_ticks: relative_end_tick - relative_start_tick,
                     relative_start_tick,
@@ -638,7 +864,7 @@ fn finalize_arrange_recording(
                     "midi-clip:recording-slot:{recording_id}:{}",
                     output.track_id
                 );
-                let mut clip = slice_recorded_midi(
+                let mut clip = materialize::slice_recorded_midi(
                     &source,
                     &output.track_id,
                     active_segment,
@@ -870,10 +1096,38 @@ fn finalize_arrange_recording(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
-    crate::session::adapter::sync_arrangement_runtime(&session_context)
-        .map(|_| ())
-        .map_err(|error| format!("Recorded Timeline was saved but runtime sync failed: {error}"))
+    Ok((base_session, session))
+}
+
+fn finalize_arrange_recording(
+    context: &RecordingContext<'_>,
+    directory: &Path,
+    manifest: &NativeArrangeManifest,
+) -> Result<ArrangementMutationResult, String> {
+    let prepared = prepare_arrange_finalization(context, directory, manifest)?;
+    let outputs = register_track_outputs(
+        context.data_root,
+        directory,
+        &prepared.manifest,
+        &prepared.files,
+    )?;
+    let (base_session, candidate_session) = materialize_arrange_candidate(prepared, outputs)?;
+    let session_context = crate::session::adapter::SessionContext {
+        core: context.core,
+        audio: context.audio,
+        runtime: context.runtime,
+        data_root: context.data_root,
+        safe_mode: context.safe_mode,
+    };
+    let committed = crate::session::adapter::commit_recording_session(
+        &session_context,
+        &base_session,
+        candidate_session,
+    )?;
+    Ok(crate::session::commit::arrangement_mutation_result(
+        &session_context,
+        committed,
+    ))
 }
 
 fn next_recording_pass_ordinal(
@@ -935,8 +1189,16 @@ fn register_recording_outputs(
     data_root: &Path,
     directory: &Path,
 ) -> Result<RecordingOutputs, String> {
-    let take_id = format!("recording:{}", directory.to_string_lossy());
-    let (raw_path, processed_path, midi_path) = crate::recording::audio_paths(&take_id)?;
+    let (raw_path, processed_path, midi_path) = crate::recording::preflight_audio_paths(directory)?;
+    for path in [raw_path.as_deref(), processed_path.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        materialize::wav_metadata(Path::new(path))?;
+    }
+    if let Some(path) = midi_path.as_deref() {
+        materialize::validate_recorded_midi(Path::new(path))?;
+    }
     let raw_asset_id = raw_path
         .as_deref()
         .map(|path| {
@@ -995,294 +1257,11 @@ fn register_recording_outputs(
     Ok((raw_asset_id, processed_asset_id, midi_asset_id))
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RecordedMidiEvent {
-    #[serde(default)]
-    time_ms: Option<f64>,
-    #[serde(default)]
-    sample_offset: Option<u64>,
-    status: u8,
-    channel: u8,
-    data1: u8,
-    data2: u8,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RecordedMidiFile {
-    #[serde(default)]
-    sample_rate: Option<f64>,
-    events: Vec<RecordedMidiEvent>,
-}
-
-fn load_recorded_midi(path: &Path) -> Result<RecordedMidiFile, String> {
-    let bytes =
-        std::fs::read(path).map_err(|error| format!("Recorded MIDI could not be read: {error}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("Recorded MIDI is invalid: {error}"))
-}
-
-fn parse_recorded_midi(
-    path: &Path,
-    track_id: &str,
-    start_tick: TimelineTick,
-    timebase: riffra_core::ProjectTimebase,
-) -> Result<MidiClip, String> {
-    let file = load_recorded_midi(path)?;
-    Ok(midi_clip_from_recorded_file(
-        &file, track_id, start_tick, timebase,
-    ))
-}
-
-fn midi_clip_from_recorded_file(
-    file: &RecordedMidiFile,
-    track_id: &str,
-    start_tick: TimelineTick,
-    timebase: riffra_core::ProjectTimebase,
-) -> MidiClip {
-    let mut notes = Vec::new();
-    let mut events = Vec::new();
-    let mut open_notes = std::collections::HashMap::<(u8, u8), (u64, u8)>::new();
-    let mut last_tick = 0_u64;
-    for (index, event) in file.events.iter().enumerate() {
-        let time_ms = event
-            .sample_offset
-            .zip(file.sample_rate)
-            .filter(|(_, sample_rate)| sample_rate.is_finite() && *sample_rate > 0.0)
-            .map(|(sample, sample_rate)| sample as f64 * 1_000.0 / sample_rate)
-            .or(event.time_ms)
-            .unwrap_or(0.0);
-        let tick =
-            (time_ms.max(0.0) * timebase.bpm * f64::from(timebase.ppq) / 60_000.0).round() as u64;
-        last_tick = last_tick.max(tick);
-        let kind = event.status & 0xf0;
-        let channel = event.channel.clamp(1, 16);
-        match kind {
-            0x80 | 0x90 if kind == 0x80 || event.data2 == 0 => {
-                if let Some((note_start, velocity)) = open_notes.remove(&(channel, event.data1)) {
-                    let end = tick.max(note_start + 1);
-                    notes.push(MidiNote {
-                        id: format!("note:recorded:{index}"),
-                        note: event.data1,
-                        start_tick: TimelineTick(note_start),
-                        duration_ticks: end - note_start,
-                        velocity,
-                        channel,
-                    });
-                    last_tick = last_tick.max(end);
-                }
-            }
-            0x90 => {
-                open_notes.insert((channel, event.data1), (tick, event.data2.max(1)));
-            }
-            0xb0 => events.push(MidiEvent {
-                id: format!("event:recorded:{index}"),
-                kind: MidiEventKind::ControlChange,
-                tick: TimelineTick(tick),
-                channel,
-                data1: event.data1,
-                data2: event.data2,
-            }),
-            0xd0 => events.push(MidiEvent {
-                id: format!("event:recorded:{index}"),
-                kind: MidiEventKind::ChannelPressure,
-                tick: TimelineTick(tick),
-                channel,
-                data1: event.data1,
-                data2: 0,
-            }),
-            0xe0 => events.push(MidiEvent {
-                id: format!("event:recorded:{index}"),
-                kind: MidiEventKind::PitchBend,
-                tick: TimelineTick(tick),
-                channel,
-                data1: event.data1,
-                data2: event.data2,
-            }),
-            _ => {}
-        }
-    }
-    for ((channel, note), (note_start, velocity)) in open_notes {
-        let end = last_tick.max(note_start + 1);
-        notes.push(MidiNote {
-            id: format!("note:recorded:open:{channel}:{note}"),
-            note,
-            start_tick: TimelineTick(note_start),
-            duration_ticks: end - note_start,
-            velocity,
-            channel,
-        });
-        last_tick = last_tick.max(end);
-    }
-    let duration_ticks = notes
-        .iter()
-        .map(|note| note.start_tick.0 + note.duration_ticks)
-        .chain(events.iter().map(|event| event.tick.0 + 1))
-        .chain(std::iter::once(last_tick))
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    MidiClip {
-        id: format!("midi-clip:recorded:{}", now_ms()),
-        name: "Recorded MIDI".into(),
-        track_id: track_id.into(),
-        asset_id: None,
-        start_tick,
-        duration_ticks,
-        notes,
-        events,
-        muted: false,
-        loop_enabled: false,
-        recording_take_id: None,
-    }
-}
-
-#[derive(Clone, Copy)]
-struct RecordingSegment {
-    start_tick: TimelineTick,
-    duration_ticks: u64,
-    relative_start_tick: u64,
-    relative_end_tick: u64,
-}
-
-fn recording_segments(
-    start_tick: TimelineTick,
-    duration_ticks: u64,
-    loop_recording: bool,
-    loop_range: riffra_core::TimelineLoopRange,
-) -> Vec<RecordingSegment> {
-    if !loop_recording || !loop_range.enabled || loop_range.end_tick.0 <= loop_range.start_tick.0 {
-        return vec![RecordingSegment {
-            start_tick,
-            duration_ticks: duration_ticks.max(1),
-            relative_start_tick: 0,
-            relative_end_tick: duration_ticks.max(1),
-        }];
-    }
-    let loop_length = loop_range.end_tick.0 - loop_range.start_tick.0;
-    let mut segments = Vec::new();
-    let mut relative_start = 0_u64;
-    let total_ticks = duration_ticks.max(1);
-    while relative_start < total_ticks {
-        let segment_duration = loop_length.min(total_ticks - relative_start).max(1);
-        let segment_start = if relative_start == 0 {
-            start_tick
-        } else {
-            loop_range.start_tick
-        };
-        segments.push(RecordingSegment {
-            start_tick: segment_start,
-            duration_ticks: segment_duration,
-            relative_start_tick: relative_start,
-            relative_end_tick: relative_start.saturating_add(segment_duration),
-        });
-        relative_start = relative_start.saturating_add(segment_duration);
-    }
-    segments
-}
-
-fn slice_recorded_midi(
-    source: &MidiClip,
-    track_id: &str,
-    segment: RecordingSegment,
-    asset_id: Option<AssetId>,
-    clip_id: String,
-) -> MidiClip {
-    let notes = source
-        .notes
-        .iter()
-        .filter_map(|note| {
-            let note_start = note.start_tick.0;
-            let note_end = note_start.saturating_add(note.duration_ticks);
-            let overlap_start = note_start.max(segment.relative_start_tick);
-            let overlap_end = note_end.min(segment.relative_end_tick);
-            (overlap_end > overlap_start).then(|| MidiNote {
-                id: format!("{}:{}", note.id, clip_id),
-                note: note.note,
-                start_tick: TimelineTick(overlap_start - segment.relative_start_tick),
-                duration_ticks: overlap_end - overlap_start,
-                velocity: note.velocity,
-                channel: note.channel,
-            })
-        })
-        .collect();
-    let events = source
-        .events
-        .iter()
-        .filter(|event| {
-            event.tick.0 >= segment.relative_start_tick && event.tick.0 < segment.relative_end_tick
-        })
-        .map(|event| MidiEvent {
-            id: format!("{}:{}", event.id, clip_id),
-            kind: event.kind,
-            tick: TimelineTick(event.tick.0 - segment.relative_start_tick),
-            channel: event.channel,
-            data1: event.data1,
-            data2: event.data2,
-        })
-        .collect();
-    MidiClip {
-        id: clip_id,
-        name: source.name.clone(),
-        track_id: track_id.into(),
-        asset_id,
-        start_tick: segment.start_tick,
-        duration_ticks: segment.duration_ticks,
-        notes,
-        events,
-        muted: false,
-        loop_enabled: false,
-        recording_take_id: None,
-    }
-}
-
-pub(crate) fn midi_clip_for_take(
-    data_root: &Path,
-    take: &RecordingTakeRecord,
-    timebase: riffra_core::ProjectTimebase,
-    clip_id: String,
-) -> Result<MidiClip, String> {
-    let asset_id = take
-        .midi_asset_id
-        .as_ref()
-        .ok_or_else(|| "Recording Take has no MIDI Asset.".to_string())?;
-    let asset = asset::load(data_root, asset_id)
-        .ok_or_else(|| format!("Recorded MIDI Asset is missing: {asset_id}"))?;
-    let path = Path::new(&asset.content_location);
-    let file = load_recorded_midi(path)?;
-    let sample_rate = file
-        .sample_rate
-        .filter(|sample_rate| sample_rate.is_finite() && *sample_rate > 0.0)
-        .ok_or_else(|| "Recorded MIDI has no valid Native sample rate.".to_string())?;
-    let sample_to_ticks = |sample: u64| {
-        ((sample as f64 / sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq)).round()
-            as u64
-    };
-    let source = midi_clip_from_recorded_file(&file, &take.track_id, take.start_tick, timebase);
-    let relative_start_tick = sample_to_ticks(take.source_start_sample);
-    let relative_end_tick =
-        sample_to_ticks(take.source_end_sample).max(relative_start_tick.saturating_add(1));
-    let mut clip = slice_recorded_midi(
-        &source,
-        &take.track_id,
-        RecordingSegment {
-            start_tick: take.start_tick,
-            duration_ticks: take.duration_ticks,
-            relative_start_tick,
-            relative_end_tick,
-        },
-        Some(asset_id.clone()),
-        clip_id,
-    );
-    clip.recording_take_id = Some(take.id.clone());
-    Ok(clip)
-}
-
 fn place_recording_on_timeline(
     context: &RecordingContext<'_>,
     directory: &Path,
     outputs: (Option<AssetId>, Option<AssetId>, Option<AssetId>),
-) -> Result<(), String> {
+) -> Result<Option<ArrangementMutationResult>, String> {
     let (raw_asset_id, processed_asset_id, midi_asset_id) = outputs;
     let listed = crate::recording::list(context.data_root, None)?
         .into_iter()
@@ -1293,7 +1272,7 @@ fn place_recording_on_timeline(
         .map(|capture| capture.armed_track_ids.clone())
         .unwrap_or_default();
     if armed_track_ids.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let session_context = crate::session::adapter::SessionContext {
         core: context.core,
@@ -1331,19 +1310,12 @@ fn place_recording_on_timeline(
         .map(|asset| asset.content_location);
     let audio_source = audio_path
         .as_ref()
-        .map(|path| {
-            let bytes = std::fs::read(path)
-                .map_err(|error| format!("Recorded audio could not be read: {error}"))?;
-            let wav = crate::analysis::parse_wav(&bytes)?;
-            let frame_bytes = usize::from(wav.bits_per_sample / 8) * usize::from(wav.channels);
-            if frame_bytes == 0 || wav.sample_rate == 0 {
-                return Err("Recorded audio has an invalid frame format.".to_string());
-            }
-            Ok((wav.sample_rate, (wav.data_len / frame_bytes) as u64))
-        })
+        .map(|path| materialize::wav_metadata(Path::new(path)))
         .transpose()?;
     let midi_source = if midi_asset_id.is_some() && midi_path.is_file() {
-        Some(parse_recorded_midi(&midi_path, "", start_tick, timebase)?)
+        Some(materialize::parse_recorded_midi(
+            &midi_path, "", start_tick, timebase,
+        )?)
     } else {
         None
     };
@@ -1359,7 +1331,7 @@ fn place_recording_on_timeline(
     let capture = listed
         .as_ref()
         .and_then(|recording| recording.capture.as_ref());
-    let segments = recording_segments(
+    let segments = materialize::recording_segments(
         start_tick,
         total_duration_ticks,
         capture.map(|value| value.loop_recording).unwrap_or(false),
@@ -1412,7 +1384,7 @@ fn place_recording_on_timeline(
                     continue;
                 };
                 let clip_id = format!("midi-clip:{}", take_id);
-                let clip = slice_recorded_midi(
+                let clip = materialize::slice_recorded_midi(
                     source,
                     &track.id,
                     segment,
@@ -1521,7 +1493,7 @@ fn place_recording_on_timeline(
         }
     }
     if take_ids.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let new_slots = session
         .arrangement
@@ -1598,11 +1570,15 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)?;
-    crate::session::adapter::sync_arrangement_runtime(&session_context).map_err(|error| {
-        format!("Recorded Timeline clip was saved but runtime sync failed: {error}")
-    })?;
-    Ok(())
+    let committed = crate::session::adapter::commit_recording_session(
+        &session_context,
+        &base_session,
+        session,
+    )?;
+    Ok(Some(crate::session::commit::arrangement_mutation_result(
+        &session_context,
+        committed,
+    )))
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read
@@ -1851,7 +1827,7 @@ mod tests {
 
     #[test]
     fn loop_recording_is_partitioned_into_active_and_preserved_takes() {
-        let segments = recording_segments(
+        let segments = materialize::recording_segments(
             TimelineTick(0),
             2_400,
             true,
@@ -2031,14 +2007,19 @@ mod tests {
             loop_enabled: false,
             recording_take_id: None,
         };
-        let segment = RecordingSegment {
+        let segment = materialize::RecordingSegment {
             start_tick: TimelineTick(960),
             duration_ticks: 960,
             relative_start_tick: 960,
             relative_end_tick: 1_920,
         };
-        let sliced =
-            slice_recorded_midi(&source, "instrument", segment, None, "clip:take:1".into());
+        let sliced = materialize::slice_recorded_midi(
+            &source,
+            "instrument",
+            segment,
+            None,
+            "clip:take:1".into(),
+        );
         assert_eq!(sliced.notes[0].start_tick, TimelineTick(0));
         assert_eq!(sliced.notes[0].duration_ticks, 140);
         assert_eq!(sliced.events[0].tick, TimelineTick(40));
@@ -2082,7 +2063,7 @@ mod tests {
             midi_asset_id: Some(asset_id),
         };
 
-        let clip = midi_clip_for_take(
+        let clip = materialize::midi_clip_for_take(
             &root,
             &take,
             riffra_core::ProjectTimebase::default(),

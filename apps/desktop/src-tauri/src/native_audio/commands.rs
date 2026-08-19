@@ -32,6 +32,29 @@ fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
     Ok(())
 }
 
+fn set_track_device_parameter_command(
+    track_id: &str,
+    device_id: &str,
+    parameter_index: u32,
+    value: f32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "setTrackDeviceParameter",
+        "trackId": track_id,
+        "deviceId": device_id,
+        "parameterIndex": parameter_index,
+        "value": value.clamp(0.0, 1.0),
+    })
+}
+
+fn start_arrange_recording_command(directory: &Path, count_in_beats: u8) -> serde_json::Value {
+    serde_json::json!({
+        "type": "startArrangeRecording",
+        "directory": directory.to_string_lossy(),
+        "countInBeats": count_in_beats,
+    })
+}
+
 impl AudioSupervisor {
     pub(crate) fn current_mute_cause(&self) -> NativeAudioResult<Option<MuteCause>> {
         self.recovery
@@ -132,13 +155,7 @@ impl AudioSupervisor {
             ));
         }
         self.send_command(
-            serde_json::json!({
-                "type": "setTrackDeviceParameter",
-                "trackId": track_id,
-                "deviceId": device_id,
-                "parameterIndex": parameter_index,
-                "value": value.clamp(0.0, 1.0),
-            }),
+            set_track_device_parameter_command(track_id, device_id, parameter_index, value),
             "",
         )?;
         Ok(())
@@ -164,16 +181,10 @@ impl AudioSupervisor {
     pub fn start_arrange_recording(
         &self,
         directory: &Path,
-        allow_no_input: bool,
         count_in_beats: u8,
     ) -> NativeAudioResult<AudioStatus> {
         self.send_command(
-            serde_json::json!({
-                "type": "startArrangeRecording",
-                "directory": directory.to_string_lossy(),
-                "allowNoInput": allow_no_input,
-                "countInBeats": count_in_beats,
-            }),
+            start_arrange_recording_command(directory, count_in_beats),
             "Arrange recording scheduled on the Native Audio Clock.",
         )
     }
@@ -585,6 +596,26 @@ pub(super) fn reinforce_emergency_mute(
 mod tests {
     use super::super::protocol::handle_native_stdout;
     use super::*;
+
+    #[test]
+    fn track_device_parameter_command_uses_the_native_parameter_field() {
+        let command = set_track_device_parameter_command("track:1", "device:1", 7, 2.0);
+
+        assert_eq!(command["type"], "setTrackDeviceParameter");
+        assert_eq!(command["parameterIndex"], 7);
+        assert_eq!(command["value"], 1.0);
+        assert!(command.get("index").is_none());
+    }
+
+    #[test]
+    fn arrange_recording_command_contains_only_supported_start_fields() {
+        let command = start_arrange_recording_command(Path::new("recordings/take-1"), 4);
+
+        assert_eq!(command["type"], "startArrangeRecording");
+        assert_eq!(command["directory"], "recordings/take-1");
+        assert_eq!(command["countInBeats"], 4);
+        assert_eq!(command.as_object().unwrap().len(), 3);
+    }
 
     #[test]
     fn native_mute_status_transitions_keep_the_owner_state_in_sync() {

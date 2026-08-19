@@ -4,7 +4,6 @@ import type {
   AudioStatus,
   AssetId,
   DeviceChannels,
-  RuntimeProjectionStatus,
   SessionAudioPair,
 } from '@/model/domain';
 import type { AssetPreviewOptions } from '../contracts';
@@ -71,30 +70,6 @@ export async function stopPreview(): Promise<AudioStatus> {
 
 export async function getAudioStatus(): Promise<AudioStatus> {
   return invokeOrFallback<AudioStatus>('get_audio_status', {}, offlineAudioStatus());
-}
-
-export async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
-  return invokeOrFallback<RuntimeProjectionStatus>(
-    'get_runtime_projection_status',
-    {},
-    {
-      state: 'idle',
-      operationId: 0,
-      runningOperationId: null,
-      targetProjectionSequence: null,
-      targetSessionRevision: null,
-      preparedSessionRevision: null,
-      activeProjectionSequence: null,
-      activeSessionRevision: null,
-      runtimeGeneration: 0,
-      queuedAtMs: null,
-      startedAtMs: null,
-      completedAtMs: null,
-      lastNativeResponseAtMs: null,
-      discardedPreparationCount: 0,
-      lastError: null,
-    },
-  );
 }
 
 export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {

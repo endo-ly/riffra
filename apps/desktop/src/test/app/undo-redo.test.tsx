@@ -7,11 +7,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import App from '@/app/App';
 import { defaultSession } from '@/native/browser-defaults';
+import type { CreativeSession } from '@/model/domain';
 
 afterEach(cleanup);
 
 function renderApp(fake: FakeNativeApi) {
   return render(<App api={fake} />);
+}
+
+function mutationResult(session: CreativeSession) {
+  return { session, projection: { state: 'notRequired' as const } };
 }
 
 async function waitForAppShell() {
@@ -26,9 +31,9 @@ describe('Undo/Redo (PRJ-003)', () => {
     const fake = new FakeNativeApi({
       bootstrapState: { session: original },
       responses: {
-        updateSessionSettings: renamed,
-        undoSession: original,
-        redoSession: renamed,
+        updateSessionSettings: mutationResult(renamed),
+        undoSession: mutationResult(original),
+        redoSession: mutationResult(renamed),
         getHistoryState: () => {
           const lastOperation = [...fake.calls]
             .reverse()

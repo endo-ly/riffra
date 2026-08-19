@@ -1,5 +1,6 @@
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type {
+  ArrangementMutationResult,
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
@@ -39,6 +40,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     rawChannels: null,
     processedChannels: null,
     samplesWritten: 0,
+    droppedMidiEvents: 0,
     droppedBlocks: 0,
     missingSamples: 0,
     dropoutStartSample: null,
@@ -252,9 +254,6 @@ export class FakeNativeApi implements NativeApi {
   }
   getAudioStatus(...args: Parameters<NativeApi['getAudioStatus']>) {
     return this.command('getAudioStatus', args);
-  }
-  getRuntimeProjectionStatus(...args: Parameters<NativeApi['getRuntimeProjectionStatus']>) {
-    return this.command('getRuntimeProjectionStatus', args);
   }
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
@@ -616,7 +615,6 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve({ inputChannels: [], outputChannels: [] });
       case 'getAudioStatus':
         return Promise.resolve(this.audio);
-      case 'getRuntimeProjectionStatus':
       case 'retryRuntimeProjection':
         return Promise.resolve(this.runtimeProjection);
       case 'setEmergencyMute':
@@ -632,9 +630,7 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
       case 'cancelBackgroundJob':
         return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
-      case 'restoreRecoveryGeneration':
       case 'exportSession':
-      case 'importSession':
       case 'importMidiFile':
       case 'importMidiBytes':
       case 'analyzeAsset':
@@ -666,8 +662,23 @@ export class FakeNativeApi implements NativeApi {
         break;
     }
 
+    if (name === 'stopArrangeRecording') {
+      return Promise.resolve({
+        session: this.bootstrapState.session,
+        audio: this.audio,
+        projection: { state: 'notRequired' },
+        finalization: { state: 'notRequired' },
+      });
+    }
     if (sessionAudioMethodNames.has(name)) {
       return Promise.resolve({ session: this.bootstrapState.session, audio: this.audio });
+    }
+    if (arrangementMutationMethodNames.has(name)) {
+      const result: ArrangementMutationResult = {
+        session: this.bootstrapState.session,
+        projection: { state: 'notRequired' },
+      };
+      return Promise.resolve(result);
     }
     if (sessionMethodNames.has(name)) {
       return Promise.resolve(this.bootstrapState.session);
@@ -699,16 +710,17 @@ export class FakeNativeApi implements NativeApi {
   }
 }
 
-const sessionAudioMethodNames = new Set<keyof NativeApi>([
-  'setMasterGainDb',
-  'stopArrangeRecording',
-]);
+const sessionAudioMethodNames = new Set<keyof NativeApi>(['setMasterGainDb']);
 
-const sessionMethodNames = new Set<keyof NativeApi>([
+const sessionMethodNames = new Set<keyof NativeApi>();
+
+const arrangementMutationMethodNames = new Set<keyof NativeApi>([
+  'relinkMissingDependency',
+  'restoreRecoveryGeneration',
+  'importSession',
   'undoSession',
   'redoSession',
   'updateSessionSettings',
-  'relinkMissingDependency',
   'disableMissingPlugin',
   'replaceMissingTrackPlugin',
   'addAudioClipToArrangement',

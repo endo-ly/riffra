@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::missing::MissingDependency;
-use crate::model::{RuntimeProjectionStatus, SessionAudioPair};
+use crate::model::{ArrangementMutationResult, RuntimeProjectionStatus, SessionAudioPair};
 use crate::session::adapter::{self, SessionContext};
 use crate::storage::SessionStore;
 use riffra_core::application::{
@@ -20,8 +20,8 @@ use riffra_core::application::{
 };
 use riffra_core::{
     AssetId, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter, AutomationPoint,
-    CreativeSession, FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute,
-    ProjectTimebase, TimelineTick, TrackKind,
+    FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
+    TimelineTick, TrackKind,
 };
 
 async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>

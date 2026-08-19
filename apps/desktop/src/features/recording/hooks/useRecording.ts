@@ -3,11 +3,14 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CreativeSession, RecordingAsset } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
 import type { LibraryApi, RecordingApi } from '@/native/native-api';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface UseRecordingOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
   setSession: (session: CreativeSession) => void;
+  onProjectionFailure: (message: string) => void;
+  onFinalizationFailure: (message: string) => void;
 }
 
 type RecordingFeatureApi = RecordingApi & Pick<LibraryApi, 'listRecordings'>;
@@ -15,7 +18,7 @@ type RecordingCommand = () => Promise<void>;
 
 /** Owns recording command serialization and the Inbox projection of new takes. */
 export function useRecording(api: RecordingFeatureApi, options: UseRecordingOptions) {
-  const { audio, setAudio, setSession } = options;
+  const { audio, setAudio, setSession, onProjectionFailure, onFinalizationFailure } = options;
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
   const recordingCommandLock = useRef(false);
@@ -73,7 +76,10 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
       const succeeded = await runRecordingCommand(async () => {
         const result = await stopArrangeRecording();
         setAudio(result.audio);
-        setSession(result.session);
+        applyArrangementMutation(result, setSession, onProjectionFailure);
+        if (result.finalization.state === 'recoveryRequired') {
+          onFinalizationFailure(result.finalization.message);
+        }
       }, 'stopRecording');
       if (succeeded) refreshRecordings();
       return;
@@ -86,6 +92,8 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     runRecordingCommand,
     setAudio,
     setSession,
+    onProjectionFailure,
+    onFinalizationFailure,
     startRecordingNow,
     stopArrangeRecording,
   ]);

@@ -19,10 +19,11 @@ import type {
   RenderOptions,
   RenderResult,
   ScanReport,
-  CreativeSession,
+  ArrangementMutationResult,
   ProjectTimebase,
   RuntimeProjectionStatus,
   SessionAudioPair,
+  RecordingStopResult,
   MonitoringState,
   MidiInputRoute,
   AudioTakeVariant,
@@ -81,12 +82,12 @@ export interface BootstrapApi {
 }
 
 export interface ProjectApi {
-  undoSession(): Promise<CreativeSession>;
-  redoSession(): Promise<CreativeSession>;
+  undoSession(): Promise<ArrangementMutationResult>;
+  redoSession(): Promise<ArrangementMutationResult>;
   getHistoryState(): Promise<HistoryState>;
-  restoreRecoveryGeneration(fileName: string): Promise<CreativeSession | null>;
+  restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult | null>;
   exportSession(): Promise<ProjectExport | null>;
-  importSession(path: string): Promise<CreativeSession | null>;
+  importSession(path: string): Promise<ArrangementMutationResult | null>;
   /**
    * Imports an external Standard MIDI File as a canonical MIDI Asset. Rust owns
    * SMF validation, copies the file under the application data root, and
@@ -155,7 +156,6 @@ export interface AudioApi {
   stopPreview(): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
-  getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
@@ -188,7 +188,7 @@ export interface AudioApi {
 export interface RecordingApi {
   startArrangeRecording(): Promise<AudioStatus>;
   recordAnotherTake(recordingSessionId: string): Promise<AudioStatus>;
-  stopArrangeRecording(): Promise<SessionAudioPair>;
+  stopArrangeRecording(): Promise<RecordingStopResult>;
 }
 
 export interface ArrangeApi {
@@ -197,48 +197,48 @@ export interface ArrangeApi {
     name: string,
     startTick?: number,
     trackId?: string,
-  ): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
   addMidiClipToArrangement(
     assetId: AssetId,
     name: string,
     startTick?: number,
     trackId?: string,
-  ): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
   createMidiClip(
     trackId: string,
     startTick: number,
     durationTicks: number,
     name?: string,
-  ): Promise<CreativeSession | null>;
-  updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<CreativeSession | null>;
-  updateMidiClip(clipId: string, patch: MidiClipPatch): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
+  updateAudioClip(clipId: string, patch: AudioClipPatch): Promise<ArrangementMutationResult | null>;
+  updateMidiClip(clipId: string, patch: MidiClipPatch): Promise<ArrangementMutationResult | null>;
   removeTimelineClips(
     audioClipIds: string[],
     midiClipIds: string[],
-  ): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
   trimAudioClip(
     clipId: string,
     startTick: number,
     sourceRange: { start: number; end: number },
-  ): Promise<CreativeSession | null>;
-  splitAudioClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
-  duplicateAudioClip(clipId: string): Promise<CreativeSession | null>;
-  moveAudioClips(moves: AudioClipMove[]): Promise<CreativeSession | null>;
-  moveMidiClips(moves: MidiClipMove[]): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
+  splitAudioClip(clipId: string, splitTick: number): Promise<ArrangementMutationResult | null>;
+  duplicateAudioClip(clipId: string): Promise<ArrangementMutationResult | null>;
+  moveAudioClips(moves: AudioClipMove[]): Promise<ArrangementMutationResult | null>;
+  moveMidiClips(moves: MidiClipMove[]): Promise<ArrangementMutationResult | null>;
   trimMidiClip(
     clipId: string,
     startTick: number,
     durationTicks: number,
-  ): Promise<CreativeSession | null>;
-  splitMidiClip(clipId: string, splitTick: number): Promise<CreativeSession | null>;
-  duplicateMidiClip(clipId: string): Promise<CreativeSession | null>;
+  ): Promise<ArrangementMutationResult | null>;
+  splitMidiClip(clipId: string, splitTick: number): Promise<ArrangementMutationResult | null>;
+  duplicateMidiClip(clipId: string): Promise<ArrangementMutationResult | null>;
   pasteTimelineClips(
     audioClipIds: string[],
     midiClipIds: string[],
     startTick: number,
-  ): Promise<CreativeSession | null>;
-  crossfadeAudioClips(firstId: string, secondId: string): Promise<CreativeSession | null>;
-  addTrack(name: string, kind: TrackKind): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult | null>;
+  crossfadeAudioClips(firstId: string, secondId: string): Promise<ArrangementMutationResult | null>;
+  addTrack(name: string, kind: TrackKind): Promise<ArrangementMutationResult>;
   updateTrack(
     trackId: string,
     patch: {
@@ -250,39 +250,50 @@ export interface ArrangeApi {
       armed?: boolean;
       monitoring?: MonitoringState;
     },
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
   setTrackAutomation(
     trackId: string,
     parameter: AutomationParameter,
     points: AutomationPoint[],
-  ): Promise<CreativeSession>;
-  setTrackAudioInput(trackId: string, channelIndex: number | null): Promise<CreativeSession>;
-  setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<CreativeSession>;
-  setTrackInstrument(trackId: string, pluginPath: string): Promise<CreativeSession>;
-  clearTrackInstrument(trackId: string): Promise<CreativeSession>;
-  addTrackEffect(trackId: string, pluginPath: string): Promise<CreativeSession>;
-  removeTrackEffect(trackId: string, deviceId: string): Promise<CreativeSession>;
-  reorderTrackEffects(trackId: string, orderedDeviceIds: string[]): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
+  setTrackAudioInput(
+    trackId: string,
+    channelIndex: number | null,
+  ): Promise<ArrangementMutationResult>;
+  setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<ArrangementMutationResult>;
+  setTrackInstrument(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
+  clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult>;
+  addTrackEffect(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
+  removeTrackEffect(trackId: string, deviceId: string): Promise<ArrangementMutationResult>;
+  reorderTrackEffects(
+    trackId: string,
+    orderedDeviceIds: string[],
+  ): Promise<ArrangementMutationResult>;
   setTrackDeviceBypassed(
     trackId: string,
     deviceId: string,
     bypassed: boolean,
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
   setTrackDeviceParameter(
     trackId: string,
     deviceId: string,
     parameterIndex: number,
     value: number,
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
   openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
-  persistTrackPluginState(change: TrackPluginStateChange): Promise<CreativeSession>;
-  persistTrackPluginParameter(change: TrackPluginParameterChange): Promise<CreativeSession>;
-  removeTrack(trackId: string): Promise<CreativeSession>;
-  duplicateTrack(trackId: string): Promise<CreativeSession>;
-  reorderTrack(trackId: string, targetIndex: number): Promise<CreativeSession>;
-  addMarker(tick: number, name: string): Promise<CreativeSession>;
-  updateMarker(markerId: string, patch: { name?: string; tick?: number }): Promise<CreativeSession>;
-  removeMarker(markerId: string): Promise<CreativeSession>;
+  persistTrackPluginState(change: TrackPluginStateChange): Promise<ArrangementMutationResult>;
+  persistTrackPluginParameter(
+    change: TrackPluginParameterChange,
+  ): Promise<ArrangementMutationResult>;
+  removeTrack(trackId: string): Promise<ArrangementMutationResult>;
+  duplicateTrack(trackId: string): Promise<ArrangementMutationResult>;
+  reorderTrack(trackId: string, targetIndex: number): Promise<ArrangementMutationResult>;
+  addMarker(tick: number, name: string): Promise<ArrangementMutationResult>;
+  updateMarker(
+    markerId: string,
+    patch: { name?: string; tick?: number },
+  ): Promise<ArrangementMutationResult>;
+  removeMarker(markerId: string): Promise<ArrangementMutationResult>;
   addMidiNote(
     clipId: string,
     startTick: number,
@@ -290,45 +301,52 @@ export interface ArrangeApi {
     durationTicks: number,
     velocity: number,
     channel: number,
-  ): Promise<CreativeSession>;
-  insertMidiNotes(clipId: string, notes: MidiNoteInput[]): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
+  insertMidiNotes(clipId: string, notes: MidiNoteInput[]): Promise<ArrangementMutationResult>;
   updateMidiNote(
     clipId: string,
     noteId: string,
     patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number },
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
   updateMidiNotes(
     clipId: string,
     updates: {
       noteId: string;
       patch: { note?: number; startTick?: number; durationTicks?: number; velocity?: number };
     }[],
-  ): Promise<CreativeSession>;
-  removeMidiNote(clipId: string, noteId: string): Promise<CreativeSession>;
-  removeMidiNotes(clipId: string, noteIds: string[]): Promise<CreativeSession>;
-  quantizeMidiNotes(clipId: string, noteIds: string[], gridTicks: number): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
+  removeMidiNote(clipId: string, noteId: string): Promise<ArrangementMutationResult>;
+  removeMidiNotes(clipId: string, noteIds: string[]): Promise<ArrangementMutationResult>;
+  quantizeMidiNotes(
+    clipId: string,
+    noteIds: string[],
+    gridTicks: number,
+  ): Promise<ArrangementMutationResult>;
   duplicateMidiNotes(
     clipId: string,
     noteIds: string[],
     offsetTicks: number,
-  ): Promise<CreativeSession>;
-  setAudioClipTakeVariant(clipId: string, variant: AudioTakeVariant): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
+  setAudioClipTakeVariant(
+    clipId: string,
+    variant: AudioTakeVariant,
+  ): Promise<ArrangementMutationResult>;
   startTakeComparison(takeId: string): Promise<AudioStatus>;
   switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus>;
   stopTakeComparison(): Promise<AudioStatus>;
-  activateTake(sessionId: string, takeId: string): Promise<CreativeSession>;
-  placeTakeAsSeparateClip(takeId: string): Promise<CreativeSession>;
-  updateArrangementTimebase(timebase: ProjectTimebase): Promise<CreativeSession>;
+  activateTake(sessionId: string, takeId: string): Promise<ArrangementMutationResult>;
+  placeTakeAsSeparateClip(takeId: string): Promise<ArrangementMutationResult>;
+  updateArrangementTimebase(timebase: ProjectTimebase): Promise<ArrangementMutationResult>;
   updateTimelineLoopRange(
     enabled: boolean,
     startTick: number,
     endTick: number,
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
   updateTimelinePunchRange(
     enabled: boolean,
     startTick: number,
     endTick: number,
-  ): Promise<CreativeSession>;
+  ): Promise<ArrangementMutationResult>;
 }
 
 export interface TransportApi {
@@ -346,7 +364,7 @@ export interface ProjectSettingsApi {
     countInBeats?: number;
     metronomeEnabled?: boolean;
     note?: string;
-  }): Promise<CreativeSession>;
+  }): Promise<ArrangementMutationResult>;
 }
 
 export interface MissingDependencyApi {
@@ -357,14 +375,14 @@ export interface MissingDependencyApi {
    * Application Operation. The Asset's content location is also updated so
    * future operations resolve to the new path.
    */
-  relinkMissingDependency(assetId: AssetId, newPath: string): Promise<CreativeSession>;
+  relinkMissingDependency(assetId: AssetId, newPath: string): Promise<ArrangementMutationResult>;
   /**
    * Marks a missing plugin device as a disabled placeholder through one Rust
    * Application Operation that mutates and persists the canonical session.
    */
-  disableMissingPlugin(deviceId: string): Promise<CreativeSession>;
+  disableMissingPlugin(deviceId: string): Promise<ArrangementMutationResult>;
   /** Replaces an unresolved Track Device without changing its chain position. */
-  replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<CreativeSession>;
+  replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<ArrangementMutationResult>;
 }
 
 export interface NativeEventApi {

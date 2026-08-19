@@ -45,7 +45,7 @@ mod types;
 use host_commands::*;
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, RecoveryCandidate,
-    RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
+    RuntimeStartupFinishedEvent,
 };
 use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
 use riffra_core::{AppCore, CreativeSession};
@@ -312,7 +312,6 @@ pub fn run() {
             probe_audio_devices,
             probe_device_channels,
             get_audio_status,
-            get_runtime_projection_status,
             preview_master_gain_db,
             set_emergency_mute,
             recover_audio_device,

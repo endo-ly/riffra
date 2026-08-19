@@ -15,6 +15,7 @@ import { useMissingDependencies } from '@/features/project/hooks/useMissingDepen
 import { useRecording } from '@/features/recording/hooks/useRecording';
 import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
 import { usePluginStatePersistence } from '@/features/plugins/hooks/usePluginStatePersistence';
+import { toast } from '@/shared/toasts';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
@@ -96,7 +97,14 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     enableMidi,
     toggleMute,
   } = audioHook;
-  const recording = useRecording(api, { audio, setAudio, setSession });
+  const recording = useRecording(api, {
+    audio,
+    setAudio,
+    setSession,
+    onProjectionFailure: (message) => toast(message, { kind: 'error' }),
+    onFinalizationFailure: (message) =>
+      toast(`Recording files were preserved in Inbox: ${message}`, { kind: 'error' }),
+  });
   const {
     recordings,
     reloadRecordings,

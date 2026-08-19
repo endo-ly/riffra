@@ -7,6 +7,8 @@ import type {
 } from '@/model/domain';
 import type { MissingDependencyApi, TransportApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { toast } from '@/shared/toasts';
 
 type MissingDependenciesApi = Pick<
   MissingDependencyApi,
@@ -69,7 +71,7 @@ export function useMissingDependencies({
     async (item: MissingDependency, newPath: string) => {
       if (!item.assetId) return;
       const next = await relinkMissingDependency(item.assetId, newPath);
-      setSession(next);
+      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
       await reloadMissingDependencies();
     },
     [relinkMissingDependency, reloadMissingDependencies, setSession],
@@ -78,7 +80,7 @@ export function useMissingDependencies({
   const disableMissingPluginDevice = useCallback(
     async (deviceId: string) => {
       const next = await disableMissingPlugin(deviceId);
-      setSession(next);
+      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
       await reloadMissingDependencies();
     },
     [disableMissingPlugin, reloadMissingDependencies, setSession],
@@ -87,7 +89,7 @@ export function useMissingDependencies({
   const replaceMissingPluginDevice = useCallback(
     async (deviceId: string, newPath: string) => {
       const next = await replaceMissingTrackPlugin(deviceId, newPath);
-      setSession(next);
+      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
       await reloadMissingDependencies();
     },
     [reloadMissingDependencies, replaceMissingTrackPlugin, setSession],
