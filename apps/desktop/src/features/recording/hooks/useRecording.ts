@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CreativeSession, RecordingAsset } from '@/model/domain';
+import { logNativeError } from '@/native/invoke';
 import type { LibraryApi, RecordingApi } from '@/native/native-api';
 
 interface UseRecordingOptions {
@@ -10,6 +11,7 @@ interface UseRecordingOptions {
 }
 
 type RecordingFeatureApi = RecordingApi & Pick<LibraryApi, 'listRecordings'>;
+type RecordingCommand = () => Promise<void>;
 
 /** Owns recording command serialization and the Inbox projection of new takes. */
 export function useRecording(api: RecordingFeatureApi, options: UseRecordingOptions) {
@@ -25,46 +27,63 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     return next;
   }, [listRecordings]);
 
-  const startRecordingNow = useCallback(
-    async (recordingSessionId?: string) => {
-      if (recordingCommandLock.current) return;
+  const refreshRecordings = useCallback(() => {
+    void reloadRecordings().catch(logNativeError('listRecordings'));
+  }, [reloadRecordings]);
+
+  const runRecordingCommand = useCallback(
+    async (command: RecordingCommand, errorLabel: string): Promise<boolean> => {
+      if (recordingCommandLock.current) return false;
       recordingCommandLock.current = true;
       setRecordingCommandPending(true);
       try {
-        setAudio(
-          await (recordingSessionId
-            ? recordAnotherTake(recordingSessionId)
-            : startArrangeRecording()),
-        );
-        await reloadRecordings();
+        await command();
+        return true;
+      } catch (error) {
+        logNativeError(errorLabel)(error);
+        return false;
       } finally {
         recordingCommandLock.current = false;
         setRecordingCommandPending(false);
       }
     },
-    [recordAnotherTake, reloadRecordings, setAudio, startArrangeRecording],
+    [],
+  );
+
+  const startRecordingNow = useCallback(
+    async (recordingSessionId?: string) => {
+      const succeeded = await runRecordingCommand(
+        async () => {
+          setAudio(
+            await (recordingSessionId
+              ? recordAnotherTake(recordingSessionId)
+              : startArrangeRecording()),
+          );
+        },
+        recordingSessionId ? 'recordAnotherTake' : 'startRecording',
+      );
+      if (succeeded) refreshRecordings();
+      return succeeded;
+    },
+    [recordAnotherTake, refreshRecordings, runRecordingCommand, setAudio, startArrangeRecording],
   );
 
   const toggleRecording = useCallback(async () => {
-    if (recordingCommandLock.current) return;
-    if (!audio.recording.active) {
-      await startRecordingNow();
+    if (audio.recording.active) {
+      const succeeded = await runRecordingCommand(async () => {
+        const result = await stopArrangeRecording();
+        setAudio(result.audio);
+        setSession(result.session);
+      }, 'stopRecording');
+      if (succeeded) refreshRecordings();
       return;
     }
-    recordingCommandLock.current = true;
-    setRecordingCommandPending(true);
-    try {
-      const result = await stopArrangeRecording();
-      setAudio(result.audio);
-      setSession(result.session);
-      await reloadRecordings();
-    } finally {
-      recordingCommandLock.current = false;
-      setRecordingCommandPending(false);
-    }
+
+    await startRecordingNow();
   }, [
     audio.recording.active,
-    reloadRecordings,
+    refreshRecordings,
+    runRecordingCommand,
     setAudio,
     setSession,
     startRecordingNow,

@@ -8,9 +8,9 @@
   height: var(--size-global-control-bar);
   padding: 0 12px;
   overflow: hidden;
-  background: linear-gradient(180deg, var(--color-bg-surface), var(--color-bg-panel));
-  border-bottom: 1px solid var(--color-border-subtle);
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-default);
+  box-shadow: none;
   user-select: none;
   z-index: 4;
 }
@@ -26,19 +26,6 @@
 .projectControls {
   gap: 6px;
   overflow: hidden;
-}
-
-.appMark {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: var(--color-text-on-accent);
-  font-size: 14px;
-  font-weight: 800;
-  background: var(--color-accent-primary);
-  border-radius: 5px;
 }
 
 .sessionTitle {
@@ -157,8 +144,8 @@
   place-items: center;
   padding: 0;
   color: var(--color-text-secondary);
-  background: var(--color-bg-control);
-  border: 1px solid var(--color-border-default);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 4px;
 }
 
@@ -216,7 +203,8 @@
 .audioStatusText {
   min-width: 0;
   display: grid;
-  gap: 1px;
+  grid-row: 1 / 3;
+  gap: 0;
   text-align: left;
 }
 
@@ -231,11 +219,13 @@
   color: var(--color-text-primary);
   font-size: var(--font-size-small);
   font-weight: 600;
+  line-height: 14px;
 }
 
 .audioStatusText small {
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
+  line-height: 10px;
 }
 
 .audioStatus svg {
@@ -253,8 +243,8 @@
   place-items: center;
   padding: 0;
   color: var(--color-status-danger);
-  background: var(--color-bg-control);
-  border: 1px solid var(--color-border-default);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 4px;
 }
 
