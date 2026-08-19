@@ -643,6 +643,8 @@ Loop / Metronome / Count-in / Tempo / Signature
 
 Timeline、Detail Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
 
+Track Arm は録音対象の Track を選択する操作であり、Focus とは分離する。Global Record は Arm された Track の Timeline Recording を開始する操作で、Count-in の設定に従い Recording 開始とともに Arrangement Transport も進行する。Arm された Track が存在しない場合は Recording と Transport を開始せず、録音対象を Arm するよう利用者へ通知する。
+
 Browser Asset Preview、Take Preview、MIDI Editor Note Preview、Plugin 内部の試聴は、それぞれ対象単位の Preview として扱う。Transport Play と Preview の状態は画面上で判別できる。
 
 ### 7.2 即時表示と確定
