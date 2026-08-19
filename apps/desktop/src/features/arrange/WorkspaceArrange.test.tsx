@@ -55,6 +55,26 @@ function mutationResult(session: CreativeSession): ArrangementMutationResult {
 }
 
 describe('WorkspaceArrange', () => {
+  it('returns the playhead and timeline viewport to start on a transport discontinuity', async () => {
+    const api = new FakeNativeApi();
+    const { container } = render(<Harness api={api} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
+    Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
+
+    api.emitTransportStatus({ timelineTick: 3_840, discontinuity: 2 });
+    await waitFor(() => expect(scroller.scrollLeft).toBe(0));
+    scroller.scrollLeft = 700;
+
+    api.emitTransportStatus({ timelineTick: 0, discontinuity: 3 });
+
+    await waitFor(() => expect(scroller.scrollLeft).toBe(0));
+    await waitFor(() =>
+      expect(container.querySelector('[class*="playhead"]')?.getAttribute('style')).toContain(
+        'translate3d(192px',
+      ),
+    );
+  });
+
   it('seeks the native timeline from the musical ruler', () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);
@@ -1010,7 +1030,7 @@ describe('WorkspaceArrange', () => {
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 
-  it('reports a persistent transport revision mismatch after its grace period', async () => {
+  it('does not infer runtime failure from an authoring-only revision mismatch', async () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.revision = 1;
@@ -1022,10 +1042,7 @@ describe('WorkspaceArrange', () => {
     api.emitTransportStatus({ revision: 0 });
 
     // Assert
-    await waitFor(
-      () => expect(screen.getByText('Playback runtime is out of sync')).toBeInTheDocument(),
-      { timeout: 2_000 },
-    );
+    expect(screen.queryByText('Playback runtime is out of sync')).not.toBeInTheDocument();
   });
 
   it('renders one shared grid for a long timeline regardless of Track count', () => {

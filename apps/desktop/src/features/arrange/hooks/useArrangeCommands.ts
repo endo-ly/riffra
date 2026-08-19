@@ -1,5 +1,10 @@
-import { useCallback, useState } from 'react';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import { useCallback, useRef, useState } from 'react';
+import type {
+  ArrangementMutationResult,
+  ArrangementProjectionOutcome,
+  CreativeSession,
+  RuntimeProjectionStatus,
+} from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 
 interface ArrangeCommandOptions {
@@ -7,11 +12,41 @@ interface ArrangeCommandOptions {
   setSession: (session: CreativeSession) => void;
 }
 
+function projectionIsActive(status: RuntimeProjectionStatus): boolean {
+  return (
+    status.state === 'active' &&
+    status.targetProjectionSequence !== null &&
+    status.targetProjectionSequence === status.activeProjectionSequence
+  );
+}
+
+function applyProjectionOutcome(
+  outcome: ArrangementProjectionOutcome,
+  wasOutOfSync: boolean,
+): { outOfSync: boolean; message: string | null } {
+  if (outcome.state === 'failed') {
+    return { outOfSync: true, message: outcome.message };
+  }
+  if (outcome.state === 'queued' && projectionIsActive(outcome.status)) {
+    return { outOfSync: false, message: null };
+  }
+  // NotRequired means that this canonical edit has no runtime projection.
+  // A queued request is accepted but is not proof of activation. Neither
+  // outcome may erase an existing runtime failure.
+  return { outOfSync: wasOutOfSync, message: null };
+}
+
 /** Owns canonical Arrange commands and their pending/error projection for the editor. */
 export function useArrangeCommands({ api, setSession }: ArrangeCommandOptions) {
   const [message, setMessage] = useState('');
   const [runtimeOutOfSync, setRuntimeOutOfSync] = useState(false);
+  const runtimeOutOfSyncRef = useRef(false);
   const [pendingCanonicalOperations, setPendingCanonicalOperations] = useState(0);
+
+  const publishRuntimeSync = useCallback((outOfSync: boolean) => {
+    runtimeOutOfSyncRef.current = outOfSync;
+    setRuntimeOutOfSync(outOfSync);
+  }, []);
 
   const commit = useCallback(
     async (operation: Promise<ArrangementMutationResult | null>) => {
@@ -24,13 +59,9 @@ export function useArrangeCommands({ api, setSession }: ArrangeCommandOptions) {
           return null;
         }
         setSession(next.session);
-        if (next.projection.state === 'failed') {
-          setRuntimeOutOfSync(true);
-          setMessage(next.projection.message);
-        } else {
-          setRuntimeOutOfSync(false);
-          setMessage('');
-        }
+        const outcome = applyProjectionOutcome(next.projection, runtimeOutOfSyncRef.current);
+        publishRuntimeSync(outcome.outOfSync);
+        setMessage(outcome.message ?? '');
         return next.session;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -40,19 +71,24 @@ export function useArrangeCommands({ api, setSession }: ArrangeCommandOptions) {
         setPendingCanonicalOperations((count) => Math.max(0, count - 1));
       }
     },
-    [setSession],
+    [publishRuntimeSync, setSession],
   );
 
   const retryRuntimeSync = useCallback(async () => {
     try {
-      await api.retryRuntimeProjection();
-      setRuntimeOutOfSync(false);
-      setMessage('');
+      const status = await api.retryRuntimeProjection();
+      if (projectionIsActive(status)) {
+        publishRuntimeSync(false);
+        setMessage('');
+        return;
+      }
+      if (status.state === 'failed') publishRuntimeSync(true);
+      setMessage(status.lastError ?? 'Playback runtime projection is still pending.');
     } catch (error) {
-      setRuntimeOutOfSync(true);
+      publishRuntimeSync(true);
       setMessage(error instanceof Error ? error.message : String(error));
     }
-  }, [api]);
+  }, [api, publishRuntimeSync]);
 
   return {
     commit,

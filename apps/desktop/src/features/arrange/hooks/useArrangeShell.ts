@@ -13,7 +13,6 @@ export function useArrangeShell(
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
-  const [canonicalOperationsPending, setCanonicalOperationsPending] = useState(0);
   const selectedTrack = useMemo(
     () =>
       session && selection.kind === 'track'
@@ -33,7 +32,6 @@ export function useArrangeShell(
 
   const addPlugin = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
     if (!selectedTrack) return;
-    setCanonicalOperationsPending((count) => count + 1);
     try {
       const next =
         target === 'instrument'
@@ -42,8 +40,6 @@ export function useArrangeShell(
       applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
-    } finally {
-      setCanonicalOperationsPending((count) => Math.max(0, count - 1));
     }
   };
 
@@ -53,7 +49,6 @@ export function useArrangeShell(
     focusedTrackId,
     setFocusedTrackId,
     selectedTrack,
-    canonicalOperationPending: canonicalOperationsPending > 0,
     addPlugin,
   };
 }

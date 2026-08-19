@@ -11,6 +11,7 @@ export function useArrangeTransport(
   const [displayTick, setDisplayTick] = useState(0);
   const displayTickRef = useRef(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
+  const receivedTransportStatus = useRef(false);
 
   const publishTick = (tick: number) => {
     displayTickRef.current = tick;
@@ -37,17 +38,9 @@ export function useArrangeTransport(
   };
 
   useEffect(() => {
-    api
-      .getAudioStatus()
-      .then((status) => {
-        if (status.timelineTick != null) {
-          anchor.current.tick = status.timelineTick;
-          anchor.current.at = performance.now();
-          publishTick(status.timelineTick);
-        }
-      })
-      .catch(() => undefined);
+    receivedTransportStatus.current = false;
     const unlisten = api.onTransportStatus((status) => {
+      receivedTransportStatus.current = true;
       setTransport((previous) =>
         transportMeaningfullyChanged(previous, status) ? status : previous,
       );
@@ -56,8 +49,20 @@ export function useArrangeTransport(
         at: performance.now(),
         playing: status.state === 'playing',
       };
-      displayTickRef.current = status.timelineTick;
+      // A transport status is authoritative at every discontinuity. Publishing
+      // through React as well as the animation ref makes stopped seeks visible
+      // to the clock and to the playhead effect.
+      publishTick(status.timelineTick);
     });
+    api
+      .getAudioStatus()
+      .then((status) => {
+        if (receivedTransportStatus.current || status.timelineTick == null) return;
+        anchor.current.tick = status.timelineTick;
+        anchor.current.at = performance.now();
+        publishTick(status.timelineTick);
+      })
+      .catch(() => undefined);
     return unlisten;
   }, [api]);
 

@@ -387,7 +387,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             plugins={plugins}
             focusedTrackId={arrange.focusedTrackId}
             onFocusTrack={arrange.setFocusedTrackId}
-            canonicalOperationPending={arrange.canonicalOperationPending}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}

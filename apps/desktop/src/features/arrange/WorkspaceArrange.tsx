@@ -70,7 +70,6 @@ interface WorkspaceArrangeProps {
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;
   onToggleTransport: () => void;
-  canonicalOperationPending?: boolean;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
   playSurfaceHost: HTMLElement | null;
@@ -183,8 +182,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
   const commitMidiEdit = (operation: Promise<ArrangementMutationResult | null>) =>
     commit(operation);
-  const canonicalOperationPending =
-    editor.canonicalOperationPending || Boolean(props.canonicalOperationPending);
   // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
   // delivers the file contents rather than the OS path, so the bytes are
   // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
@@ -211,21 +208,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     },
     [api, commit, setMessage],
   );
-  const [revisionMismatchOutOfSync, setRevisionMismatchOutOfSync] = useState(false);
-  const revisionMismatch = Boolean(transport && transport.revision !== arrangement.revision);
-
-  // Arrangement edits reach the audio runtime asynchronously, so a transport
-  // revision mismatch is expected briefly after a canonical response.
-  useEffect(() => {
-    if (!revisionMismatch || canonicalOperationPending) {
-      setRevisionMismatchOutOfSync(false);
-      return;
-    }
-    const timeout = window.setTimeout(() => setRevisionMismatchOutOfSync(true), 1_000);
-    return () => window.clearTimeout(timeout);
-  }, [arrangement.revision, canonicalOperationPending, revisionMismatch, transport?.revision]);
-
-  const playbackOutOfSync = editor.runtimeOutOfSync || revisionMismatchOutOfSync;
+  // Runtime projection status, rather than Arrangement revision, is the source
+  // of truth for playback health. Marker and other authoring-only edits still
+  // advance the canonical revision without requiring a new audio graph.
+  const playbackOutOfSync = editor.runtimeOutOfSync;
   const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
   const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -469,6 +455,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       if (frame) cancelAnimationFrame(frame);
     };
   }, [transport?.state]);
+
+  const previousDiscontinuityRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!transport) return;
+    const previous = previousDiscontinuityRef.current;
+    previousDiscontinuityRef.current = transport.discontinuity;
+    if (previous === null || previous === transport.discontinuity) return;
+
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const playheadX = TRACK_HEADER_WIDTH + transport.timelineTick * pixelsPerTick;
+    programmaticScrollRef.current = true;
+    scroller.scrollLeft = Math.max(0, playheadX - scroller.clientWidth * 0.32);
+    setFollow(true);
+  }, [pixelsPerTick, transport]);
 
   const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
     event.preventDefault();
@@ -1013,6 +1014,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           )}
           <ArrangePlayhead
             positionRef={displayTickRef}
+            positionTick={displayTick}
             pixelsPerTick={pixelsPerTick}
             playing={transport?.state === 'playing'}
           />
