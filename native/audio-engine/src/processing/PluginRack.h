@@ -2,10 +2,14 @@
 
 #include <JuceHeader.h>
 
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
+
+#include "BoundedMpmcQueue.h"
 
 namespace riffra {
 
@@ -19,6 +23,7 @@ struct PluginLoadError final {
 
 class PluginRack final {
 public:
+    PluginRack();
     ~PluginRack();
 
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
@@ -73,18 +78,30 @@ private:
 
     class PendingMidi final {
     public:
+        // Live MIDI packets use a fixed approximately 64 KiB budget and
+        // accept messages up to 256 bytes. Larger packets are overflow.
+        static constexpr std::size_t kCapacity = 256;
+        static constexpr std::size_t kMaximumMessageBytes = 256;
+
         void reset();
-        void add(const juce::MidiMessage& message);
+        void add(const juce::MidiMessage& message) noexcept;
         void appendTo(juce::MidiBuffer& destination, int sampleCount);
+        [[nodiscard]] std::uint64_t droppedEvents() const noexcept;
 
     private:
-        juce::CriticalSection lock;
-        juce::MidiBuffer messages;
+        struct Event final {
+            std::array<std::uint8_t, kMaximumMessageBytes> bytes{};
+            std::uint16_t size = 0;
+        };
+
+        BoundedMpmcQueue<Event, kCapacity> messages;
+        std::atomic<std::uint64_t> droppedOversized{0};
     };
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
     PendingMidi pendingMidi;
+    juce::MidiBuffer processMidi;
     mutable juce::SpinLock pluginLock;
     mutable juce::CriticalSection statusLock;
     std::vector<CachedParameter> cachedParameters;

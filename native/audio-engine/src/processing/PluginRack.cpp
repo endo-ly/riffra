@@ -11,23 +11,44 @@
 
 namespace riffra {
 
-void PluginRack::PendingMidi::reset() {
-    const juce::ScopedLock guard(lock);
-    messages.clear();
-    messages.ensureSize(2048);
+PluginRack::PluginRack() {
+    // Reserve enough raw storage for the entire bounded live-MIDI queue before
+    // the rack can be used by the audio callback.
+    // JUCE stores each event as timestamp (int32), payload length (uint16), and
+    // payload bytes. Keep an additional two bytes per event as an alignment/
+    // implementation margin so the full bounded queue is covered up front.
+    processMidi.ensureSize(
+        PendingMidi::kCapacity *
+        (PendingMidi::kMaximumMessageBytes + sizeof(std::int32_t) + sizeof(std::uint16_t) + 2));
 }
 
-void PluginRack::PendingMidi::add(const juce::MidiMessage& message) {
-    const juce::ScopedLock guard(lock);
-    messages.addEvent(message, 0);
+void PluginRack::PendingMidi::reset() {
+    Event ignored;
+    while (messages.tryPopNonRealtime(ignored)) {
+    }
+}
+
+void PluginRack::PendingMidi::add(const juce::MidiMessage& message) noexcept {
+    const auto size = message.getRawDataSize();
+    if (size <= 0 || static_cast<std::size_t>(size) > kMaximumMessageBytes) {
+        droppedOversized.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    Event event;
+    event.size = static_cast<std::uint16_t>(size);
+    std::copy_n(message.getRawData(), size, event.bytes.begin());
+    (void)messages.tryPush(event);
 }
 
 void PluginRack::PendingMidi::appendTo(juce::MidiBuffer& destination, const int sampleCount) {
-    const juce::ScopedLock guard(lock);
-    for (const auto metadata : messages)
-        destination.addEvent(metadata.getMessage(), juce::jlimit(0, std::max(0, sampleCount - 1),
-                                                                 metadata.samplePosition));
-    messages.clear();
+    Event event;
+    const auto sample = juce::jlimit(0, std::max(0, sampleCount - 1), 0);
+    while (messages.tryPop(event))
+        (void)destination.addEvent(event.bytes.data(), event.size, sample);
+}
+
+std::uint64_t PluginRack::PendingMidi::droppedEvents() const noexcept {
+    return messages.droppedPushes() + droppedOversized.load(std::memory_order_acquire);
 }
 
 namespace {
@@ -588,21 +609,21 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
 
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
-    juce::MidiBuffer midi;
+    processMidi.clear();
     if (panicPending.exchange(false, std::memory_order_acq_rel)) {
         for (int channel = 1; channel <= 16; ++channel) {
-            midi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
-            midi.addEvent(juce::MidiMessage::allSoundOff(channel), 0);
-            midi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);
+            (void)processMidi.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
+            (void)processMidi.addEvent(juce::MidiMessage::allSoundOff(channel), 0);
+            (void)processMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);
         }
     }
     if (timelineMidi != nullptr) {
         for (const auto metadata : *timelineMidi) {
-            midi.addEvent(metadata.getMessage(), metadata.samplePosition);
+            (void)processMidi.addEvent(metadata.data, metadata.numBytes, metadata.samplePosition);
         }
     }
-    pendingMidi.appendTo(midi, numSamples);
-    plugin->processBlock(buffer, midi);
+    pendingMidi.appendTo(processMidi, numSamples);
+    plugin->processBlock(buffer, processMidi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -661,6 +682,7 @@ juce::var PluginRack::cachedStatus(const bool includeParameters) const {
                         static_cast<juce::int64>(contentionBlocks.load(std::memory_order_acquire)));
     result->setProperty("transitionBlocks",
                         static_cast<juce::int64>(transitionBlocks.load(std::memory_order_acquire)));
+    result->setProperty("droppedMidiEvents", static_cast<juce::int64>(pendingMidi.droppedEvents()));
     result->setProperty("loadCount",
                         static_cast<juce::int64>(loadCount.load(std::memory_order_acquire)));
     result->setProperty("destroyCount",

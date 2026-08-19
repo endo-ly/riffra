@@ -164,4 +164,34 @@ TEST_F(ArrangeRecordingSessionTest, CancelsWithoutLeavingARecoverableDirectory) 
     EXPECT_FALSE(cancelledDirectory.exists());
 }
 
+TEST_F(ArrangeRecordingSessionTest, ReportsOversizedMidiSourceIds) {
+    juce::String error;
+    auto session = ArrangeRecordingSession::create(directory.get(), makeConfiguration(), error);
+    ASSERT_NE(session, nullptr) << error;
+
+    std::array<float, 1> raw{0.1f};
+    std::array<float, 1> processedLeft{0.2f};
+    std::array<float, 1> processedRight{0.21f};
+    const std::array<const float*, 2> processed{processedLeft.data(), processedRight.data()};
+    ASSERT_TRUE(session->beginAudioTrackCapture("track:guitar", 1000, 24'000));
+    session->writeAudioTrack("track:guitar", raw.data(), 1, processed.data(), 1);
+    ASSERT_TRUE(session->endAudioTrackCapture("track:guitar", 1001, 24'001));
+    ASSERT_TRUE(session->beginAudioTrackCapture("track:vocal", 1000, 24'000));
+    session->writeAudioTrack("track:vocal", raw.data(), 1, processed.data(), 1);
+    ASSERT_TRUE(session->endAudioTrackCapture("track:vocal", 1001, 24'001));
+
+    juce::String oversizedSource;
+    for (int index = 0; index < 65; ++index) oversizedSource << "x";
+    session->writeMidiTrack("track:keys", oversizedSource, juce::MidiMessage::noteOn(1, 60, 1.0f),
+                            1100);
+
+    EXPECT_EQ(session->droppedMidiEvents(), 1u);
+    EXPECT_EQ(static_cast<juce::int64>(session->status().getProperty("droppedMidiEvents", -1)), 1);
+
+    EXPECT_TRUE(session->finish(error)) << error;
+    const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
+    EXPECT_EQ(static_cast<juce::int64>(manifest.getProperty("droppedMidiEvents", -1)), 1);
+    EXPECT_EQ(manifest.getProperty("recoveryStatus", {}).toString(), "partial");
+}
+
 }  // namespace riffra

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ArrangementCaptureSink.h"
+#include "BoundedMpmcQueue.h"
 #include "RecordingSession.h"
 
 namespace riffra {
@@ -39,10 +40,12 @@ public:
     bool finish(juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;
+    [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
 
 private:
     static constexpr std::size_t kMaximumLoopBoundaries = 4096;
     static constexpr std::size_t kMaximumCaptureSegments = 4096;
+    static constexpr std::size_t kMaximumMidiEvents = 200'000;
 
     struct CaptureSegment final {
         std::uint64_t audioClockStartSample = 0;
@@ -52,6 +55,18 @@ private:
         std::uint64_t fileStartSample = 0;
         std::uint64_t fileEndSample = 0;
     };
+
+    struct MidiEvent final {
+        std::uint64_t audioSample = 0;
+        std::uint32_t trackIndex = 0;
+        std::array<char, 65> sourceDeviceId{};
+        std::uint8_t sourceDeviceIdLength = 0;
+        int status = 0;
+        int channel = 0;
+        int data1 = 0;
+        int data2 = 0;
+    };
+    using MidiEventQueue = BoundedMpmcQueue<MidiEvent, kMaximumMidiEvents>;
 
     struct TrackWriter final {
         struct VariantCaptureSegment final {
@@ -65,14 +80,6 @@ private:
             std::uint64_t processedFileEndSample = 0;
             std::uint64_t processedTailEndSample = 0;
         };
-        struct MidiEvent final {
-            std::uint64_t audioSample = 0;
-            juce::String sourceDeviceId;
-            int status = 0;
-            int channel = 0;
-            int data1 = 0;
-            int data2 = 0;
-        };
         juce::String trackId;
         juce::String trackKey;
         juce::String kind;
@@ -81,10 +88,8 @@ private:
         int midiChannel = 0;
         int pluginLatencySamples = 0;
         int pluginTailSamples = 0;
+        std::uint32_t midiTrackIndex = 0;
         std::unique_ptr<RecordingSession> audio;
-        std::vector<MidiEvent> midiEvents;
-        // Allocate this before recording begins; audio callbacks never grow
-        // the vector and therefore never allocate.
         static constexpr std::size_t kMaximumTrackCaptureSegments = kMaximumCaptureSegments;
         std::vector<VariantCaptureSegment> captureSegments;
         std::size_t captureSegmentCount = 0;
@@ -108,7 +113,10 @@ private:
     std::int64_t punchStartSample = 0;
     std::int64_t punchEndSample = 0;
     std::vector<TrackWriter> tracks;
-    mutable juce::CriticalSection midiLock;
+    std::unique_ptr<MidiEventQueue> midiEvents;
+    std::unique_ptr<std::atomic<std::size_t>[]> midiTrackEventCounts;
+    std::atomic<std::uint64_t> midiSourceIdOverflow{0};
+    std::atomic<std::uint64_t> midiTrackQuotaOverflow{0};
     std::array<std::atomic<std::uint64_t>, kMaximumLoopBoundaries> loopBoundaries{};
     std::atomic<std::size_t> loopBoundaryCount{0};
     std::array<CaptureSegment, kMaximumCaptureSegments> captureSegments{};
