@@ -9,6 +9,7 @@ interface UseRecordingOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
   setSession: (session: CreativeSession) => void;
+  onCommandFailure: (message: string) => void;
   onProjectionFailure: (message: string) => void;
   onFinalizationFailure: (message: string) => void;
 }
@@ -18,7 +19,14 @@ type RecordingCommand = () => Promise<void>;
 
 /** Owns recording command serialization and the Inbox projection of new takes. */
 export function useRecording(api: RecordingFeatureApi, options: UseRecordingOptions) {
-  const { audio, setAudio, setSession, onProjectionFailure, onFinalizationFailure } = options;
+  const {
+    audio,
+    setAudio,
+    setSession,
+    onCommandFailure,
+    onProjectionFailure,
+    onFinalizationFailure,
+  } = options;
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
   const recordingCommandLock = useRef(false);
@@ -44,13 +52,14 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
         return true;
       } catch (error) {
         logNativeError(errorLabel)(error);
+        onCommandFailure(error instanceof Error ? error.message : String(error));
         return false;
       } finally {
         recordingCommandLock.current = false;
         setRecordingCommandPending(false);
       }
     },
-    [],
+    [onCommandFailure],
   );
 
   const startRecordingNow = useCallback(

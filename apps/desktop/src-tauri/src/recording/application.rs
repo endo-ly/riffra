@@ -1668,7 +1668,7 @@ mod tests {
     use super::*;
     use crate::native_audio::AudioSupervisor;
     use crate::runtime::RuntimeReconciler;
-    use riffra_core::CreativeSession;
+    use riffra_core::{CreativeSession, Track};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1822,6 +1822,31 @@ mod tests {
         let ctx = context_for(&root, &audio, &runtime, true);
         let error = start_recording(&ctx).unwrap_err();
         assert!(error.contains("Safe Mode"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn no_armed_track_rejects_recording_before_audio_start() {
+        let root = temp_root("no-armed-track");
+        let audio = AudioSupervisor::offline("test");
+        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:unarmed".into(), "Unarmed".into()));
+        let core = AppCore::new(root.clone(), session, audio.clone(), false, false);
+        let ctx = RecordingContext {
+            core: &core,
+            audio: &audio,
+            runtime: &runtime,
+            data_root: &root,
+            safe_mode: false,
+        };
+
+        let error = start_recording(&ctx).unwrap_err();
+
+        assert_eq!(error, "No tracks are armed for recording.");
         let _ = fs::remove_dir_all(root);
     }
 

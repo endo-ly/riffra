@@ -101,6 +101,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     audio,
     setAudio,
     setSession,
+    onCommandFailure: (message) => toast(`Recording failed: ${message}`, { kind: 'error' }),
     onProjectionFailure: (message) => toast(message, { kind: 'error' }),
     onFinalizationFailure: (message) =>
       toast(`Recording files were preserved in Inbox: ${message}`, { kind: 'error' }),
