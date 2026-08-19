@@ -6,6 +6,7 @@ import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
+import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
@@ -21,6 +22,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
   const [commandOpen, setCommandOpen] = useState(false);
   const runtime = useAppRuntime(api);
+  const runtimeProjection = useRuntimeProjectionStatus(api);
   const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(api);
   const {
     boot,
@@ -251,5 +253,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     inbox,
     api,
     startRecordingNow,
+    runtimeProjectionStatus: runtimeProjection.status,
+    runtimeProjectionFailure: runtimeProjection.failure,
+    retryRuntimeProjection: runtimeProjection.retry,
   };
 }

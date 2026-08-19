@@ -350,6 +350,7 @@ export interface ArrangeApi {
 }
 
 export interface TransportApi {
+  getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
   playTimeline(transportSequence: number): Promise<void>;
   stopTimeline(transportSequence: number): Promise<void>;
@@ -397,6 +398,8 @@ export interface NativeEventApi {
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
   onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
+  /** Subscribes to the latest asynchronous Audio Runtime projection status. */
+  onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
   onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
   onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;

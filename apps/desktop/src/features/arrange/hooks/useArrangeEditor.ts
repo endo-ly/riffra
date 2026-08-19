@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioAnalysis, CreativeSession, TrackKind } from '@/model/domain';
-import type { ArrangeApi, TransportApi } from '@/native/native-api';
+import type { ArrangeApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
   snapGridTicks,
@@ -21,7 +21,7 @@ interface UseArrangeEditorOptions {
   setSession: (session: CreativeSession) => void;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
-  api: ArrangeApi & Pick<TransportApi, 'retryRuntimeProjection'>;
+  api: ArrangeApi;
   tool: ArrangeTool;
   snap: SnapGrid;
   pixelsPerTick: number;
@@ -54,15 +54,8 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const commands = useArrangeCommands({ api, setSession });
-  const {
-    commit,
-    message,
-    pendingCanonicalOperations,
-    retryRuntimeSync,
-    runtimeOutOfSync,
-    setMessage,
-  } = commands;
+  const commands = useArrangeCommands({ setSession });
+  const { commit, message, setMessage } = commands;
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -329,9 +322,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
 
   return {
     message,
-    runtimeOutOfSync,
-    canonicalOperationPending: pendingCanonicalOperations > 0,
-    retryRuntimeSync,
     snapGuide,
     marquee,
     commit,

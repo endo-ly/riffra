@@ -7,7 +7,9 @@
 use crate::model::RuntimeProjectionStatus;
 use crate::runtime::error::RuntimeError;
 use crate::runtime::ports::RuntimeDriver;
-use crate::runtime::projection_coordinator::{ProjectionCoordinator, RuntimeRecovery};
+use crate::runtime::projection_coordinator::{
+    ProjectionCoordinator, ProjectionStatusHook, RuntimeRecovery,
+};
 use crate::runtime::transport_executor::TransportExecutor;
 use riffra_core::ProjectionKey;
 use riffra_core::application::transport::{PlayDecision, StopDecision, TransportSequence};
@@ -21,11 +23,25 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
+    #[cfg(test)]
     pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, RuntimeError> {
+        Self::with_status_listener(driver, recovery, Arc::new(|_| {}))
+    }
+
+    pub(crate) fn with_status_listener(
+        driver: Arc<D>,
+        recovery: Option<RuntimeRecovery>,
+        status_listener: ProjectionStatusHook,
+    ) -> Result<Self, RuntimeError> {
         let transport = Arc::new(TransportExecutor::new(Arc::clone(&driver)));
         let activation_transport = Arc::clone(&transport);
         let on_activated = Arc::new(move |key| activation_transport.play_after_projection(key));
-        let projection = ProjectionCoordinator::new(driver, recovery, on_activated)?;
+        let projection = ProjectionCoordinator::new_with_status_hook(
+            driver,
+            recovery,
+            on_activated,
+            status_listener,
+        )?;
         Ok(Self {
             projection,
             transport,
@@ -42,6 +58,10 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
 
     pub fn status(&self) -> RuntimeProjectionStatus {
         self.projection.status()
+    }
+
+    pub(crate) fn mark_projection_failed(&self, message: String) -> RuntimeProjectionStatus {
+        self.projection.mark_failed(message)
     }
 
     /// Clears a failed candidate projection before the canonical graph is
@@ -370,6 +390,32 @@ mod tests {
                 .last_error
                 .as_deref()
                 .is_some_and(|error| error.contains("generation"))
+        );
+    }
+
+    #[test]
+    fn publishes_async_projection_failure_to_the_status_listener() {
+        // Arrange
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver.timeout_once.store(1, Ordering::Release);
+        let states = Arc::new(Mutex::new(Vec::new()));
+        let observed_states = Arc::clone(&states);
+        let listener: ProjectionStatusHook = Arc::new(move |status| {
+            observed_states.lock().unwrap().push(status.state);
+        });
+        let reconciler =
+            RuntimeReconciler::with_status_listener(Arc::clone(&driver), None, listener).unwrap();
+
+        // Act
+        reconciler.submit_nonblocking(snapshot(12), key(12, 12));
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+
+        // Assert
+        assert!(
+            states
+                .lock()
+                .unwrap()
+                .contains(&RuntimeProjectionState::Failed)
         );
     }
 

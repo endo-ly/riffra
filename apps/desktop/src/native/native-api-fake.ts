@@ -108,6 +108,9 @@ export class FakeNativeApi implements NativeApi {
     (event: RuntimeStartupFinishedEvent) => void
   >();
   private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
+  private readonly runtimeProjectionListeners = new Set<
+    (status: RuntimeProjectionStatus) => void
+  >();
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
   private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
@@ -459,6 +462,9 @@ export class FakeNativeApi implements NativeApi {
   retryRuntimeProjection(...args: Parameters<NativeApi['retryRuntimeProjection']>) {
     return this.command('retryRuntimeProjection', args);
   }
+  getRuntimeProjectionStatus(...args: Parameters<NativeApi['getRuntimeProjectionStatus']>) {
+    return this.command('getRuntimeProjectionStatus', args);
+  }
   playTimeline(...args: Parameters<NativeApi['playTimeline']>) {
     return this.command('playTimeline', args);
   }
@@ -498,6 +504,10 @@ export class FakeNativeApi implements NativeApi {
   onTransportStatus(callback: Parameters<NativeApi['onTransportStatus']>[0]) {
     this.recordCall('onTransportStatus');
     return this.subscribe(this.transportListeners, callback);
+  }
+  onRuntimeProjectionStatus(callback: Parameters<NativeApi['onRuntimeProjectionStatus']>[0]) {
+    this.recordCall('onRuntimeProjectionStatus');
+    return this.subscribe(this.runtimeProjectionListeners, callback);
   }
   onRuntimeRestarted(callback: Parameters<NativeApi['onRuntimeRestarted']>[0]) {
     this.recordCall('onRuntimeRestarted');
@@ -545,6 +555,11 @@ export class FakeNativeApi implements NativeApi {
 
   emitRuntimeRestarted(generation = 2): void {
     this.runtimeRestartListeners.forEach((listener) => listener(generation));
+  }
+
+  emitRuntimeProjectionStatus(status: RuntimeProjectionStatus): void {
+    this.runtimeProjection = status;
+    this.runtimeProjectionListeners.forEach((listener) => listener(status));
   }
 
   emitTransportStatus(status: Partial<TransportStatus> = {}): void {
@@ -616,6 +631,8 @@ export class FakeNativeApi implements NativeApi {
       case 'getAudioStatus':
         return Promise.resolve(this.audio);
       case 'retryRuntimeProjection':
+        return Promise.resolve(this.runtimeProjection);
+      case 'getRuntimeProjectionStatus':
         return Promise.resolve(this.runtimeProjection);
       case 'setEmergencyMute':
         this.emergencyMuteRequests.push(Boolean(arguments_[0]));

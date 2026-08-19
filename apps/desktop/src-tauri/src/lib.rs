@@ -45,7 +45,7 @@ mod types;
 use host_commands::*;
 use model::{
     AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, RecoveryCandidate,
-    RuntimeStartupFinishedEvent,
+    RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
 };
 use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
 use riffra_core::{AppCore, CreativeSession};
@@ -266,9 +266,15 @@ pub fn run() {
                     .map_err(crate::runtime::error::RuntimeError::from)
                 }) as crate::runtime::projection_coordinator::RuntimeRecovery)
             };
-            let runtime = Arc::new(runtime::RuntimeReconciler::new(
+            let runtime_status_app = app.handle().clone();
+            let runtime_status_listener: crate::runtime::projection_coordinator::ProjectionStatusHook =
+                Arc::new(move |status: RuntimeProjectionStatus| {
+                    let _ = runtime_status_app.emit("runtime-projection-status", &status);
+                });
+            let runtime = Arc::new(runtime::RuntimeReconciler::with_status_listener(
                 Arc::new(audio.clone()),
                 runtime_recovery,
+                runtime_status_listener,
             )?);
             let runtime_for_restart = Arc::downgrade(&runtime);
             audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
@@ -343,6 +349,7 @@ pub fn run() {
             session::commands::duplicate_midi_clip,
             session::commands::paste_timeline_clips,
             session::commands::crossfade_audio_clips,
+            session::commands::get_runtime_projection_status,
             session::commands::retry_runtime_projection,
             session::commands::play_timeline,
             session::commands::stop_timeline,

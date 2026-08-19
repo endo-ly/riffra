@@ -38,10 +38,10 @@ pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
     }
     let projection = match crate::session::transport::sync_arrangement(context) {
         Ok(status) => ArrangementProjectionOutcome::Queued { status },
-        Err(message) => ArrangementProjectionOutcome::Failed {
-            status: context.runtime.status(),
-            message,
-        },
+        Err(message) => {
+            let status = context.runtime.mark_projection_failed(message.clone());
+            ArrangementProjectionOutcome::Failed { status, message }
+        }
     };
     ArrangementMutationResult {
         session,

@@ -17,6 +17,7 @@ import type {
   Marker,
   MidiClip,
   PluginEntry,
+  RuntimeProjectionStatus,
   TrackKind,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from './arrange-api';
@@ -70,6 +71,9 @@ interface WorkspaceArrangeProps {
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;
   onToggleTransport: () => void;
+  runtimeProjectionStatus: RuntimeProjectionStatus;
+  runtimeProjectionFailure: string | null;
+  onRetryRuntimeProjection: () => Promise<void>;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
   playSurfaceHost: HTMLElement | null;
@@ -211,7 +215,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
   // advance the canonical revision without requiring a new audio graph.
-  const playbackOutOfSync = editor.runtimeOutOfSync;
+  const playbackOutOfSync =
+    props.runtimeProjectionStatus.state === 'failed' || props.runtimeProjectionFailure !== null;
   const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
   const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
@@ -267,12 +272,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     !activeInstrumentUnavailable,
   );
   const statusMessage = playbackOutOfSync
-    ? 'Playback runtime is out of sync'
+    ? (props.runtimeProjectionFailure ??
+      props.runtimeProjectionStatus.lastError ??
+      'Playback runtime is out of sync')
     : unavailableClipCount || missingDeviceCount
       ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
       : editor.message;
   const statusPersistent = playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
-  const { retryRuntimeSync } = editor;
+  const retryRuntimeProjection = props.onRetryRuntimeProjection;
 
   useEffect(() => {
     if (!statusMessage) {
@@ -283,11 +290,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       kind: playbackOutOfSync ? 'error' : 'info',
       persistent: statusPersistent,
       ...(playbackOutOfSync
-        ? { action: { label: 'Retry', onClick: () => void retryRuntimeSync() } }
+        ? { action: { label: 'Retry', onClick: () => void retryRuntimeProjection() } }
         : {}),
     });
     return () => clearToast('arrange.status');
-  }, [playbackOutOfSync, retryRuntimeSync, statusMessage, statusPersistent]);
+  }, [playbackOutOfSync, retryRuntimeProjection, statusMessage, statusPersistent]);
 
   const openPlaySurface = (trackId: string) => {
     props.setSelection({ kind: 'track', trackId });

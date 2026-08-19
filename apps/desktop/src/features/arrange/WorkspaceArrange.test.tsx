@@ -5,12 +5,19 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
-import { type ArrangementMutationResult, type CreativeSession, type Track } from '@/model/domain';
+import {
+  type ArrangementMutationResult,
+  type CreativeSession,
+  type RuntimeProjectionStatus,
+  type Track,
+} from '@/model/domain';
 import { defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { ToastStack } from '@/shared/ui/ToastStack';
+
+const noopRetryRuntimeProjection = async (): Promise<void> => undefined;
 
 afterEach(() => {
   cleanup();
@@ -20,10 +27,16 @@ function Harness({
   api,
   initialSession,
   onToggleTransport,
+  runtimeProjectionStatus,
+  runtimeProjectionFailure,
+  onRetryRuntimeProjection,
 }: {
   api: FakeNativeApi;
   initialSession?: CreativeSession;
   onToggleTransport?: () => void;
+  runtimeProjectionStatus?: RuntimeProjectionStatus;
+  runtimeProjectionFailure?: string | null;
+  onRetryRuntimeProjection?: () => Promise<void>;
 }) {
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
@@ -42,6 +55,14 @@ function Harness({
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
+        runtimeProjectionStatus={runtimeProjectionStatus ?? api.runtimeProjection}
+        runtimeProjectionFailure={
+          runtimeProjectionFailure ??
+          (runtimeProjectionStatus?.state === 'failed'
+            ? (runtimeProjectionStatus.lastError ?? 'Playback runtime is out of sync')
+            : null)
+        }
+        onRetryRuntimeProjection={onRetryRuntimeProjection ?? noopRetryRuntimeProjection}
         playSurfaceHost={playSurfaceHost}
       />
       <div ref={setPlaySurfaceHost} data-play-surface-host />
@@ -1043,6 +1064,35 @@ describe('WorkspaceArrange', () => {
 
     // Assert
     expect(screen.queryByText('Playback runtime is out of sync')).not.toBeInTheDocument();
+  });
+
+  it('surfaces an asynchronous runtime projection failure with a retry action', async () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    let retryCount = 0;
+    const runtimeProjectionStatus: RuntimeProjectionStatus = {
+      ...api.runtimeProjection,
+      state: 'failed',
+      operationId: 1,
+      lastError: 'native rejected',
+    };
+
+    // Act
+    render(
+      <Harness
+        api={api}
+        runtimeProjectionStatus={runtimeProjectionStatus}
+        runtimeProjectionFailure="native rejected"
+        onRetryRuntimeProjection={async () => {
+          retryCount += 1;
+        }}
+      />,
+    );
+
+    // Assert
+    expect(await screen.findByText('native rejected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retryCount).toBe(1);
   });
 
   it('renders one shared grid for a long timeline regardless of Track count', () => {

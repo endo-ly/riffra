@@ -93,6 +93,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     transportPlaying,
     recordingCommandPending,
     startRecordingNow,
+    runtimeProjectionStatus,
+    runtimeProjectionFailure,
+    retryRuntimeProjection,
     autosaveError,
     audioPreferenceMessage,
     exportMessage,
@@ -390,6 +393,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             missingDeviceIds={missingDependencies
               .filter((item) => item.kind === 'plugin')
               .map((item) => item.id)}
+            runtimeProjectionStatus={runtimeProjectionStatus}
+            runtimeProjectionFailure={runtimeProjectionFailure}
+            onRetryRuntimeProjection={retryRuntimeProjection}
             playSurfaceHost={playSurfaceHost}
           />
         </section>

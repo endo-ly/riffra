@@ -1,6 +1,10 @@
 import type { RuntimeProjectionStatus } from '@/model/domain';
 import { invoke } from '../invoke';
 
+export async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
+  return await invoke<RuntimeProjectionStatus>('get_runtime_projection_status');
+}
+
 export async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {
   return await invoke<RuntimeProjectionStatus>('retry_runtime_projection');
 }
