@@ -58,15 +58,19 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi) {
 
   useEffect(() => {
     let disposed = false;
+    let receivedEvent = false;
     const publish = (next: RuntimeProjectionStatus) => {
       if (disposed) return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     };
-    const unlisten = api.onRuntimeProjectionStatus(publish);
+    const unlisten = api.onRuntimeProjectionStatus((next) => {
+      receivedEvent = true;
+      publish(next);
+    });
     void api
       .getRuntimeProjectionStatus()
       .then((next) => {
-        publish(next);
+        if (!receivedEvent) publish(next);
       })
       .catch(() => undefined);
     return () => {
@@ -81,15 +85,7 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi) {
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setViewState((current) => ({
-        status: {
-          ...current.status,
-          state: 'failed',
-          completedAtMs: Date.now(),
-          lastError: message,
-        },
-        failure: message,
-      }));
+      setViewState((current) => ({ ...current, failure: message }));
     }
   }, [api]);
 

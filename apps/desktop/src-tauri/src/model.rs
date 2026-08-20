@@ -52,13 +52,8 @@ pub struct ArrangementMutationResult {
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum ArrangementProjectionOutcome {
     NotRequired,
-    Queued {
-        status: RuntimeProjectionStatus,
-    },
-    Failed {
-        status: RuntimeProjectionStatus,
-        message: String,
-    },
+    Queued,
+    Failed { message: String },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, TS)]

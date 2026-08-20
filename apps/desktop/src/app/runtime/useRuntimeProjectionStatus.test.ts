@@ -41,6 +41,33 @@ describe('useRuntimeProjectionStatus', () => {
     });
   });
 
+  it('does not let an initial status fetch overwrite a newer event', async () => {
+    const api = new FakeNativeApi();
+    let resolveInitial!: (value: RuntimeProjectionStatus) => void;
+    api.setResponse(
+      'getRuntimeProjectionStatus',
+      new Promise<RuntimeProjectionStatus>((resolve) => {
+        resolveInitial = resolve;
+      }),
+    );
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const active = status({
+      state: 'active',
+      runningOperationId: null,
+      activeProjectionSequence: 2,
+      completedAtMs: 2,
+    });
+
+    act(() => api.emitRuntimeProjectionStatus(active));
+    await waitFor(() => expect(result.current.status).toEqual(active));
+
+    await act(async () => {
+      resolveInitial(status({ operationId: active.operationId }));
+    });
+
+    expect(result.current.status).toEqual(active);
+  });
+
   it('replaces a failed status with the active status returned by retry', async () => {
     const api = new FakeNativeApi();
     const active = status({
@@ -59,6 +86,23 @@ describe('useRuntimeProjectionStatus', () => {
 
     expect(result.current.status).toEqual(active);
     expect(result.current.failure).toBeNull();
+  });
+
+  it('keeps the native status unchanged when the retry command fails', async () => {
+    const api = new FakeNativeApi();
+    const failed = status({ state: 'failed', lastError: 'native rejected' });
+    api.emitRuntimeProjectionStatus(failed);
+    api.setFailure('retryRuntimeProjection', new Error('retry unavailable'));
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+
+    await waitFor(() => expect(result.current.failure).toBe('native rejected'));
+
+    await act(async () => {
+      await result.current.retry();
+    });
+
+    expect(result.current.status).toEqual(failed);
+    expect(result.current.failure).toBe('retry unavailable');
   });
 
   it('keeps a projection failure visible until a later projection becomes active', async () => {

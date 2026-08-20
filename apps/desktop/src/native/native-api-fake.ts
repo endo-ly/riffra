@@ -697,9 +697,6 @@ export class FakeNativeApi implements NativeApi {
       };
       return Promise.resolve(result);
     }
-    if (sessionMethodNames.has(name)) {
-      return Promise.resolve(this.bootstrapState.session);
-    }
     if (audioMethodNames.has(name)) return Promise.resolve(this.audio);
     if (voidMethodNames.has(name)) return Promise.resolve(undefined);
     throw new Error(`Unconfigured NativeApi method: ${String(name)}`);
@@ -728,8 +725,6 @@ export class FakeNativeApi implements NativeApi {
 }
 
 const sessionAudioMethodNames = new Set<keyof NativeApi>(['setMasterGainDb']);
-
-const sessionMethodNames = new Set<keyof NativeApi>();
 
 const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'relinkMissingDependency',

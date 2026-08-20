@@ -414,7 +414,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         true
     }
 
-    pub(crate) fn mark_failed(&self, message: String) -> RuntimeProjectionStatus {
+    pub(crate) fn mark_failed(&self, message: String) {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime projection lock poisoned");
         state.status.state = RuntimeProjectionState::Failed;
@@ -424,8 +424,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let status = state.status.clone();
         wake.notify_all();
         drop(state);
-        (self.status_hook)(status.clone());
-        status
+        (self.status_hook)(status);
     }
 
     /// Invalidates the active graph after the native audio device environment

@@ -60,7 +60,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.status()
     }
 
-    pub(crate) fn mark_projection_failed(&self, message: String) -> RuntimeProjectionStatus {
+    pub(crate) fn mark_projection_failed(&self, message: String) {
         self.projection.mark_failed(message)
     }
 
