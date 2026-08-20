@@ -5,7 +5,7 @@ pub async fn set_track_instrument(
     track_id: String,
     plugin_path: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking_without_command_gate(app, move |state| {
         adapter::set_track_instrument(&app_context(state), &track_id, &plugin_path)
     })
@@ -16,7 +16,7 @@ pub async fn set_track_instrument(
 pub async fn clear_track_instrument(
     track_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::clear_track_instrument(&app_context(state), &track_id)
     })
@@ -28,7 +28,7 @@ pub async fn add_track_effect(
     track_id: String,
     plugin_path: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking_without_command_gate(app, move |state| {
         adapter::add_track_effect(&app_context(state), &track_id, &plugin_path)
     })
@@ -40,7 +40,7 @@ pub async fn remove_track_effect(
     track_id: String,
     device_id: String,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::remove_track_effect(&app_context(state), &track_id, &device_id)
     })
@@ -52,7 +52,7 @@ pub async fn reorder_track_effects(
     track_id: String,
     ordered_device_ids: Vec<String>,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::reorder_track_effects(&app_context(state), &track_id, &ordered_device_ids)
     })
@@ -65,7 +65,7 @@ pub async fn set_track_device_bypassed(
     device_id: String,
     bypassed: bool,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_track_device_bypassed(&app_context(state), &track_id, &device_id, bypassed)
     })
@@ -79,7 +79,7 @@ pub async fn set_track_device_parameter(
     parameter_index: u32,
     value: f32,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::set_track_device_parameter(
             &app_context(state),
@@ -117,7 +117,7 @@ pub async fn persist_track_plugin_state(
     state_data: Option<String>,
     bypassed: bool,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::persist_track_plugin_state(
             &app_context(state),
@@ -138,7 +138,7 @@ pub async fn persist_track_plugin_parameter(
     parameter_index: i32,
     value: f32,
     app: AppHandle,
-) -> Result<CreativeSession, String> {
+) -> Result<ArrangementMutationResult, String> {
     run_blocking(app, move |state| {
         adapter::persist_track_plugin_parameter(
             &app_context(state),

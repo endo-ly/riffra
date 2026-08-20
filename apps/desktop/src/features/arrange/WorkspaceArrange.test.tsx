@@ -5,12 +5,19 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
-import { type CreativeSession, type Track } from '@/model/domain';
+import {
+  type ArrangementMutationResult,
+  type CreativeSession,
+  type RuntimeProjectionStatus,
+  type Track,
+} from '@/model/domain';
 import { defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { ToastStack } from '@/shared/ui/ToastStack';
+
+const noopRetryRuntimeProjection = async (): Promise<void> => undefined;
 
 afterEach(() => {
   cleanup();
@@ -20,10 +27,16 @@ function Harness({
   api,
   initialSession,
   onToggleTransport,
+  runtimeProjectionStatus,
+  runtimeProjectionFailure,
+  onRetryRuntimeProjection,
 }: {
   api: FakeNativeApi;
   initialSession?: CreativeSession;
   onToggleTransport?: () => void;
+  runtimeProjectionStatus?: RuntimeProjectionStatus;
+  runtimeProjectionFailure?: string | null;
+  onRetryRuntimeProjection?: () => Promise<void>;
 }) {
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
@@ -42,6 +55,14 @@ function Harness({
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
+        runtimeProjectionStatus={runtimeProjectionStatus ?? api.runtimeProjection}
+        runtimeProjectionFailure={
+          runtimeProjectionFailure ??
+          (runtimeProjectionStatus?.state === 'failed'
+            ? (runtimeProjectionStatus.lastError ?? 'Playback runtime is out of sync')
+            : null)
+        }
+        onRetryRuntimeProjection={onRetryRuntimeProjection ?? noopRetryRuntimeProjection}
         playSurfaceHost={playSurfaceHost}
       />
       <div ref={setPlaySurfaceHost} data-play-surface-host />
@@ -50,7 +71,31 @@ function Harness({
   );
 }
 
+function mutationResult(session: CreativeSession): ArrangementMutationResult {
+  return { session, projection: { state: 'notRequired' } };
+}
+
 describe('WorkspaceArrange', () => {
+  it('returns the playhead and timeline viewport to start on a transport discontinuity', async () => {
+    const api = new FakeNativeApi();
+    const { container } = render(<Harness api={api} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
+    Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
+
+    api.emitTransportStatus({ timelineTick: 3_840, discontinuity: 2 });
+    await waitFor(() => expect(scroller.scrollLeft).toBe(0));
+    scroller.scrollLeft = 700;
+
+    api.emitTransportStatus({ timelineTick: 0, discontinuity: 3 });
+
+    await waitFor(() => expect(scroller.scrollLeft).toBe(0));
+    await waitFor(() =>
+      expect(container.querySelector('[class*="playhead"]')?.getAttribute('style')).toContain(
+        'translate3d(192px',
+      ),
+    );
+  });
+
   it('seeks the native timeline from the musical ruler', () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);
@@ -163,10 +208,10 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
-    let finishQuantize: ((next: CreativeSession) => void) | undefined;
+    let finishQuantize: ((next: ArrangementMutationResult) => void) | undefined;
     api.quantizeMidiNotes = async (_clipId, _noteIds, _gridTicks) => {
       api.calls.push('quantizeMidiNotes');
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         finishQuantize = resolve;
       });
     };
@@ -182,7 +227,7 @@ describe('WorkspaceArrange', () => {
     // Assert
     await waitFor(() => expect(finishQuantize).toBeDefined());
     expect(screen.queryByText('Quantized 1 note to 1/16.')).not.toBeInTheDocument();
-    finishQuantize!(session);
+    finishQuantize!(mutationResult(session));
     await screen.findByText('Quantized 1 note to 1/16.');
     await waitFor(() => expect(api.calls).toContain('quantizeMidiNotes'));
   });
@@ -289,7 +334,7 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return createdSession;
+      return mutationResult(createdSession);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const lane = container.querySelector(`[data-track-id="${track.id}"] > div[class*="lane_"]`)!;
@@ -349,7 +394,7 @@ describe('WorkspaceArrange', () => {
     api.createMidiClip = async (...args) => {
       createArgs = args;
       api.calls.push('createMidiClip');
-      return createdSession;
+      return mutationResult(createdSession);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     const ruler = screen.getByLabelText('Timeline ruler');
@@ -421,7 +466,7 @@ describe('WorkspaceArrange', () => {
     api.updateMidiNotes = async (...args) => {
       updateArgs = args;
       api.calls.push('updateMidiNotes');
-      return session;
+      return mutationResult(session);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
 
@@ -566,7 +611,7 @@ describe('WorkspaceArrange', () => {
     api.addMidiNote = async (...args) => {
       addArgs = args;
       api.calls.push('addMidiNote');
-      return session;
+      return mutationResult(session);
     };
     const { container } = render(<Harness api={api} initialSession={session} />);
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:draw"]')!);
@@ -718,23 +763,26 @@ describe('WorkspaceArrange', () => {
     let releaseUpdate!: () => void;
     api.updateMidiNote = (...args) => {
       const canonical = originalUpdateMidiNote(...args);
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         releaseUpdate = () => {
           void canonical.then((next) =>
             resolve({
               ...next,
-              arrangement: {
-                ...next.arrangement,
-                midiClips: next.arrangement.midiClips.map((clip) =>
-                  clip.id === 'clip:midi-move'
-                    ? {
-                        ...clip,
-                        notes: clip.notes.map((note) =>
-                          note.id === 'note:move' ? { ...note, startTick: 120 } : note,
-                        ),
-                      }
-                    : clip,
-                ),
+              session: {
+                ...next.session,
+                arrangement: {
+                  ...next.session.arrangement,
+                  midiClips: next.session.arrangement.midiClips.map((clip) =>
+                    clip.id === 'clip:midi-move'
+                      ? {
+                          ...clip,
+                          notes: clip.notes.map((note) =>
+                            note.id === 'note:move' ? { ...note, startTick: 120 } : note,
+                          ),
+                        }
+                      : clip,
+                  ),
+                },
               },
             }),
           );
@@ -813,7 +861,7 @@ describe('WorkspaceArrange', () => {
     let releaseUpdate!: () => void;
     api.updateMidiNotes = (...args) => {
       const canonical = originalUpdateMidiNotes(...args);
-      return new Promise<CreativeSession>((resolve) => {
+      return new Promise<ArrangementMutationResult>((resolve) => {
         releaseUpdate = () => {
           void canonical.then(resolve);
         };
@@ -1003,7 +1051,7 @@ describe('WorkspaceArrange', () => {
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();
   });
 
-  it('reports a persistent transport revision mismatch after its grace period', async () => {
+  it('does not infer runtime failure from an authoring-only revision mismatch', async () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.revision = 1;
@@ -1015,10 +1063,36 @@ describe('WorkspaceArrange', () => {
     api.emitTransportStatus({ revision: 0 });
 
     // Assert
-    await waitFor(
-      () => expect(screen.getByText('Playback runtime is out of sync')).toBeInTheDocument(),
-      { timeout: 2_000 },
+    expect(screen.queryByText('Playback runtime is out of sync')).not.toBeInTheDocument();
+  });
+
+  it('surfaces an asynchronous runtime projection failure with a retry action', async () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    let retryCount = 0;
+    const runtimeProjectionStatus: RuntimeProjectionStatus = {
+      ...api.runtimeProjection,
+      state: 'failed',
+      operationId: 1,
+      lastError: 'native rejected',
+    };
+
+    // Act
+    render(
+      <Harness
+        api={api}
+        runtimeProjectionStatus={runtimeProjectionStatus}
+        runtimeProjectionFailure="native rejected"
+        onRetryRuntimeProjection={async () => {
+          retryCount += 1;
+        }}
+      />,
     );
+
+    // Assert
+    expect(await screen.findByText('native rejected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retryCount).toBe(1);
   });
 
   it('renders one shared grid for a long timeline regardless of Track count', () => {
@@ -1253,7 +1327,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.loopRange = { enabled: true, startTick: 960, endTick: 3840 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelineLoopRange: canonical },
+      responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1274,7 +1348,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelineLoopRange: canonical },
+      responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1295,7 +1369,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.punchRange = { startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateTimelinePunchRange: canonical },
+      responses: { updateTimelinePunchRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1316,7 +1390,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.markers = [];
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { removeMarker: canonical },
+      responses: { removeMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1332,7 +1406,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const canonical = defaultSession();
     canonical.arrangement.markers.push({ id: 'marker:1', name: 'Marker 1', tick: 960 });
-    const api = new FakeNativeApi({ responses: { addMarker: canonical } });
+    const api = new FakeNativeApi({ responses: { addMarker: mutationResult(canonical) } });
     render(<Harness api={api} />);
     const ruler = screen.getByLabelText('Timeline ruler');
     Object.defineProperty(ruler, 'getBoundingClientRect', {
@@ -1478,7 +1552,7 @@ describe('WorkspaceArrange', () => {
     canonical.arrangement.markers[0].name = 'Verse';
     const api = new FakeNativeApi({
       bootstrapState: { session },
-      responses: { updateMarker: canonical },
+      responses: { updateMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1612,8 +1686,8 @@ describe('WorkspaceArrange', () => {
         ),
       },
     };
-    let resolveUpdate!: (next: CreativeSession) => void;
-    const pendingUpdate = new Promise<CreativeSession>((resolve) => {
+    let resolveUpdate!: (next: ArrangementMutationResult) => void;
+    const pendingUpdate = new Promise<ArrangementMutationResult>((resolve) => {
       resolveUpdate = resolve;
     });
     let updateArgs: Parameters<FakeNativeApi['updateMidiNotes']> | undefined;
@@ -1659,7 +1733,7 @@ describe('WorkspaceArrange', () => {
     expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76');
     expect(secondaryBar).toHaveAttribute('aria-label', 'E4 velocity 92');
 
-    resolveUpdate(committedSession);
+    resolveUpdate(mutationResult(committedSession));
     await waitFor(() => expect(bar).toHaveAttribute('aria-label', 'C4 velocity 76'));
 
     const pianoKey = velocityLane.querySelector('[data-piano-key="60"]') as HTMLElement;

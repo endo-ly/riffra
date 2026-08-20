@@ -4,7 +4,7 @@ use crate::DomainError;
 use crate::domain::asset::AssetId;
 use crate::domain::rack::{RackDevice, RackInstance};
 use crate::domain::recording::*;
-use crate::domain::session::{
+use crate::domain::timeline::{
     FrameDuration, FrameRange, ProjectTimebase, TIMELINE_PPQ, TimelineLoopRange,
     TimelinePunchRange, TimelineTick,
 };

@@ -52,6 +52,7 @@ target_sources(riffra-render-core PRIVATE
   src/processing/ArrangementCaptureSink.h
   src/processing/PluginRack.cpp
   src/processing/PluginRack.h
+  src/processing/BoundedMpmcQueue.h
   src/processing/PluginChain.cpp
   src/processing/PluginChain.h
   src/realtime/FaultInjection.cpp
@@ -330,6 +331,7 @@ if(BUILD_TESTING)
     tests/PluginChainTest.cpp
     tests/RecordingSessionTest.cpp
     tests/ArrangeRecordingSessionTest.cpp
+    tests/BoundedMpmcQueueTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
   )

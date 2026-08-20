@@ -1,7 +1,7 @@
 //! Recording session, pass, take, and source domain models.
 
 use crate::domain::asset::AssetId;
-use crate::domain::session::TimelineTick;
+use crate::domain::timeline::TimelineTick;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

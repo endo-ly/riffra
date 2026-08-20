@@ -18,7 +18,7 @@ The safety chain is deliberately small and auditable: immediate emergency mute, 
 {"type":"setEmergencyMute","muted":false}
 {"type":"setMasterGainDb","gainDb":-24.0}
 {"type":"loadTimelineSnapshot","snapshot":{...}}
-{"type":"setTrackDeviceParameter","trackId":"track:1","deviceId":"device:1","index":0,"value":0.5}
+{"type":"setTrackDeviceParameter","trackId":"track:1","deviceId":"device:1","parameterIndex":0,"value":0.5}
 {"type":"sendTrackMidi","trackId":"track:1","bytes":[144,60,100]}
 {"type":"recoverAudioDevice"}
 {"type":"previewSample","path":"C:\\path\\to\\processed.wav","startMs":0,"endMs":1000,"gain":1.0}

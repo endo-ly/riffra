@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
 import styles from './ArrangeClipInspector.module.css';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface MultiClipInspectorProps {
   session: CreativeSession;
@@ -31,7 +32,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
   );
   const selectedClips = [...audioClips, ...midiClips];
 
-  const run = (operation: Promise<CreativeSession | null>, onSuccess?: () => void) => {
+  const run = (operation: Promise<ArrangementMutationResult | null>, onSuccess?: () => void) => {
     setMessage(null);
     void operation
       .then((next) => {
@@ -39,7 +40,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
           setMessage('The edit was not applied.');
           return;
         }
-        props.setSession(next);
+        applyArrangementMutation(next, props.setSession, setMessage);
         onSuccess?.();
       })
       .catch((error: unknown) => {

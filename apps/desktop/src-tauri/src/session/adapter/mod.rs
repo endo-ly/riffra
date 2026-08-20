@@ -38,10 +38,12 @@ use crate::model::{AudioStatus, SessionAudioPair};
 use crate::plugin_catalog;
 use crate::runtime::ports::RuntimeDriver;
 use crate::storage::SessionStore;
+#[cfg(test)]
+use riffra_core::CreativeSession;
 use riffra_core::{
     AssetId, AssetKind, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter,
-    AutomationPoint, CreativeSession, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind,
-    MidiInputRoute, MidiNote, ProjectTimebase, TimelineTick, TrackKind,
+    AutomationPoint, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind, MidiInputRoute,
+    MidiNote, ProjectTimebase, TimelineTick, TrackKind,
 };
 
 pub(crate) use crate::session::commit::{
@@ -50,8 +52,7 @@ pub(crate) use crate::session::commit::{
 pub(crate) use crate::session::context::{SessionContext, current_session};
 pub(crate) use crate::session::transport::{
     go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
-    runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement,
-    sync_arrangement_runtime,
+    runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement_runtime,
 };
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,

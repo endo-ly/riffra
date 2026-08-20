@@ -15,7 +15,7 @@ export type ArrangeWorkspaceApi = ArrangeApi &
   Pick<JobApi, 'scanVst3Folder'> &
   Pick<NativeEventApi, 'onTransportStatus'> &
   Pick<ProjectApi, 'importMidiBytes'> &
-  Pick<TransportApi, 'seekTimeline' | 'retryRuntimeProjection'>;
+  Pick<TransportApi, 'seekTimeline'>;
 
 /** Native capabilities required by Arrange inspectors. */
 export type ArrangeInspectorApi = ArrangeApi &

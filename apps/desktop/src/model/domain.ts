@@ -1,5 +1,7 @@
 export type {
   Arrangement,
+  ArrangementMutationResult,
+  ArrangementProjectionOutcome,
   AudioTakeVariant,
   AutomationLane,
   AutomationParameter,
@@ -51,8 +53,10 @@ export type {
   RecordingAsset,
   RecordingCapture,
   RecordingCaptureStatus,
+  RecordingFinalizationOutcome,
   RecordingSessionRecord,
   RecordingStatus,
+  RecordingStopResult,
   RecordingTakeRecord,
   RecoveryCandidate,
   RuntimeProjectionState,

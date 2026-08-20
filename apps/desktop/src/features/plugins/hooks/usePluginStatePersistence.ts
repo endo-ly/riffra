@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { CreativeSession } from '@/model/domain';
 import type { ArrangeApi, NativeEventApi } from '@/native/native-api';
 import { getCurrentWindow } from '@/native/window';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 type PluginPersistenceApi = Pick<
   ArrangeApi,
@@ -88,20 +89,39 @@ export function usePluginStatePersistence({
           if (batch.length === 0) break;
           try {
             let latest: CreativeSession | null = null;
+            let projectionError: string | null = null;
             for (const [, pending] of batch) {
-              if (pending.state != null) latest = await persistTrackPluginState(pending.state);
+              if (pending.state != null) {
+                applyArrangementMutation(
+                  await persistTrackPluginState(pending.state),
+                  (session) => {
+                    latest = session;
+                  },
+                  (message) => {
+                    projectionError = message;
+                  },
+                );
+              }
               for (const [parameterIndex, value] of pending.parameters) {
-                latest = await persistTrackPluginParameter({
-                  trackId: pending.trackId,
-                  deviceId: pending.deviceId,
-                  parameterIndex,
-                  value,
-                });
+                applyArrangementMutation(
+                  await persistTrackPluginParameter({
+                    trackId: pending.trackId,
+                    deviceId: pending.deviceId,
+                    parameterIndex,
+                    value,
+                  }),
+                  (session) => {
+                    latest = session;
+                  },
+                  (message) => {
+                    projectionError = message;
+                  },
+                );
               }
             }
             if (latest != null) {
               setSession(latest);
-              setAutosaveError(null);
+              setAutosaveError(projectionError);
             }
           } catch (error: unknown) {
             mergeFailedPluginBatch(batch);

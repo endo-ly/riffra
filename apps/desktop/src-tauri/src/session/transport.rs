@@ -152,7 +152,7 @@ impl<D: RuntimeDriver> RuntimeProjection for DesktopRuntimeProjection<'_, D> {
 /// active before returning use [`sync_arrangement_runtime`] instead.
 pub(crate) fn sync_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
+) -> Result<(), String> {
     let projection = DesktopRuntimeProjection {
         data_root: context.data_root,
         runtime: context.runtime,
@@ -164,7 +164,7 @@ pub(crate) fn sync_arrangement<D: RuntimeDriver>(
         .application(&store)
         .project_current(&projection)
         .map_err(|error| error.to_string())?;
-    Ok(context.runtime.status())
+    Ok(())
 }
 
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(

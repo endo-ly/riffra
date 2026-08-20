@@ -6,6 +6,7 @@ import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
+import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
@@ -15,11 +16,13 @@ import { useMissingDependencies } from '@/features/project/hooks/useMissingDepen
 import { useRecording } from '@/features/recording/hooks/useRecording';
 import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
 import { usePluginStatePersistence } from '@/features/plugins/hooks/usePluginStatePersistence';
+import { toast } from '@/shared/toasts';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
   const [commandOpen, setCommandOpen] = useState(false);
   const runtime = useAppRuntime(api);
+  const runtimeProjection = useRuntimeProjectionStatus(api);
   const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(api);
   const {
     boot,
@@ -96,7 +99,15 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     enableMidi,
     toggleMute,
   } = audioHook;
-  const recording = useRecording(api, { audio, setAudio, setSession });
+  const recording = useRecording(api, {
+    audio,
+    setAudio,
+    setSession,
+    onCommandFailure: (message) => toast(`Recording failed: ${message}`, { kind: 'error' }),
+    onProjectionFailure: (message) => toast(message, { kind: 'error' }),
+    onFinalizationFailure: (message) =>
+      toast(`Recording files were preserved in Inbox: ${message}`, { kind: 'error' }),
+  });
   const {
     recordings,
     reloadRecordings,
@@ -242,5 +253,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     inbox,
     api,
     startRecordingNow,
+    runtimeProjectionStatus: runtimeProjection.status,
+    runtimeProjectionFailure: runtimeProjection.failure,
+    retryRuntimeProjection: runtimeProjection.retry,
   };
 }

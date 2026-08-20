@@ -31,7 +31,7 @@
 │ React（src/native/native-api.ts）                                    │
 └────┬───────────────────────┬───────────────────────┬───────────────┘
      │ A: Tauri 命令          │ B: イベント購読        │
-     │ invoke 系             │ listen(7種)           │
+     │ invoke 系             │ listen(8種)           │
 ┌────▼───────────────────────▼───────────────────────▼───────────────┐
 │ Rust バックエンド（src-tauri）                                          │
 │ 命令層 → Desktop Adapter → riffra-core / RuntimeReconciler / 永続化    │
@@ -80,7 +80,7 @@
 | 命令                                                                   | 責務                                                    |
 | ---------------------------------------------------------------------- | ------------------------------------------------------- |
 | `get_bootstrap_state`                                                  | CreativeSession・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status` / `get_runtime_projection_status`                   | 音声状態・ランタイム投影状態の照会                      |
+| `get_audio_status`                                                     | 音声状態の照会                                          |
 | `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）         |
 | `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                |
 | `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                      |
@@ -121,7 +121,7 @@
 | 解析       | `analyze_asset`（同期）                                            |
 | レンダー   | `render_timeline`                                                  |
 
-**ランタイム回復**: `retry_runtime_projection`
+**ランタイム投影**: `get_runtime_projection_status`、`retry_runtime_projection`
 
 **演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
 
@@ -149,6 +149,7 @@
 | `audio-status`                   | `AudioStatus`                         | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知、Preview再生中かどうか） |
 | `audio-meters`                   | `AudioMeters`                         | 入力・出力ピーク、無効サンプル数（高頻度）                                                                              |
 | `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                                            |
+| `runtime-projection-status`      | `RuntimeProjectionStatus`             | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
 | `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
 | `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                                                |
 | `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                                              |

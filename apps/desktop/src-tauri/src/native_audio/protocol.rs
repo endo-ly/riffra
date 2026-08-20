@@ -69,6 +69,7 @@ struct NativeRecordingStatus {
     raw_channels: Option<u32>,
     processed_channels: Option<u32>,
     samples_written: Option<u64>,
+    dropped_midi_events: Option<u64>,
     dropped_blocks: Option<u64>,
     missing_samples: Option<u64>,
     dropout_start_sample: Option<u64>,
@@ -168,6 +169,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 raw_channels: recording.raw_channels,
                 processed_channels: recording.processed_channels,
                 samples_written: recording.samples_written.unwrap_or_default(),
+                dropped_midi_events: recording.dropped_midi_events.unwrap_or_default(),
                 dropped_blocks: recording.dropped_blocks.unwrap_or_default(),
                 missing_samples: recording.missing_samples.unwrap_or_default(),
                 dropout_start_sample: recording.dropout_start_sample,
@@ -185,7 +187,9 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 processed_dropout_start_sample: recording.processed_dropout_start_sample,
                 processed_dropout_end_sample: recording.processed_dropout_end_sample,
                 recovery_status: recording.recovery_status.unwrap_or_else(|| {
-                    if recording.dropped_blocks.unwrap_or_default() == 0 {
+                    if recording.dropped_blocks.unwrap_or_default() == 0
+                        && recording.dropped_midi_events.unwrap_or_default() == 0
+                    {
                         "clean".into()
                     } else {
                         "partial".into()

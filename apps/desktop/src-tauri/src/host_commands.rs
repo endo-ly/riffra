@@ -319,13 +319,6 @@ pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, Stri
 }
 
 #[tauri::command]
-pub(crate) async fn get_runtime_projection_status(
-    app: AppHandle,
-) -> Result<RuntimeProjectionStatus, String> {
-    run_blocking(app, |state| Ok(state.runtime.status())).await
-}
-
-#[tauri::command]
 pub(crate) async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), String> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());

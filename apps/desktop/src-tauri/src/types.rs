@@ -12,9 +12,11 @@ use crate::jobs::{BackgroundJobStatus, JobKind, JobState};
 use crate::library::LibraryAsset;
 use crate::missing::MissingDependency;
 use crate::model::{
-    AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo,
-    AudioState, AudioStatus, BootstrapState, DeviceChannels, MidiDeviceInfo, RecordingStatus,
-    RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
+    ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
+    AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState,
+    DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -89,6 +91,10 @@ fn export_types() {
     RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
     RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");
     SessionAudioPair::export_all(&cfg).expect("SessionAudioPair bindings");
+    RecordingStopResult::export_all(&cfg).expect("RecordingStopResult bindings");
+    RecordingFinalizationOutcome::export_all(&cfg).expect("RecordingFinalizationOutcome bindings");
+    ArrangementMutationResult::export_all(&cfg).expect("ArrangementMutationResult bindings");
+    ArrangementProjectionOutcome::export_all(&cfg).expect("ArrangementProjectionOutcome bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");
     AudioDriverConfig::export_all(&cfg).expect("AudioDriverConfig bindings");

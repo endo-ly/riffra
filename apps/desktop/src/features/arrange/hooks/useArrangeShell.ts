@@ -3,6 +3,8 @@ import type { CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import type { ArrangeSelection } from './useArrangeEditor';
+import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { toast } from '@/shared/toasts';
 
 export function useArrangeShell(
   api: Pick<ArrangeApi, 'setTrackInstrument' | 'addTrackEffect'>,
@@ -11,7 +13,6 @@ export function useArrangeShell(
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
-  const [canonicalOperationsPending, setCanonicalOperationsPending] = useState(0);
   const selectedTrack = useMemo(
     () =>
       session && selection.kind === 'track'
@@ -31,17 +32,14 @@ export function useArrangeShell(
 
   const addPlugin = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
     if (!selectedTrack) return;
-    setCanonicalOperationsPending((count) => count + 1);
     try {
       const next =
         target === 'instrument'
           ? await api.setTrackInstrument(selectedTrack.id, plugin.path)
           : await api.addTrackEffect(selectedTrack.id, plugin.path);
-      setSession(next);
+      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
-    } finally {
-      setCanonicalOperationsPending((count) => Math.max(0, count - 1));
     }
   };
 
@@ -51,7 +49,6 @@ export function useArrangeShell(
     focusedTrackId,
     setFocusedTrackId,
     selectedTrack,
-    canonicalOperationPending: canonicalOperationsPending > 0,
     addPlugin,
   };
 }

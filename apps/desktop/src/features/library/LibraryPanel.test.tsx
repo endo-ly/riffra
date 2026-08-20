@@ -30,6 +30,7 @@ const recordingA: RecordingAsset = {
   midiFile: null,
   sampleRate: 44_100,
   samplesWritten: 44_100,
+  droppedMidiEvents: 0,
   droppedBlocks: 0,
   missingSamples: 0,
   dropoutStartSample: null,

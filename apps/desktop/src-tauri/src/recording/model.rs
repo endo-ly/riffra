@@ -43,6 +43,8 @@ pub struct DropoutInformation {
     #[serde(default)]
     pub samples_written: u64,
     #[serde(default)]
+    pub dropped_midi_events: u64,
+    #[serde(default)]
     pub dropped_blocks: u64,
     #[serde(default)]
     pub missing_samples: u64,

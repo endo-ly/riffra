@@ -38,6 +38,7 @@ pub struct RecordingAsset {
     pub midi_file: Option<String>,
     pub sample_rate: Option<u32>,
     pub samples_written: u64,
+    pub dropped_midi_events: u64,
     pub dropped_blocks: u64,
     pub missing_samples: u64,
     pub dropout_start_sample: Option<u64>,
@@ -65,6 +66,7 @@ struct RecordingManifest {
     processed_file: Option<String>,
     sample_rate: Option<f64>,
     samples_written: Option<u64>,
+    dropped_midi_events: Option<u64>,
     dropped_blocks: Option<u64>,
     missing_samples: Option<u64>,
     dropout_start_sample: Option<u64>,
@@ -326,6 +328,27 @@ pub fn audio_paths(take_id: &str) -> Result<RecordingAudioPaths, String> {
     Ok((raw, processed, midi))
 }
 
+/// Resolves every declared recording output and fails before callers perform
+/// any Asset registration when a declared file is missing or unsafe.
+pub fn preflight_audio_paths(directory: &Path) -> Result<RecordingAudioPaths, String> {
+    let manifest = read_manifest(&directory.join("manifest.json"))?;
+    let raw = manifest
+        .raw_file
+        .as_deref()
+        .map(|file| resolve_take_file(directory, Some(file), "Raw"))
+        .transpose()?;
+    let processed = manifest
+        .processed_file
+        .as_deref()
+        .map(|file| resolve_take_file(directory, Some(file), "Processed"))
+        .transpose()?;
+    let midi = directory
+        .join("midi.json")
+        .is_file()
+        .then(|| directory.join("midi.json").to_string_lossy().into_owned());
+    Ok((raw, processed, midi))
+}
+
 fn validate_manifest(
     directory: &Path,
     manifest: &RecordingManifest,
@@ -465,7 +488,11 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         let sample_rate = current_sample_rate(&manifest);
         let recovery_status = if let Some(capture) = manifest.capture.as_ref() {
             match capture.status {
-                RecordingCaptureStatus::Completed if dropout.dropped_blocks == 0 => "clean".into(),
+                RecordingCaptureStatus::Completed
+                    if dropout.dropped_blocks == 0 && dropout.dropped_midi_events == 0 =>
+                {
+                    "clean".into()
+                }
                 RecordingCaptureStatus::Failed => "failed".into(),
                 RecordingCaptureStatus::Recording | RecordingCaptureStatus::Completing => {
                     "recording".into()
@@ -476,7 +503,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             }
         } else {
             manifest.recovery_status.clone().unwrap_or_else(|| {
-                if dropout.dropped_blocks == 0 {
+                if dropout.dropped_blocks == 0 && dropout.dropped_midi_events == 0 {
                     "clean".into()
                 } else {
                     "partial".into()
@@ -502,6 +529,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             midi_file,
             sample_rate,
             samples_written: dropout.samples_written,
+            dropped_midi_events: dropout.dropped_midi_events,
             dropped_blocks: dropout.dropped_blocks,
             missing_samples: dropout.missing_samples,
             dropout_start_sample: dropout.dropout_start_sample,
@@ -559,6 +587,7 @@ pub fn save_asset_ids(
     capture.midi_asset_id = midi_asset_id;
     capture.dropout_information = crate::recording::DropoutInformation {
         samples_written: manifest.samples_written.unwrap_or_default(),
+        dropped_midi_events: manifest.dropped_midi_events.unwrap_or_default(),
         dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),
         missing_samples: manifest.missing_samples.unwrap_or_default(),
         dropout_start_sample: manifest.dropout_start_sample,

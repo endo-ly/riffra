@@ -27,7 +27,7 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if let Err(error) =
         prepare_arrangement_candidate(context, prepared.session(), prepared.sequence())
     {
@@ -41,41 +41,44 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
             return Err(repair_previous_arrangement(context, error));
         }
     };
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn set_track_audio_input(
     context: &SessionContext<'_>,
     track_id: &str,
     channel_index: Option<u32>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .set_track_audio_input(track_id, channel_index)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn set_track_midi_input(
     context: &SessionContext<'_>,
     track_id: &str,
     route: MidiInputRoute,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .set_track_midi_input(track_id, route)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn set_track_instrument(
     context: &SessionContext<'_>,
     track_id: &str,
     path: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if context.safe_mode {
         return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.".into());
     }
@@ -97,19 +100,20 @@ pub fn set_track_instrument(
 pub fn clear_track_instrument(
     context: &SessionContext<'_>,
     track_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).set_track_instrument(track_id, None)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn add_track_effect(
     context: &SessionContext<'_>,
     track_id: &str,
     path: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if context.safe_mode {
         return Err(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect effects."
@@ -135,26 +139,28 @@ pub fn remove_track_effect(
     context: &SessionContext<'_>,
     track_id: &str,
     device_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .remove_track_effect(track_id, device_id)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn reorder_track_effects(
     context: &SessionContext<'_>,
     track_id: &str,
     ordered_device_ids: &[String],
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .reorder_track_effects(track_id, ordered_device_ids.to_owned())
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 pub fn set_track_device_bypassed(
@@ -162,7 +168,7 @@ pub fn set_track_device_bypassed(
     track_id: &str,
     device_id: &str,
     bypassed: bool,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let session = current_session(context)?;
     let device = session
         .arrangement
@@ -192,7 +198,9 @@ pub fn set_track_device_bypassed(
             .set_track_device_bypassed(track_id, device_id, bypassed)
     });
     match result {
-        Ok(committed) => Ok(committed),
+        Ok(committed) => {
+            Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+        }
         Err(error) => {
             let _ = context
                 .audio
@@ -208,7 +216,7 @@ pub fn set_track_device_parameter(
     device_id: &str,
     parameter_index: u32,
     value: f32,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if !value.is_finite() {
         return Err("Track Device parameter value must be finite.".into());
     }
@@ -244,7 +252,9 @@ pub fn set_track_device_parameter(
             .set_track_device_parameter(track_id, device_id, index, value)
     });
     match result {
-        Ok(committed) => Ok(committed),
+        Ok(committed) => {
+            Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+        }
         Err(error) => {
             let _ = context.audio.set_track_device_parameter(
                 track_id,
@@ -300,11 +310,11 @@ pub fn persist_track_plugin_state(
     parameter_values: Vec<f32>,
     state_data: Option<String>,
     bypassed: bool,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if parameter_values.iter().any(|value| !value.is_finite()) {
         return Err("Track Plugin Editor returned a non-finite parameter value.".into());
     }
-    commit_core_application(context, |core, store| {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store).persist_track_plugin_state(
             track_id,
             device_id,
@@ -312,7 +322,8 @@ pub fn persist_track_plugin_state(
             state_data,
             bypassed,
         )
-    })
+    })?;
+    Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
 }
 
 /// Persists one editor-originated parameter without routing it back through
@@ -324,16 +335,17 @@ pub fn persist_track_plugin_parameter(
     device_id: &str,
     parameter_index: i32,
     value: f32,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     if parameter_index < 0 || !value.is_finite() {
         return Err("Track Plugin Editor returned an invalid parameter change.".into());
     }
     let index = usize::try_from(parameter_index)
         .map_err(|_| "Track Plugin Editor returned an invalid parameter index.".to_string())?;
-    commit_core_application(context, |core, store| {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .persist_track_plugin_parameter(track_id, device_id, index, value)
-    })
+    })?;
+    Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
 }
 
 /// Rewrites every canonical Asset reference pointed to by `asset_id` to the
@@ -344,7 +356,7 @@ pub fn relink_missing_dependency(
     context: &SessionContext<'_>,
     asset_id: AssetId,
     new_path: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let session = current_session(context)?;
     if !session
         .arrangement
@@ -368,10 +380,13 @@ pub fn relink_missing_dependency(
         new_path,
         Some(riffra_core::Provenance::imported()),
     )?;
-    commit_core_application(context, |core, store| {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .replace_asset_references(&asset_id, new_asset_id)
-    })
+    })?;
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 /// Marks a missing plugin device as a disabled placeholder so it no longer
@@ -380,12 +395,13 @@ pub fn relink_missing_dependency(
 pub fn disable_missing_plugin(
     context: &SessionContext<'_>,
     device_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).disable_missing_plugin(device_id)
     })?;
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(crate::session::commit::arrangement_mutation_result(
+        context, committed,
+    ))
 }
 
 /// Replaces an unresolved Track Device in place so its chain position and id
@@ -394,7 +410,7 @@ pub fn replace_missing_track_plugin(
     context: &SessionContext<'_>,
     device_id: &str,
     new_path: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let path = Path::new(new_path.trim());
     if !path.exists() {
         return Err("Replacement VST3 path does not exist.".into());

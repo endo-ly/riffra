@@ -1,4 +1,6 @@
 export type { Arrangement } from './Arrangement';
+export type { ArrangementMutationResult } from './ArrangementMutationResult';
+export type { ArrangementProjectionOutcome } from './ArrangementProjectionOutcome';
 export type { AssetId } from './AssetId';
 export type { AudioAccessMode } from './AudioAccessMode';
 export type { AudioAnalysis } from './AudioAnalysis';
@@ -56,6 +58,8 @@ export type { RecordingPassRecord } from './RecordingPassRecord';
 export type { RecordingSessionRecord } from './RecordingSessionRecord';
 export type { RecordingSessionTrackSlot } from './RecordingSessionTrackSlot';
 export type { RecordingStatus } from './RecordingStatus';
+export type { RecordingStopResult } from './RecordingStopResult';
+export type { RecordingFinalizationOutcome } from './RecordingFinalizationOutcome';
 export type { RecordingTakeRecord } from './RecordingTakeRecord';
 export type { RecoveryCandidate } from './RecoveryCandidate';
 export type { RenderOptions } from './RenderOptions';

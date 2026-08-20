@@ -1,52 +1,49 @@
-import type { CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult } from '@/model/domain';
 import { invoke } from '../invoke';
 import type { TrackPluginParameterChange, TrackPluginStateChange } from '../native-api';
+
+async function invokeRack(command: string, args: Record<string, unknown>) {
+  return invoke<ArrangementMutationResult>(command, args);
+}
 
 export async function setTrackInstrument(
   trackId: string,
   pluginPath: string,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_instrument', { trackId, pluginPath });
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('set_track_instrument', { trackId, pluginPath });
 }
 
-export async function clearTrackInstrument(trackId: string): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('clear_track_instrument', { trackId });
+export async function clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult> {
+  return await invokeRack('clear_track_instrument', { trackId });
 }
 
 export async function addTrackEffect(
   trackId: string,
   pluginPath: string,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('add_track_effect', { trackId, pluginPath });
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('add_track_effect', { trackId, pluginPath });
 }
 
 export async function removeTrackEffect(
   trackId: string,
   deviceId: string,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('remove_track_effect', { trackId, deviceId });
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('remove_track_effect', { trackId, deviceId });
 }
 
 export async function reorderTrackEffects(
   trackId: string,
   orderedDeviceIds: string[],
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('reorder_track_effects', {
-    trackId,
-    orderedDeviceIds,
-  });
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('reorder_track_effects', { trackId, orderedDeviceIds });
 }
 
 export async function setTrackDeviceBypassed(
   trackId: string,
   deviceId: string,
   bypassed: boolean,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_device_bypassed', {
-    trackId,
-    deviceId,
-    bypassed,
-  });
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('set_track_device_bypassed', { trackId, deviceId, bypassed });
 }
 
 export async function setTrackDeviceParameter(
@@ -54,8 +51,8 @@ export async function setTrackDeviceParameter(
   deviceId: string,
   parameterIndex: number,
   value: number,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('set_track_device_parameter', {
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('set_track_device_parameter', {
     trackId,
     deviceId,
     parameterIndex,
@@ -69,8 +66,8 @@ export async function openTrackPluginEditor(trackId: string, deviceId: string): 
 
 export async function persistTrackPluginState(
   change: TrackPluginStateChange,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('persist_track_plugin_state', {
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('persist_track_plugin_state', {
     trackId: change.trackId,
     deviceId: change.deviceId,
     parameterValues: change.parameterValues,
@@ -81,8 +78,8 @@ export async function persistTrackPluginState(
 
 export async function persistTrackPluginParameter(
   change: TrackPluginParameterChange,
-): Promise<CreativeSession> {
-  return await invoke<CreativeSession>('persist_track_plugin_parameter', {
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('persist_track_plugin_parameter', {
     trackId: change.trackId,
     deviceId: change.deviceId,
     parameterIndex: change.parameterIndex,

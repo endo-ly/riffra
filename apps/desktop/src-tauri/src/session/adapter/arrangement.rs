@@ -1,75 +1,72 @@
 //! Arrangement command adapters.
 
 use super::*;
+use crate::session::commit::{
+    arrangement_mutation_result, arrangement_mutation_without_projection,
+};
 
 pub fn update_audio_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
     patch: AudioClipPatch,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_audio_clip(clip_id, patch)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn split_audio_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
     split_tick: TimelineTick,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .split_audio_clip(clip_id, split_tick)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn duplicate_audio_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_audio_clip(clip_id)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn move_audio_clips(
     context: &SessionContext<'_>,
     moves: Vec<AudioClipMove>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).move_audio_clips(moves)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_midi_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
     patch: MidiClipPatch,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_midi_clip(clip_id, patch)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn move_midi_clips(
     context: &SessionContext<'_>,
     moves: Vec<MidiClipMove>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).move_midi_clips(moves)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn trim_midi_clip(
@@ -77,60 +74,55 @@ pub fn trim_midi_clip(
     clip_id: &str,
     start_tick: TimelineTick,
     duration_ticks: u64,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .trim_midi_clip(clip_id, start_tick, duration_ticks)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn split_midi_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
     split_tick: TimelineTick,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).split_midi_clip(clip_id, split_tick)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn duplicate_midi_clip(
     context: &SessionContext<'_>,
     clip_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_midi_clip(clip_id)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn crossfade_audio_clips(
     context: &SessionContext<'_>,
     first_id: &str,
     second_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .crossfade_audio_clips(first_id, second_id)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_timebase(
     context: &SessionContext<'_>,
     timebase: ProjectTimebase,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_timebase(timebase)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_loop_range(
@@ -138,13 +130,12 @@ pub fn update_loop_range(
     enabled: bool,
     start_tick: TimelineTick,
     end_tick: TimelineTick,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .update_loop_range(enabled, start_tick, end_tick)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_punch_range(
@@ -152,26 +143,24 @@ pub fn update_punch_range(
     enabled: bool,
     start_tick: TimelineTick,
     end_tick: TimelineTick,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .update_punch_range(enabled, start_tick, end_tick)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn remove_timeline_clips(
     context: &SessionContext<'_>,
     audio_clip_ids: &[String],
     midi_clip_ids: &[String],
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .remove_timeline_clips(audio_clip_ids.to_owned(), midi_clip_ids.to_owned())
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn paste_timeline_clips(
@@ -179,7 +168,7 @@ pub fn paste_timeline_clips(
     audio_clip_ids: &[String],
     midi_clip_ids: &[String],
     start_tick: TimelineTick,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).paste_timeline_clips(
             audio_clip_ids.to_owned(),
@@ -187,8 +176,7 @@ pub fn paste_timeline_clips(
             start_tick,
         )
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn trim_audio_clip(
@@ -196,7 +184,7 @@ pub fn trim_audio_clip(
     clip_id: &str,
     start_tick: TimelineTick,
     source_range: riffra_core::FrameRange,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let session = context
         .core
         .snapshot()
@@ -225,8 +213,7 @@ pub fn trim_audio_clip(
             (wav.data_len / frame_bytes) as u64,
         )
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Adds an audio clip referencing a canonical Asset and commits the session.
@@ -236,7 +223,7 @@ pub fn add_audio_clip(
     name: String,
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let source_asset = asset::load(context.data_root, &asset_id)
         .ok_or_else(|| format!("Audio Asset is not registered: {asset_id}"))?;
     if source_asset.kind != AssetKind::Audio {
@@ -267,8 +254,7 @@ pub fn add_audio_clip(
             |id| asset::load(context.data_root, id).is_some(),
         )
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Creates an empty MIDI Clip through the Core Application boundary.
@@ -278,51 +264,49 @@ pub fn create_midi_clip(
     start_tick: TimelineTick,
     duration_ticks: u64,
     name: Option<String>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .create_midi_clip(track_id, start_tick, duration_ticks, name)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_session_settings(
     context: &SessionContext<'_>,
     patch: SessionSettingsPatch,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let metronome_changed = patch.metronome_enabled.is_some();
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_session_settings(patch)
     })?;
-    if metronome_changed {
-        sync_arrangement(context)?;
-    }
-    Ok(committed)
+    Ok(if metronome_changed {
+        arrangement_mutation_result(context, committed)
+    } else {
+        arrangement_mutation_without_projection(committed)
+    })
 }
 
 pub fn add_track(
     context: &SessionContext<'_>,
     name: String,
     kind: TrackKind,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).add_track(name, kind)
     })?;
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_track<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     track_id: &str,
     patch: TrackPatch,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_track(track_id, patch)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Replaces one Track Automation Lane in a single canonical edit.
@@ -334,37 +318,34 @@ pub fn set_track_automation(
     track_id: &str,
     parameter: AutomationParameter,
     points: Vec<AutomationPoint>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .set_track_automation(track_id, parameter, points)
     })?;
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Removes a Track and its Clips without deleting any referenced Asset.
 pub fn remove_track(
     context: &SessionContext<'_>,
     track_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_track(track_id)
     })?;
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Duplicates a Track and its non-destructive Clip references.
 pub fn duplicate_track(
     context: &SessionContext<'_>,
     track_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_track(track_id)
     })?;
-    let _ = sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Moves a Track to a zero-based position while preserving Clip ownership.
@@ -372,13 +353,12 @@ pub fn reorder_track(
     context: &SessionContext<'_>,
     track_id: &str,
     target_index: usize,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .reorder_track(track_id, target_index)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 // Marker operations. Markers are timeline authoring metadata with no audio
@@ -388,10 +368,11 @@ pub fn add_marker(
     context: &SessionContext<'_>,
     tick: TimelineTick,
     name: String,
-) -> Result<CreativeSession, String> {
-    commit_core_application(context, |core, store| {
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store).add_marker(tick, name)
-    })
+    })?;
+    Ok(arrangement_mutation_without_projection(committed))
 }
 
 pub fn update_marker(
@@ -399,20 +380,22 @@ pub fn update_marker(
     marker_id: &str,
     name: Option<String>,
     tick: Option<TimelineTick>,
-) -> Result<CreativeSession, String> {
-    commit_core_application(context, |core, store| {
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .update_marker(marker_id, MarkerPatch { name, tick })
-    })
+    })?;
+    Ok(arrangement_mutation_without_projection(committed))
 }
 
 pub fn remove_marker(
     context: &SessionContext<'_>,
     marker_id: &str,
-) -> Result<CreativeSession, String> {
-    commit_core_application(context, |core, store| {
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_marker(marker_id)
-    })
+    })?;
+    Ok(arrangement_mutation_without_projection(committed))
 }
 
 /// Adds a single MIDI note to an existing MIDI clip. The note id is minted by
@@ -425,7 +408,7 @@ pub fn add_midi_note(
     duration_ticks: u64,
     velocity: u8,
     channel: u8,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).add_midi_note(
             clip_id,
@@ -436,8 +419,7 @@ pub fn add_midi_note(
             channel,
         )
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Inserts identity-free MIDI notes through one Core Application operation.
@@ -445,12 +427,11 @@ pub fn insert_midi_notes(
     context: &SessionContext<'_>,
     clip_id: &str,
     notes: Vec<MidiNoteInput>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).insert_midi_notes(clip_id, notes)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn update_midi_note(
@@ -458,7 +439,7 @@ pub fn update_midi_note(
     clip_id: &str,
     note_id: &str,
     patch: MidiNotePatch,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     update_midi_notes(
         context,
         clip_id,
@@ -473,24 +454,22 @@ pub fn update_midi_notes(
     context: &SessionContext<'_>,
     clip_id: &str,
     updates: Vec<MidiNoteUpdate>,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_midi_notes(clip_id, updates)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn remove_midi_note(
     context: &SessionContext<'_>,
     clip_id: &str,
     note_id: &str,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_midi_note(clip_id, note_id)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 /// Removes multiple MIDI notes through one Core Application operation.
@@ -498,13 +477,12 @@ pub fn remove_midi_notes(
     context: &SessionContext<'_>,
     clip_id: &str,
     note_ids: &[String],
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .remove_midi_notes(clip_id, note_ids.to_owned())
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn quantize_midi_notes(
@@ -512,13 +490,12 @@ pub fn quantize_midi_notes(
     clip_id: &str,
     note_ids: &[String],
     grid_ticks: u64,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .quantize_midi_notes(clip_id, note_ids.to_owned(), grid_ticks)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 pub fn duplicate_midi_notes(
@@ -526,13 +503,12 @@ pub fn duplicate_midi_notes(
     clip_id: &str,
     note_ids: &[String],
     offset_ticks: u64,
-) -> Result<CreativeSession, String> {
+) -> Result<crate::model::ArrangementMutationResult, String> {
     let committed = commit_core_application(context, |core, store| {
         core.application(store)
             .duplicate_midi_notes(clip_id, note_ids.to_owned(), offset_ticks)
     })?;
-    sync_arrangement(context)?;
-    Ok(committed)
+    Ok(arrangement_mutation_result(context, committed))
 }
 
 // Audio + Session coupling operations.

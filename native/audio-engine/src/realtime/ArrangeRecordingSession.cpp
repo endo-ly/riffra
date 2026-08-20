@@ -43,12 +43,19 @@ bool ArrangeRecordingSession::initialise(const juce::var& configuration, juce::S
         error = "Arrange recording requires at least one armed Track.";
         return false;
     }
+    midiEvents = std::make_unique<MidiEventQueue>();
+    midiTrackEventCounts =
+        std::make_unique<std::atomic<std::size_t>[]>(static_cast<std::size_t>(values.size()));
+    for (int index = 0; index < values.size(); ++index)
+        midiTrackEventCounts[static_cast<std::size_t>(index)].store(0, std::memory_order_relaxed);
     tracks.reserve(static_cast<std::size_t>(values.size()));
     for (int index = 0; index < values.size(); ++index) {
         const auto value = values[index];
-        TrackWriter track;
+        tracks.emplace_back();
+        auto& track = tracks.back();
         track.trackId = value.getProperty("trackId", {}).toString();
         track.trackKey = juce::String(index).paddedLeft('0', 4);
+        track.midiTrackIndex = static_cast<std::uint32_t>(index);
         track.kind = value.getProperty("kind", {}).toString();
         track.audioInputChannel = static_cast<int>(value.getProperty("audioInputChannel", -1));
         track.midiDeviceId = value.getProperty("midiDeviceId", {}).toString();
@@ -70,7 +77,6 @@ bool ArrangeRecordingSession::initialise(const juce::var& configuration, juce::S
             error = "MIDI Track recording folder could not be created.";
             return false;
         }
-        tracks.push_back(std::move(track));
     }
     return writeManifest("recording", error);
 }
@@ -184,20 +190,61 @@ void ArrangeRecordingSession::writeMidiTrack(const juce::String& trackId,
                                              const juce::MidiMessage& message,
                                              const std::uint64_t audioSample) noexcept {
     if (finished.load(std::memory_order_acquire)) return;
-    const juce::ScopedLock lock(midiLock);
     const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
         return track.trackId == trackId && track.kind == "instrument";
     });
-    if (found == tracks.end() || found->midiEvents.size() >= 200'000) return;
+    if (found == tracks.end() || midiEvents == nullptr || midiTrackEventCounts == nullptr) return;
+    auto& eventCount = midiTrackEventCounts[found->midiTrackIndex];
+    auto currentCount = eventCount.load(std::memory_order_relaxed);
+    auto reserved = false;
+    for (std::size_t attempt = 0; attempt < MidiEventQueue::kMaximumAttempts; ++attempt) {
+        if (currentCount >= kMaximumMidiEvents) {
+            midiTrackQuotaOverflow.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (eventCount.compare_exchange_weak(currentCount, currentCount + 1,
+                                             std::memory_order_relaxed)) {
+            reserved = true;
+            break;
+        }
+    }
+    if (!reserved) {
+        midiTrackQuotaOverflow.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     const auto* bytes = message.getRawData();
-    found->midiEvents.push_back(TrackWriter::MidiEvent{
-        audioSample,
-        sourceDeviceId,
-        message.getRawDataSize() > 0 ? bytes[0] & 0xf0 : 0,
-        message.getChannel(),
-        message.getRawDataSize() > 1 ? bytes[1] : 0,
-        message.getRawDataSize() > 2 ? bytes[2] : 0,
-    });
+    MidiEvent event;
+    event.audioSample = audioSample;
+    event.trackIndex = found->midiTrackIndex;
+    // Convert directly into the fixed packet. CharacterPointer conversion is
+    // bounded and does not allocate, unlike toRawUTF8() for UTF-16 strings.
+    const auto source = sourceDeviceId.getCharPointer();
+    std::size_t sourceBytes = 0;
+    auto sourceEnded = false;
+    auto cursor = source;
+    for (std::size_t character = 0; character < event.sourceDeviceId.size(); ++character) {
+        const auto codePoint = cursor.getAndAdvance();
+        if (codePoint == 0) {
+            sourceEnded = true;
+            break;
+        }
+        sourceBytes += juce::CharPointer_UTF8::getBytesRequiredFor(codePoint);
+        if (sourceBytes >= event.sourceDeviceId.size()) break;
+    }
+    if (!sourceEnded || sourceBytes >= event.sourceDeviceId.size()) {
+        eventCount.fetch_sub(1, std::memory_order_relaxed);
+        midiSourceIdOverflow.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    juce::CharPointer_UTF8(event.sourceDeviceId.data())
+        .writeWithDestByteLimit(source, event.sourceDeviceId.size());
+    event.sourceDeviceIdLength = static_cast<std::uint8_t>(sourceBytes);
+    const auto rawSize = message.getRawDataSize();
+    event.status = rawSize > 0 ? bytes[0] & 0xf0 : 0;
+    event.channel = message.getChannel();
+    event.data1 = rawSize > 1 ? bytes[1] : 0;
+    event.data2 = rawSize > 2 ? bytes[2] : 0;
+    if (!midiEvents->tryPush(event)) eventCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void ArrangeRecordingSession::setCaptureRange(const std::uint64_t startAudioSample,
@@ -289,6 +336,13 @@ bool ArrangeRecordingSession::writeProcessedAudioTrackOffline(const juce::String
 bool ArrangeRecordingSession::finish(juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel)) return true;
     auto completed = true;
+    std::vector<MidiEvent> recordedMidiEvents;
+    recordedMidiEvents.reserve(kMaximumMidiEvents);
+    if (midiEvents != nullptr) {
+        MidiEvent queuedEvent;
+        while (midiEvents->tryPopNonRealtime(queuedEvent))
+            recordedMidiEvents.push_back(queuedEvent);
+    }
     for (auto& track : tracks) {
         if (track.audio != nullptr) {
             juce::String trackError;
@@ -299,52 +353,51 @@ bool ArrangeRecordingSession::finish(juce::String& error) {
         }
         if (track.kind == "instrument") {
             juce::Array<juce::var> events;
-            {
-                const juce::ScopedLock lock(midiLock);
-                const auto segmentCount = std::min(
-                    captureSegmentCount.load(std::memory_order_acquire), captureSegments.size());
-                const auto appendEvent = [&events](const TrackWriter::MidiEvent& event,
-                                                   const std::uint64_t sampleOffset) {
-                    auto* value = new juce::DynamicObject();
-                    value->setProperty("sampleOffset", static_cast<juce::int64>(sampleOffset));
-                    value->setProperty("sourceDeviceId", event.sourceDeviceId);
-                    value->setProperty("status", event.status);
-                    value->setProperty("channel", event.channel);
-                    value->setProperty("data1", event.data1);
-                    value->setProperty("data2", event.data2);
-                    events.add(juce::var(value));
-                };
-                // Open notes are scoped to one capture segment. This prevents a
-                // Punch gap or loop restart from borrowing a Note Off from a
-                // later pass, and closes a captured note exactly at the pass end.
-                for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex) {
-                    const auto& segment = captureSegments[segmentIndex];
-                    std::map<std::pair<int, int>, TrackWriter::MidiEvent> openNotes;
-                    for (const auto& event : track.midiEvents) {
-                        if (event.audioSample < segment.audioClockStartSample ||
-                            event.audioSample >= segment.audioClockEndSample)
-                            continue;
-                        const auto kind = event.status & 0xf0;
-                        const auto key = std::make_pair(event.channel, event.data1);
-                        const auto isNoteOff = kind == 0x80 || (kind == 0x90 && event.data2 == 0);
-                        if (isNoteOff) {
-                            // A Note On before the punch is not captured, so its
-                            // matching Note Off must not create a dangling event.
-                            if (openNotes.erase(key) == 0) continue;
-                        } else if (kind == 0x90) {
-                            openNotes[key] = event;
-                        }
-                        appendEvent(event, segment.fileStartSample + event.audioSample -
-                                               segment.audioClockStartSample);
+            const auto segmentCount = std::min(captureSegmentCount.load(std::memory_order_acquire),
+                                               captureSegments.size());
+            auto appendEvent = [&events](const MidiEvent& event, const std::uint64_t sampleOffset) {
+                auto* value = new juce::DynamicObject();
+                value->setProperty("sourceDeviceId",
+                                   juce::String::fromUTF8(event.sourceDeviceId.data(),
+                                                          event.sourceDeviceIdLength));
+                value->setProperty("sampleOffset", static_cast<juce::int64>(sampleOffset));
+                value->setProperty("status", event.status);
+                value->setProperty("channel", event.channel);
+                value->setProperty("data1", event.data1);
+                value->setProperty("data2", event.data2);
+                events.add(juce::var(value));
+            };
+            // Open notes are scoped to one capture segment. This prevents a
+            // Punch gap or loop restart from borrowing a Note Off from a
+            // later pass, and closes a captured note exactly at the pass end.
+            for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex) {
+                const auto& segment = captureSegments[segmentIndex];
+                std::map<std::pair<int, int>, MidiEvent> openNotes;
+                for (const auto& event : recordedMidiEvents) {
+                    if (event.trackIndex != track.midiTrackIndex) continue;
+                    if (event.audioSample < segment.audioClockStartSample ||
+                        event.audioSample >= segment.audioClockEndSample)
+                        continue;
+                    const auto kind = event.status & 0xf0;
+                    const auto key = std::make_pair(event.channel, event.data1);
+                    const auto isNoteOff = kind == 0x80 || (kind == 0x90 && event.data2 == 0);
+                    if (isNoteOff) {
+                        // A Note On before the punch is not captured, so its
+                        // matching Note Off must not create a dangling event.
+                        if (openNotes.erase(key) == 0) continue;
+                    } else if (kind == 0x90) {
+                        openNotes[key] = event;
                     }
-                    for (const auto& [key, noteOn] : openNotes) {
-                        auto syntheticOff = noteOn;
-                        syntheticOff.status = 0x80;
-                        syntheticOff.channel = key.first;
-                        syntheticOff.data1 = key.second;
-                        syntheticOff.data2 = 0;
-                        appendEvent(syntheticOff, segment.fileEndSample);
-                    }
+                    appendEvent(event, segment.fileStartSample + event.audioSample -
+                                           segment.audioClockStartSample);
+                }
+                for (const auto& [key, noteOn] : openNotes) {
+                    auto syntheticOff = noteOn;
+                    syntheticOff.status = 0x80;
+                    syntheticOff.channel = key.first;
+                    syntheticOff.data1 = key.second;
+                    syntheticOff.data2 = 0;
+                    appendEvent(syntheticOff, segment.fileEndSample);
                 }
             }
             auto* root = new juce::DynamicObject();
@@ -401,12 +454,21 @@ juce::var ArrangeRecordingSession::status() const {
             processedMissing += track.audio->getProcessedMissingSamples();
         }
     }
+    const auto midiDropped = droppedMidiEvents();
     result->setProperty("samplesWritten", static_cast<juce::int64>(written));
     result->setProperty("droppedBlocks", static_cast<juce::int64>(dropped));
+    result->setProperty("droppedMidiEvents", static_cast<juce::int64>(midiDropped));
     result->setProperty("rawMissingSamples", static_cast<juce::int64>(rawMissing));
     result->setProperty("processedMissingSamples", static_cast<juce::int64>(processedMissing));
-    result->setProperty("recoveryStatus", dropped == 0 ? "clean" : "partial");
+    result->setProperty("recoveryStatus", dropped == 0 && midiDropped == 0 ? "clean" : "partial");
     return juce::var(result);
+}
+
+std::uint64_t ArrangeRecordingSession::droppedMidiEvents() const noexcept {
+    auto dropped = midiSourceIdOverflow.load(std::memory_order_acquire);
+    dropped += midiTrackQuotaOverflow.load(std::memory_order_acquire);
+    if (midiEvents != nullptr) dropped += midiEvents->droppedPushes();
+    return dropped;
 }
 
 bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::String& error) const {
@@ -444,6 +506,7 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
     std::uint64_t processedDroppedBlocks = 0;
     std::uint64_t rawMissingSamples = 0;
     std::uint64_t processedMissingSamples = 0;
+    const auto droppedMidiEventsCount = droppedMidiEvents();
     std::optional<std::uint64_t> rawFirstMissingSample;
     std::optional<std::uint64_t> rawLastMissingSample;
     std::optional<std::uint64_t> processedFirstMissingSample;
@@ -481,6 +544,7 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
     }
     root->setProperty("samplesWritten", static_cast<juce::int64>(samplesWritten));
     root->setProperty("droppedBlocks", static_cast<juce::int64>(droppedBlocks));
+    root->setProperty("droppedMidiEvents", static_cast<juce::int64>(droppedMidiEventsCount));
     root->setProperty("missingSamples", static_cast<juce::int64>(missingSamples));
     root->setProperty("rawAttemptedSamples", static_cast<juce::int64>(rawAttemptedSamples));
     root->setProperty("processedAttemptedSamples",
@@ -497,7 +561,8 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
                       static_cast<juce::int64>(processedFirstMissingSample.value_or(0)));
     root->setProperty("processedDropoutEndSample",
                       static_cast<juce::int64>(processedLastMissingSample.value_or(0)));
-    root->setProperty("recoveryStatus", droppedBlocks == 0 ? "clean" : "partial");
+    root->setProperty("recoveryStatus",
+                      droppedBlocks == 0 && droppedMidiEventsCount == 0 ? "clean" : "partial");
     juce::Array<juce::var> segments;
     const auto segmentCount =
         std::min(captureSegmentCount.load(std::memory_order_acquire), captureSegments.size());

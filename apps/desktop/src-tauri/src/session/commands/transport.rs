@@ -1,6 +1,13 @@
 use super::*;
 
 #[tauri::command]
+pub async fn get_runtime_projection_status(
+    app: AppHandle,
+) -> Result<RuntimeProjectionStatus, String> {
+    run_runtime_control(app, |state| Ok(state.runtime.status())).await
+}
+
+#[tauri::command]
 pub async fn retry_runtime_projection(app: AppHandle) -> Result<RuntimeProjectionStatus, String> {
     run_runtime_control(app, |state| {
         adapter::sync_arrangement_runtime(&app_context(state))
