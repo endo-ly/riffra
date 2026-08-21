@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioTakeVariant,
@@ -7,9 +8,9 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
-import surface from '@/shared/ui/Surface.module.css';
+import { Icon } from '@/shared/ui/primitives';
 import { useInspectorOperation } from './useInspectorOperation';
-import styles from './TakeInspector.module.css';
+import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 type RecordingSession = CreativeSession['arrangement']['recordingSessions'][number];
@@ -269,7 +270,7 @@ export function TakeInspector(props: TakeInspectorProps) {
       <header className={styles.sectionHeader}>
         <strong>TAKES</strong>
         <button
-          className={surface.textButton}
+          className={styles.headerAction}
           type="button"
           disabled={!canRecordAnotherTake}
           aria-label="Record another take"
@@ -281,9 +282,10 @@ export function TakeInspector(props: TakeInspectorProps) {
       </header>
 
       {context.sessions.length > 1 && (
-        <label className={styles.groupSelector}>
-          <span>Recording group</span>
+        <label className={styles.field}>
+          <span>Group</span>
           <select
+            className={styles.control}
             aria-label="Recording group"
             disabled={Boolean(context.selectedTake)}
             value={context.recordingSession.id}
@@ -310,23 +312,53 @@ export function TakeInspector(props: TakeInspectorProps) {
         const isAuditioning = audition?.takeId === take.id;
 
         return (
-          <div className={styles.takeRow} key={take.id}>
-            <div className={styles.takeHeader}>
+          <div className={clsx(styles.take, isAuditioning && styles.auditioning)} key={take.id}>
+            <div className={styles.takeLine}>
+              <Icon name={hasPreview ? 'wave' : 'note'} />
               <strong>Take {index + 1}</strong>
-              <div className={styles.takeMeta}>
-                {!hasPreview && <span className={styles.typeLabel}>MIDI</span>}
-                {active && <span className={styles.currentBadge}>CURRENT</span>}
+              {!hasPreview && <span className={clsx(styles.badge, styles.muted)}>MIDI</span>}
+              {active && <span className={styles.badge}>CURRENT</span>}
+              <div className={styles.takeActions}>
+                {!active && (
+                  <button
+                    className={clsx(styles.smallButton, styles.accent)}
+                    type="button"
+                    aria-label={`Use Take ${index + 1}`}
+                    onClick={() =>
+                      commit(props.api.activateTake(context.recordingSession.id, take.id))
+                    }
+                  >
+                    Use
+                  </button>
+                )}
+                <button
+                  className={styles.smallButton}
+                  type="button"
+                  onClick={() => commit(props.api.placeTakeAsSeparateClip(take.id))}
+                >
+                  Place copy
+                </button>
+                {hasPreview && (
+                  <button
+                    className={styles.iconButton}
+                    type="button"
+                    aria-label={isAuditioning ? 'Stop' : 'Preview'}
+                    aria-pressed={isAuditioning}
+                    onClick={() => preview(take)}
+                  >
+                    <Icon name={isAuditioning ? 'stop' : 'speaker'} />
+                  </button>
+                )}
               </div>
             </div>
-
             {hasComparison && (
               <div
-                className={styles.sourceBlock}
+                className={styles.takeSource}
                 role="group"
                 aria-label={`Take ${index + 1} source`}
               >
-                <span className={styles.sourceLabel}>Audio source</span>
-                <div className={styles.sourceControl}>
+                <span>Source</span>
+                <div className={styles.segmented}>
                   <button
                     type="button"
                     aria-pressed={selectedVariant === 'raw'}
@@ -344,38 +376,6 @@ export function TakeInspector(props: TakeInspectorProps) {
                 </div>
               </div>
             )}
-
-            <div className={styles.actions}>
-              {!active && (
-                <button
-                  className={`${styles.actionButton} ${styles.useButton}`}
-                  type="button"
-                  aria-label={`Use Take ${index + 1}`}
-                  onClick={() =>
-                    commit(props.api.activateTake(context.recordingSession.id, take.id))
-                  }
-                >
-                  Use
-                </button>
-              )}
-              <button
-                className={`${styles.actionButton} ${styles.copyButton}`}
-                type="button"
-                onClick={() => commit(props.api.placeTakeAsSeparateClip(take.id))}
-              >
-                Place copy
-              </button>
-              {hasPreview && (
-                <button
-                  className={`${styles.actionButton} ${isAuditioning ? styles.stopButton : styles.previewButton}`}
-                  type="button"
-                  aria-pressed={isAuditioning}
-                  onClick={() => preview(take)}
-                >
-                  {isAuditioning ? 'Stop' : 'Preview'}
-                </button>
-              )}
-            </div>
           </div>
         );
       })}

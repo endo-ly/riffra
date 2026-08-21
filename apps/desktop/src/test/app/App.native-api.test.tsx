@@ -57,7 +57,7 @@ describe('App native boundary', () => {
       name: 'Resize Browser and Properties',
     });
     fireEvent.keyDown(propertiesHandle, { key: 'ArrowUp' });
-    expect(propertiesHandle).toHaveAttribute('aria-valuenow', '248');
+    expect(propertiesHandle).toHaveAttribute('aria-valuenow', '348');
   });
 
   it('removes a collapsed left column from the interaction tree', async () => {

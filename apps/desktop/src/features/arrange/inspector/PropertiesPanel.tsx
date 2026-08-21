@@ -6,6 +6,7 @@ import { MidiClipInspector } from './MidiClipInspector';
 import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
 
 interface PropertiesPanelProps {
@@ -142,7 +143,13 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               api={props.api}
             />
           </>
-        ) : null}
+        ) : (
+          <div className={styles.empty}>
+            <Icon name="pointer" />
+            <strong>Nothing selected</strong>
+            <small>Select a track or a clip in the arrangement to inspect it here.</small>
+          </div>
+        )}
       </div>
     </aside>
   );

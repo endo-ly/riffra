@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import clsx from 'clsx';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
-import styles from './ArrangeClipInspector.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface MultiClipInspectorProps {
@@ -61,30 +63,51 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
     );
   };
 
+  const summary = [audioClips.length, midiClips.length];
   return (
     <div className={styles.inspector}>
-      <div className={styles.actions}>
-        {selectedClips.length === 2 && audioClips.length === 2 && (
-          <button
-            className={styles.primary}
-            onClick={() => run(props.api.crossfadeAudioClips(audioClips[0].id, audioClips[1].id))}
-          >
-            Crossfade
-          </button>
-        )}
-        <button onClick={duplicate}>Duplicate</button>
-        <button
-          className={styles.danger}
-          onClick={() =>
-            run(
-              props.api.removeTimelineClips(props.selectedAudioClipIds, props.selectedMidiClipIds),
-              () => props.setSelectedClipIds([]),
-            )
-          }
-        >
-          Delete
-        </button>
+      <div className={styles.identity}>
+        <span className={styles.identityIcon}>
+          <Icon name="copy" />
+        </span>
+        <div className={styles.identityBlock}>
+          <strong>{selectedClips.length} clips selected</strong>
+          <small>
+            {summary[0]} audio · {summary[1]} midi
+          </small>
+        </div>
       </div>
+      <section className={styles.section}>
+        <div className={styles.clipActions}>
+          {selectedClips.length === 2 && audioClips.length === 2 && (
+            <button
+              type="button"
+              className={clsx(styles.smallButton, styles.accent)}
+              onClick={() => run(props.api.crossfadeAudioClips(audioClips[0].id, audioClips[1].id))}
+            >
+              Crossfade
+            </button>
+          )}
+          <button type="button" className={styles.smallButton} onClick={duplicate}>
+            Duplicate
+          </button>
+          <button
+            type="button"
+            className={clsx(styles.smallButton, styles.danger)}
+            onClick={() =>
+              run(
+                props.api.removeTimelineClips(
+                  props.selectedAudioClipIds,
+                  props.selectedMidiClipIds,
+                ),
+                () => props.setSelectedClipIds([]),
+              )
+            }
+          >
+            Delete
+          </button>
+        </div>
+      </section>
       {message && <p className={styles.message}>{message}</p>}
     </div>
   );

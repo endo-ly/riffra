@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioStatus,
@@ -7,10 +8,11 @@ import type {
   Track,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
+import { Icon } from '@/shared/ui/primitives';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
-import styles from './TrackInspector.module.css';
+import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface TrackInspectorProps {
@@ -24,6 +26,11 @@ interface TrackInspectorProps {
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
   api: ArrangeInspectorApi;
+}
+
+function formatPan(pan: number) {
+  if (Math.abs(pan) < 0.01) return 'C';
+  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
 }
 
 export function TrackInspector(props: TrackInspectorProps) {
@@ -50,239 +57,41 @@ export function TrackInspector(props: TrackInspectorProps) {
   const instrumentUnavailable =
     props.track.instrument?.disabledPlaceholder ||
     (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
-  const replaceMissing = (deviceId: string) => {
-    setReplaceTarget({ deviceId });
-  };
+  const instrument = props.track.instrument;
   return (
     <div className={styles.inspector}>
-      <section className={styles.section}>
-        <header className={styles.sectionHeader}>
-          <strong>TRACK</strong>
-        </header>
-        <label className={styles.field}>
-          <span>Name</span>
-          <input
-            className={styles.control}
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-            onBlur={() => {
-              const next = name.trim();
-              if (next && next !== props.track.name) {
-                commit(props.api.updateTrack(props.track.id, { name: next }));
-              } else {
-                setName(props.track.name);
-              }
-            }}
-          />
-        </label>
-      </section>
-      {props.track.kind === 'audio' ? (
-        <section className={styles.section}>
-          <header className={styles.sectionHeader}>
-            <strong>INPUT</strong>
-          </header>
-          <select
-            className={styles.control}
-            aria-label="Audio input"
-            value={props.track.audioInput?.channelIndex ?? ''}
-            onChange={(event) =>
-              commit(
-                props.api.setTrackAudioInput(
-                  props.track.id,
-                  event.currentTarget.value === '' ? null : Number(event.currentTarget.value),
-                ),
-              )
+      <div className={styles.identity}>
+        <span className={styles.identityIcon}>
+          <Icon name={props.track.kind === 'audio' ? 'wave' : 'note'} />
+        </span>
+        <input
+          className={styles.identityName}
+          aria-label="Track name"
+          value={name}
+          onChange={(event) => setName(event.currentTarget.value)}
+          onBlur={() => {
+            const next = name.trim();
+            if (next && next !== props.track.name) {
+              commit(props.api.updateTrack(props.track.id, { name: next }));
+            } else {
+              setName(props.track.name);
             }
-          >
-            <option value="">None</option>
-            {props.audio.inputChannels.map((channel) => (
-              <option key={channel.index} value={channel.index}>
-                {channel.name}
-              </option>
-            ))}
-            {props.track.audioInput &&
-              !props.audio.inputChannels.some(
-                (channel) => channel.index === props.track.audioInput?.channelIndex,
-              ) && (
-                <option value={props.track.audioInput.channelIndex}>
-                  Input {props.track.audioInput.channelIndex + 1} · Unavailable
-                </option>
-              )}
-          </select>
-        </section>
-      ) : (
-        <>
-          <section className={styles.section}>
-            <header className={styles.sectionHeader}>
-              <strong>MIDI INPUT</strong>
-            </header>
-            <select
-              className={styles.control}
-              aria-label="MIDI input"
-              value={props.track.midiInput.deviceId ?? ''}
-              onChange={(event) =>
-                commit(
-                  props.api.setTrackMidiInput(props.track.id, {
-                    ...props.track.midiInput,
-                    deviceId: event.currentTarget.value || undefined,
-                  }),
-                )
-              }
-            >
-              <option value="">All Inputs</option>
-              {props.audio.midiInputs.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={styles.control}
-              aria-label="MIDI channel"
-              value={props.track.midiInput.channel ?? ''}
-              onChange={(event) =>
-                commit(
-                  props.api.setTrackMidiInput(props.track.id, {
-                    ...props.track.midiInput,
-                    channel: event.currentTarget.value
-                      ? Number(event.currentTarget.value)
-                      : undefined,
-                  }),
-                )
-              }
-            >
-              <option value="">All Channels</option>
-              {Array.from({ length: 16 }, (_, index) => index + 1).map((channel) => (
-                <option key={channel} value={channel}>
-                  Channel {channel}
-                </option>
-              ))}
-            </select>
-          </section>
-          <section className={styles.section}>
-            <header className={styles.sectionHeader}>
-              <strong>INSTRUMENT</strong>
-            </header>
-            {(instrumentPickerOpen || replaceTarget) && (
-              <PluginPicker
-                api={props.api}
-                plugins={props.plugins}
-                title={replaceTarget ? 'Replace Plugin' : 'Choose Instrument'}
-                onSelect={(plugin) => {
-                  if (replaceTarget) {
-                    runOperation(props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path));
-                    setReplaceTarget(null);
-                  } else {
-                    setInstrument(plugin);
-                    setInstrumentPickerOpen(false);
-                  }
-                }}
-                onClose={() => {
-                  setInstrumentPickerOpen(false);
-                  setReplaceTarget(null);
-                }}
-              />
-            )}
-            <div className={styles.instrumentRow}>
-              <div>
-                <strong>{props.track.instrument?.name ?? 'None'}</strong>
-                <small>
-                  {props.track.instrument ? 'VST3 instrument' : 'No instrument selected'}
-                </small>
-              </div>
-              {!instrumentUnavailable && (
-                <button type="button" onClick={() => setInstrumentPickerOpen(true)}>
-                  {props.track.instrument ? 'Change' : 'Choose'}
-                </button>
-              )}
-            </div>
-            {instrumentUnavailable && (
-              <strong className={styles.warning}>
-                {props.track.instrument?.disabledPlaceholder
-                  ? 'DISABLED PLACEHOLDER'
-                  : 'MISSING PLUGIN'}
-              </strong>
-            )}
-            {props.track.instrument && instrumentUnavailable && (
-              <div className={styles.actions}>
-                <button onClick={() => runOperation(props.onRescanMissingPlugins())}>
-                  Re-scan
-                </button>
-                <button onClick={() => replaceMissing(props.track.instrument!.id)}>Replace</button>
-                {!props.track.instrument.disabledPlaceholder && (
-                  <button
-                    onClick={() =>
-                      runOperation(props.onDisableMissingPlugin(props.track.instrument!.id))
-                    }
-                  >
-                    Disable
-                  </button>
-                )}
-              </div>
-            )}
-            {props.track.instrument && !instrumentUnavailable && (
-              <div className={styles.actions}>
-                <button
-                  onClick={() =>
-                    runOperation(
-                      props.api.openTrackPluginEditor(props.track.id, props.track.instrument!.id),
-                    )
-                  }
-                >
-                  Edit
-                </button>
-                <button onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}>
-                  Clear
-                </button>
-              </div>
-            )}
-          </section>
-        </>
-      )}
-      {props.track.kind === 'audio' && (
-        <section className={styles.section}>
-          <header className={styles.sectionHeader}>
-            <strong>MONITORING</strong>
-          </header>
-          <div className={styles.segmented} role="group" aria-label="Monitoring">
-            {(['off', 'auto', 'on'] as const).map((monitoring) => (
-              <button
-                type="button"
-                key={monitoring}
-                className={props.track.monitoring === monitoring ? styles.active : ''}
-                aria-pressed={props.track.monitoring === monitoring}
-                onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
-              >
-                {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-      <TrackPluginChainEditor
-        track={props.track}
-        api={props.api}
-        plugins={props.plugins}
-        commit={commit}
-        missingDeviceIds={props.missingDeviceIds}
-        onDisableMissingPlugin={props.onDisableMissingPlugin}
-        onReplaceMissingPlugin={props.onReplaceMissingPlugin}
-        onRescanMissingPlugins={props.onRescanMissingPlugins}
-        runOperation={runOperation}
-      />
-      {operationMessage && (
-        <p className={styles.message} role="status">
-          {operationMessage}
-        </p>
-      )}
-      <section className={styles.section}>
-        <header className={styles.sectionHeader}>
-          <strong>MIX</strong>
-        </header>
-        <label className={styles.field}>
-          <span>Volume</span>
+          }}
+        />
+      </div>
+
+      <div className={styles.mixCluster} aria-label="Track mix">
+        <label className={styles.mixField}>
+          <span>
+            Gain{' '}
+            <span className={styles.value}>
+              {gainDb > 0 ? '+' : ''}
+              {gainDb.toFixed(1)} dB
+            </span>
+          </span>
           <input
             className={styles.range}
+            aria-label="Track gain"
             type="range"
             min="-60"
             max="12"
@@ -299,10 +108,13 @@ export function TrackInspector(props: TrackInspectorProps) {
             }}
           />
         </label>
-        <label className={styles.field}>
-          <span>Pan</span>
+        <label className={styles.mixField}>
+          <span>
+            Pan <span className={styles.value}>{formatPan(pan)}</span>
+          </span>
           <input
             className={styles.range}
+            aria-label="Track pan"
             type="range"
             min="-1"
             max="1"
@@ -317,7 +129,229 @@ export function TrackInspector(props: TrackInspectorProps) {
             }}
           />
         </label>
-      </section>
+      </div>
+
+      {props.track.kind === 'audio' ? (
+        <>
+          <section className={styles.section}>
+            <header className={styles.sectionHeader}>
+              <strong>INPUT</strong>
+            </header>
+            <select
+              className={styles.control}
+              aria-label="Audio input"
+              value={props.track.audioInput?.channelIndex ?? ''}
+              onChange={(event) =>
+                commit(
+                  props.api.setTrackAudioInput(
+                    props.track.id,
+                    event.currentTarget.value === '' ? null : Number(event.currentTarget.value),
+                  ),
+                )
+              }
+            >
+              <option value="">None</option>
+              {props.audio.inputChannels.map((channel) => (
+                <option key={channel.index} value={channel.index}>
+                  {channel.name}
+                </option>
+              ))}
+              {props.track.audioInput &&
+                !props.audio.inputChannels.some(
+                  (channel) => channel.index === props.track.audioInput?.channelIndex,
+                ) && (
+                  <option value={props.track.audioInput.channelIndex}>
+                    Input {props.track.audioInput.channelIndex + 1} · Unavailable
+                  </option>
+                )}
+            </select>
+            <div
+              className={clsx(styles.segmented, styles.segmentedGap)}
+              role="group"
+              aria-label="Monitoring"
+            >
+              {(['off', 'auto', 'on'] as const).map((monitoring) => (
+                <button
+                  type="button"
+                  key={monitoring}
+                  aria-pressed={props.track.monitoring === monitoring}
+                  onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
+                >
+                  {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
+                </button>
+              ))}
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <section className={styles.section}>
+            <header className={styles.sectionHeader}>
+              <strong>MIDI INPUT</strong>
+            </header>
+            <div className={styles.fieldColumn}>
+              <select
+                className={styles.control}
+                aria-label="MIDI input"
+                value={props.track.midiInput.deviceId ?? ''}
+                onChange={(event) =>
+                  commit(
+                    props.api.setTrackMidiInput(props.track.id, {
+                      ...props.track.midiInput,
+                      deviceId: event.currentTarget.value || undefined,
+                    }),
+                  )
+                }
+              >
+                <option value="">All Inputs</option>
+                {props.audio.midiInputs.map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className={styles.control}
+                aria-label="MIDI channel"
+                value={props.track.midiInput.channel ?? ''}
+                onChange={(event) =>
+                  commit(
+                    props.api.setTrackMidiInput(props.track.id, {
+                      ...props.track.midiInput,
+                      channel: event.currentTarget.value
+                        ? Number(event.currentTarget.value)
+                        : undefined,
+                    }),
+                  )
+                }
+              >
+                <option value="">All Channels</option>
+                {Array.from({ length: 16 }, (_, index) => index + 1).map((channel) => (
+                  <option key={channel} value={channel}>
+                    Channel {channel}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </section>
+          <section className={styles.section}>
+            <header className={styles.sectionHeader}>
+              <strong>INSTRUMENT</strong>
+            </header>
+            {instrumentPickerOpen && (
+              <PluginPicker
+                api={props.api}
+                plugins={props.plugins}
+                title="Choose Instrument"
+                onSelect={(plugin) => {
+                  setInstrument(plugin);
+                  setInstrumentPickerOpen(false);
+                }}
+                onClose={() => setInstrumentPickerOpen(false)}
+              />
+            )}
+            <div className={styles.deviceRow}>
+              <span className={styles.deviceIcon}>
+                <Icon name="module" />
+              </span>
+              <div className={styles.deviceMeta}>
+                <strong>{instrument?.name ?? 'None'}</strong>
+                {!instrument && <small>No instrument selected</small>}
+              </div>
+              <div className={clsx(styles.deviceActions, styles.visible)}>
+                {!instrumentUnavailable && (
+                  <button
+                    type="button"
+                    className={styles.textButton}
+                    onClick={() => setInstrumentPickerOpen(true)}
+                  >
+                    {instrument ? 'Change' : 'Choose'}
+                  </button>
+                )}
+                {instrument && !instrumentUnavailable && (
+                  <>
+                    <button
+                      type="button"
+                      className={clsx(styles.textButton, styles.plain)}
+                      onClick={() =>
+                        runOperation(props.api.openTrackPluginEditor(props.track.id, instrument.id))
+                      }
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className={clsx(styles.textButton, styles.plain)}
+                      onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            {instrumentUnavailable && (
+              <div className={styles.missingState}>
+                <strong>
+                  {instrument?.disabledPlaceholder ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}
+                </strong>
+                <button
+                  type="button"
+                  className={styles.smallButton}
+                  onClick={() => runOperation(props.onRescanMissingPlugins())}
+                >
+                  Re-scan
+                </button>
+                <button
+                  type="button"
+                  className={styles.smallButton}
+                  onClick={() => setReplaceTarget({ deviceId: instrument!.id })}
+                >
+                  Replace
+                </button>
+                {!instrument?.disabledPlaceholder && (
+                  <button
+                    type="button"
+                    className={styles.smallButton}
+                    onClick={() => runOperation(props.onDisableMissingPlugin(instrument!.id))}
+                  >
+                    Disable
+                  </button>
+                )}
+              </div>
+            )}
+            {replaceTarget && (
+              <PluginPicker
+                api={props.api}
+                plugins={props.plugins}
+                title="Replace Plugin"
+                onSelect={(plugin) => {
+                  runOperation(props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path));
+                  setReplaceTarget(null);
+                }}
+                onClose={() => setReplaceTarget(null)}
+              />
+            )}
+          </section>
+        </>
+      )}
+
+      <TrackPluginChainEditor
+        track={props.track}
+        api={props.api}
+        plugins={props.plugins}
+        commit={commit}
+        missingDeviceIds={props.missingDeviceIds}
+        onDisableMissingPlugin={props.onDisableMissingPlugin}
+        onReplaceMissingPlugin={props.onReplaceMissingPlugin}
+        onRescanMissingPlugins={props.onRescanMissingPlugins}
+        runOperation={runOperation}
+      />
+      {operationMessage && (
+        <p className={styles.message} role="status">
+          {operationMessage}
+        </p>
+      )}
     </div>
   );
 }

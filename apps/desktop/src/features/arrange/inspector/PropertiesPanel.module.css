@@ -10,7 +10,7 @@
 }
 
 .heading {
-  flex: 0 0 36px;
+  flex: 0 0 32px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -36,4 +36,30 @@
   overflow-y: auto;
   scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
   scrollbar-width: thin;
+}
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 48px 20px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.empty svg {
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-disabled);
+}
+
+.empty strong {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.empty small {
+  font-size: var(--font-size-micro);
+  line-height: 1.6;
 }

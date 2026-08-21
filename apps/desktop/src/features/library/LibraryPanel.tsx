@@ -38,6 +38,12 @@ interface LibraryPanelProps {
   inbox: InboxController;
 }
 
+function assetIconName(asset: Pick<LibraryAsset, 'kind'>) {
+  if (asset.kind === 'audio') return 'wave';
+  if (asset.kind === 'midi') return 'note';
+  return 'module';
+}
+
 export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
 
@@ -45,44 +51,58 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
     void operation.catch(() => undefined);
   };
 
+  const sectionCount = (section: string) =>
+    section === 'Plugins' ? plugins.plugins.length : recordings.count;
+
   return (
     <aside className={styles.libraryPanel} aria-label="Browser" data-library-panel>
-      <div className={styles.panelHeading}>
-        <span>BROWSER</span>
-      </div>
-      <label className={styles.panelSearch}>
-        <Icon name="search" />
-        <input
-          aria-label="Library search"
-          value={library.query}
-          onChange={(event) => library.setQuery(event.target.value)}
-          placeholder="Search assets"
-        />
-      </label>
-      <div className={styles.libraryActions}>
-        <button
-          type="button"
-          className={surface.textButton}
-          onClick={() => void library.onImportMidi()}
-        >
-          Import MIDI…
-        </button>
-      </div>
-      <nav className={styles.nav}>
+      <div className={styles.tabs} role="tablist" aria-label="Browser sections">
         {librarySections.map((section) => (
           <button
             key={section}
-            className={clsx(styles.navButton, library.section === section && styles.active)}
+            role="tab"
+            aria-selected={library.section === section}
+            className={clsx(styles.tab, library.section === section && styles.active)}
             onClick={() => library.setSection(section)}
           >
-            <span className={styles.navGlyph} />
             {section}
-            <small>{section === 'Plugins' ? plugins.plugins.length : ''}</small>
+            <small>{sectionCount(section)}</small>
           </button>
         ))}
-      </nav>
+      </div>
+      <div className={styles.toolbar}>
+        <label className={styles.search}>
+          <Icon name="search" />
+          <input
+            aria-label="Library search"
+            value={library.query}
+            onChange={(event) => library.setQuery(event.target.value)}
+            placeholder="Search"
+          />
+        </label>
+        {library.section === 'Plugins' ? (
+          <button
+            type="button"
+            className={styles.toolButton}
+            aria-label="Import MIDI"
+            title="Import MIDI"
+            onClick={() => void library.onImportMidi()}
+          >
+            <Icon name="import" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={styles.toolButton}
+            aria-label="Find duplicates"
+            title="Find duplicates"
+            onClick={() => showHandledError(inbox.detectDuplicates())}
+          >
+            <Icon name="copy" />
+          </button>
+        )}
+      </div>
       <div className={styles.libraryContent}>
-        <span className={surface.eyebrow}>{library.section.toUpperCase()}</span>
         {library.searchQuery && (
           <section className={styles.librarySearchResults}>
             <span className={surface.eyebrow}>CROSS-ASSET SEARCH · {library.results.length}</span>
@@ -105,7 +125,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                 }}
                 onClick={() => void library.onSelectAsset(asset)}
               >
-                <span className={styles.navGlyph} />
+                <Icon name={assetIconName(asset)} />
                 <div>
                   <strong>{asset.name}</strong>
                   <small>
@@ -159,78 +179,75 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
         )}
         {library.section === 'Plugins' ? (
           <div className={styles.pluginArea}>
-            <small className={styles.scanMessage}>{plugins.visiblePlugins.length}件を表示</small>
+            {plugins.visiblePlugins.length < plugins.plugins.length && (
+              <small className={styles.scanMessage}>
+                Showing {plugins.visiblePlugins.length} of {plugins.plugins.length} plugins
+              </small>
+            )}
             {plugins.visiblePlugins.slice(0, 12).map((plugin) => (
-              <div className={styles.pluginEntry} key={plugin.id}>
-                <div className={styles.pluginRow}>
-                  <span>{plugin.name.slice(0, 1).toUpperCase()}</span>
-                  <div>
-                    <strong>{plugin.name}</strong>
-                    <small>{plugin.vendor ?? 'VST3'}</small>
-                  </div>
-                  <i className={clsx(styles.stability, styles[plugin.scanState])} />
-                  <button
-                    type="button"
-                    className={styles.pluginAdd}
-                    aria-label={
-                      plugins.selectedTrack
+              <div className={styles.pluginRow} key={plugin.id}>
+                <span className={styles.rowIcon}>
+                  <Icon name="module" />
+                </span>
+                <div>
+                  <strong>{plugin.name}</strong>
+                  <small>{plugin.vendor ?? 'VST3'}</small>
+                </div>
+                <i className={clsx(styles.stability, styles[plugin.scanState])} />
+                <button
+                  type="button"
+                  className={styles.pluginAdd}
+                  aria-label={
+                    plugins.selectedTrack
+                      ? `${
+                          plugins.selectedTrack.kind === 'instrument' &&
+                          plugins.selectedTrack.instrument
+                            ? 'Replace instrument with'
+                            : 'Add'
+                        } ${plugin.name} as ${
+                          plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
+                        } on ${plugins.selectedTrack.name}`
+                      : `Select a Track before adding ${plugin.name}`
+                  }
+                  onClick={() => {
+                    if (!plugins.selectedTrack) {
+                      setMessage('Select a Track before adding a Plugin.');
+                      return;
+                    }
+                    setMessage(null);
+                    plugins.onAddPlugin(
+                      plugin,
+                      plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
+                    );
+                  }}
+                  disabled={plugin.scanState !== 'validated'}
+                  title={
+                    plugin.scanState === 'validated'
+                      ? plugins.selectedTrack
                         ? `${
                             plugins.selectedTrack.kind === 'instrument' &&
                             plugins.selectedTrack.instrument
                               ? 'Replace instrument with'
                               : 'Add'
-                          } ${plugin.name} as ${
-                            plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect'
-                          } on ${plugins.selectedTrack.name}`
+                          } ${plugin.name} on ${plugins.selectedTrack.name}`
                         : `Select a Track before adding ${plugin.name}`
-                    }
-                    onClick={() => {
-                      if (!plugins.selectedTrack) {
-                        setMessage('Select a Track before adding a Plugin.');
-                        return;
-                      }
-                      setMessage(null);
-                      plugins.onAddPlugin(
-                        plugin,
-                        plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
-                      );
-                    }}
-                    disabled={plugin.scanState !== 'validated'}
-                    title={
-                      plugin.scanState === 'validated'
-                        ? plugins.selectedTrack
-                          ? `${
-                              plugins.selectedTrack.kind === 'instrument' &&
-                              plugins.selectedTrack.instrument
-                                ? 'Replace instrument with'
-                                : 'Add'
-                            } ${plugin.name} on ${plugins.selectedTrack.name}`
-                          : `Select a Track before adding ${plugin.name}`
-                        : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
-                    }
-                  >
-                    ＋
-                  </button>
-                </div>
+                      : `${plugin.name} is ${plugin.scanState} and cannot be loaded`
+                  }
+                >
+                  <Icon name="plus" />
+                </button>
               </div>
             ))}
             {message && <small className={styles.inboxMessage}>{message}</small>}
             {plugins.visiblePlugins.length === 0 && (
               <div className={styles.libraryEmpty}>
-                <span>一致するVST3がありません</span>
-                <small>検索語を変えるか、VST3フォルダを確認してください。</small>
+                <span>No plugins match</span>
+                <small>Adjust the search or check your VST3 folders.</small>
               </div>
             )}
           </div>
         ) : library.section === 'Recordings' ? (
           <>
-            <button
-              className={surface.textButton}
-              aria-label="Find duplicates"
-              onClick={() => showHandledError(inbox.detectDuplicates())}
-            >
-              Find duplicates
-            </button>
             {inbox.error ? (
               <small className={clsx(styles.inboxMessage, styles.error)} role="alert">
                 {inbox.error}
@@ -274,7 +291,9 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                   }}
                   title={recording.error ?? recording.path}
                 >
-                  <span>{recording.state === 'completed' ? '✓' : '!'}</span>
+                  <span className={styles.rowIcon}>
+                    <Icon name="wave" />
+                  </span>
                   <div>
                     <strong>{recording.name}</strong>
                     <small>
@@ -287,9 +306,9 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                     </small>
                   </div>
                   {(recording.processedAssetId ?? recording.rawAssetId) && (
-                    <b className={styles.assetGrip} aria-hidden="true">
-                      ⠿
-                    </b>
+                    <span className={styles.assetGrip} aria-hidden="true">
+                      <Icon name="grip" />
+                    </span>
                   )}
                   <i
                     className={clsx(
@@ -306,8 +325,10 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
             ))}
             {recordings.visibleRecordings.length === 0 && (
               <div className={styles.libraryEmpty}>
-                <span>まだ録音がありません</span>
-                <small>Quick RecordまたはTransportの録音ボタンからInboxへ保全できます。</small>
+                <span>No recordings yet</span>
+                <small>
+                  Capture takes with Quick Record or the transport to keep them in the Inbox.
+                </small>
               </div>
             )}
             {inbox.selected && (
@@ -343,18 +364,11 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
           </>
         ) : (
           <div className={styles.libraryEmpty}>
-            <span>まだ資産がありません</span>
-            <small>良い結果を保存すると、ここから再利用できます。</small>
+            <span>No assets yet</span>
+            <small>Saved sounds become reusable here.</small>
           </div>
         )}
       </div>
-      <button className={styles.inboxButton} onClick={() => library.setSection('Recordings')}>
-        <span className={styles.inboxIcon}>↓</span>
-        <div>
-          <strong>Inbox</strong>
-          <small>{recordings.count} items</small>
-        </div>
-      </button>
     </aside>
   );
 }
