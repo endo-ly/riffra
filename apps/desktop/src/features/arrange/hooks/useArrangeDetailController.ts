@@ -15,7 +15,7 @@ export function useArrangeDetailController({
   const [view, setView] = useState<ArrangeDetailView>('closed');
   const [collapsed, setCollapsedState] = useState(false);
   const [maximized, setMaximizedState] = useState(false);
-  const [height, setHeight] = useState(280);
+  const [height, setHeight] = useState(380);
   const activeMidiClip = useMemo(
     () => midiClips.find((clip) => clip.id === activeMidiClipId) ?? null,
     [activeMidiClipId, midiClips],

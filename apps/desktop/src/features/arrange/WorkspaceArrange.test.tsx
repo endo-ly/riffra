@@ -1787,7 +1787,7 @@ describe('WorkspaceArrange', () => {
       configurable: true,
       value: 600,
     });
-    const resizeHandle = screen.getByRole('button', { name: 'Resize detail area' });
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize detail area' });
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: -200 });
     fireEvent.pointerUp(window, { clientY: -200 });

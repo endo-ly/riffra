@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import styles from './LeftColumn.module.css';
 
 const PROPERTIES_HEIGHT = { min: 160, browserMin: 180, handle: 5 } as const;
@@ -87,14 +88,11 @@ export function LeftColumn({
       data-left-column
     >
       <div className={styles.browser}>{browser}</div>
-      <div
-        className={styles.resizeHandle}
-        role="separator"
-        aria-label="Resize Browser and Properties"
-        aria-orientation="horizontal"
-        aria-valuemin={PROPERTIES_HEIGHT.min}
-        aria-valuenow={ariaValue}
-        tabIndex={0}
+      <ResizeHandle
+        orientation="horizontal"
+        ariaLabel="Resize Browser and Properties"
+        ariaValueMin={PROPERTIES_HEIGHT.min}
+        ariaValueNow={ariaValue}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
