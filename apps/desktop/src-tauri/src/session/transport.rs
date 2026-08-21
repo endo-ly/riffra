@@ -65,6 +65,7 @@ pub(crate) fn runtime_timeline_snapshot(
                         "startTick": clip.start_tick.0,
                         "fadeInFrames": clip.fade_in.frames,
                         "fadeOutFrames": clip.fade_out.frames,
+                        "fadeShape": clip.fade_shape.as_code(),
                         "gainDb": clip.gain_db,
                         "pan": clip.pan,
                         "loopEnabled": clip.loop_enabled,

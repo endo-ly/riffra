@@ -56,6 +56,7 @@ function sessionWithContent(): CreativeSession {
     pan: -0.5,
     fadeIn: { frames: 480, sampleRate: 48_000 },
     fadeOut: { frames: 0, sampleRate: 48_000 },
+    fadeShape: 'equalPower',
     loopEnabled: false,
     muted: false,
     takeVariant: 'raw',

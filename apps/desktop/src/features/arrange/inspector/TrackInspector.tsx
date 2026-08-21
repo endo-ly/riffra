@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
@@ -9,6 +9,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { Icon } from '@/shared/ui/primitives';
+import { TRACK_COLOR_PALETTE } from './track-colors';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
@@ -37,6 +38,9 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [name, setName] = useState(props.track.name);
   const [gainDb, setGainDb] = useState(props.track.gainDb);
   const [pan, setPan] = useState(props.track.pan);
+  const [gainEdit, setGainEdit] = useState(false);
+  const [panEdit, setPanEdit] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
   const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
   const [replaceTarget, setReplaceTarget] = useState<{ deviceId: string } | null>(null);
   const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
@@ -58,9 +62,50 @@ export function TrackInspector(props: TrackInspectorProps) {
     props.track.instrument?.disabledPlaceholder ||
     (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
   const instrument = props.track.instrument;
+  const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
+  const displayColor =
+    props.track.color ?? TRACK_COLOR_PALETTE[Math.max(0, trackIndex) % TRACK_COLOR_PALETTE.length];
   return (
     <div className={styles.inspector}>
       <div className={styles.identity}>
+        <button
+          type="button"
+          className={styles.colorDot}
+          aria-label="Track color"
+          title={props.track.color ? `Color ${props.track.color}` : `Auto color ${displayColor}`}
+          style={{ '--track-color': displayColor } as CSSProperties}
+          data-color={props.track.color ? 'custom' : 'auto'}
+          onClick={() => setColorOpen((open) => !open)}
+        />
+        {colorOpen && (
+          <div className={styles.colorPalette} role="group" aria-label="Track color">
+            {TRACK_COLOR_PALETTE.map((hex) => (
+              <button
+                key={hex}
+                type="button"
+                className={styles.colorSwatch}
+                aria-label={`Set track color ${hex}`}
+                aria-pressed={props.track.color === hex}
+                style={{ '--swatch': hex } as CSSProperties}
+                onClick={() => {
+                  setColorOpen(false);
+                  commit(props.api.updateTrack(props.track.id, { color: hex }));
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              className={clsx(styles.colorSwatch, styles.colorClear)}
+              aria-label="Clear track color"
+              onClick={() => {
+                setColorOpen(false);
+                commit(props.api.updateTrack(props.track.id, { color: '' }));
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         <span className={styles.identityIcon}>
           <Icon name={props.track.kind === 'audio' ? 'wave' : 'note'} />
         </span>
@@ -84,10 +129,40 @@ export function TrackInspector(props: TrackInspectorProps) {
         <label className={styles.mixField}>
           <span>
             Gain{' '}
-            <span className={styles.value}>
-              {gainDb > 0 ? '+' : ''}
-              {gainDb.toFixed(1)} dB
-            </span>
+            {gainEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.1"
+                value={gainDb}
+                onChange={(event) => setGainDb(Number(event.currentTarget.value))}
+                onBlur={() => {
+                  setGainEdit(false);
+                  const next = Number(gainDb);
+                  if (Number.isFinite(next) && next !== props.track.gainDb)
+                    commit(props.api.updateTrack(props.track.id, { gainDb: next }));
+                  else setGainDb(props.track.gainDb);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setGainDb(props.track.gainDb);
+                    setGainEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit track gain"
+                onClick={() => setGainEdit(true)}
+              >
+                {gainDb > 0 ? '+' : ''}
+                {gainDb.toFixed(1)} dB
+              </button>
+            )}
           </span>
           <input
             className={styles.range}
@@ -110,7 +185,40 @@ export function TrackInspector(props: TrackInspectorProps) {
         </label>
         <label className={styles.mixField}>
           <span>
-            Pan <span className={styles.value}>{formatPan(pan)}</span>
+            Pan{' '}
+            {panEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.05"
+                value={pan}
+                onChange={(event) => setPan(Number(event.currentTarget.value))}
+                onBlur={() => {
+                  setPanEdit(false);
+                  const next = Number(pan);
+                  if (Number.isFinite(next) && next !== props.track.pan)
+                    commit(props.api.updateTrack(props.track.id, { pan: next }));
+                  else setPan(props.track.pan);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setPan(props.track.pan);
+                    setPanEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit track pan"
+                onClick={() => setPanEdit(true)}
+              >
+                {formatPan(pan)}
+              </button>
+            )}
           </span>
           <input
             className={styles.range}

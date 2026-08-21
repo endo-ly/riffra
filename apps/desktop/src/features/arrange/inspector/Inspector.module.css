@@ -3,11 +3,67 @@
 }
 
 .identity {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.colorDot {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  padding: 0;
+  background: var(--track-color, var(--color-border-strong));
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+}
+
+.colorDot[data-color='custom'] {
+  background: var(--track-color);
+  border-color: var(--track-color);
+}
+
+.colorPalette {
+  position: absolute;
+  top: 36px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 140px;
+  padding: 8px;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.colorSwatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: var(--swatch);
+  border: 1px solid color-mix(in srgb, var(--swatch) 60%, black 10%);
+  border-radius: 50%;
+}
+
+.colorSwatch[aria-pressed='true'] {
+  box-shadow:
+    0 0 0 2px var(--color-bg-surface-raised),
+    0 0 0 3px var(--color-accent-primary);
+}
+
+.colorClear {
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  background: transparent;
+  border: 1px dashed var(--color-border-default);
 }
 
 .identityIcon {
@@ -231,12 +287,45 @@ select.control {
 }
 
 .value {
-  color: var(--color-text-secondary);
+  min-width: 64px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  color: var(--color-text-primary);
   font:
     var(--font-size-small) 'DM Mono',
     Consolas,
     monospace;
   font-weight: 500;
+  text-align: right;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+}
+
+.value:hover {
+  border-color: var(--color-border-strong);
+}
+
+.valueInput {
+  width: 64px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--color-text-primary);
+  font:
+    var(--font-size-small) 'DM Mono',
+    Consolas,
+    monospace;
+  text-align: right;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+}
+
+.valueInput:focus {
+  border-color: var(--color-accent-primary);
+  outline: none;
 }
 
 .range {
@@ -282,6 +371,24 @@ select.control {
 
 .segmentedGap {
   margin-top: 6px;
+}
+
+.transformRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transformLabel {
+  min-width: 34px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.06em;
+}
+
+.transformGrid {
+  display: grid;
+  gap: 6px;
 }
 
 .segmented button {

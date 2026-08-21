@@ -387,6 +387,7 @@ pub fn run() {
             session::commands::remove_midi_note,
             session::commands::remove_midi_notes,
             session::commands::quantize_midi_notes,
+            session::commands::transform_midi_notes,
             session::commands::duplicate_midi_notes,
             session::commands::set_audio_clip_take_variant,
             session::commands::start_take_comparison,

@@ -52,14 +52,14 @@ describe('PropertiesPanel', () => {
   it('shows the selected Track title without a close button', () => {
     renderPanel({ kind: 'track', trackId: 'track:audio' });
 
-    expect(screen.getAllByText('TRACK')[0]).toBeInTheDocument();
+    expect(screen.getByLabelText('Track name')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Close Properties/ })).not.toBeInTheDocument();
   });
 
   it('shows the empty Arrange title without a clip selection', () => {
     renderPanel({ kind: 'none' });
 
-    expect(screen.getByText('PROPERTIES')).toBeInTheDocument();
+    expect(screen.getByText('Nothing selected')).toBeInTheDocument();
   });
 
   it('limits mixed clip selections to shared clip actions', () => {
@@ -77,6 +77,7 @@ describe('PropertiesPanel', () => {
       pan: 0,
       fadeIn: { frames: 0, sampleRate: 48_000 },
       fadeOut: { frames: 0, sampleRate: 48_000 },
+      fadeShape: 'equalPower',
       loopEnabled: false,
       muted: false,
       takeVariant: 'raw',
@@ -116,6 +117,7 @@ describe('PropertiesPanel', () => {
       pan: 0,
       fadeIn: { frames: 0, sampleRate: 48_000 },
       fadeOut: { frames: 0, sampleRate: 48_000 },
+      fadeShape: 'equalPower' as const,
       loopEnabled: false,
       muted: false,
       takeVariant: 'raw' as const,

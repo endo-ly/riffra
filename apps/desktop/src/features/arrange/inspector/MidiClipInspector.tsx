@@ -36,12 +36,20 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     if (next) applyArrangementMutation(next, props.setSession, setMessage);
   };
 
+  const [quantizeGrid, setQuantizeGrid] = useState(
+    String(Math.max(1, Math.round(props.session.arrangement.timebase.ppq / 4))),
+  );
+
   if (!clip) {
     return null;
   }
 
   const patch = (fields: Parameters<ArrangeInspectorApi['updateMidiClip']>[1]) =>
     void commit(props.api.updateMidiClip(clip.id, fields));
+  const noteIds = clip.notes.map((note) => note.id);
+  const hasNotes = noteIds.length > 0;
+  const transform = (transpose: number, velocity: number) =>
+    void commit(props.api.transformMidiNotes(clip.id, noteIds, transpose, velocity));
   return (
     <div className={styles.inspector}>
       <div className={styles.identity}>
@@ -97,6 +105,103 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
               }}
             />
           </label>
+        </div>
+      </section>
+      <section className={styles.section}>
+        <header className={styles.sectionHeader}>
+          <strong>TRANSFORM</strong>
+        </header>
+        <div className={styles.transformGrid}>
+          <div className={styles.transformRow} aria-label="Transpose">
+            <span className={styles.transformLabel}>Pitch</span>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Transpose down octave"
+              onClick={() => transform(-12, 0)}
+            >
+              −12
+            </button>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Transpose down 1 semitone"
+              onClick={() => transform(-1, 0)}
+            >
+              −1
+            </button>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Transpose up 1 semitone"
+              onClick={() => transform(1, 0)}
+            >
+              +1
+            </button>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Transpose up octave"
+              onClick={() => transform(12, 0)}
+            >
+              +12
+            </button>
+          </div>
+          <div className={styles.transformRow} aria-label="Velocity">
+            <span className={styles.transformLabel}>Vel</span>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Decrease velocity"
+              onClick={() => transform(0, -10)}
+            >
+              −10
+            </button>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              aria-label="Increase velocity"
+              onClick={() => transform(0, 10)}
+            >
+              +10
+            </button>
+          </div>
+          <div className={styles.transformRow}>
+            <select
+              className={styles.control}
+              aria-label="Quantize grid"
+              value={quantizeGrid}
+              onChange={(event) => setQuantizeGrid(event.target.value)}
+              style={{ maxWidth: 88 }}
+            >
+              <option value={String(props.session.arrangement.timebase.ppq)}>1/4</option>
+              <option value={String(Math.round(props.session.arrangement.timebase.ppq / 2))}>
+                1/8
+              </option>
+              <option value={String(Math.round(props.session.arrangement.timebase.ppq / 4))}>
+                1/16
+              </option>
+              <option value={String(Math.round(props.session.arrangement.timebase.ppq / 8))}>
+                1/32
+              </option>
+            </select>
+            <button
+              type="button"
+              className={styles.smallButton}
+              disabled={!hasNotes}
+              onClick={() =>
+                void commit(props.api.quantizeMidiNotes(clip.id, noteIds, Number(quantizeGrid)))
+              }
+            >
+              Quantize
+            </button>
+          </div>
         </div>
       </section>
       <section className={styles.section}>

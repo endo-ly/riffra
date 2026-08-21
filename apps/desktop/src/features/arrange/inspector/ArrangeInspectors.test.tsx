@@ -73,6 +73,7 @@ function recordingSession(): CreativeSession {
       loopEnabled: false,
       muted: false,
       recordingTakeId: 'take:1',
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
   }

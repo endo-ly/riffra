@@ -31,6 +31,7 @@ function audioClip(): AudioClip {
     loopEnabled: false,
     muted: false,
     name: 'Audio',
+    fadeShape: 'equalPower',
     takeVariant: 'raw',
   };
 }

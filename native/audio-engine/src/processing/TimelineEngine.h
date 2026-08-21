@@ -108,6 +108,7 @@ private:
         float pan = 0.0f;
         std::int64_t fadeInSamples = 0;
         std::int64_t fadeOutSamples = 0;
+        int fadeShape = 1;
         bool loop = false;
         bool muted = false;
     };

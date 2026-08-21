@@ -67,6 +67,7 @@ describe('arrange timeline layout', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     };
     const midiClip: MidiClip = {

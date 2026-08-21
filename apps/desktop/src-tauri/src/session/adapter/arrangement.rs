@@ -485,6 +485,24 @@ pub fn remove_midi_notes(
     Ok(arrangement_mutation_result(context, committed))
 }
 
+pub fn transform_midi_notes(
+    context: &SessionContext<'_>,
+    clip_id: &str,
+    note_ids: Vec<String>,
+    transpose_semitones: i16,
+    velocity_offset: i16,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let committed = commit_core_application(context, |core, store| {
+        core.application(store).transform_midi_notes(
+            clip_id,
+            note_ids,
+            transpose_semitones,
+            velocity_offset,
+        )
+    })?;
+    Ok(arrangement_mutation_result(context, committed))
+}
+
 pub fn quantize_midi_notes(
     context: &SessionContext<'_>,
     clip_id: &str,

@@ -9,4 +9,8 @@ import type { TrackKind } from "./TrackKind";
 /**
  * A timeline track.
  */
-export type Track = { id: string, name: string, kind: TrackKind, gainDb: number, pan: number, muted: boolean, solo: boolean, armed: boolean, monitoring: MonitoringState, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: RackDevice, rack: RackInstance, };
+export type Track = { id: string, name: string, kind: TrackKind, gainDb: number, pan: number, muted: boolean, solo: boolean, armed: boolean, monitoring: MonitoringState, 
+/**
+ * Presentation color as `#rrggbb`. `None` keeps the Track's kind default.
+ */
+color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: RackDevice, rack: RackInstance, };

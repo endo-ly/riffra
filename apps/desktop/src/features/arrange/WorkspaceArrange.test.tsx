@@ -527,6 +527,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     session.arrangement.midiClips.push(
@@ -1017,6 +1018,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
@@ -1213,6 +1215,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });

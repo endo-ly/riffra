@@ -57,6 +57,10 @@ pub struct Track {
     pub armed: bool,
     #[serde(default)]
     pub monitoring: MonitoringState,
+    /// Presentation color as `#rrggbb`. `None` keeps the Track's kind default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub audio_input: Option<AudioInputRoute>,
@@ -79,6 +83,9 @@ pub struct TrackPatch {
     pub solo: Option<bool>,
     pub armed: Option<bool>,
     pub monitoring: Option<MonitoringState>,
+    /// Sets the presentation color; an empty string clears it back to the
+    /// kind default.
+    pub color: Option<String>,
 }
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
@@ -140,6 +147,7 @@ impl Track {
             solo: false,
             armed: false,
             monitoring: MonitoringState::Off,
+            color: None,
             audio_input: None,
             midi_input: MidiInputRoute::default(),
             instrument: None,
@@ -220,6 +228,27 @@ pub struct MidiClip {
     pub recording_take_id: Option<String>,
 }
 
+/// The amplitude curve used by clip fades.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum FadeShape {
+    Linear,
+    #[default]
+    EqualPower,
+    Smooth,
+}
+
+impl FadeShape {
+    /// Engine-facing discriminant matching the audio sidecar contract.
+    pub fn as_code(self) -> u8 {
+        match self {
+            FadeShape::Linear => 0,
+            FadeShape::EqualPower => 1,
+            FadeShape::Smooth => 2,
+        }
+    }
+}
+
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -237,6 +266,8 @@ pub struct AudioClip {
     pub pan: f64,
     pub fade_in: FrameDuration,
     pub fade_out: FrameDuration,
+    #[serde(default)]
+    pub fade_shape: FadeShape,
     pub loop_enabled: bool,
     pub muted: bool,
     pub name: String,
@@ -286,6 +317,7 @@ impl AudioClip {
             },
             loop_enabled: false,
             muted: false,
+            fade_shape: FadeShape::EqualPower,
             recording_take_id: None,
             take_variant: AudioTakeVariant::Raw,
         }
@@ -345,6 +377,9 @@ pub struct AudioClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fade_out: Option<FrameDuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fade_shape: Option<FadeShape>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub loop_enabled: Option<bool>,
@@ -1072,6 +1107,9 @@ impl Arrangement {
         }
         if let Some(fade_out) = patch.fade_out {
             clip.fade_out = fade_out;
+        }
+        if let Some(fade_shape) = patch.fade_shape {
+            clip.fade_shape = fade_shape;
         }
         if let Some(loop_enabled) = patch.loop_enabled {
             clip.loop_enabled = loop_enabled;

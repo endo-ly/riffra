@@ -265,6 +265,14 @@ fn next_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::now_v7())
 }
 
+fn is_valid_track_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7 || bytes[0] != b'#' {
+        return false;
+    }
+    bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+}
+
 fn normalize_track_name(name: String) -> Result<String, ApplicationError> {
     let name = name.trim().chars().take(80).collect::<String>();
     if name.is_empty() {

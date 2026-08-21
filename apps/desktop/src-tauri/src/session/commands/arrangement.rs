@@ -509,6 +509,26 @@ pub async fn quantize_midi_notes(
 }
 
 #[tauri::command]
+pub async fn transform_midi_notes(
+    clip_id: String,
+    note_ids: Vec<String>,
+    transpose_semitones: i16,
+    velocity_offset: i16,
+    app: AppHandle,
+) -> Result<ArrangementMutationResult, String> {
+    run_blocking(app, move |state| {
+        adapter::transform_midi_notes(
+            &app_context(state),
+            &clip_id,
+            note_ids,
+            transpose_semitones,
+            velocity_offset,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn duplicate_midi_notes(
     clip_id: String,
     note_ids: Vec<String>,

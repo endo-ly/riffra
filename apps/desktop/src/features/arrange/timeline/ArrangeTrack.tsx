@@ -24,6 +24,7 @@ import styles from '../WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
   track: Track;
+  trackIndex?: number;
   timeline: TrackTimeline;
   timebase: ProjectTimebase;
   analyses: Record<string, AudioAnalysis | null>;
@@ -184,6 +185,21 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     >
       <aside
         className={styles.trackHeader}
+        style={(() => {
+          const palette = [
+            '#7eb8ff',
+            '#7ee0a0',
+            '#ff9f6b',
+            '#ffd166',
+            '#c79eff',
+            '#ff7eb0',
+            '#64e8ff',
+            '#a8b0bf',
+          ] as const;
+          const fallback = palette[(props.trackIndex ?? 0) % palette.length];
+          const color = props.track.color ?? fallback;
+          return { '--track-color': color } as CSSProperties;
+        })()}
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
             props.onSelectTrack();
@@ -250,9 +266,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </div>
           <div className={styles.trackMeta}>
             <span>{trackMeta}</span>
-            {props.focused && props.track.kind === 'instrument' && (
-              <b className={styles.focusBadge}>LIVE</b>
-            )}
           </div>
         </div>
         <div className={styles.trackSwitches}>

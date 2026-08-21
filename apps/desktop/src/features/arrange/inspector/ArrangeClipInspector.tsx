@@ -50,6 +50,8 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
+  const [gainEdit, setGainEdit] = useState(false);
+  const [panEdit, setPanEdit] = useState(false);
   const {
     operationMessage: message,
     runOperation,
@@ -137,10 +139,8 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             />
           </label>
           <div className={styles.readoutRow}>
-            <span>Pos</span>
-            <strong>
-              {formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}
-            </strong>
+            <span>Ticks</span>
+            <strong>{drafts.startTick}</strong>
           </div>
         </div>
       </section>
@@ -174,7 +174,39 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       <div className={styles.mixCluster} aria-label="Clip mix">
         <label className={styles.mixField}>
           <span>
-            Gain <span className={styles.value}>{Number(drafts.gainDb).toFixed(1)} dB</span>
+            Gain{' '}
+            {gainEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.1"
+                value={drafts.gainDb}
+                onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
+                onBlur={() => {
+                  setGainEdit(false);
+                  const next = Number(drafts.gainDb);
+                  if (Number.isFinite(next) && next !== clip.gainDb)
+                    patch({ gainDb: next }, 'Gain');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setDrafts({ ...drafts, gainDb: clip.gainDb.toFixed(1) });
+                    setGainEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit clip gain"
+                onClick={() => setGainEdit(true)}
+              >
+                {Number(drafts.gainDb).toFixed(1)} dB
+              </button>
+            )}
           </span>
           <input
             className={styles.range}
@@ -193,7 +225,38 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
         </label>
         <label className={styles.mixField}>
           <span>
-            Pan <span className={styles.value}>{formatPan(Number(drafts.pan))}</span>
+            Pan{' '}
+            {panEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.05"
+                value={drafts.pan}
+                onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
+                onBlur={() => {
+                  setPanEdit(false);
+                  const next = Number(drafts.pan);
+                  if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setDrafts({ ...drafts, pan: clip.pan.toFixed(2) });
+                    setPanEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit clip pan"
+                onClick={() => setPanEdit(true)}
+              >
+                {formatPan(Number(drafts.pan))}
+              </button>
+            )}
           </span>
           <input
             className={styles.range}
@@ -215,7 +278,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       <section className={styles.section}>
         <header className={styles.sectionHeader}>
           <strong>FADES</strong>
-          <span className={styles.headerMeta}>EQUAL POWER</span>
         </header>
         <div className={styles.fieldPair}>
           <label className={styles.field}>
@@ -256,6 +318,22 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
               }}
             />
           </label>
+        </div>
+        <div
+          className={clsx(styles.segmented, styles.segmentedGap)}
+          aria-label="Fade shape"
+          role="group"
+        >
+          {(['linear', 'equalPower', 'smooth'] as const).map((shape) => (
+            <button
+              key={shape}
+              type="button"
+              aria-pressed={(clip.fadeShape ?? 'equalPower') === shape}
+              onClick={() => patch({ fadeShape: shape }, 'Fade shape')}
+            >
+              {shape === 'linear' ? 'Linear' : shape === 'equalPower' ? 'Equal' : 'Smooth'}
+            </button>
+          ))}
         </div>
       </section>
 

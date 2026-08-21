@@ -66,7 +66,7 @@ function LeftColumnResizeHandle(props: {
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
-  const [propertiesHeight, setPropertiesHeight] = useState(340);
+  const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const [panelResize, setPanelResize] = useState<{
     startX: number;

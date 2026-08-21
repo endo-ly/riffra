@@ -43,16 +43,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   const selectedMidiClipCount = selectedMidiClipIds.length;
   const setSelectedClipIds = (clipIds: string[]) =>
     props.setArrangeSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
-  const title = getPropertiesTitle(
-    Boolean(selectedTrack),
-    selectedAudioClipCount,
-    selectedMidiClipCount,
-  );
   return (
     <aside className={styles.panel} aria-label="Properties" data-properties-panel>
-      <div className={styles.heading}>
-        <span>{title}</span>
-      </div>
       <div className={styles.body}>
         {selectedTrack ? (
           <>
@@ -153,18 +145,4 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
       </div>
     </aside>
   );
-}
-
-function getPropertiesTitle(
-  hasSelectedTrack: boolean,
-  audioClipCount: number,
-  midiClipCount: number,
-) {
-  if (hasSelectedTrack) return 'TRACK';
-  if (audioClipCount > 0 && midiClipCount === 0)
-    return audioClipCount === 1 ? 'AUDIO CLIP' : 'AUDIO CLIPS';
-  if (midiClipCount > 0 && audioClipCount === 0)
-    return midiClipCount === 1 ? 'MIDI CLIP' : 'MIDI CLIPS';
-  if (audioClipCount > 0 || midiClipCount > 0) return 'CLIPS';
-  return 'PROPERTIES';
 }
