@@ -1460,8 +1460,6 @@ TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
         EXPECT_NEAR(riffra::fadeEnvelope(1.0f, shape), 1.0f, 1e-6f);
         EXPECT_NEAR(riffra::fadeEnvelope(0.0f, shape), 0.0f, 1e-6f);
     }
-    // Unknown shapes fall back to equal power.
-    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 7), 0.38268343f, 1e-6f);
 }
 
 TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce) {

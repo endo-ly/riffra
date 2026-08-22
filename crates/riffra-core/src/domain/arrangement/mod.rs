@@ -57,7 +57,8 @@ pub struct Track {
     pub armed: bool,
     #[serde(default)]
     pub monitoring: MonitoringState,
-    /// Presentation color as `#rrggbb`. `None` keeps the Track's kind default.
+    /// Presentation color as `#rrggbb`. `None` delegates automatic coloring
+    /// to the presentation layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub color: Option<String>,
@@ -83,8 +84,8 @@ pub struct TrackPatch {
     pub solo: Option<bool>,
     pub armed: Option<bool>,
     pub monitoring: Option<MonitoringState>,
-    /// Sets the presentation color; an empty string clears it back to the
-    /// kind default.
+    /// Sets the presentation color; an empty string clears it and returns
+    /// the track to automatic coloring.
     pub color: Option<String>,
 }
 
