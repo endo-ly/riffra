@@ -1449,6 +1449,21 @@ TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender) {
     EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
 }
 
+TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
+    // Arrange
+    // Act / Assert
+    // Rust `FadeShape`: 0 linear, 1 equal power, 2 smoothstep.
+    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 0), 0.25f, 1e-6f);
+    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 1), 0.38268343f, 1e-6f);
+    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 2), 0.15625f, 1e-6f);
+    for (const int shape : {0, 1, 2}) {
+        EXPECT_NEAR(riffra::fadeEnvelope(1.0f, shape), 1.0f, 1e-6f);
+        EXPECT_NEAR(riffra::fadeEnvelope(0.0f, shape), 0.0f, 1e-6f);
+    }
+    // Unknown shapes fall back to equal power.
+    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 7), 0.38268343f, 1e-6f);
+}
+
 TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce) {
     // Arrange
     // Act

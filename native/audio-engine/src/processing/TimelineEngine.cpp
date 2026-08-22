@@ -11,6 +11,17 @@
 
 namespace riffra {
 
+float fadeEnvelope(const float progress, const int fadeShape) noexcept {
+    switch (fadeShape) {
+        case 0:
+            return progress;
+        case 2:
+            return progress * progress * (3.0f - 2.0f * progress);
+        default:
+            return std::sin(juce::MathConstants<float>::halfPi * progress);
+    }
+}
+
 namespace {
 constexpr int kReadAheadSamples = 32768;
 
@@ -445,7 +456,8 @@ bool TimelineEngine::prepareSnapshot(const juce::var& snapshot, juce::AudioForma
                 std::llround(static_cast<double>(fadeInFrames) * outputSampleRate / durationRate));
             clip->fadeOutSamples = static_cast<std::int64_t>(
                 std::llround(static_cast<double>(fadeOutFrames) * outputSampleRate / durationRate));
-            clip->fadeShape = juce::jlimit(0, 2, static_cast<int>(value.getProperty("fadeShape", 1)));
+            clip->fadeShape =
+                juce::jlimit(0, 2, static_cast<int>(value.getProperty("fadeShape", 1)));
             clip->gain = juce::Decibels::decibelsToGain(
                 static_cast<float>(value.getProperty("gainDb", 0.0)));
             clip->pan =
@@ -1415,24 +1427,17 @@ void TimelineEngine::mixRange(Track& track, const std::int64_t rangeStart,
             for (int sample = 0; sample < chunk; ++sample) {
                 const auto position = localSample + sample;
                 auto envelope = 1.0f;
-                auto shape = [](float p, int fadeShape) {
-                    switch (fadeShape) {
-                        case 0: return p;
-                        case 2: return p * p * (3.0f - 2.0f * p);
-                        default: return std::sin(juce::MathConstants<float>::halfPi * p);
-                    }
-                };
                 if (clip.fadeInSamples > 0 && position < clip.fadeInSamples) {
                     const auto progress =
                         static_cast<float>(position) / static_cast<float>(clip.fadeInSamples);
-                    envelope = std::min(envelope, shape(progress, clip.fadeShape));
+                    envelope = std::min(envelope, fadeEnvelope(progress, clip.fadeShape));
                 }
                 const auto remainingClip = clip.durationSamples - position - 1;
                 if (clip.fadeOutSamples > 0 && remainingClip < clip.fadeOutSamples) {
                     const auto progress =
                         static_cast<float>(std::max<std::int64_t>(0, remainingClip)) /
                         static_cast<float>(clip.fadeOutSamples);
-                    envelope = std::min(envelope, shape(progress, clip.fadeShape));
+                    envelope = std::min(envelope, fadeEnvelope(progress, clip.fadeShape));
                 }
                 const auto panAngle = (clip.pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
                 const auto source = clip.scratch.getSample(0, sample) * clip.gain * envelope;
