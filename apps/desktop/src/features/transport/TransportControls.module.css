@@ -47,6 +47,11 @@
 
 .transportActions button:focus-visible {
   position: relative;
+  /*
+   * Control-local raise: the focus ring must paint above adjacent sibling
+   * buttons inside this cluster only.
+   */
+  /* stylelint-disable-next-line declaration-property-value-allowed-list */
   z-index: 1;
 }
 
