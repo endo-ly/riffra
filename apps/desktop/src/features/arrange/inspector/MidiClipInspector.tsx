@@ -48,8 +48,9 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
     void commit(props.api.updateMidiClip(clip.id, fields));
   const noteIds = clip.notes.map((note) => note.id);
   const hasNotes = noteIds.length > 0;
+  // Empty ids tell the core to transform every note in the clip.
   const transform = (transpose: number, velocity: number) =>
-    void commit(props.api.transformMidiNotes(clip.id, noteIds, transpose, velocity));
+    void commit(props.api.transformMidiNotes(clip.id, [], transpose, velocity));
   return (
     <div className={styles.inspector}>
       <div className={styles.identity}>

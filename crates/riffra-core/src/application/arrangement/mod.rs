@@ -813,24 +813,23 @@ where
                     "transform requires a non-zero transpose or velocity offset".into(),
                 ));
             }
-            let targets: Vec<String> = if note_ids.is_empty() {
-                clip.notes.iter().map(|note| note.id.clone()).collect()
-            } else {
+            use std::collections::HashSet;
+            let targets: HashSet<&str> = note_ids.iter().map(String::as_str).collect();
+            if !targets.is_empty() {
+                let known: HashSet<&str> = clip.notes.iter().map(|note| note.id.as_str()).collect();
                 for id in &note_ids {
-                    if !clip.notes.iter().any(|note| &note.id == id) {
+                    if !known.contains(id.as_str()) {
                         return Err(crate::DomainError::InvalidClip(format!(
                             "midi note '{id}' is not registered"
                         ))
                         .into());
                     }
                 }
-                note_ids
-            };
-            for note in clip
-                .notes
-                .iter_mut()
-                .filter(|note| targets.contains(&note.id))
-            {
+            }
+            for note in clip.notes.iter_mut() {
+                if !targets.is_empty() && !targets.contains(note.id.as_str()) {
+                    continue;
+                }
                 let next_pitch = (note.note as i16 + transpose_semitones).clamp(0, 127) as u8;
                 let next_velocity = (note.velocity as i16 + velocity_offset).clamp(0, 127) as u8;
                 note.note = next_pitch;

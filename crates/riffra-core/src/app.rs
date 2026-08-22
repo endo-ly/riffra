@@ -1328,4 +1328,198 @@ mod tests {
 
         assert_eq!(committed.arrangement.tracks[0].color, None);
     }
+
+    #[test]
+    fn transform_midi_notes_touches_only_the_selected_notes() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        application
+            .add_midi_clip(MidiClip {
+                id: "midi:1".into(),
+                name: "Pattern".into(),
+                track_id,
+                asset_id: None,
+                start_tick: TimelineTick(0),
+                duration_ticks: 1_920,
+                notes: Vec::new(),
+                events: Vec::new(),
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .unwrap();
+        application
+            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .unwrap();
+        let with_second = application
+            .add_midi_note("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .unwrap();
+        let ids: Vec<String> = with_second.arrangement.midi_clips[0]
+            .notes
+            .iter()
+            .map(|note| note.id.clone())
+            .collect();
+
+        let transformed = application
+            .transform_midi_notes("midi:1", vec![ids[0].clone()], 2, -10)
+            .unwrap();
+
+        let notes = &transformed.arrangement.midi_clips[0].notes;
+        assert_eq!(
+            (notes[0].note, notes[0].velocity),
+            (62, 90),
+            "the selected note is transposed and offset"
+        );
+        assert_eq!(
+            (notes[1].note, notes[1].velocity),
+            (64, 40),
+            "the unselected note keeps its pitch and velocity"
+        );
+    }
+
+    #[test]
+    fn transform_midi_notes_without_ids_transforms_every_note() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        application
+            .add_midi_clip(MidiClip {
+                id: "midi:1".into(),
+                name: "Pattern".into(),
+                track_id,
+                asset_id: None,
+                start_tick: TimelineTick(0),
+                duration_ticks: 1_920,
+                notes: Vec::new(),
+                events: Vec::new(),
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .unwrap();
+        application
+            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .unwrap();
+        application
+            .add_midi_note("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .unwrap();
+
+        let transformed = application
+            .transform_midi_notes("midi:1", Vec::new(), -3, 5)
+            .unwrap();
+
+        let notes = &transformed.arrangement.midi_clips[0].notes;
+        assert_eq!((notes[0].note, notes[0].velocity), (57, 105));
+        assert_eq!((notes[1].note, notes[1].velocity), (61, 45));
+    }
+
+    #[test]
+    fn transform_midi_notes_clamps_pitch_and_velocity() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        application
+            .add_midi_clip(MidiClip {
+                id: "midi:1".into(),
+                name: "Pattern".into(),
+                track_id,
+                asset_id: None,
+                start_tick: TimelineTick(0),
+                duration_ticks: 1_920,
+                notes: Vec::new(),
+                events: Vec::new(),
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .unwrap();
+        application
+            .add_midi_note("midi:1", TimelineTick(0), 120, 480, 20, 1)
+            .unwrap();
+
+        let transformed = application
+            .transform_midi_notes("midi:1", Vec::new(), 30, -200)
+            .unwrap();
+
+        let notes = &transformed.arrangement.midi_clips[0].notes;
+        assert_eq!(notes[0].note, 127);
+        assert_eq!(notes[0].velocity, 0);
+    }
+
+    #[test]
+    fn transform_midi_notes_rejects_unknown_note_ids() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        application
+            .add_midi_clip(MidiClip {
+                id: "midi:1".into(),
+                name: "Pattern".into(),
+                track_id,
+                asset_id: None,
+                start_tick: TimelineTick(0),
+                duration_ticks: 1_920,
+                notes: Vec::new(),
+                events: Vec::new(),
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .unwrap();
+        application
+            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .unwrap();
+
+        let error = application
+            .transform_midi_notes("midi:1", vec!["midi-note:missing".into()], 1, 0)
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::InvalidCommand(
+                "invalid clip: midi note 'midi-note:missing' is not registered".into()
+            )
+        );
+    }
 }
