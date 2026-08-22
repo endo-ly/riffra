@@ -30,6 +30,11 @@ export function Icon({ name }: { name: string }) {
     magnet: 'M5 3h5v8a2 2 0 0 0 4 0V3h5v8a7 7 0 0 1-14 0V3Z',
     copy: 'M8 8h12v12H8V8ZM4 4h10v2H6v8H4V4Z',
     speaker: 'M4 9h4l5-4v14l-5-4H4V9Zm11.6-.5a6.3 6.3 0 0 1 0 7l-1.6-1.2a4.3 4.3 0 0 0 0-4.6Z',
+    module: 'M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z',
+    wave: 'M3 10h2v4H3v-4Zm4-3h2v10H7V7Zm4-4h2v18h-2V3Zm4 4h2v10h-2V7Zm4 3h2v4h-2v-4Z',
+    note: 'M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z',
+    grip: 'M9 5h2v2H9V5Zm4 0h2v2h-2V5ZM9 11h2v2H9v-2Zm4 0h2v2h-2v-2ZM9 17h2v2H9v-2Zm4 0h2v2h-2v-2Z',
+    import: 'M12 3 6.6 8.4 8 9.8l3-3V15h2V6.8l3 3 1.4-1.4L12 3ZM5 18h14v2H5v-2Z',
   };
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">

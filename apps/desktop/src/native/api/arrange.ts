@@ -328,6 +328,20 @@ export async function quantizeMidiNotes(
   });
 }
 
+export async function transformMidiNotes(
+  clipId: string,
+  noteIds: string[],
+  transposeSemitones: number,
+  velocityOffset: number,
+): Promise<ArrangementMutationResult> {
+  return await invokeArrangement('transform_midi_notes', {
+    clipId,
+    noteIds,
+    transposeSemitones,
+    velocityOffset,
+  });
+}
+
 export async function duplicateMidiNotes(
   clipId: string,
   noteIds: string[],

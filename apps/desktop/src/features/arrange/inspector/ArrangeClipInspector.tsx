@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import clsx from 'clsx';
 import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
-import surface from '@/shared/ui/Surface.module.css';
-import styles from './ArrangeClipInspector.module.css';
+import { Icon } from '@/shared/ui/primitives';
+import styles from './Inspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
@@ -38,12 +39,19 @@ function buildDrafts(clip: AudioClip): Drafts {
   };
 }
 
+function formatPan(pan: number) {
+  if (Math.abs(pan) < 0.01) return 'C';
+  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
+}
+
 export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   const selected = props.session.arrangement.audioClips.filter((clip) =>
     props.selectedClipIds.includes(clip.id),
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
+  const [gainEdit, setGainEdit] = useState(false);
+  const [panEdit, setPanEdit] = useState(false);
   const {
     operationMessage: message,
     runOperation,
@@ -87,63 +95,67 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
 
   return (
     <div className={styles.inspector}>
-      <section className={styles.identity}>
-        <span className={styles.art}>▥</span>
-        <div>
-          <span className={surface.eyebrow}>AUDIO CLIP</span>
-          <input
-            aria-label="Clip name"
-            value={drafts.name}
-            onChange={(event) => setDrafts({ ...drafts, name: event.currentTarget.value })}
-            onBlur={() => {
-              const name = drafts.name.trim();
-              if (name && name !== clip.name) patch({ name }, 'Rename');
-            }}
-          />
-        </div>
-      </section>
+      <div className={styles.identity}>
+        <span className={styles.identityIcon}>
+          <Icon name="wave" />
+        </span>
+        <input
+          className={styles.identityName}
+          aria-label="Clip name"
+          value={drafts.name}
+          onChange={(event) => setDrafts({ ...drafts, name: event.currentTarget.value })}
+          onBlur={() => {
+            const name = drafts.name.trim();
+            if (name && name !== clip.name) patch({ name }, 'Rename');
+          }}
+        />
+        <span className={styles.identityMeta}>
+          {formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}
+        </span>
+      </div>
 
       <section className={styles.section}>
-        <header>
-          <strong>Timing</strong>
-          <span>{formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}</span>
+        <header className={styles.sectionHeader}>
+          <strong>TIMING</strong>
+          <span className={styles.headerMeta}>
+            {seconds.toFixed(3)} s · {clip.sourceRange.start.toLocaleString()}–
+            {clip.sourceRange.end.toLocaleString()}
+          </span>
         </header>
-        <label>
-          <span>Start tick</span>
-          <input
-            type="number"
-            min="0"
-            value={drafts.startTick}
-            onChange={(event) => setDrafts({ ...drafts, startTick: event.currentTarget.value })}
-            onBlur={() => {
-              const next = Number(drafts.startTick);
-              if (Number.isFinite(next) && next >= 0 && next !== clip.startTick)
-                patch({ startTick: next }, 'Start tick');
-            }}
-          />
-        </label>
-        <div className={styles.readout}>
-          <span>Length</span>
-          <strong>{seconds.toFixed(3)} s</strong>
-        </div>
-        <div className={styles.readout}>
-          <span>Source</span>
-          <strong>
-            {clip.sourceRange.start.toLocaleString()} – {clip.sourceRange.end.toLocaleString()}
-          </strong>
+        <div className={styles.fieldPair}>
+          <label className={styles.field}>
+            <span>Start</span>
+            <input
+              className={clsx(styles.control, styles.mono)}
+              type="number"
+              min="0"
+              value={drafts.startTick}
+              onChange={(event) => setDrafts({ ...drafts, startTick: event.currentTarget.value })}
+              onBlur={() => {
+                const next = Number(drafts.startTick);
+                if (Number.isFinite(next) && next >= 0 && next !== clip.startTick)
+                  patch({ startTick: next }, 'Start tick');
+              }}
+            />
+          </label>
+          <div className={styles.readoutRow}>
+            <span>Ticks</span>
+            <strong>{drafts.startTick}</strong>
+          </div>
         </div>
       </section>
 
       {recordingTake?.rawAudio && recordingTake.processedAudio && (
         <section className={styles.section}>
-          <header>
+          <header className={styles.sectionHeader}>
             <strong>SOURCE</strong>
-            <span>CLIP ONLY</span>
+            <span className={styles.headerMeta}>CLIP ONLY</span>
           </header>
-          <div role="group" aria-label="Clip recording source">
+          <div className={styles.segmented} role="group" aria-label="Clip recording source">
             {(['raw', 'processed'] as const).map((variant) => (
               <button
                 key={variant}
+                type="button"
                 aria-pressed={clip.takeVariant === variant}
                 onClick={() =>
                   void commit(
@@ -159,14 +171,45 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
         </section>
       )}
 
-      <section className={styles.section}>
-        <header>
-          <strong>Clip mix</strong>
-          <span>PRE-RACK</span>
-        </header>
-        <label>
-          <span>Gain</span>
+      <div className={styles.mixCluster} aria-label="Clip mix">
+        <label className={styles.mixField}>
+          <span>
+            Gain{' '}
+            {gainEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.1"
+                value={drafts.gainDb}
+                onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
+                onBlur={() => {
+                  setGainEdit(false);
+                  const next = Number(drafts.gainDb);
+                  if (Number.isFinite(next) && next !== clip.gainDb)
+                    patch({ gainDb: next }, 'Gain');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setDrafts({ ...drafts, gainDb: clip.gainDb.toFixed(1) });
+                    setGainEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit clip gain"
+                onClick={() => setGainEdit(true)}
+              >
+                {Number(drafts.gainDb).toFixed(1)} dB
+              </button>
+            )}
+          </span>
           <input
+            className={styles.range}
             aria-label="Clip gain"
             type="range"
             min="-60"
@@ -179,11 +222,44 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
               if (Number.isFinite(next) && next !== clip.gainDb) patch({ gainDb: next }, 'Gain');
             }}
           />
-          <output>{Number(drafts.gainDb).toFixed(1)} dB</output>
         </label>
-        <label>
-          <span>Pan</span>
+        <label className={styles.mixField}>
+          <span>
+            Pan{' '}
+            {panEdit ? (
+              <input
+                className={styles.valueInput}
+                autoFocus
+                type="number"
+                step="0.05"
+                value={drafts.pan}
+                onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
+                onBlur={() => {
+                  setPanEdit(false);
+                  const next = Number(drafts.pan);
+                  if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
+                  if (event.key === 'Escape') {
+                    setDrafts({ ...drafts, pan: clip.pan.toFixed(2) });
+                    setPanEdit(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.value}
+                aria-label="Edit clip pan"
+                onClick={() => setPanEdit(true)}
+              >
+                {formatPan(Number(drafts.pan))}
+              </button>
+            )}
+          </span>
           <input
+            className={styles.range}
             aria-label="Clip pan"
             type="range"
             min="-1"
@@ -196,101 +272,128 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
               if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
             }}
           />
-          <output>
-            {Math.abs(Number(drafts.pan)) < 0.01
-              ? 'Center'
-              : `${Number(drafts.pan) < 0 ? 'L' : 'R'} ${Math.round(Math.abs(Number(drafts.pan)) * 100)}`}
-          </output>
         </label>
+      </div>
+
+      <section className={styles.section}>
+        <header className={styles.sectionHeader}>
+          <strong>FADES</strong>
+        </header>
+        <div className={styles.fieldPair}>
+          <label className={styles.field}>
+            <span>In</span>
+            <input
+              className={clsx(styles.control, styles.mono)}
+              type="number"
+              min="0"
+              max={seconds * 1000}
+              step="1"
+              value={drafts.fadeInMs}
+              onChange={(event) => setDrafts({ ...drafts, fadeInMs: event.currentTarget.value })}
+              onBlur={() => {
+                const ms = Number(drafts.fadeInMs);
+                if (!Number.isFinite(ms) || ms < 0) return;
+                const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+                if (frames !== clip.fadeIn.frames)
+                  patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade in');
+              }}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Out</span>
+            <input
+              className={clsx(styles.control, styles.mono)}
+              type="number"
+              min="0"
+              max={seconds * 1000}
+              step="1"
+              value={drafts.fadeOutMs}
+              onChange={(event) => setDrafts({ ...drafts, fadeOutMs: event.currentTarget.value })}
+              onBlur={() => {
+                const ms = Number(drafts.fadeOutMs);
+                if (!Number.isFinite(ms) || ms < 0) return;
+                const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
+                if (frames !== clip.fadeOut.frames)
+                  patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade out');
+              }}
+            />
+          </label>
+        </div>
+        <div
+          className={clsx(styles.segmented, styles.segmentedGap)}
+          aria-label="Fade shape"
+          role="group"
+        >
+          {(['linear', 'equalPower', 'smooth'] as const).map((shape) => (
+            <button
+              key={shape}
+              type="button"
+              aria-pressed={(clip.fadeShape ?? 'equalPower') === shape}
+              onClick={() => patch({ fadeShape: shape }, 'Fade shape')}
+            >
+              {shape === 'linear' ? 'Linear' : shape === 'equalPower' ? 'Equal' : 'Smooth'}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className={styles.section}>
-        <header>
-          <strong>Fades</strong>
-          <span>EQUAL POWER</span>
-        </header>
-        <label>
-          <span>Fade in</span>
-          <input
-            type="number"
-            min="0"
-            max={seconds * 1000}
-            step="1"
-            value={drafts.fadeInMs}
-            onChange={(event) => setDrafts({ ...drafts, fadeInMs: event.currentTarget.value })}
-            onBlur={() => {
-              const ms = Number(drafts.fadeInMs);
-              if (!Number.isFinite(ms) || ms < 0) return;
-              const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
-              if (frames !== clip.fadeIn.frames)
-                patch({ fadeIn: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade in');
-            }}
-          />
-          <output>ms</output>
-        </label>
-        <label>
-          <span>Fade out</span>
-          <input
-            type="number"
-            min="0"
-            max={seconds * 1000}
-            step="1"
-            value={drafts.fadeOutMs}
-            onChange={(event) => setDrafts({ ...drafts, fadeOutMs: event.currentTarget.value })}
-            onBlur={() => {
-              const ms = Number(drafts.fadeOutMs);
-              if (!Number.isFinite(ms) || ms < 0) return;
-              const frames = Math.round((ms * clip.sourceSampleRate) / 1000);
-              if (frames !== clip.fadeOut.frames)
-                patch({ fadeOut: { frames, sampleRate: clip.sourceSampleRate } }, 'Fade out');
-            }}
-          />
-          <output>ms</output>
-        </label>
-      </section>
-
-      <div className={styles.toggles}>
-        <button
-          className={clip.muted ? styles.active : ''}
-          onClick={() => commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')}
-        >
-          Mute
-        </button>
-        <button
-          className={clip.loopEnabled ? styles.active : ''}
-          onClick={() =>
-            commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }), 'Loop')
-          }
-        >
-          Loop
-        </button>
-      </div>
-
-      <div className={styles.actions}>
-        {props.onSetLoopToClip && (
+        <div className={styles.clipActions}>
+          <div className={styles.segmented} role="group" aria-label="Clip state">
+            <button
+              type="button"
+              aria-pressed={clip.muted}
+              onClick={() =>
+                commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
+              }
+            >
+              Mute
+            </button>
+            <button
+              type="button"
+              aria-pressed={clip.loopEnabled}
+              onClick={() =>
+                commit(
+                  props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
+                  'Loop',
+                )
+              }
+            >
+              Loop
+            </button>
+          </div>
           <button
-            onClick={() => {
-              const operation = props.onSetLoopToClip?.(clip);
-              if (operation) commit(operation, 'Loop range');
-            }}
+            type="button"
+            className={styles.smallButton}
+            onClick={() => commit(props.api.duplicateAudioClip(clip.id), 'Duplicate')}
           >
-            Set Loop to Clip
+            Duplicate
           </button>
-        )}
-        <button onClick={() => commit(props.api.duplicateAudioClip(clip.id), 'Duplicate')}>
-          Duplicate
-        </button>
-        <button
-          className={styles.danger}
-          onClick={() =>
-            commit(props.api.removeTimelineClips([clip.id], []), 'Delete', () =>
-              props.setSelectedClipIds([]),
-            )
-          }
-        >
-          Delete
-        </button>
-      </div>
+          {props.onSetLoopToClip && (
+            <button
+              type="button"
+              className={styles.smallButton}
+              onClick={() => {
+                const operation = props.onSetLoopToClip?.(clip);
+                if (operation) commit(operation, 'Loop range');
+              }}
+            >
+              Loop to Clip
+            </button>
+          )}
+          <button
+            type="button"
+            className={clsx(styles.smallButton, styles.danger)}
+            onClick={() =>
+              commit(props.api.removeTimelineClips([clip.id], []), 'Delete', () =>
+                props.setSelectedClipIds([]),
+              )
+            }
+          >
+            Delete
+          </button>
+        </div>
+      </section>
 
       {message && <p className={styles.message}>{message}</p>}
     </div>

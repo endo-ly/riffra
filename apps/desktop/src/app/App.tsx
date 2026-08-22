@@ -13,6 +13,7 @@ import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
 import { PropertiesPanel } from '@/features/arrange/inspector/PropertiesPanel';
 import { LibraryPanel } from '@/features/library/LibraryPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
+import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
@@ -44,15 +45,12 @@ function LeftColumnResizeHandle(props: {
   onResizeBy: (delta: number) => void;
 }) {
   return (
-    <div
-      className={clsx(shellStyles.panelResizeHandle, props.width === 0 && shellStyles.collapsed)}
-      role="separator"
-      aria-label="Resize or collapse left column"
-      aria-orientation="vertical"
-      aria-valuemin={0}
-      aria-valuemax={LEFT_COLUMN_WIDTH.max}
-      aria-valuenow={props.width}
-      tabIndex={0}
+    <ResizeHandle
+      orientation="vertical"
+      ariaLabel="Resize or collapse left column"
+      ariaValueMin={0}
+      ariaValueMax={LEFT_COLUMN_WIDTH.max}
+      ariaValueNow={props.width}
       onPointerDown={props.onPointerDown}
       onKeyDown={(event) => {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -60,13 +58,19 @@ function LeftColumnResizeHandle(props: {
           props.onResizeBy((event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 24 : 8));
         }
       }}
+      style={{
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: 'var(--layout-left-column-width)',
+      }}
     />
   );
 }
 
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
-  const [propertiesHeight, setPropertiesHeight] = useState(240);
+  const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const [panelResize, setPanelResize] = useState<{
     startX: number;

@@ -38,41 +38,7 @@
   grid-area: play-surface;
   min-width: 0;
   min-height: 0;
-}
-
-.panelResizeHandle {
-  position: absolute;
-  z-index: 8;
-  top: 0;
-  bottom: 0;
-  left: var(--layout-left-column-width);
-  width: 8px;
-  transform: translateX(-50%);
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.panelResizeHandle::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 34px;
-  transform: translate(-50%, -50%);
-  border-radius: 2px;
-  background: transparent;
-  transition: background 0.14s ease;
-}
-
-.panelResizeHandle:hover::after,
-.panelResizeHandle:focus-visible::after,
-.isPanelResizing .panelResizeHandle::after {
-  background: var(--color-accent-primary);
-}
-
-.panelResizeHandle.collapsed {
-  transform: translateX(0);
+  isolation: isolate;
 }
 
 .isPanelResizing,

@@ -3,12 +3,17 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(180px, 1fr) 8px minmax(
-      160px,
-      min(var(--properties-height), calc(100% - 188px))
-    );
+  isolation: isolate;
+  grid-template-rows: 1fr 5px 1fr;
   overflow: hidden;
   background: var(--color-bg-panel);
+}
+
+.column[data-custom] {
+  grid-template-rows: minmax(180px, 1fr) 5px minmax(
+      160px,
+      min(var(--properties-height), calc(100% - 185px))
+    );
 }
 
 .browser,
@@ -21,34 +26,4 @@
 .browser > *,
 .properties > * {
   height: 100%;
-}
-
-.resizeHandle {
-  position: relative;
-  z-index: 8;
-  width: 100%;
-  height: 8px;
-  cursor: ns-resize;
-  touch-action: none;
-  background: var(--color-bg-panel);
-  border-top: 1px solid var(--color-border-default);
-  border-bottom: 1px solid var(--color-border-default);
-}
-
-.resizeHandle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  width: 44px;
-  height: 2px;
-  transform: translateX(-50%);
-  background: transparent;
-  border-radius: 2px;
-  transition: background 0.14s ease;
-}
-
-.resizeHandle:hover::after,
-.resizeHandle:focus-visible::after {
-  background: var(--color-accent-primary);
 }

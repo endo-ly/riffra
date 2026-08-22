@@ -249,6 +249,7 @@ export interface ArrangeApi {
       solo?: boolean;
       armed?: boolean;
       monitoring?: MonitoringState;
+      color?: string;
     },
   ): Promise<ArrangementMutationResult>;
   setTrackAutomation(
@@ -321,6 +322,12 @@ export interface ArrangeApi {
     clipId: string,
     noteIds: string[],
     gridTicks: number,
+  ): Promise<ArrangementMutationResult>;
+  transformMidiNotes(
+    clipId: string,
+    noteIds: string[],
+    transposeSemitones: number,
+    velocityOffset: number,
   ): Promise<ArrangementMutationResult>;
   duplicateMidiNotes(
     clipId: string,

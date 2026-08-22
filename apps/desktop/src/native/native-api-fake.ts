@@ -429,6 +429,9 @@ export class FakeNativeApi implements NativeApi {
   quantizeMidiNotes(...args: Parameters<NativeApi['quantizeMidiNotes']>) {
     return this.command('quantizeMidiNotes', args);
   }
+  transformMidiNotes(...args: Parameters<NativeApi['transformMidiNotes']>) {
+    return this.command('transformMidiNotes', args);
+  }
   duplicateMidiNotes(...args: Parameters<NativeApi['duplicateMidiNotes']>) {
     return this.command('duplicateMidiNotes', args);
   }
@@ -778,6 +781,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'removeMidiNote',
   'removeMidiNotes',
   'quantizeMidiNotes',
+  'transformMidiNotes',
   'duplicateMidiNotes',
   'setAudioClipTakeVariant',
   'activateTake',

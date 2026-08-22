@@ -20,10 +20,12 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
+import { resolveTrackColor } from '../inspector/track-colors';
 import styles from '../WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
   track: Track;
+  trackIndex?: number;
   timeline: TrackTimeline;
   timebase: ProjectTimebase;
   analyses: Record<string, AudioAnalysis | null>;
@@ -184,6 +186,11 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     >
       <aside
         className={styles.trackHeader}
+        style={
+          {
+            '--track-color': resolveTrackColor(props.track, props.trackIndex ?? 0),
+          } as CSSProperties
+        }
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
             props.onSelectTrack();
@@ -250,9 +257,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </div>
           <div className={styles.trackMeta}>
             <span>{trackMeta}</span>
-            {props.focused && props.track.kind === 'instrument' && (
-              <b className={styles.focusBadge}>LIVE</b>
-            )}
           </div>
         </div>
         <div className={styles.trackSwitches}>

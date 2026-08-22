@@ -1,5 +1,6 @@
 .workspace {
   position: relative;
+  isolation: isolate;
   height: 100%;
   min-height: 0;
   display: grid;
@@ -394,8 +395,12 @@
 }
 
 .trackRow[data-selected='true'] .trackHeader {
-  box-shadow: inset 3px 0 0 var(--color-selection-accent);
-  background: color-mix(in srgb, var(--color-bg-panel) 92%, var(--color-selection-accent));
+  box-shadow: inset 3px 0 0 var(--track-color, var(--color-selection-accent));
+  background: color-mix(
+    in srgb,
+    var(--color-bg-panel) 92%,
+    var(--track-color, var(--color-selection-accent))
+  );
 }
 .trackRow[data-focused='true'] .trackHeader {
   background: color-mix(in srgb, var(--color-bg-panel) 94%, var(--color-accent-primary));
@@ -403,7 +408,7 @@
 }
 .trackRow[data-selected='true'][data-focused='true'] .trackHeader {
   box-shadow:
-    inset 3px 0 0 var(--color-selection-accent),
+    inset 3px 0 0 var(--track-color, var(--color-selection-accent)),
     inset 0 -2px 0 var(--color-accent-primary);
 }
 
@@ -431,9 +436,10 @@
   grid-auto-rows: auto;
   align-content: center;
   gap: 4px 6px;
-  padding: 6px 8px 6px 12px;
+  padding: 6px 8px 6px 10px;
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
+  border-left: 3px solid var(--track-color, transparent);
 }
 
 .trackGrip {
@@ -495,16 +501,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.focusBadge {
-  flex: 0 0 auto;
-  padding: 1px 4px;
-  color: var(--color-text-on-accent);
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  background: var(--color-accent-primary);
-  border-radius: 2px;
 }
 
 .trackSwitches {

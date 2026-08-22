@@ -1,5 +1,6 @@
 .area {
   position: relative;
+  isolation: isolate;
   min-height: 180px;
   height: var(--detail-height);
   display: grid;
@@ -7,13 +8,11 @@
   overflow: hidden;
   color: var(--color-text-primary);
   background: var(--color-bg-surface);
-  border-top: 1px solid var(--color-border-strong);
-  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.24);
 }
 
 .maximized {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-region-raised);
   inset: var(--size-toolbar) 0 0;
   height: auto;
   min-height: 0;
@@ -25,41 +24,11 @@
   grid-template-rows: 48px;
 }
 
-.resizeHandle {
-  position: absolute;
-  z-index: 20;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 10px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  cursor: ns-resize;
-}
-
-.resizeHandle::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 50%;
-  width: 58px;
-  height: 3px;
-  transform: translateX(-50%);
-  background: var(--color-border-strong);
-  border-radius: 3px;
-}
-
-.resizeHandle:hover::after,
-.resizeHandle:focus-visible::after {
-  background: var(--color-accent-primary);
-}
-
 .actions {
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: 21;
+  z-index: var(--z-detail-actions);
   display: flex;
   align-items: center;
   gap: 3px;

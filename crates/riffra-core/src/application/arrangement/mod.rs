@@ -30,10 +30,11 @@ where
         let name = normalize_track_name(name.into())?;
         self.commit_arrangement(|arrangement| {
             let id = next_id("track");
-            arrangement.tracks.push(match kind {
+            let track = match kind {
                 TrackKind::Audio => Track::audio(id, name),
                 TrackKind::Instrument => Track::instrument(id, name),
-            });
+            };
+            arrangement.tracks.push(track);
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -159,6 +160,20 @@ where
             }
             if let Some(monitoring) = patch.monitoring {
                 track.monitoring = monitoring;
+            }
+            if let Some(color) = patch.color {
+                let trimmed = color.trim();
+                if trimmed.is_empty() {
+                    track.color = None;
+                } else {
+                    if !is_valid_track_color(trimmed) {
+                        return Err(crate::DomainError::InvalidClip(
+                            "track color must be #rrggbb".into(),
+                        )
+                        .into());
+                    }
+                    track.color = Some(trimmed.to_ascii_lowercase());
+                }
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
@@ -762,6 +777,66 @@ where
             arrangement
                 .remove_midi_notes(clip_id, &note_ids)
                 .map_err(Into::into)
+        })
+    }
+
+    /// Transposes and velocity-offsets MIDI notes in a clip.
+    ///
+    /// When `note_ids` is non-empty only those notes are touched. When empty
+    /// all notes in the clip are transformed. Pitch and velocity are clamped
+    /// to `0..=127`.
+    pub fn transform_midi_notes(
+        &self,
+        clip_id: &str,
+        note_ids: Vec<String>,
+        transpose_semitones: i16,
+        velocity_offset: i16,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            let clip = arrangement
+                .midi_clips
+                .iter_mut()
+                .find(|clip| clip.id == clip_id)
+                .ok_or_else(|| {
+                    crate::DomainError::InvalidClip(format!(
+                        "midi clip '{clip_id}' is not registered"
+                    ))
+                })?;
+            if clip.notes.is_empty() {
+                return Err(crate::DomainError::InvalidClip(
+                    "midi clip has no notes to transform".into(),
+                )
+                .into());
+            }
+            if transpose_semitones == 0 && velocity_offset == 0 {
+                return Err(crate::ApplicationError::InvalidCommand(
+                    "transform requires a non-zero transpose or velocity offset".into(),
+                ));
+            }
+            use std::collections::HashSet;
+            let targets: HashSet<&str> = note_ids.iter().map(String::as_str).collect();
+            if !targets.is_empty() {
+                let known: HashSet<&str> = clip.notes.iter().map(|note| note.id.as_str()).collect();
+                for id in &note_ids {
+                    if !known.contains(id.as_str()) {
+                        return Err(crate::DomainError::InvalidClip(format!(
+                            "midi note '{id}' is not registered"
+                        ))
+                        .into());
+                    }
+                }
+            }
+            for note in clip.notes.iter_mut() {
+                if !targets.is_empty() && !targets.contains(note.id.as_str()) {
+                    continue;
+                }
+                let next_pitch = (note.note as i16 + transpose_semitones).clamp(0, 127) as u8;
+                let next_velocity = (note.velocity as i16 + velocity_offset).clamp(0, 127) as u8;
+                note.note = next_pitch;
+                note.velocity = next_velocity;
+            }
+            arrangement.revision = arrangement.revision.saturating_add(1);
+            Ok(())
         })
     }
 

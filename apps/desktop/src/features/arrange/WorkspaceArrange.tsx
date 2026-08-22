@@ -1095,6 +1095,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               <Fragment key={track.id}>
                 <ArrangeTrack
                   track={track}
+                  trackIndex={trackIndex}
                   timeline={buildTrackTimeline(
                     track.id,
                     arrangement.audioClips,

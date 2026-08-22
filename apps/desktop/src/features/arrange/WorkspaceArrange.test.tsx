@@ -527,6 +527,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     session.arrangement.midiClips.push(
@@ -1017,6 +1018,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
@@ -1213,6 +1215,7 @@ describe('WorkspaceArrange', () => {
       fadeOut: { frames: 0, sampleRate: 48_000 },
       loopEnabled: false,
       muted: false,
+      fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
     const api = new FakeNativeApi({ bootstrapState: { session } });
@@ -1784,7 +1787,7 @@ describe('WorkspaceArrange', () => {
       configurable: true,
       value: 600,
     });
-    const resizeHandle = screen.getByRole('button', { name: 'Resize detail area' });
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize detail area' });
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: -200 });
     fireEvent.pointerUp(window, { clientY: -200 });

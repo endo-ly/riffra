@@ -1,0 +1,49 @@
+.handle {
+  position: relative;
+  /*
+   * Panel toolbars are grid items, so their --z-chrome applies even without
+   * positioning; the strip must stay hoverable above them.
+   */
+  z-index: var(--z-handle);
+  touch-action: none;
+  background: transparent;
+}
+
+.horizontal {
+  width: 100%;
+  height: 5px;
+  cursor: ns-resize;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.vertical {
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  border-left: 1px solid var(--color-border-default);
+}
+
+.grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  border-radius: 2px;
+  transition: background 0.14s ease;
+}
+
+.horizontal .grip {
+  width: 44px;
+  height: 2px;
+}
+
+.vertical .grip {
+  width: 2px;
+  height: 44px;
+}
+
+.handle:hover .grip,
+.handle:focus-visible .grip {
+  background: var(--color-accent-primary);
+}

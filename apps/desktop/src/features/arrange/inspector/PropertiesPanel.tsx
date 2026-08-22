@@ -6,6 +6,7 @@ import { MidiClipInspector } from './MidiClipInspector';
 import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
 
 interface PropertiesPanelProps {
@@ -42,16 +43,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   const selectedMidiClipCount = selectedMidiClipIds.length;
   const setSelectedClipIds = (clipIds: string[]) =>
     props.setArrangeSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
-  const title = getPropertiesTitle(
-    Boolean(selectedTrack),
-    selectedAudioClipCount,
-    selectedMidiClipCount,
-  );
   return (
     <aside className={styles.panel} aria-label="Properties" data-properties-panel>
-      <div className={styles.heading}>
-        <span>{title}</span>
-      </div>
       <div className={styles.body}>
         {selectedTrack ? (
           <>
@@ -142,22 +135,14 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               api={props.api}
             />
           </>
-        ) : null}
+        ) : (
+          <div className={styles.empty}>
+            <Icon name="pointer" />
+            <strong>Nothing selected</strong>
+            <small>Select a track or a clip in the arrangement to inspect it here.</small>
+          </div>
+        )}
       </div>
     </aside>
   );
-}
-
-function getPropertiesTitle(
-  hasSelectedTrack: boolean,
-  audioClipCount: number,
-  midiClipCount: number,
-) {
-  if (hasSelectedTrack) return 'TRACK';
-  if (audioClipCount > 0 && midiClipCount === 0)
-    return audioClipCount === 1 ? 'AUDIO CLIP' : 'AUDIO CLIPS';
-  if (midiClipCount > 0 && audioClipCount === 0)
-    return midiClipCount === 1 ? 'MIDI CLIP' : 'MIDI CLIPS';
-  if (audioClipCount > 0 || midiClipCount > 0) return 'CLIPS';
-  return 'PROPERTIES';
 }

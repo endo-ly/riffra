@@ -1,6 +1,6 @@
 .overlay {
   position: fixed;
-  z-index: 1100;
+  z-index: var(--z-confirm);
   inset: 0;
   display: grid;
   place-items: center;

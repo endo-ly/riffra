@@ -1,5 +1,5 @@
 .toolbar {
-  z-index: 10;
+  z-index: var(--z-chrome);
   min-width: 0;
   display: flex;
   flex-wrap: nowrap;

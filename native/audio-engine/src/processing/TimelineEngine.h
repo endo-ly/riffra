@@ -19,6 +19,13 @@ namespace riffra {
 class TimelineEngineTestPeer;
 class SafetyAudioCallback;
 
+/// Envelope multiplier for a normalized fade progress in [0, 1].
+///
+/// Shapes mirror the Rust `FadeShape` contract: 0 linear, 1 equal power
+/// (half-sine), 2 smoothstep. Snapshot loading clamps stored values into
+/// that range before they reach playback.
+[[nodiscard]] float fadeEnvelope(float progress, int fadeShape) noexcept;
+
 class TimelineEngine final {
 public:
     explicit TimelineEngine(bool offline = false);
@@ -108,6 +115,7 @@ private:
         float pan = 0.0f;
         std::int64_t fadeInSamples = 0;
         std::int64_t fadeOutSamples = 0;
+        int fadeShape = 1;
         bool loop = false;
         bool muted = false;
     };

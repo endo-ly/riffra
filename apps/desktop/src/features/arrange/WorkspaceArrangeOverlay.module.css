@@ -1,6 +1,6 @@
 .markerDialog {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-popover);
   top: 48px;
   left: 50%;
   width: min(300px, calc(100vw - 32px));
@@ -61,7 +61,7 @@
 
 .pluginPickerOverlay {
   position: fixed;
-  z-index: 100;
+  z-index: var(--z-popover);
   inset: 0;
   display: grid;
   place-content: center;
