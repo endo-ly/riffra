@@ -15,8 +15,10 @@
     "gen:types": "npm run gen:types --workspace @riffra/desktop",
     "check": "npm run check --workspace @riffra/desktop",
     "typecheck": "npm run typecheck --workspace @riffra/desktop",
-    "lint": "eslint apps/desktop",
+    "lint": "npm run lint:ts && npm run lint:css",
+    "lint:ts": "eslint apps/desktop",
     "lint:fix": "eslint apps/desktop --fix",
+    "lint:css": "stylelint \"apps/desktop/src/**/*.css\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "knip": "knip --tsConfig apps/desktop/tsconfig.app.json --include=files,dependencies --no-config-hints",
@@ -27,7 +29,11 @@
       "eslint --fix",
       "prettier --write"
     ],
-    "**/*.{json,md,css}": [
+    "**/*.css": [
+      "stylelint --fix",
+      "prettier --write"
+    ],
+    "**/*.{json,md}": [
       "prettier --write"
     ]
   },
@@ -43,6 +49,7 @@
     "knip": "^6.27.0",
     "lint-staged": "^17.0.8",
     "prettier": "^3.9.5",
+    "stylelint": "^17.14.1",
     "typescript-eslint": "^8.64.0"
   }
 }

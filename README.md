@@ -68,7 +68,8 @@ npm run test            # フロントエンドの全テスト
 npm run gen:types      # Rust 定義から TS 型を再生成（ts-rs + gen-barrel.js）
 npm run check          # 型チェック + ビルド + テスト
 
-npm run lint           # ESLint
+npm run lint           # ESLint + Stylelint
+npm run lint:css       # Stylelint（z-index は tokens.css のレイヤートークンを使用）
 npm run typecheck      # tsc
 
 cargo run -p riffra-cli -- --session ./project.json get-session
