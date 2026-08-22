@@ -1,5 +1,6 @@
 .workspace {
   position: relative;
+  isolation: isolate;
   height: 100%;
   min-height: 0;
   display: grid;

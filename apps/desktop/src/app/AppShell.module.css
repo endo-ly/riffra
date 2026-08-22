@@ -38,6 +38,7 @@
   grid-area: play-surface;
   min-width: 0;
   min-height: 0;
+  isolation: isolate;
 }
 
 .isPanelResizing,

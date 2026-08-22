@@ -1,7 +1,10 @@
 .handle {
   position: relative;
-  /* Panel toolbars are grid items with z-index 10; the strip must stay hoverable above them. */
-  z-index: 20;
+  /*
+   * Panel toolbars are grid items, so their --z-chrome applies even without
+   * positioning; the strip must stay hoverable above them.
+   */
+  z-index: var(--z-handle);
   touch-action: none;
   background: transparent;
 }

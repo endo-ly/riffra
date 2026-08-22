@@ -1,6 +1,6 @@
 .stack {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-toast);
   right: 14px;
   bottom: 12px;
   display: flex;

@@ -2,7 +2,7 @@
   position: fixed;
   top: 64px;
   left: 12px;
-  z-index: 11;
+  z-index: var(--z-banner);
   width: min(360px, calc(100vw - 24px));
   max-height: min(54vh, 420px);
   display: grid;

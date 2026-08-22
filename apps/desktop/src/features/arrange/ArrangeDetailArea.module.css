@@ -1,5 +1,6 @@
 .area {
   position: relative;
+  isolation: isolate;
   min-height: 180px;
   height: var(--detail-height);
   display: grid;
@@ -11,7 +12,7 @@
 
 .maximized {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-region-raised);
   inset: var(--size-toolbar) 0 0;
   height: auto;
   min-height: 0;
@@ -27,7 +28,7 @@
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: 21;
+  z-index: var(--z-detail-actions);
   display: flex;
   align-items: center;
   gap: 3px;

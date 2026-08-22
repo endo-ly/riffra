@@ -1,6 +1,6 @@
 .menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-menu);
   min-width: 176px;
   display: grid;
   padding: 4px;
