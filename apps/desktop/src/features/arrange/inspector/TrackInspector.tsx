@@ -9,7 +9,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { Icon } from '@/shared/ui/primitives';
-import { TRACK_COLOR_PALETTE } from './track-colors';
+import { resolveTrackColor, TRACK_COLOR_PALETTE } from './track-colors';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
 import { useInspectorOperation } from './useInspectorOperation';
@@ -63,8 +63,7 @@ export function TrackInspector(props: TrackInspectorProps) {
     (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
   const instrument = props.track.instrument;
   const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
-  const displayColor =
-    props.track.color ?? TRACK_COLOR_PALETTE[Math.max(0, trackIndex) % TRACK_COLOR_PALETTE.length];
+  const displayColor = resolveTrackColor(props.track, trackIndex);
   return (
     <div className={styles.inspector}>
       <div className={styles.identity}>

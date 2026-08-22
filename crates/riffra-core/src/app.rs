@@ -1309,4 +1309,23 @@ mod tests {
         assert!(core.history_state().unwrap().can_undo);
         assert_eq!(storage.sessions.lock().unwrap().len(), 1);
     }
+
+    #[test]
+    fn add_track_leaves_coloring_to_the_ui() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+
+        let committed = core
+            .application(&storage)
+            .add_track("Main", TrackKind::Audio)
+            .unwrap();
+
+        assert_eq!(committed.arrangement.tracks[0].color, None);
+    }
 }

@@ -30,15 +30,10 @@ where
         let name = normalize_track_name(name.into())?;
         self.commit_arrangement(|arrangement| {
             let id = next_id("track");
-            let mut track = match kind {
+            let track = match kind {
                 TrackKind::Audio => Track::audio(id, name),
                 TrackKind::Instrument => Track::instrument(id, name),
             };
-            const PALETTE: [&str; 8] = [
-                "#7eb8ff", "#7ee0a0", "#ff9f6b", "#ffd166", "#c79eff", "#ff7eb0", "#64e8ff",
-                "#a8b0bf",
-            ];
-            track.color = Some(PALETTE[arrangement.tracks.len() % PALETTE.len()].to_string());
             arrangement.tracks.push(track);
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())

@@ -20,6 +20,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
+import { resolveTrackColor } from '../inspector/track-colors';
 import styles from '../WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
@@ -185,21 +186,11 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     >
       <aside
         className={styles.trackHeader}
-        style={(() => {
-          const palette = [
-            '#7eb8ff',
-            '#7ee0a0',
-            '#ff9f6b',
-            '#ffd166',
-            '#c79eff',
-            '#ff7eb0',
-            '#64e8ff',
-            '#a8b0bf',
-          ] as const;
-          const fallback = palette[(props.trackIndex ?? 0) % palette.length];
-          const color = props.track.color ?? fallback;
-          return { '--track-color': color } as CSSProperties;
-        })()}
+        style={
+          {
+            '--track-color': resolveTrackColor(props.track, props.trackIndex ?? 0),
+          } as CSSProperties
+        }
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
             props.onSelectTrack();
