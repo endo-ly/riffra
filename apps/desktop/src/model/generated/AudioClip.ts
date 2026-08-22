@@ -9,4 +9,4 @@ import type { FrameRange } from "./FrameRange";
  * A non-destructive audio clip referencing an [`AssetId`].
  *
  */
-export type AudioClip = { id: string, trackId: string, assetId: AssetId, startTick: number, sourceRange: FrameRange, sourceSampleRate: number, timelineDuration: FrameDuration, gainDb: number, pan: number, fadeIn: FrameDuration, fadeOut: FrameDuration, fadeShape?: FadeShape, loopEnabled: boolean, muted: boolean, name: string, recordingTakeId?: string, takeVariant: AudioTakeVariant, };
+export type AudioClip = { id: string, trackId: string, assetId: AssetId, startTick: number, sourceRange: FrameRange, sourceSampleRate: number, timelineDuration: FrameDuration, gainDb: number, pan: number, fadeIn: FrameDuration, fadeOut: FrameDuration, fadeShape: FadeShape, loopEnabled: boolean, muted: boolean, name: string, recordingTakeId?: string, takeVariant: AudioTakeVariant, };
