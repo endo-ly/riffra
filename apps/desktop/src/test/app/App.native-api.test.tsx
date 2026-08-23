@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
+import { defaultSession } from '@/native/browser-defaults';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 afterEach(cleanup);
@@ -144,6 +145,27 @@ describe('App native boundary', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Stop playback' })).toBeInTheDocument(),
     );
+  });
+
+  it('keeps the newest canonical state when events arrive out of order', async () => {
+    const api = new FakeNativeApi();
+    await renderApp(api);
+    const newer = { ...defaultSession(), projectName: 'Newest' };
+    const older = { ...defaultSession(), projectName: 'Older' };
+
+    api.emitCanonicalStateChanged({
+      session: newer,
+      sequence: 2,
+      history: { canUndo: true, canRedo: false },
+    });
+    api.emitCanonicalStateChanged({
+      session: older,
+      sequence: 1,
+      history: { canUndo: false, canRedo: false },
+    });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Newest/ })).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /Older/ })).not.toBeInTheDocument();
   });
 
   it('surfaces the native feedback cause in the global safety control', async () => {

@@ -7,22 +7,29 @@ use super::*;
 /// projection is prepared again.
 pub(crate) fn reconcile_runtime_after_audio_device_change(
     context: &SessionContext<'_>,
-) -> Result<AudioStatus, String> {
+) -> Result<AudioStatus, AdapterError> {
     context
         .audio
         .mark_runtime_recovery_mute()
-        .map_err(|error| format!("Runtime recovery mute could not be recorded: {error}"))?;
+        .map_err(|error| {
+            AdapterError::runtime(format!(
+                "Runtime recovery mute could not be recorded: {error}"
+            ))
+        })?;
     if !context.runtime.invalidate_for_audio_device_change() {
-        return Err(
-            "Audio Runtime graph is busy; the audio device change can be retried shortly.".into(),
-        );
+        return Err(AdapterError::runtime(
+            "Audio Runtime graph is busy; the audio device change can be retried shortly.",
+        ));
     }
     let arrangement_error = sync_arrangement_runtime(context).err().map(|error| {
         format!("Arrangement Runtime restoration failed after the audio device change: {error}")
     });
-    let status = context.audio.refresh_status().map_err(String::from)?;
+    let status = context
+        .audio
+        .refresh_status()
+        .map_err(|error| AdapterError::runtime(error.to_string()))?;
     if let Some(error) = arrangement_error {
-        return Err(error);
+        return Err(AdapterError::runtime(error));
     }
     Ok(status)
 }
@@ -32,29 +39,24 @@ pub(crate) fn reconcile_runtime_after_audio_device_change(
 pub fn set_master_gain_db(
     context: &SessionContext<'_>,
     gain_db: f64,
-) -> Result<SessionAudioPair, String> {
+) -> Result<SessionAudioPair, AdapterError> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }
     let previous_gain_db = current_session(context)?.settings.master_db;
     let audio = context.audio.set_master_gain_db(gain_db)?;
-    let committed = match commit_core_application(context, |core, store| {
+    if let Err(error) = commit_core_application(context, |core, store| {
         core.application(store)
             .update_session_settings(SessionSettingsPatch {
                 master_db: Some(gain_db),
                 ..SessionSettingsPatch::default()
             })
     }) {
-        Ok(committed) => committed,
-        Err(error) => {
-            let _ = context.audio.set_master_gain_db(previous_gain_db);
-            return Err(error);
-        }
-    };
-    Ok(SessionAudioPair {
-        session: committed,
-        audio,
-    })
+        let _ = context.audio.set_master_gain_db(previous_gain_db);
+        return Err(error);
+    }
+    let canonical = context.core.canonical_state().map_err(AdapterError::from)?;
+    Ok(SessionAudioPair { canonical, audio })
 }
 
 // Missing-dependency recovery operations.

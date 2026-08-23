@@ -4,16 +4,16 @@
 
 ## CLI Host
 
-`riffra` は `riffra-core` のApplication操作を `riffra-host` の永続化へ接続するStandalone Hostである。
+Linuxの`riffra`は、`riffra-core`のApplication操作を`riffra-host`の永続化へ接続するStandalone Hostである。
 
 ```text
 AI agent
    │ spawn
    ▼
 riffra --data-root ./riffra-data --interactive
-   │ Protocol v1 JSON Lines
+   │ JSON Lines
    ▼
-DataRootLease → SessionStore → AppCore<Application>
+DataRootLease → SessionStore → AppCore<()>
 ```
 
 DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所有できない。
@@ -38,7 +38,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --ki
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 ```
 
-ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力からProtocol v1の要求を複数受け取り、要求ごとにJSON Linesで応答する。`undo` と `redo` の履歴はプロセス内に保持されるため、対話モードでのみ利用できる。
+ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力から要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`はプロセス内の履歴を使うため、対話モードで利用する。
 
 ## 編集できる制作状態
 
@@ -58,22 +58,21 @@ CLIは次の状態を編集できる。
 
 ## JSON Lines境界
 
-要求は次の形式である。
+Standaloneの要求は次の形式である。`expectedSequence`は任意で、指定した場合は正準シーケンスが一致するときだけ操作する。
 
 ```json
 {
-  "protocolVersion": 1,
   "requestId": "42",
   "command": "track.add",
+  "expectedSequence": 18,
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
 
-成功応答にはcanonical sequenceを含める。
+応答には、その結果が対応する正準シーケンスを含める。
 
 ```json
 {
-  "protocolVersion": 1,
   "requestId": "42",
   "ok": true,
   "sequence": 12,
@@ -81,11 +80,16 @@ CLIは次の状態を編集できる。
 }
 ```
 
-不正なJSON・Protocol version・要求形式は `invalidRequest`、未知のコマンドやCore・Hostの失敗は `commandFailed` として返す。応答の `requestId` は要求の値を保持する。
+不正なJSON、要求形式、`params`、未知のコマンドは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime操作を受けた場合は`runtimeUnavailable`として返す。
 
 ## Runtimeとの境界
 
-CLIはAudio Runtimeを起動しない。再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Adapterまたは専用Workerの責務である。CLIは音声デバイスやGUIのない環境でも、保存済みの制作状態を編集できる。
+LinuxのStandalone CLIはAudio Runtimeを起動しない。保存済みの制作状態は、音声デバイスやGUIのない環境でも編集できる。RuntimeやDesktop専用サービスを必要とする操作は、このHostの範囲外である。
+
+| 範囲              | 例                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| Audio Runtime     | 再生、録音、Live MIDI、デバイス制御                                                               |
+| Desktopのサービス | プレビュー、レンダー、プラグインスキャン、プラグインエディタ、VST音源の追加・置換・パラメータ変更 |
 
 LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。CLIのDataRoot所有とNative audio engineのデバイス所有は混在させない。
 

@@ -104,6 +104,7 @@ pub async fn open_track_plugin_editor(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         adapter::open_track_plugin_editor(&app_context(state.inner()), &track_id, &device_id)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Track plugin editor operation failed: {error}"))?

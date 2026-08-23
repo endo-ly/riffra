@@ -4,6 +4,7 @@ import type {
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
+  CanonicalState,
   MissingDependency,
   RecordingAsset,
   RecordingStatus,
@@ -113,6 +114,7 @@ export class FakeNativeApi implements NativeApi {
   >();
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
+  private readonly canonicalStateListeners = new Set<(state: CanonicalState) => void>();
   private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
   private readonly pluginStateListeners = new Set<(change: TrackPluginStateChange) => void>();
   private readonly pluginParameterListeners = new Set<
@@ -500,6 +502,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onAudioStatus');
     return this.subscribe(this.audioStatusListeners, callback);
   }
+  onCanonicalStateChanged(callback: Parameters<NativeApi['onCanonicalStateChanged']>[0]) {
+    this.recordCall('onCanonicalStateChanged');
+    return this.subscribe(this.canonicalStateListeners, callback);
+  }
   onAudioMeters(callback: Parameters<NativeApi['onAudioMeters']>[0]) {
     this.recordCall('onAudioMeters');
     return this.subscribe(this.audioMetersListeners, callback);
@@ -594,6 +600,14 @@ export class FakeNativeApi implements NativeApi {
     this.audioStatusListeners.forEach((listener) => listener(status));
   }
 
+  emitCanonicalStateChanged(state: CanonicalState): void {
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      canonical: state,
+    };
+    this.canonicalStateListeners.forEach((listener) => listener(state));
+  }
+
   emitTrackPluginState(change: TrackPluginStateChange): void {
     this.pluginStateListeners.forEach((listener) => listener(change));
   }
@@ -684,18 +698,21 @@ export class FakeNativeApi implements NativeApi {
 
     if (name === 'stopArrangeRecording') {
       return Promise.resolve({
-        session: this.bootstrapState.session,
+        canonical: this.bootstrapState.canonical,
         audio: this.audio,
         projection: { state: 'notRequired' },
         finalization: { state: 'notRequired' },
       });
     }
     if (sessionAudioMethodNames.has(name)) {
-      return Promise.resolve({ session: this.bootstrapState.session, audio: this.audio });
+      return Promise.resolve({
+        canonical: this.bootstrapState.canonical,
+        audio: this.audio,
+      });
     }
     if (arrangementMutationMethodNames.has(name)) {
       const result: ArrangementMutationResult = {
-        session: this.bootstrapState.session,
+        canonical: this.bootstrapState.canonical,
         projection: { state: 'notRequired' },
       };
       return Promise.resolve(result);
@@ -817,8 +834,12 @@ const voidMethodNames = new Set<keyof NativeApi>([
 ]);
 
 function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState {
-  return {
+  const canonical = overrides.canonical ?? {
     session: defaultSession(),
+    sequence: 0,
+    history: { canUndo: false, canRedo: false },
+  };
+  return {
     pluginCatalog: [],
     runtimeStarted: true,
     runtimeStartupFinished: true,
@@ -829,5 +850,6 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     dataRoot: 'C:\\Riffra',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
     ...overrides,
+    canonical,
   };
 }

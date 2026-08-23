@@ -22,6 +22,7 @@ export type { AutomationParameter } from './AutomationParameter';
 export type { AutomationPoint } from './AutomationPoint';
 export type { BackgroundJobStatus } from './BackgroundJobStatus';
 export type { BootstrapState } from './BootstrapState';
+export type { CanonicalState } from './CanonicalState';
 export type { CreativeSession } from './CreativeSession';
 export type { DeviceChannels } from './DeviceChannels';
 export type { DeviceKind } from './DeviceKind';

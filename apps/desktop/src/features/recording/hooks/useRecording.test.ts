@@ -5,7 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioStatus, CreativeSession } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { useRecording } from './useRecording';
 
@@ -42,7 +42,10 @@ function useRecordingHarness(
   const recording = useRecording(api, {
     audio,
     setAudio,
-    setSession,
+    applyCanonicalState: (canonical) => {
+      setSession(canonical.session);
+      return true;
+    },
     onCommandFailure: setCommandError,
     onProjectionFailure: setError,
     onFinalizationFailure: setFinalizationError,
@@ -245,7 +248,7 @@ describe('useRecording', () => {
 
       api.setFailure('stopArrangeRecording', null);
       api.setResponse('stopArrangeRecording', {
-        session: defaultSession(),
+        canonical: canonicalState(defaultSession()),
         audio: fakeAudioStatus(),
         projection: { state: 'notRequired' },
         finalization: { state: 'notRequired' },
@@ -268,7 +271,7 @@ describe('useRecording', () => {
     });
     api.setFailure('listRecordings', new Error('Inbox unavailable'));
     api.setResponse('stopArrangeRecording', {
-      session: defaultSession(),
+      canonical: canonicalState(defaultSession()),
       audio: fakeAudioStatus(),
       projection: { state: 'notRequired' },
       finalization: { state: 'notRequired' },
@@ -302,7 +305,7 @@ describe('useRecording', () => {
     const api = new FakeNativeApi({ recordings: [], audio: activeAudio });
     const committedSession = sessionWithTrack(false);
     api.setResponse('stopArrangeRecording', {
-      session: committedSession,
+      canonical: canonicalState(committedSession),
       audio: fakeAudioStatus(),
       projection: {
         state: 'failed',
@@ -328,7 +331,7 @@ describe('useRecording', () => {
     const api = new FakeNativeApi({ recordings: [], audio: activeAudio });
     const stoppedSession = sessionWithTrack(false);
     api.setResponse('stopArrangeRecording', {
-      session: stoppedSession,
+      canonical: canonicalState(stoppedSession),
       audio: fakeAudioStatus(),
       projection: { state: 'notRequired' },
       finalization: { state: 'recoveryRequired', message: 'manifest invalid' },

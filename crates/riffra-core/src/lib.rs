@@ -10,7 +10,10 @@ pub mod domain;
 mod errors;
 pub mod ports;
 
-pub use app::{AppCore, CanonicalSessionHandle, CanonicalSnapshot, HistoryState, PreparedSession};
+pub use app::{
+    AppCore, CanonicalSessionHandle, CanonicalSnapshot, CanonicalState, HistoryState,
+    PreparedSession,
+};
 pub use domain::*;
 pub use errors::{ApplicationError, DomainError};
 pub use ports::{

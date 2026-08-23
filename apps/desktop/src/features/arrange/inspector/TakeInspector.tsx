@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioTakeVariant,
+  CanonicalState,
   CreativeSession,
   RecordingTakeRecord,
 } from '@/model/domain';
@@ -23,7 +24,7 @@ interface AuditionState {
 interface TakeInspectorProps {
   session: CreativeSession;
   selection: ArrangeSelection;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   recordingActive: boolean;
   recordingCommandPending: boolean;
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
@@ -200,7 +201,7 @@ export function TakeInspector(props: TakeInspectorProps) {
 
   const commit = (promise: Promise<ArrangementMutationResult>) =>
     runOperation(promise, (result) =>
-      applyArrangementMutation(result, props.setSession, setOperationMessage),
+      applyArrangementMutation(result, props.applyCanonicalState, setOperationMessage),
     );
 
   const preview = (take: RecordingTakeRecord) => {

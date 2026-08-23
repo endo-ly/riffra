@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CreativeSession, TrackKind } from '@/model/domain';
+import type { AudioAnalysis, CanonicalState, CreativeSession, TrackKind } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
@@ -18,7 +18,7 @@ export type ArrangeSelection =
 
 interface UseArrangeEditorOptions {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
   api: ArrangeApi;
@@ -33,7 +33,7 @@ interface UseArrangeEditorOptions {
 export function useArrangeEditor(options: UseArrangeEditorOptions) {
   const {
     session,
-    setSession,
+    applyCanonicalState,
     selection,
     setSelection,
     api,
@@ -54,7 +54,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
   );
   const { arrangement } = session;
   const { timebase } = arrangement;
-  const commands = useArrangeCommands({ setSession });
+  const commands = useArrangeCommands({ applyCanonicalState });
   const { commit, message, setMessage } = commands;
   const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const [marquee, setMarquee] = useState<{

@@ -9,6 +9,7 @@ import type {
   MidiClipPatch,
   BackgroundJobStatus,
   BootstrapState,
+  CanonicalState,
   HistoryState,
   AssetId,
   DeviceChannels,
@@ -404,6 +405,7 @@ export interface NativeEventApi {
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
   onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
+  onCanonicalStateChanged(callback: (state: CanonicalState) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;

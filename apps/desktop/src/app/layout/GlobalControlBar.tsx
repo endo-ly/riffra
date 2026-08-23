@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type { AudioStatus, CreativeSession, HistoryState } from '@/model/domain';
+import type { AudioStatus, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
@@ -19,7 +19,7 @@ interface GlobalControlBarProps {
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAudio: (audio: AudioStatus) => void;
   transportPlaying: boolean;
   onPlay: () => void;
@@ -85,7 +85,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       <div className={styles.transportControls}>
         <TransportControls
           session={props.session}
-          setSession={props.setSession}
+          applyCanonicalState={props.applyCanonicalState}
           recordingActive={props.audio.recording.active}
           transportPlaying={props.transportPlaying}
           onPlay={props.onPlay}
@@ -100,7 +100,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       <div className={styles.audioControls}>
         <AudioMonitor
           session={props.session}
-          setSession={props.setSession}
+          applyCanonicalState={props.applyCanonicalState}
           setAudio={props.setAudio}
           api={props.audioMonitorApi}
         />

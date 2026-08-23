@@ -6,11 +6,16 @@ import type { RuntimeStartupFinishedEvent } from '../native-api';
 import { defaultVst3Root } from './constants';
 
 export async function bootstrap(): Promise<BootstrapState> {
+  const session = defaultSession();
   return invokeOrFallback<BootstrapState>(
     'get_bootstrap_state',
     {},
     {
-      session: defaultSession(),
+      canonical: {
+        session,
+        sequence: 0,
+        history: { canUndo: false, canRedo: false },
+      },
       pluginCatalog: [],
       runtimeStarted: false,
       runtimeStartupFinished: false,

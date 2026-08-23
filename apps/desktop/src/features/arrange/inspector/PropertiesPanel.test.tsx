@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PropertiesPanel } from './PropertiesPanel';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
@@ -28,13 +28,13 @@ function renderPanel(
     midiInput: {},
     rack: { devices: [], macros: [] },
   });
-  const api = new FakeNativeApi({ bootstrapState: { session } });
+  const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   render(
     <PropertiesPanel
       audio={fakeAudioStatus()}
       recordingCommandPending={false}
       session={session}
-      setSession={() => undefined}
+      applyCanonicalState={() => true}
       arrangeSelection={selection}
       setArrangeSelection={() => undefined}
       missingDependencies={[]}

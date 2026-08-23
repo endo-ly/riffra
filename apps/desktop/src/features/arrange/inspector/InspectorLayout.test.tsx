@@ -7,7 +7,7 @@ import { TrackInspector } from '@/features/arrange/inspector/TrackInspector';
 import { ArrangeClipInspector } from '@/features/arrange/inspector/ArrangeClipInspector';
 import { MidiClipInspector } from '@/features/arrange/inspector/MidiClipInspector';
 import type { CreativeSession } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
@@ -77,8 +77,8 @@ function sessionWithContent(): CreativeSession {
 
 const inspectorProps = (session: CreativeSession) => ({
   session,
-  setSession: () => undefined,
-  api: new FakeNativeApi({ bootstrapState: { session } }),
+  applyCanonicalState: () => true,
+  api: new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } }),
 });
 
 describe('compact inspector layout', () => {

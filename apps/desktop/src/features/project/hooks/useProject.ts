@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { BootstrapState, CreativeSession, HistoryState } from '@/model/domain';
+import type { BootstrapState, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
@@ -27,16 +27,36 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
+  const sequenceRef = useRef(0);
+  const canonicalStateRef = useRef<CanonicalState | null>(null);
   sessionRef.current = session;
 
-  const applyNativeSession = useCallback((nextSession: CreativeSession) => {
-    sessionRef.current = nextSession;
-    setSession(nextSession);
+  const applyCanonicalState = useCallback(
+    (canonical: CanonicalState): boolean => {
+      if (canonical.sequence < sequenceRef.current) return false;
+      sequenceRef.current = canonical.sequence;
+      canonicalStateRef.current = canonical;
+      sessionRef.current = canonical.session;
+      setSession(canonical.session);
+      setHistoryState(canonical.history);
+      setBoot((current) => (current ? { ...current, canonical } : current));
+      return true;
+    },
+    [setBoot],
+  );
+
+  const mergeBootstrapState = useCallback((next: BootstrapState): BootstrapState => {
+    const current = canonicalStateRef.current;
+    if (!current || current.sequence <= next.canonical.sequence) return next;
+    return { ...next, canonical: current };
   }, []);
 
   const refreshHistory = useCallback(async () => {
+    const sequenceAtRequest = sequenceRef.current;
     try {
-      setHistoryState(await getHistoryState());
+      const nextHistory = await getHistoryState();
+      if (sequenceRef.current !== sequenceAtRequest) return;
+      setHistoryState(nextHistory);
     } catch (error) {
       setAutosaveError(
         `History state could not be read: ${error instanceof Error ? error.message : String(error)}`,
@@ -49,7 +69,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     try {
       const projectionFailed = applyArrangementMutation(
         await undoSession(),
-        applyNativeSession,
+        applyCanonicalState,
         setAutosaveError,
       );
       await refreshHistory();
@@ -57,14 +77,14 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyNativeSession, historyState.canUndo, refreshHistory, undoSession]);
+  }, [applyCanonicalState, historyState.canUndo, refreshHistory, undoSession]);
 
   const redo = useCallback(async () => {
     if (!historyState.canRedo) return;
     try {
       const projectionFailed = applyArrangementMutation(
         await redoSession(),
-        applyNativeSession,
+        applyCanonicalState,
         setAutosaveError,
       );
       await refreshHistory();
@@ -72,7 +92,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyNativeSession, historyState.canRedo, redoSession, refreshHistory]);
+  }, [applyCanonicalState, historyState.canRedo, redoSession, refreshHistory]);
 
   useEffect(() => {
     if (session) void refreshHistory();
@@ -85,11 +105,11 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     const name = next.trim().slice(0, 160);
     const projectionFailed = applyArrangementMutation(
       await updateSessionSettings({ projectName: name || null }),
-      applyNativeSession,
+      applyCanonicalState,
       setAutosaveError,
     );
     if (!projectionFailed) setAutosaveError(null);
-  }, [applyNativeSession, session, updateSessionSettings]);
+  }, [applyCanonicalState, session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
     const result = await exportSessionApi();
@@ -110,17 +130,15 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     }
     const projectionFailed = applyArrangementMutation(
       imported,
-      applyNativeSession,
+      applyCanonicalState,
       setAutosaveError,
     );
-    setBoot((current) =>
-      current ? { ...current, session: imported.session, recoveredFromGeneration: false } : current,
-    );
+    setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
     if (!projectionFailed) setAutosaveError(null);
     setExportMessage(
-      `Imported session: ${imported.session.projectName ?? imported.session.sessionId}`,
+      `Imported session: ${imported.canonical.session.projectName ?? imported.canonical.session.sessionId}`,
     );
-  }, [applyNativeSession, importSessionApi, setBoot]);
+  }, [applyCanonicalState, importSessionApi, setBoot]);
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
@@ -139,20 +157,16 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
       }
       const projectionFailed = applyArrangementMutation(
         restored,
-        applyNativeSession,
+        applyCanonicalState,
         setAutosaveError,
       );
-      setBoot((current) =>
-        current
-          ? { ...current, session: restored.session, recoveredFromGeneration: false }
-          : current,
-      );
+      setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
       if (!projectionFailed) setAutosaveError(null);
       setExportMessage(
-        `Restored stable generation: ${restored.session.projectName ?? restored.session.sessionId}`,
+        `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
       );
     },
-    [applyNativeSession, restoreRecoveryGeneration, setBoot],
+    [applyCanonicalState, restoreRecoveryGeneration, setBoot],
   );
 
   const dismissRecovery = useCallback(() => {
@@ -162,7 +176,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
 
   return {
     session,
-    setSession,
+    applyCanonicalState,
+    mergeBootstrapState,
     historyState,
     autosaveError,
     setAutosaveError,

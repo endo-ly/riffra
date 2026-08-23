@@ -1,0 +1,24 @@
+[package]
+name = "riffra-control"
+version = "0.1.0"
+description = "Shared local control protocol and transport primitives for Riffra"
+authors = ["Riffra contributors"]
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1.23", features = ["v7"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }

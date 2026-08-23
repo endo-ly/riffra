@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioStatus,
+  CanonicalState,
   CreativeSession,
   PluginEntry,
   Track,
@@ -19,7 +20,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 interface TrackInspectorProps {
   track: Track;
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   audio: AudioStatus;
   missingDeviceIds: string[];
   plugins: PluginEntry[];
@@ -50,10 +51,10 @@ export function TrackInspector(props: TrackInspectorProps) {
   const commit = useCallback(
     (operation: Promise<ArrangementMutationResult>) => {
       runOperation(operation, (result) =>
-        applyArrangementMutation(result, props.setSession, setOperationMessage),
+        applyArrangementMutation(result, props.applyCanonicalState, setOperationMessage),
       );
     },
-    [props.setSession, runOperation, setOperationMessage],
+    [props.applyCanonicalState, runOperation, setOperationMessage],
   );
   const setInstrument = (plugin: PluginEntry) => {
     commit(props.api.setTrackInstrument(props.track.id, plugin.path));

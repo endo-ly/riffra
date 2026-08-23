@@ -13,6 +13,7 @@ import type {
   AutomationParameter,
   AudioStatus,
   ArrangementMutationResult,
+  CanonicalState,
   CreativeSession,
   Marker,
   MidiClip,
@@ -63,7 +64,7 @@ import overlayStyles from './WorkspaceArrangeOverlay.module.css';
 
 interface WorkspaceArrangeProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
   setSelection: (selection: ArrangeSelection) => void;
   api: ArrangeWorkspaceApi;

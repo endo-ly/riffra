@@ -24,10 +24,11 @@ use riffra_core::{
     TimelineTick, TrackKind,
 };
 
-async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+async fn run_blocking<T, E, F>(app: AppHandle, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, E> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -35,20 +36,24 @@ where
             .command_gate
             .lock()
             .map_err(|error| format!("Desktop command gate was poisoned: {error}"))?;
-        operation(state.inner())
+        operation(state.inner()).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
 }
 
-async fn run_blocking_without_command_gate<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+async fn run_blocking_without_command_gate<T, E, F>(
+    app: AppHandle,
+    operation: F,
+) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, E> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner())
+        operation(state.inner()).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
@@ -57,14 +62,15 @@ where
 /// Runtime controls must not queue behind canonical Session persistence or a
 /// slow VST/native operation. They only read the current snapshot when needed
 /// and never mutate the durable Session.
-async fn run_runtime_control<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+async fn run_runtime_control<T, E, F>(app: AppHandle, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, E> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner())
+        operation(state.inner()).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Runtime control operation failed: {error}"))?
@@ -77,6 +83,7 @@ fn app_context(state: &AppState) -> SessionContext<'_> {
         runtime: &state.runtime,
         data_root: state.core.data_root(),
         safe_mode: state.core.safe_mode(),
+        app_handle: Some(&state.app_handle),
     }
 }
 

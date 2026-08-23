@@ -12,6 +12,7 @@ name = "riffra"
 path = "src/main.rs"
 
 [dependencies]
+riffra-control = { path = "../../crates/riffra-control" }
 riffra-core = { path = "../../crates/riffra-core" }
 riffra-host = { path = "../../crates/riffra-host" }
 clap = { version = "4", features = ["derive"] }

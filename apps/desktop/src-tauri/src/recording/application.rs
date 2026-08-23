@@ -43,6 +43,7 @@ use riffra_core::{
     ProvenanceOperation, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
     RecordingTakeRecord, TakeAudioSource, TimelineTick, TrackKind,
 };
+use tauri::AppHandle;
 
 #[cfg(test)]
 use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
@@ -55,6 +56,7 @@ pub struct RecordingContext<'a> {
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
     pub safe_mode: bool,
+    pub app_handle: Option<&'a AppHandle>,
 }
 
 /// Starts a new hardware recording. The Audio Runtime begins writing into a
@@ -265,13 +267,12 @@ fn recording_stop_result(
     audio: AudioStatus,
     finalization: RecordingFinalizationOutcome,
 ) -> Result<RecordingStopResult, String> {
-    let session = context
+    let canonical = context
         .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     Ok(RecordingStopResult {
-        session,
+        canonical,
         audio,
         projection: ArrangementProjectionOutcome::NotRequired,
         finalization,
@@ -284,7 +285,7 @@ fn recording_stop_result_from_mutation(
     finalization: RecordingFinalizationOutcome,
 ) -> RecordingStopResult {
     RecordingStopResult {
-        session: mutation.session,
+        canonical: mutation.canonical,
         audio,
         projection: mutation.projection,
         finalization,
@@ -481,9 +482,7 @@ fn preflight_track_outputs(
                     .min(processed_frames);
                 raw_end > raw_start || processed_end > processed_start
             });
-            if (track.kind == "instrument" && midi_source.is_none() && !has_audio_take)
-                || (track.kind != "instrument" && !has_audio_take)
-            {
+            if !has_audio_take && (track.kind != "instrument" || midi_source.is_none()) {
                 return Err(format!(
                     "Arrange recording track has no usable capture segment: {}",
                     track.track_id
@@ -1118,16 +1117,16 @@ fn finalize_arrange_recording(
         runtime: context.runtime,
         data_root: context.data_root,
         safe_mode: context.safe_mode,
+        app_handle: context.app_handle,
     };
-    let committed = crate::session::adapter::commit_recording_session(
+    crate::session::adapter::commit_recording_session(
         &session_context,
         &base_session,
         candidate_session,
-    )?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        &session_context,
-        committed,
-    ))
+    )
+    .map_err(|error| error.to_string())?;
+    crate::session::commit::arrangement_mutation_result(&session_context)
+        .map_err(|error| error.to_string())
 }
 
 fn next_recording_pass_ordinal(
@@ -1280,6 +1279,7 @@ fn place_recording_on_timeline(
         runtime: context.runtime,
         data_root: context.data_root,
         safe_mode: context.safe_mode,
+        app_handle: context.app_handle,
     };
     let mut session = context
         .core
@@ -1570,15 +1570,12 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = crate::session::adapter::commit_recording_session(
-        &session_context,
-        &base_session,
-        session,
-    )?;
-    Ok(Some(crate::session::commit::arrangement_mutation_result(
-        &session_context,
-        committed,
-    )))
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(
+        crate::session::commit::arrangement_mutation_result(&session_context)
+            .map_err(|error| error.to_string())?,
+    ))
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read
@@ -1722,6 +1719,7 @@ mod tests {
             runtime,
             data_root,
             safe_mode,
+            app_handle: None,
         }
     }
 
@@ -1842,6 +1840,7 @@ mod tests {
             runtime: &runtime,
             data_root: &root,
             safe_mode: false,
+            app_handle: None,
         };
 
         let error = start_recording(&ctx).unwrap_err();

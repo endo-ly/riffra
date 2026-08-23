@@ -2,38 +2,12 @@ use super::*;
 
 #[tauri::command]
 pub async fn undo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, |state| {
-        let store = SessionStore::new(state.core.data_root());
-        let session = state
-            .core
-            .application(&store)
-            .undo()
-            .map_err(|error| error.to_string())?;
-        crate::library::index::queue(state.core.data_root(), &session);
-        let context = app_context(state);
-        Ok(crate::session::commit::arrangement_mutation_result(
-            &context, session,
-        ))
-    })
-    .await
+    run_blocking(app, |state| adapter::undo(&app_context(state))).await
 }
 
 #[tauri::command]
 pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, |state| {
-        let store = SessionStore::new(state.core.data_root());
-        let session = state
-            .core
-            .application(&store)
-            .redo()
-            .map_err(|error| error.to_string())?;
-        crate::library::index::queue(state.core.data_root(), &session);
-        let context = app_context(state);
-        Ok(crate::session::commit::arrangement_mutation_result(
-            &context, session,
-        ))
-    })
-    .await
+    run_blocking(app, |state| adapter::redo(&app_context(state))).await
 }
 
 #[tauri::command]
@@ -136,7 +110,7 @@ pub async fn get_missing_dependencies(app: AppHandle) -> Result<Vec<MissingDepen
             .snapshot()
             .map_err(|error| error.to_string())?
             .session;
-        Ok(crate::missing::collect_missing(
+        Ok::<_, String>(crate::missing::collect_missing(
             state.core.data_root(),
             &session,
         ))

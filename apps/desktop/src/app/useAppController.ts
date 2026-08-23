@@ -31,7 +31,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
-    setSession,
+    applyCanonicalState,
     session: canonicalSession,
     historyState,
     autosaveError,
@@ -46,7 +46,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     dismissRecovery,
   } = runtime;
   const session = canonicalSession;
-  usePluginStatePersistence({ api, setSession, setAutosaveError });
+  usePluginStatePersistence({ api, applyCanonicalState, setAutosaveError });
   const pluginCatalog = usePluginCatalog({
     api,
     boot,
@@ -66,7 +66,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const missingDependencyState = useMissingDependencies({
     api,
     boot,
-    setSession,
+    applyCanonicalState,
     rescanPlugins: scanPlugins,
   });
   const {
@@ -102,7 +102,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const recording = useRecording(api, {
     audio,
     setAudio,
-    setSession,
+    applyCanonicalState,
     onCommandFailure: (message) => toast(`Recording failed: ${message}`, { kind: 'error' }),
     onProjectionFailure: (message) => toast(message, { kind: 'error' }),
     onFinalizationFailure: (message) =>
@@ -198,7 +198,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   return {
     boot,
     session,
-    setSession,
+    applyCanonicalState,
     audio,
     setAudio,
     audioPreferenceMessage,

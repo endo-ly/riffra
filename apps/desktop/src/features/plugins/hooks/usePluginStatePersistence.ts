@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { CanonicalState } from '@/model/domain';
 import type { ArrangeApi, NativeEventApi } from '@/native/native-api';
 import { getCurrentWindow } from '@/native/window';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -12,14 +12,14 @@ type PluginPersistenceApi = Pick<
 
 interface UsePluginStatePersistenceOptions {
   api: PluginPersistenceApi;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAutosaveError: (message: string | null) => void;
 }
 
 /** Persists plugin editor changes and flushes the final batch on window close. */
 export function usePluginStatePersistence({
   api,
-  setSession,
+  applyCanonicalState,
   setAutosaveError,
 }: UsePluginStatePersistenceOptions) {
   const {
@@ -88,14 +88,15 @@ export function usePluginStatePersistence({
           pendingPluginChanges.current.clear();
           if (batch.length === 0) break;
           try {
-            let latest: CreativeSession | null = null;
+            let latestCanonical: CanonicalState | null = null;
             let projectionError: string | null = null;
             for (const [, pending] of batch) {
               if (pending.state != null) {
                 applyArrangementMutation(
                   await persistTrackPluginState(pending.state),
-                  (session) => {
-                    latest = session;
+                  (canonical) => {
+                    latestCanonical = canonical;
+                    return applyCanonicalState(canonical);
                   },
                   (message) => {
                     projectionError = message;
@@ -110,8 +111,9 @@ export function usePluginStatePersistence({
                     parameterIndex,
                     value,
                   }),
-                  (session) => {
-                    latest = session;
+                  (canonical) => {
+                    latestCanonical = canonical;
+                    return applyCanonicalState(canonical);
                   },
                   (message) => {
                     projectionError = message;
@@ -119,8 +121,7 @@ export function usePluginStatePersistence({
                 );
               }
             }
-            if (latest != null) {
-              setSession(latest);
+            if (latestCanonical != null) {
               setAutosaveError(projectionError);
             }
           } catch (error: unknown) {
@@ -256,7 +257,7 @@ export function usePluginStatePersistence({
     onTrackPluginStateChanged,
     persistTrackPluginParameter,
     persistTrackPluginState,
+    applyCanonicalState,
     setAutosaveError,
-    setSession,
   ]);
 }

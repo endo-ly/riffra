@@ -1,4 +1,10 @@
-import type { AudioStatus, CreativeSession, MissingDependency, PluginEntry } from '@/model/domain';
+import type {
+  AudioStatus,
+  CanonicalState,
+  CreativeSession,
+  MissingDependency,
+  PluginEntry,
+} from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
 import { MultiClipInspector } from './MultiClipInspector';
@@ -13,7 +19,7 @@ interface PropertiesPanelProps {
   audio: AudioStatus;
   recordingCommandPending: boolean;
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
   missingDependencies: MissingDependency[];
@@ -51,7 +57,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
             <TrackInspector
               track={selectedTrack}
               session={props.session}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               audio={props.audio}
               missingDeviceIds={props.missingDependencies
                 .filter((item) => item.kind === 'plugin')
@@ -65,7 +71,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
             <TakeInspector
               session={props.session}
               selection={props.arrangeSelection}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
@@ -75,7 +81,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
         ) : selectedAudioClipCount + selectedMidiClipCount > 1 ? (
           <MultiClipInspector
             session={props.session}
-            setSession={props.setSession}
+            applyCanonicalState={props.applyCanonicalState}
             selectedAudioClipIds={selectedAudioClipIds}
             selectedMidiClipIds={selectedMidiClipIds}
             setSelectedClipIds={setSelectedClipIds}
@@ -85,7 +91,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
           <>
             <MidiClipInspector
               session={props.session}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               selectedClipIds={selectedMidiClipIds}
               setSelectedClipIds={setSelectedClipIds}
               api={props.api}
@@ -93,7 +99,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
             <TakeInspector
               session={props.session}
               selection={props.arrangeSelection}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
@@ -104,7 +110,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
           <>
             <ArrangeClipInspector
               session={props.session}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               selectedClipIds={selectedAudioClipIds}
               setSelectedClipIds={setSelectedClipIds}
               api={props.api}
@@ -128,7 +134,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
             <TakeInspector
               session={props.session}
               selection={props.arrangeSelection}
-              setSession={props.setSession}
+              applyCanonicalState={props.applyCanonicalState}
               recordingActive={props.audio.recording.active}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}

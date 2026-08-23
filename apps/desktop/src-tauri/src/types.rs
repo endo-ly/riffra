@@ -26,10 +26,10 @@ use crate::recording::{
 use crate::render::{RenderOptions, RenderRange, RenderResult};
 use riffra_core::{
     Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
-    AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CreativeSession,
-    DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip, MidiClipMove,
-    MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase, RackDevice,
-    RackInstance, RackMacro, RecordingPassRecord, RecordingSessionRecord,
+    AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CanonicalState,
+    CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
+    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase,
+    RackDevice, RackInstance, RackMacro, RecordingPassRecord, RecordingSessionRecord,
     RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange, Track,
     TrackKind,
 };
@@ -77,6 +77,7 @@ fn export_types() {
     SessionSettings::export_all(&cfg).expect("SessionSettings bindings");
     CreativeSession::export_all(&cfg).expect("CreativeSession bindings");
     HistoryState::export_all(&cfg).expect("HistoryState bindings");
+    CanonicalState::export_all(&cfg).expect("CanonicalState bindings");
     AudioState::export_all(&cfg).expect("AudioState bindings");
     AudioAccessMode::export_all(&cfg).expect("AudioAccessMode bindings");
     AudioDevicePairing::export_all(&cfg).expect("AudioDevicePairing bindings");

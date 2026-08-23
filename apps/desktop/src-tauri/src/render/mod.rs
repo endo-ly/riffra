@@ -1,10 +1,13 @@
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession, OfflineRenderRequest, RenderRuntime};
+#[cfg(windows)]
+use riffra_render_worker::RenderWorker;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
 };
 use ts_rs::TS;
 
@@ -77,13 +80,56 @@ pub fn render_timeline_with_options(
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<RenderResult, String> {
+    render_timeline_with_renderer(
+        data_root,
+        session,
+        created_at_ms,
+        options,
+        |request| renderer.render_timeline_offline(request),
+        None,
+    )
+}
+
+/// Renders one timeline while allowing the owning background job to cancel
+/// the worker process before the output becomes a canonical Asset.
+///
+/// # Errors
+/// Returns a host-provided description when validation, rendering, or Asset
+/// registration fails.
+#[cfg(windows)]
+pub(crate) fn render_timeline_with_cancellation(
+    renderer: &RenderWorker,
+    data_root: &Path,
+    session: &CreativeSession,
+    created_at_ms: u64,
+    options: RenderOptions,
+    cancelled: &AtomicBool,
+) -> Result<RenderResult, String> {
+    render_timeline_with_renderer(
+        data_root,
+        session,
+        created_at_ms,
+        options,
+        |request| renderer.render_timeline_offline_cancellable(request, cancelled),
+        Some(cancelled),
+    )
+}
+
+fn render_timeline_with_renderer(
+    data_root: &Path,
+    session: &CreativeSession,
+    created_at_ms: u64,
+    options: RenderOptions,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<(), String>,
+    cancelled: Option<&AtomicBool>,
+) -> Result<RenderResult, String> {
     let plan = build_render_plan(data_root, session, created_at_ms, &options)?;
     if let Some(parent) = plan.output_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Render output folder could not be created: {error}"))?;
     }
 
-    renderer.render_timeline_offline(OfflineRenderRequest {
+    if let Err(error) = render(OfflineRenderRequest {
         snapshot: plan.snapshot,
         destination: plan.output_path.clone(),
         start_tick: plan.start_tick,
@@ -92,7 +138,14 @@ pub fn render_timeline_with_options(
         block_size: DEFAULT_OFFLINE_BLOCK_SIZE,
         master_gain_db: session.settings.master_db,
         normalize: options.normalize,
-    })?;
+    }) {
+        let _ = fs::remove_file(&plan.output_path);
+        return Err(error);
+    }
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        let _ = fs::remove_file(&plan.output_path);
+        return Err("Timeline render was cancelled.".into());
+    }
     if !plan.output_path.is_file() {
         return Err("Native Offline Render completed without producing its WAV output.".into());
     }

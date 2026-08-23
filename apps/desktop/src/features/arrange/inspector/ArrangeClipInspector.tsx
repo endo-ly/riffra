@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import type { ArrangementMutationResult, AudioClip, CreativeSession } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  AudioClip,
+  CanonicalState,
+  CreativeSession,
+} from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
@@ -10,7 +15,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 
 interface ArrangeClipInspectorProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
   api: ArrangeInspectorApi;
@@ -74,7 +79,7 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   ) => {
     runOperation(operation, (next) => {
       if (next) {
-        applyArrangementMutation(next, props.setSession, setMessage);
+        applyArrangementMutation(next, props.applyCanonicalState, setMessage);
         afterSuccess?.();
       } else {
         setMessage(`${label} was not applied.`);

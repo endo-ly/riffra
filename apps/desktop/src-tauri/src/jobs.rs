@@ -1,4 +1,6 @@
 use crate::plugins::ScanReport;
+#[cfg(windows)]
+use crate::render::RenderResult;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -30,12 +32,16 @@ pub enum JobState {
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
     Scan,
+    #[cfg(windows)]
+    Render,
 }
 
 impl JobKind {
     fn label(self) -> &'static str {
         match self {
             Self::Scan => "scan",
+            #[cfg(windows)]
+            Self::Render => "render",
         }
     }
 }
@@ -66,6 +72,14 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<ScanReport>,
     },
+    #[cfg(windows)]
+    Render {
+        id: String,
+        state: JobState,
+        progress: f32,
+        message: String,
+        result: Option<RenderResult>,
+    },
 }
 
 /// Promotes an opaque [`JobStatus`] to a typed [`BackgroundJobStatus`]. The
@@ -94,6 +108,17 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .map(serde_json::from_value::<ScanReport>)
                 .transpose()
                 .map_err(|error| format!("scan result could not be decoded: {error}"))?,
+        },
+        #[cfg(windows)]
+        JobKind::Render => BackgroundJobStatus::Render {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<RenderResult>)
+                .transpose()
+                .map_err(|error| format!("render result could not be decoded: {error}"))?,
         },
     })
 }
@@ -155,6 +180,9 @@ impl JobRegistry {
 
     pub fn set_running(&self, id: &str, message: impl Into<String>) {
         self.update(id, |status, _| {
+            if status.state == JobState::Cancelling {
+                return;
+            }
             status.state = JobState::Running;
             status.message = message.into();
         });

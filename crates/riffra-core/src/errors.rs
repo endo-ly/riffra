@@ -26,6 +26,14 @@ pub enum DomainError {
 /// Failure returned by an application operation at the Core boundary.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ApplicationError {
+    /// A long-running or preconditioned command was based on an old revision.
+    #[error(
+        "canonical state changed: expected sequence {expected_sequence}, current sequence {current_sequence}"
+    )]
+    Conflict {
+        expected_sequence: u64,
+        current_sequence: u64,
+    },
     /// The requested production edit violates a domain rule.
     #[error("invalid command: {0}")]
     InvalidCommand(String),

@@ -87,6 +87,8 @@ jobs:
             ${{ runner.os }}-cargo-tauri-
 
       - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test -p riffra-control
+      - run: cargo test -p riffra-cli
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   native-linux:

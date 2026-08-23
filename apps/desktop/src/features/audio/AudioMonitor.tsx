@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CreativeSession } from '@/model/domain';
+import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import type { AudioMonitorApi } from './audio-api';
@@ -7,13 +7,13 @@ import styles from './AudioMonitor.module.css';
 
 interface AudioMonitorProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAudio: (audio: AudioStatus) => void;
   api: AudioMonitorApi;
 }
 
 export function AudioMonitor(props: AudioMonitorProps) {
-  const { session, setSession, setAudio, api } = props;
+  const { session, applyCanonicalState, setAudio, api } = props;
   const meters = useAudioMeters();
   const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
   const masterEditing = useRef(false);
@@ -53,7 +53,7 @@ export function AudioMonitor(props: AudioMonitorProps) {
     lastCommittedMasterDb.current = gainDb;
     try {
       const result = await api.setMasterGainDb(gainDb);
-      setSession(result.session);
+      applyCanonicalState(result.canonical);
       setAudio(result.audio);
     } catch {
       lastCommittedMasterDb.current = session.settings.masterDb;

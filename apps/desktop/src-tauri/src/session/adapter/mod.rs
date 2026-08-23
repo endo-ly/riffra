@@ -46,9 +46,11 @@ use riffra_core::{
 };
 
 pub(crate) use crate::session::commit::{
-    commit_core_application, commit_recording_session, import_session, restore_generation,
+    arrangement_mutation_result, arrangement_mutation_without_projection, commit_core_application,
+    commit_recording_session, import_session, publish_canonical_state, restore_generation,
 };
 pub(crate) use crate::session::context::{SessionContext, current_session};
+pub(crate) use crate::session::error::AdapterError;
 pub(crate) use crate::session::transport::{
     go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
     runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement_runtime,
@@ -58,6 +60,35 @@ use riffra_core::application::{
     MidiNoteUpdate, SessionSettingsPatch,
 };
 use riffra_core::domain::TrackPatch;
+
+pub(crate) fn undo(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    let store = SessionStore::new(context.data_root);
+    let session = context
+        .core
+        .application(&store)
+        .undo()
+        .map_err(AdapterError::from)?;
+    crate::library::index::queue(context.data_root, &session);
+    publish_canonical_state(context)?;
+    crate::session::adapter::arrangement_mutation_result(context)
+}
+
+pub(crate) fn redo(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    let store = SessionStore::new(context.data_root);
+    let session = context
+        .core
+        .application(&store)
+        .redo()
+        .map_err(AdapterError::from)?;
+    crate::library::index::queue(context.data_root, &session);
+    publish_canonical_state(context)?;
+    crate::session::adapter::arrangement_mutation_result(context)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +277,7 @@ mod tests {
             runtime,
             data_root: root,
             safe_mode: false,
+            app_handle: None,
         }
     }
 
@@ -375,11 +407,57 @@ mod tests {
         let result = commit_plugin_arrangement(&context, candidate);
 
         // Assert
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
         let current = core.snapshot().unwrap().session;
         assert_eq!(current.arrangement.revision, 1);
         assert!(current.arrangement.tracks[0].rack.devices.is_empty());
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stale_plugin_candidate_is_rejected_before_runtime_prepare() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-stale-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            plugin_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let context = candidate_context(&root, &runtime, &audio, &core);
+        let candidate = prepared_plugin_candidate(&context);
+        let store = SessionStore::new(&root);
+        core.application(&store)
+            .add_marker(TimelineTick(7), "concurrent".into())
+            .unwrap();
+
+        // Act
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
+        assert!(driver.loaded.lock().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -450,6 +528,7 @@ mod tests {
             runtime: runtime.as_ref(),
             data_root: &root,
             safe_mode: false,
+            app_handle: None,
         };
 
         update_track(
@@ -476,6 +555,7 @@ mod tests {
                     runtime: runtime.as_ref(),
                     data_root: &root,
                     safe_mode: false,
+                    app_handle: None,
                 };
                 let result = update_track(
                     &context,
