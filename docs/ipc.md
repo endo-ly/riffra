@@ -53,9 +53,9 @@
 | C    | Rust ↔ riffra-audio          | 子プロセスの stdin/stdout（JSON Lines） | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
 | D    | Rust → riffra-render-worker  | 子プロセスの stdin/stdout（JSON 1行）   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe） | 子プロセスの stdout（JSON 1行）/ 引数   | デバイス・チャンネル列挙、VST3スキャン                   |
-| F    | Host ↔ riffra-cli            | stdin/stdout（JSON Lines、対話モード）  | セッションの最小操作を外部Hostから実行                   |
+| F    | Host ↔ `riffra`              | stdin/stdout（JSON Lines、対話モード）  | 制作状態の編集を外部Hostから実行                         |
 
-使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、GUIを持たない外部Hostからの最小セッション操作は F、それ以外のデスクトップ操作は A。
+使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、GUIを持たない外部Hostからの制作状態編集は F、それ以外のデスクトップ操作は A。
 
 ---
 
@@ -224,36 +224,79 @@
 
 ---
 
-## 8. 境界 F: CLI JSON Lines（`riffra-cli`）
+## 8. 境界 F: CLI JSON Lines（`riffra`）
 
-`riffra-cli` の対話モードは、GUIを持たないHostからセッションの最小操作を実行するための境界である。CLIは `riffra-core::AppCore` とセッションファイルを直接利用し、デスクトップのTauri命令、音声サイドカー、レンダーワーカーは経由しない。
+`riffra` はGUIを持たないStandalone Hostである。`DataRootLease`を取得してから `riffra-host::SessionStore` と `riffra-core::AppCore` を開き、DesktopのTauri命令、音声サイドカー、レンダーワーカーは経由しない。同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。
 
-### 8.1 フレーミング
+### 8.1 起動とフレーミング
 
-- 起動: `riffra-cli --interactive --session <path>`
-- 送受信: stdinの1行を1要求として読み、stdoutへ1行の応答を書く
-- 相関: 要求の `requestId` を応答へそのまま返す
-- 応答: 成功は `ok: true` と `result`、失敗は `ok: false` と `error`
-- 対話モードでは空行を無視し、要求ごとに応答をflushする
+ワンショットは階層化された引数で1つの操作を実行する。
 
-要求は `type` とコマンド固有のフィールドを同じ階層に置く。現在のCLIは `params` オブジェクトやイベントストリームを持たない。
-
-```json
-{"requestId":"1","type":"addTrack","name":"Bass","kind":"instrument"}
-{"requestId":"2","type":"listTracks"}
-{"requestId":"3","type":"updateSessionSettings","loopEnabled":true}
+```bash
+riffra --data-root ./data session get
+riffra --data-root ./data track add --name Bass --kind instrument
 ```
 
-### 8.2 コマンドと応答
+対話モードは標準入力の1行を1要求として読み、標準出力へ1行の応答を書いてflushする。空行は無視する。
 
-現在のコマンドは `getSession`、`listTracks`、`addTrack`、`removeTrack`、`updateSessionSettings`、`undo`、`redo` である。`undo` と `redo` は履歴がプロセス内に保持されるため、対話モードでのみ利用できる。
-
-```json
-{"requestId":"1","ok":true,"result":{}}
-{"requestId":"4","ok":false,"error":{"code":"commandFailed","message":"..."}}
+```bash
+riffra --data-root ./data --interactive
 ```
 
-不正なJSONや未知のコマンドは `invalidRequest` または `commandFailed` として返す。イベント、ジョブ進捗、`protocolVersion`、共通Diagnostics形式は現在のCLI契約に含まれない。ワンショットモードはJSON Linesではなく、コマンドライン引数で1つの操作を実行してJSON結果を出力する。
+要求はProtocol v1、`command`、`params`を持つ。`requestId`は応答へそのまま返される。
+
+```json
+{
+  "protocolVersion": 1,
+  "requestId": "42",
+  "command": "track.add",
+  "params": { "name": "Bass", "kind": "instrument" }
+}
+```
+
+### 8.2 応答
+
+成功応答には `AppCore::snapshot()` のcanonical sequenceを含める。
+
+```json
+{
+  "protocolVersion": 1,
+  "requestId": "42",
+  "ok": true,
+  "sequence": 12,
+  "result": { "type": "session", "value": {} }
+}
+```
+
+失敗応答は入力検証を `invalidRequest`、Core操作またはHost処理の失敗を `commandFailed` として返す。
+
+```json
+{
+  "protocolVersion": 1,
+  "requestId": "42",
+  "ok": false,
+  "error": { "code": "commandFailed", "message": "..." }
+}
+```
+
+`undo` と `redo` は履歴がプロセス内に保持されるため、対話モードでのみ利用できる。イベントストリーム、Desktopへのattach、Runtime操作はこの境界に含めない。
+
+### 8.3 制作操作
+
+CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
+
+| 分類                   | コマンド                                                                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session / History      | `session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                            |
+| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                       |
+| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                        |
+| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/quantize/transform/duplicate` |
+| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                    |
+| Automation             | `automation set`、`automation clear`                                                                                                                                               |
+| Asset / Project        | `asset import-midi`、`project export`、`project import`                                                                                                                            |
+| Rack state             | `instrument clear`、`effect remove/reorder`、`device bypass`                                                                                                                       |
+
+再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Runtimeまたは別Hostの責務である。
 
 ---
 

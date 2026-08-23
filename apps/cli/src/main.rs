@@ -1,33 +1,53 @@
-mod commands;
+mod args;
+mod dispatcher;
 mod protocol;
-mod storage;
 
-use crate::commands::Dispatcher;
-use crate::protocol::{Command, Request, Response};
-use crate::storage::SessionFileStorage;
-use riffra_core::TrackKind;
-use riffra_core::application::SessionSettingsPatch;
+use args::Cli;
+use clap::Parser;
+use dispatcher::Dispatcher;
+use protocol::{CommandResult, Request, Response};
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 
 fn main() {
-    if let Err(error) = run(std::env::args().skip(1).collect()) {
-        eprintln!("riffra-cli: {error}");
+    if let Err(error) = run() {
+        eprintln!("riffra: {error}");
         std::process::exit(1);
     }
 }
 
-fn run(arguments: Vec<String>) -> Result<(), String> {
-    let options = Options::parse(arguments)?;
-    let dispatcher = Dispatcher::open(SessionFileStorage::new(options.session_path))?;
-    if options.interactive {
+fn run() -> Result<(), String> {
+    let cli = Cli::parse();
+    if cli.interactive && cli.command.is_some() {
+        return Err("--interactive cannot be combined with a one-shot command".into());
+    }
+    let interactive = cli.interactive;
+    let data_root = cli.data_root.clone();
+    let request = if interactive {
+        None
+    } else {
+        let request = cli.request()?;
+        if matches!(request.command.as_str(), "undo" | "redo") {
+            return Err(
+                "undo and redo require --interactive because history is process-local".into(),
+            );
+        }
+        Some(request)
+    };
+    let dispatcher = Dispatcher::open(data_root)?;
+    if interactive {
         return run_interactive(&dispatcher);
     }
-    let command = options
-        .command
-        .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
-    let result = dispatcher.dispatch(command)?;
-    write_json(&result)
+    let dispatched = dispatcher
+        .dispatch(request.expect("one-shot request is present"))
+        .map_err(|error| error.to_string())?;
+    write_response(&Response::success(
+        "one-shot".into(),
+        dispatched.sequence,
+        CommandResult {
+            result_type: dispatched.result_type,
+            value: dispatched.value,
+        },
+    ))
 }
 
 fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
@@ -52,175 +72,72 @@ fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
 }
 
 fn handle_request(dispatcher: &Dispatcher, line: &str) -> Response {
-    match serde_json::from_str::<Request>(line) {
-        Ok(request) => match dispatcher.dispatch(request.command) {
-            Ok(result) => Response::success(request.request_id, result),
-            Err(error) => Response::failure(request.request_id, "commandFailed", error),
+    let parsed = serde_json::from_str::<Request>(line);
+    let request_id = parsed
+        .as_ref()
+        .map(|request| request.request_id.clone())
+        .unwrap_or_default();
+    let request = match parsed {
+        Ok(request) => match request.into_command() {
+            Ok(request) => request,
+            Err(error) => return Response::failure(request_id, "invalidRequest", error),
         },
-        Err(error) => Response::failure(String::new(), "invalidRequest", error.to_string()),
+        Err(error) => return Response::failure(request_id, "invalidRequest", error.to_string()),
+    };
+    match dispatcher.dispatch(request) {
+        Ok(result) => Response::success(
+            request_id,
+            result.sequence,
+            CommandResult {
+                result_type: result.result_type,
+                value: result.value,
+            },
+        ),
+        Err(error) => Response::failure(request_id, "commandFailed", error.to_string()),
     }
 }
 
-fn write_json(value: &impl serde::Serialize) -> Result<(), String> {
-    serde_json::to_writer_pretty(io::stdout().lock(), value)
+fn write_response(response: &Response) -> Result<(), String> {
+    serde_json::to_writer_pretty(io::stdout().lock(), response)
         .map_err(|error| format!("response could not be encoded: {error}"))?;
     println!();
     Ok(())
 }
 
-struct Options {
-    session_path: PathBuf,
-    interactive: bool,
-    command: Option<Command>,
-}
-
-impl Options {
-    fn parse(arguments: Vec<String>) -> Result<Self, String> {
-        let mut session_path = None;
-        let mut interactive = false;
-        let mut command_arguments = Vec::new();
-        let mut arguments = arguments.into_iter();
-        while let Some(argument) = arguments.next() {
-            match argument.as_str() {
-                "--session" => {
-                    session_path = Some(PathBuf::from(
-                        arguments
-                            .next()
-                            .ok_or_else(|| "--session requires a path".to_string())?,
-                    ));
-                }
-                "--interactive" => interactive = true,
-                _ => command_arguments.push(argument),
-            }
-        }
-        let session_path = session_path.ok_or_else(|| "--session is required".to_string())?;
-        let command = if command_arguments.is_empty() {
-            None
-        } else {
-            Some(parse_command(command_arguments)?)
-        };
-        if !interactive && matches!(command, Some(Command::Undo | Command::Redo)) {
-            return Err(
-                "undo and redo require --interactive because history is process-local".into(),
-            );
-        }
-        if interactive && command.is_some() {
-            return Err("--interactive cannot be combined with a one-shot command".into());
-        }
-        Ok(Self {
-            session_path,
-            interactive,
-            command,
-        })
-    }
-}
-
-fn parse_command(arguments: Vec<String>) -> Result<Command, String> {
-    let command = arguments
-        .first()
-        .ok_or_else(|| "a command is required".to_string())?;
-    let value = |flag: &str| {
-        arguments
-            .windows(2)
-            .find(|pair| pair[0] == flag)
-            .map(|pair| pair[1].clone())
-            .ok_or_else(|| format!("{command} requires {flag}"))
-    };
-    match command.as_str() {
-        "get-session" => Ok(Command::GetSession),
-        "list-tracks" => Ok(Command::ListTracks),
-        "add-track" => Ok(Command::AddTrack {
-            name: value("--name")?,
-            kind: parse_track_kind(&value("--kind")?)?,
-        }),
-        "remove-track" => Ok(Command::RemoveTrack {
-            track_id: value("--track-id")?,
-        }),
-        "update-session-settings" => Ok(Command::UpdateSessionSettings {
-            patch: SessionSettingsPatch {
-                project_name: option_value(&arguments, "--project-name").map(Some),
-                loop_enabled: parse_optional_bool(&arguments, "--loop-enabled")?,
-                count_in_beats: parse_optional(&arguments, "--count-in-beats")?,
-                metronome_enabled: parse_optional_bool(&arguments, "--metronome-enabled")?,
-                note: option_value(&arguments, "--note"),
-                ..Default::default()
-            },
-        }),
-        "undo" => Ok(Command::Undo),
-        "redo" => Ok(Command::Redo),
-        _ => Err(format!("unknown command: {command}")),
-    }
-}
-
-fn option_value(arguments: &[String], flag: &str) -> Option<String> {
-    arguments
-        .windows(2)
-        .find(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
-}
-
-fn parse_optional<T: std::str::FromStr>(
-    arguments: &[String],
-    flag: &str,
-) -> Result<Option<T>, String> {
-    option_value(arguments, flag)
-        .map(|value| {
-            value
-                .parse()
-                .map_err(|_| format!("{flag} has an invalid value"))
-        })
-        .transpose()
-}
-
-fn parse_optional_bool(arguments: &[String], flag: &str) -> Result<Option<bool>, String> {
-    parse_optional(arguments, flag)
-}
-
-fn parse_track_kind(value: &str) -> Result<TrackKind, String> {
-    match value {
-        "audio" => Ok(TrackKind::Audio),
-        "instrument" => Ok(TrackKind::Instrument),
-        _ => Err("--kind must be audio or instrument".into()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use super::handle_request;
+    use crate::dispatcher::Dispatcher;
+    use std::fs;
 
     #[test]
-    fn interactive_requests_share_history_across_lines() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("riffra-cli-interactive-{nonce}"));
-        let path = root.join("session.json");
-        let dispatcher = Dispatcher::open(SessionFileStorage::new(path)).unwrap();
-
-        let add = handle_request(
+    fn protocol_v1_requests_return_request_id_and_sequence() {
+        let root = std::env::temp_dir().join(format!("riffra-cli-protocol-{}", std::process::id()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
             &dispatcher,
-            r#"{"requestId":"1","type":"addTrack","name":"Bass","kind":"instrument"}"#,
+            r#"{"protocolVersion":1,"requestId":"42","command":"session.get","params":{}}"#,
         );
-        let undo = handle_request(&dispatcher, r#"{"requestId":"2","type":"undo"}"#);
-        let redo = handle_request(&dispatcher, r#"{"requestId":"3","type":"redo"}"#);
-
-        assert!(add.ok);
-        assert!(undo.ok);
-        assert!(redo.ok);
-        let _ = std::fs::remove_dir_all(root);
+        assert!(response.ok);
+        assert_eq!(response.request_id, "42");
+        assert_eq!(response.protocol_version, 1);
+        assert!(response.sequence.is_some());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn one_shot_undo_requires_interactive_mode() {
-        let result = Options::parse(vec![
-            "--session".into(),
-            "session.json".into(),
-            "undo".into(),
-        ]);
-
-        let error = result.err().expect("one-shot undo should be rejected");
-        assert!(error.contains("require --interactive"));
+    fn protocol_version_is_validated_before_dispatch() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-protocol-invalid-{}",
+            std::process::id()
+        ));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"protocolVersion":2,"requestId":"42","command":"session.get","params":{}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(response.error.as_ref().unwrap().code, "invalidRequest");
+        let _ = fs::remove_dir_all(root);
     }
 }

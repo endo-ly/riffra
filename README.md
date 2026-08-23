@@ -30,14 +30,15 @@
 | パス                           | 内容                                                                             |
 | ------------------------------ | -------------------------------------------------------------------------------- |
 | `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
-| `apps/cli/`                    | `riffra-core` を直接利用するワンショット／JSON Lines CLI ホスト                  |
+| `apps/cli/`                    | `riffra-core` と `riffra-host` を利用するワンショット／JSON Lines CLI ホスト     |
 | `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
+| `crates/riffra-host/`          | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
 | `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
 | `scripts/`                     | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
 | `docs/`                        | 設計・調整ドキュメント                                                           |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-host` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 
@@ -72,8 +73,8 @@ npm run lint           # ESLint + Stylelint
 npm run lint:css       # Stylelint（z-index は tokens.css のレイヤートークンを使用）
 npm run typecheck      # tsc
 
-cargo run -p riffra-cli -- --session ./project.json get-session
-cargo run -p riffra-cli -- --interactive --session ./project.json
+cargo run -p riffra-cli -- --data-root ./riffra-data session get
+cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 ```
 
 ## ドキュメント

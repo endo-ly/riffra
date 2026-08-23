@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/riffra-core",
+  "crates/riffra-host",
   "crates/riffra-render-worker",
   "apps/cli",
   "apps/desktop/src-tauri",
