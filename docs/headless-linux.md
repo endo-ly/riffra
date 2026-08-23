@@ -4,7 +4,7 @@
 
 ## CLI Host
 
-Linuxの`riffra`は、`riffra-core`のApplication操作を`riffra-host`の永続化へ接続するStandalone Hostである。Windowsでは、同じCLIバイナリから起動中のDesktopへ接続するAttached modeも利用できる。LinuxではDesktop Attachを提供しない。
+Linuxの`riffra`は、`riffra-core`のApplication操作を`riffra-host`の永続化へ接続するStandalone Hostである。
 
 ```text
 AI agent
@@ -13,18 +13,7 @@ AI agent
 riffra --data-root ./riffra-data --interactive
    │ JSON Lines
    ▼
-DataRootLease → SessionStore → AppCore<Application>
-```
-
-実行モードは、Data Rootを誰が所有するかで分かれる。
-
-```text
-Windows
-├─ Standalone CLI → DataRootLease → SessionStore → AppCore<()>
-└─ --attach       → Named Pipe → Desktop AppCore / Runtime
-
-Linux
-└─ Standalone CLI → DataRootLease → SessionStore → AppCore<()>
+DataRootLease → SessionStore → AppCore<()>
 ```
 
 DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所有できない。
@@ -80,7 +69,7 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 }
 ```
 
-成功応答には操作後の正準シーケンスを含める。
+応答には、その結果が対応する正準シーケンスを含める。
 
 ```json
 {
@@ -91,13 +80,16 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 }
 ```
 
-不正なJSON、要求形式、`params`、unknown commandは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime commandを受けた場合は`runtimeUnavailable`として返す。
+不正なJSON、要求形式、`params`、未知のコマンドは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime操作を受けた場合は`runtimeUnavailable`として返す。
 
 ## Runtimeとの境界
 
-LinuxのStandalone CLIはAudio Runtimeを起動しない。再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Adapterまたは専用Workerの責務である。CLIは音声デバイスやGUIのない環境でも、保存済みの制作状態を編集できる。WindowsのAttached CLIでは、公開されたRuntime操作をDesktopのNamed Pipe経由で依頼できる。
+LinuxのStandalone CLIはAudio Runtimeを起動しない。保存済みの制作状態は、音声デバイスやGUIのない環境でも編集できる。RuntimeやDesktop専用サービスを必要とする操作は、このHostの範囲外である。
 
-Linux Desktop Attachは提供せず、LinuxではStandaloneを使う。Desktop接続を追加する場合のローカル通信にはUnix Domain Socketを使う。
+| 範囲              | 例                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| Audio Runtime     | 再生、録音、Live MIDI、デバイス制御                                                               |
+| Desktopのサービス | プレビュー、レンダー、プラグインスキャン、プラグインエディタ、VST音源の追加・置換・パラメータ変更 |
 
 LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。CLIのDataRoot所有とNative audio engineのデバイス所有は混在させない。
 

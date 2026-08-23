@@ -107,13 +107,13 @@ Attached CLI（apps/cli --attach）
   └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
 ```
 
-制作状態を変更する命令はCoreのApplication層を通り、確定したCreativeSessionが同じ順序でフロントエンドへ返る。選択やパネル状態などの表示状態はCreativeSessionとは分離してフロントエンドが保持する。
+制作状態を変更する命令はCoreのApplication層を通り、確定した`CanonicalState`が同じ順序でフロントエンドへ返る。選択やパネル状態などの表示状態はCreativeSessionとは分離してフロントエンドが保持する。
 
 ### Desktopの外部制御
 
-Windows Desktopは起動時にNamed Pipeの制御サーバーを開始し、準備が整ったらData Rootの`control/desktop.json`へ接続情報を公開する。Attached CLIはその情報を読み、Named Pipeへの接続とProtocol handshakeを完了してから要求を送る。要求はTauri commandを経由せず、Desktop Control RouterからDesktop Adapterへ渡る。
+Windows Desktopは、起動中のアプリを外部Hostから操作する制御経路を持つ。Attached CLIはこの経路を介してDesktop Adapterへ要求を送り、DesktopのCoreとRuntimeを共有する。
 
-Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionStore・`AppCore<()>`を使う独立Hostである。Attached CLIだけがDesktopの`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio RuntimeをGUIと共有する。
+Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立Hostである。Attached CLIはこれらを開かず、Desktopが保持するCore、Undo/Redo履歴、正準シーケンス、Audio RuntimeをGUIと共有する。
 
 ---
 
@@ -121,7 +121,7 @@ Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionS
 
 ### 4.1 単一の正準状態
 
-CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。`AppCore`はCreativeSession、正準シーケンス、Undo/Redo履歴を一体の状態として管理し、フロントエンドと音声サイドカーはその投影を扱う。
+CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。`AppCore`はCreativeSessionと正準シーケンス、Undo/Redo履歴を一体の状態として管理し、フロントエンドと音声サイドカーはその投影を扱う。
 
 ### 4.2 Core操作境界
 
@@ -214,7 +214,9 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopが保持するLeaseの内側で制御要求だけを送る。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
+DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopへ制御要求だけを送る。
+
+排他にはロックファイルではなくOSのファイルロックを使うため、異常終了後に残ったファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
 ---
 

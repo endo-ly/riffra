@@ -35,15 +35,22 @@
 ┌────▼───────────────────────▼───────────────────────▼───────────────┐
 │ Rust バックエンド（src-tauri）                                          │
 │ 命令層 → Desktop Adapter → riffra-core / RuntimeReconciler / 永続化    │
-└────┬───────────────┬───────────────┬────────────────┬───────────────┘
-     │ C: JSON Lines  │ D: JSON 1行   │ E: JSON 1行     │ F: Named Pipe
-     │ stdin/stdout   │ stdin/stdout  │ stdout         │
-┌────▼───────┐  ┌─────▼────────┐  ┌──▼──────────┐  ┌───▼───────────┐
-│riffra-audio│  │riffra-render │  │riffra-audio │  │riffra-plugin- │
-│ --serve    │  │ -worker      │  │ --probe系   │  │ scan          │
-│ 常駐・音声  │  │ レンダ要求1  │  │ デバイス列挙│  │ VST3スキャン   │
-└────────────┘  │ 回ごとに起動  │  └─────────────┘  └───────────────┘
+└────┬───────────────┬───────────────┬──────────────────────────────┘
+     │ C: JSON Lines  │ D: JSON 1行   │ E: JSON 1行
+     │ stdin/stdout   │ stdin/stdout  │ stdout
+┌────▼───────┐  ┌─────▼────────┐  ┌──▼──────────┐
+│riffra-audio│  │riffra-render │  │riffra-audio │
+│ --serve    │  │ -worker      │  │ --probe系   │
+│ 常駐・音声  │  │ レンダ要求1  │  │ デバイス列挙│
+└────────────┘  │ 回ごとに起動  │  └─────────────┘
                 └──────────────┘
+```
+
+```text
+外部Host（`riffra --attach`）
+        │ F: Windows Named Pipe
+        ▼
+Desktop Control Server → Control Router → Desktop Adapter
 ```
 
 | 境界 | 方向                              | 方式                                    | 用途                                                     |
@@ -55,7 +62,7 @@
 | E    | Rust ↔ riffra-audio（probe）      | 子プロセスの stdout（JSON 1行）/ 引数   | デバイス・チャンネル列挙、VST3スキャン                   |
 | F    | 外部Host ↔ Desktop Control Server | Windows Named Pipe（長さ付きJSON）      | Desktopの正準状態とRuntimeを外部から操作                 |
 
-使い分けは、低レイテンシの音声処理にC、時間のかかるバッチにD、デバイスやプラグインの列挙にEを使う。起動中のDesktopを外部Hostから操作するときはF、それ以外のデスクトップ操作はAを使う。Standalone CLIの標準入出力はFとは別の境界である。
+低レイテンシの音声処理はC、時間のかかるバッチはD、デバイスやプラグインの列挙はEを使う。起動中のDesktopを外部Hostから操作する経路がFで、WebViewからの操作はAを使う。Standalone CLIの標準入出力はFを使わない。
 
 ---
 
@@ -227,13 +234,16 @@
 
 ## 8. 境界 F: CLIとDesktop制御（`riffra`）
 
-`riffra`にはStandaloneとAttachedの二つの実行モードがある。どちらも同じ`riffra-control::ControlCommand`へコマンドを変換する。
+`riffra`にはStandaloneとAttachedの二つの実行モードがある。どちらも同じ`riffra-control::ControlCommand`へコマンドを変換するため、制作操作の入力形式は共通である。
 
-Standaloneでは`DataRootLease`を取得してから`riffra-host::SessionStore`と`riffra-core::AppCore<()>`を開く。DesktopのTauri命令、音声サイドカー、レンダーワーカーは経由しない。同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。
+| モード     | 状態の所有者                                        | 要求の経路                   |
+| ---------- | --------------------------------------------------- | ---------------------------- |
+| Standalone | CLIの`DataRootLease`、`SessionStore`、`AppCore<()>` | CoreとHostを直接利用         |
+| Attached   | DesktopのCore、履歴、Runtime、Asset DB              | Desktop Control Serverへ接続 |
 
-AttachedではDataRootLease、SessionStore、AppCore、Asset DBを開かない。Data Rootの`control/desktop.json`を読み、記載されたNamed Pipeへ接続する。`instanceId`のhandshakeを終えてから、Desktop Control Routerへ要求を送る。Attached CLIはDesktopのAppCore、履歴、正準シーケンス、RuntimeをGUIと共有する。
+Standaloneで同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。Attached CLIはDataRootのストレージを開かず、Desktopが保持する正準シーケンスをGUIと共有する。
 
-DesktopはNamed Pipeの準備が整ってからdescriptorを一時ファイル経由で公開する。descriptorの存在だけではDesktopの稼働を判定せず、接続とhandshakeまで成功しない要求は`hostUnavailable`として扱う。`--attach`の失敗はStandaloneへ自動で切り替えない。
+DesktopはNamed Pipeの準備後に接続情報を公開する。Attached CLIは接続と`instanceId`のhandshakeが完了してから要求を送り、接続できない場合は`hostUnavailable`を返す。`--attach`の失敗はStandaloneへ自動で切り替えない。
 
 ### 8.1 起動とフレーミング
 
@@ -264,11 +274,11 @@ StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`req
 }
 ```
 
-Attachedのinteractive modeは、標準入力の1行を1要求として読み、Named Pipeのフレームへ変換して転送する。Desktopは1接続内の要求と応答を順番に処理し、CLIは応答を標準出力へ1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONでなければならず、条件を満たさない入力は実行前に拒否する。
+Attachedでは、CLIが標準入力の各行をNamed Pipeのフレームへ変換して送る。Desktopは1接続内の要求を受けた順に処理し、CLIは応答を標準出力へ1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONでなければならない。
 
 ### 8.2 応答とエラー
 
-成功応答には現在の正準シーケンスを含める。
+成功応答には、結果が対応する正準シーケンスを含める。Desktopが`CanonicalState`を返す結果では、`result.value.sequence`と応答の`sequence`が一致する。
 
 ```json
 {
@@ -279,7 +289,15 @@ Attachedのinteractive modeは、標準入力の1行を1要求として読み、
 }
 ```
 
-入力検証、必須`params`、型、unknown commandは`invalidRequest`として返す。Core、Host、保存処理の失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`、Desktopへ接続できない場合は`hostUnavailable`、セーフモードや音声Runtimeが利用できない場合は`runtimeUnavailable`である。機械判定にはerror codeを使い、message文字列を解析しない。
+| エラーコード         | 発生条件                                                         |
+| -------------------- | ---------------------------------------------------------------- |
+| `invalidRequest`     | 入力形式、`params`、型、未知のコマンドが不正                     |
+| `commandFailed`      | Core、Host、保存処理が失敗                                       |
+| `conflict`           | `expectedSequence`が現在の正準シーケンスと不一致                 |
+| `hostUnavailable`    | Attached CLIがDesktopへ接続できない                              |
+| `runtimeUnavailable` | StandaloneでDesktop専用操作を受けた、またはRuntimeを利用できない |
+
+機械判定にはエラーコードを使い、message文字列を解析しない。
 
 ```json
 {
@@ -311,9 +329,19 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Asset / Project        | `asset import-midi`、`project export`、`project import`                                                                                                                            |
 | Rack state             | `instrument clear`、`effect remove/reorder`、`device bypass`                                                                                                                       |
 
-Attachedでは、上記に加えてRuntime projection、Transport、Audio status、Live MIDI、Plugin catalog、VST instrument/effect、device parameter、missing dependency、Render、background jobをDesktopの既存AdapterとRuntime ownerへ送れる。Standaloneではこれらを`runtimeUnavailable`として扱う。録音lifecycle、Preview、Plugin editor、VST scan、library metadataの編集は、この公開制御境界に含めない。
+Attachedで利用できる追加操作は、Desktop側の担当ごとに次のように分かれる。
 
-`render start`はDesktopが所有する`RenderWorker`のbackground jobを開始し、job idを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
+| 操作群                                                 | Attached               | Standalone           |
+| ------------------------------------------------------ | ---------------------- | -------------------- |
+| Runtime投影・トランスポート                            | DesktopのRuntime       | `runtimeUnavailable` |
+| 音声状態・Live MIDI                                    | DesktopのAudio Runtime | `runtimeUnavailable` |
+| プラグイン一覧・VST音源/エフェクト・デバイスパラメータ | Desktop Adapter        | `runtimeUnavailable` |
+| 欠落依存                                               | Desktop Adapter        | `runtimeUnavailable` |
+| レンダー・ジョブ                                       | DesktopのRenderWorker  | `runtimeUnavailable` |
+
+録音の開始から完了まで、プレビュー、プラグインエディタ、VSTスキャン、ライブラリメタデータはこの制御境界に含めず、既存のDesktop専用APIが扱う。
+
+`render start`はDesktopが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
 
 ---
 
