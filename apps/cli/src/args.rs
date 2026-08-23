@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use riffra_control::ControlCommand;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -9,9 +10,15 @@ pub struct Cli {
     /// Root directory containing the session, library, and Asset stores.
     #[arg(long)]
     pub data_root: PathBuf,
-    /// Read Protocol v1 JSON Lines requests from stdin.
+    /// Read Protocol v2 JSON Lines requests from stdin.
     #[arg(long)]
     pub interactive: bool,
+    /// Route commands to the running Desktop Host.
+    #[arg(long)]
+    pub attach: bool,
+    /// Require a specific canonical sequence for a one-shot mutation.
+    #[arg(long)]
+    pub expected_sequence: Option<u64>,
     #[command(subcommand)]
     pub command: Option<CliCommand>,
 }
@@ -85,6 +92,38 @@ pub enum CliCommand {
     Device {
         #[command(subcommand)]
         command: DeviceCommand,
+    },
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommand,
+    },
+    Transport {
+        #[command(subcommand)]
+        command: TransportCommand,
+    },
+    Midi {
+        #[command(subcommand)]
+        command: LiveMidiCommand,
+    },
+    Audio {
+        #[command(subcommand)]
+        command: AudioCommand,
+    },
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+    Missing {
+        #[command(subcommand)]
+        command: MissingCommand,
+    },
+    Render {
+        #[command(subcommand)]
+        command: RenderCommand,
+    },
+    Job {
+        #[command(subcommand)]
+        command: JobCommand,
     },
     Undo,
     Redo,
@@ -697,6 +736,7 @@ pub struct EffectReorderArgs {
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
     Bypass(DeviceBypassArgs),
+    ParameterSet(DeviceParameterSetArgs),
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -710,13 +750,165 @@ pub struct DeviceBypassArgs {
     pub bypassed: bool,
 }
 
-pub struct CommandRequest {
-    pub command: String,
-    pub params: Value,
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterSetArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub parameter_index: u32,
+    #[arg(long)]
+    pub value: f32,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeCommand {
+    Projection {
+        #[command(subcommand)]
+        command: RuntimeProjectionCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeProjectionCommand {
+    Get,
+    Retry,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TransportCommand {
+    Play(TransportSequenceArgs),
+    Stop(TransportSequenceArgs),
+    GoToStart(TransportSequenceArgs),
+    Seek(SeekArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransportSequenceArgs {
+    #[arg(long)]
+    pub transport_sequence: u64,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeekArgs {
+    #[arg(long)]
+    pub tick: u64,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LiveMidiCommand {
+    Send(LiveMidiSendArgs),
+    Panic(IdArg),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveMidiSendArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long, value_delimiter = ',')]
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AudioCommand {
+    Status,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginCommand {
+    Catalog {
+        #[command(subcommand)]
+        command: PluginCatalogCommand,
+    },
+    Instrument(PluginPathArgs),
+    Effect(PluginPathArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginCatalogCommand {
+    List,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPathArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub plugin_path: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MissingCommand {
+    List,
+    Relink(MissingRelinkArgs),
+    DisablePlugin(DeviceIdArg),
+    ReplacePlugin(MissingPluginReplaceArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingRelinkArgs {
+    #[arg(long)]
+    pub asset_id: String,
+    #[arg(long)]
+    pub new_path: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceIdArg {
+    #[arg(long)]
+    pub device_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingPluginReplaceArgs {
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub new_path: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RenderCommand {
+    Start(RenderStartArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RenderStartArgs {
+    #[arg(long, default_value = "entire-arrangement")]
+    pub range: String,
+    #[arg(long)]
+    pub start_tick: Option<u64>,
+    #[arg(long)]
+    pub end_tick: Option<u64>,
+    #[arg(long)]
+    pub normalize: bool,
+    #[arg(long)]
+    pub track_id: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JobCommand {
+    Get(JobIdArgs),
+    Cancel(JobIdArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+pub struct JobIdArgs {
+    #[arg(long)]
+    pub id: String,
 }
 
 impl Cli {
-    pub fn request(self) -> Result<CommandRequest, String> {
+    pub fn request(self) -> Result<ControlCommand, String> {
         let command = self
             .command
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
@@ -724,7 +916,7 @@ impl Cli {
     }
 }
 
-fn command_request(command: CliCommand) -> Result<CommandRequest, String> {
+fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
     let request = match command {
         CliCommand::Session { command } => match command {
             SessionCommand::Get => simple("session.get"),
@@ -865,6 +1057,46 @@ fn command_request(command: CliCommand) -> Result<CommandRequest, String> {
         },
         CliCommand::Device { command } => match command {
             DeviceCommand::Bypass(args) => value("device.bypass", args),
+            DeviceCommand::ParameterSet(args) => value("device.parameter.set", args),
+        },
+        CliCommand::Runtime { command } => match command {
+            RuntimeCommand::Projection { command } => match command {
+                RuntimeProjectionCommand::Get => simple("runtime.projection.get"),
+                RuntimeProjectionCommand::Retry => simple("runtime.projection.retry"),
+            },
+        },
+        CliCommand::Transport { command } => match command {
+            TransportCommand::Play(args) => value("transport.play", args),
+            TransportCommand::Stop(args) => value("transport.stop", args),
+            TransportCommand::GoToStart(args) => value("transport.go-to-start", args),
+            TransportCommand::Seek(args) => value("transport.seek", args),
+        },
+        CliCommand::Midi { command } => match command {
+            LiveMidiCommand::Send(args) => value("midi.send", args),
+            LiveMidiCommand::Panic(args) => value("midi.panic", json!({"trackId": args.track_id})),
+        },
+        CliCommand::Audio { command } => match command {
+            AudioCommand::Status => simple("audio.status"),
+        },
+        CliCommand::Plugin { command } => match command {
+            PluginCommand::Catalog { command } => match command {
+                PluginCatalogCommand::List => simple("plugin.catalog.list"),
+            },
+            PluginCommand::Instrument(args) => value("instrument.set", args),
+            PluginCommand::Effect(args) => value("effect.add", args),
+        },
+        CliCommand::Missing { command } => match command {
+            MissingCommand::List => simple("missing.list"),
+            MissingCommand::Relink(args) => value("missing.relink", args),
+            MissingCommand::DisablePlugin(args) => value("missing.disable-plugin", args),
+            MissingCommand::ReplacePlugin(args) => value("missing.replace-plugin", args),
+        },
+        CliCommand::Render { command } => match command {
+            RenderCommand::Start(args) => render_start(args)?,
+        },
+        CliCommand::Job { command } => match command {
+            JobCommand::Get(args) => value("job.get", args),
+            JobCommand::Cancel(args) => value("job.cancel", args),
         },
         CliCommand::Undo => simple("undo"),
         CliCommand::Redo => simple("redo"),
@@ -872,18 +1104,53 @@ fn command_request(command: CliCommand) -> Result<CommandRequest, String> {
     Ok(request)
 }
 
-fn simple(command: &str) -> CommandRequest {
-    CommandRequest {
-        command: command.into(),
+fn simple(command: &str) -> ControlCommand {
+    ControlCommand {
+        name: command.into(),
         params: json!({}),
     }
 }
 
-fn value<T: Serialize>(command: &str, params: T) -> CommandRequest {
-    CommandRequest {
-        command: command.into(),
+fn value<T: Serialize>(command: &str, params: T) -> ControlCommand {
+    ControlCommand {
+        name: command.into(),
         params: serde_json::to_value(params).expect("CLI arguments must serialize"),
     }
+}
+
+fn render_start(args: RenderStartArgs) -> Result<ControlCommand, String> {
+    let range = match args.range.as_str() {
+        "entire-arrangement" => json!({"kind": "entireArrangement"}),
+        "loop-range" => json!({"kind": "loopRange"}),
+        "time-selection" => {
+            let start_tick = args
+                .start_tick
+                .ok_or_else(|| "--start-tick is required for --range time-selection".to_string())?;
+            let end_tick = args
+                .end_tick
+                .ok_or_else(|| "--end-tick is required for --range time-selection".to_string())?;
+            json!({
+                "kind": "timeSelection",
+                "startTick": start_tick,
+                "endTick": end_tick,
+            })
+        }
+        other => {
+            return Err(format!(
+                "--range must be entire-arrangement, loop-range, or time-selection (got {other})"
+            ));
+        }
+    };
+    Ok(value(
+        "render.start",
+        json!({
+            "options": {
+                "range": range,
+                "normalize": args.normalize,
+                "trackId": args.track_id,
+            }
+        }),
+    ))
 }
 
 fn json_string(
@@ -891,7 +1158,7 @@ fn json_string(
     clip_id: String,
     field: &str,
     encoded: String,
-) -> Result<CommandRequest, String> {
+) -> Result<ControlCommand, String> {
     let points: Value = serde_json::from_str(&encoded)
         .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?;
     Ok(value(command, json!({"clipId": clip_id, field: points})))
@@ -902,7 +1169,7 @@ fn json_string_with_fields<T: Serialize>(
     fields: T,
     field: &str,
     encoded: String,
-) -> Result<CommandRequest, String> {
+) -> Result<ControlCommand, String> {
     let mut object = serde_json::to_value(fields)
         .map_err(|error| format!("CLI arguments could not be encoded: {error}"))?;
     object
@@ -916,7 +1183,7 @@ fn json_string_with_fields<T: Serialize>(
     Ok(value(command, object))
 }
 
-fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<CommandRequest, String> {
+fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<ControlCommand, String> {
     if let Some(patch) = args.patch {
         let patch: Value = serde_json::from_str(&patch)
             .map_err(|error| format!("--patch is invalid JSON: {error}"))?;
@@ -940,7 +1207,7 @@ fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<CommandRequest, String
     ))
 }
 
-fn midi_clip_update(args: MidiClipUpdateArgs) -> Result<CommandRequest, String> {
+fn midi_clip_update(args: MidiClipUpdateArgs) -> Result<ControlCommand, String> {
     if let Some(patch) = args.patch {
         let patch: Value = serde_json::from_str(&patch)
             .map_err(|error| format!("--patch is invalid JSON: {error}"))?;

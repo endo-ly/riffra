@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AudioStatus, BootstrapState, CreativeSession } from '@/model/domain';
+import type { AudioStatus, BootstrapState, CanonicalState, CreativeSession } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import { publishAudioMeters } from '@/shared/audio/audio-meters';
@@ -17,7 +17,7 @@ type AppRuntimeApi = BootstrapApi &
   ProjectApi &
   ProjectSettingsApi &
   Pick<AudioApi, 'getAudioStatus'> &
-  Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters'>;
+  Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters' | 'onCanonicalStateChanged'>;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
 export function useAppRuntime(api: AppRuntimeApi) {
@@ -30,19 +30,29 @@ export function useAppRuntime(api: AppRuntimeApi) {
   const sessionRef = useRef<CreativeSession | null>(null);
   const sessionHook = useProject(api, { setBoot });
   const { setSession: setProjectSession } = sessionHook;
+  const { applyCanonicalState, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
 
   const setSession = useCallback(
-    (nextSession: CreativeSession) => {
+    (nextSession: CreativeSession, canonical?: CanonicalState) => {
+      if (canonical) {
+        applyCanonicalState(canonical);
+        return;
+      }
       sessionRef.current = nextSession;
       setProjectSession(nextSession);
     },
-    [setProjectSession],
+    [applyCanonicalState, setProjectSession],
   );
 
   useEffect(() => {
     let disposed = false;
     let unlistenRuntimeStartupFinished: (() => void) | null = null;
+    const unlistenCanonicalStateChanged = api.onCanonicalStateChanged(
+      (canonical: CanonicalState) => {
+        if (!disposed) applyCanonicalState(canonical);
+      },
+    );
     const runtimeStartupListener = api
       .onRuntimeStartupFinished((event) => {
         if (disposed) return;
@@ -64,8 +74,9 @@ export function useAppRuntime(api: AppRuntimeApi) {
     void bootstrapOperation
       .then((state) => {
         if (disposed) return;
-        setBoot(state);
-        setSession(state.session);
+        const mergedState = mergeBootstrapState(state);
+        setBoot(mergedState);
+        applyCanonicalState(mergedState.canonical);
         if (!runtimeStartupEventReceived.current) {
           setRuntimeStarted(state.runtimeStarted);
           setRuntimeStartupFinished(state.runtimeStartupFinished);
@@ -108,9 +119,10 @@ export function useAppRuntime(api: AppRuntimeApi) {
       if (audioStatusTimer != null) clearTimeout(audioStatusTimer);
       unlistenAudio();
       unlistenRuntimeStartupFinished?.();
+      unlistenCanonicalStateChanged();
       unlistenMeters();
     };
-  }, [api, setSession]);
+  }, [api, applyCanonicalState, mergeBootstrapState, setSession]);
 
   return {
     ...sessionHook,

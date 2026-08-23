@@ -4,16 +4,27 @@
 
 ## CLI Host
 
-`riffra` は `riffra-core` のApplication操作を `riffra-host` の永続化へ接続するStandalone Hostである。
+Linuxの`riffra`は、`riffra-core`のApplication操作を`riffra-host`の永続化へ接続するStandalone Hostである。Windowsでは、同じCLIバイナリにDesktopのcanonical stateを操作するAttached modeもあるが、Linux Desktop Attachは提供していない。
 
 ```text
 AI agent
    │ spawn
    ▼
 riffra --data-root ./riffra-data --interactive
-   │ Protocol v1 JSON Lines
+   │ Protocol v2 JSON Lines
    ▼
 DataRootLease → SessionStore → AppCore<Application>
+```
+
+実行モードはData Rootの所有方式で分かれる。
+
+```text
+Windows
+├─ Standalone CLI → DataRootLease → SessionStore → AppCore<()>
+└─ --attach       → Named Pipe → Desktop AppCore / Runtime
+
+Linux
+└─ Standalone CLI → DataRootLease → SessionStore → AppCore<()>
 ```
 
 DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所有できない。
@@ -38,7 +49,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --ki
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 ```
 
-ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力からProtocol v1の要求を複数受け取り、要求ごとにJSON Linesで応答する。`undo` と `redo` の履歴はプロセス内に保持されるため、対話モードでのみ利用できる。
+ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力からProtocol v2の要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`の履歴はプロセス内に保持されるため、対話モードでのみ利用できる。
 
 ## 編集できる制作状態
 
@@ -58,13 +69,14 @@ CLIは次の状態を編集できる。
 
 ## JSON Lines境界
 
-要求は次の形式である。
+Standaloneの要求は次の形式である。`expectedSequence`は任意で、指定時はcanonical sequenceが一致するときだけ操作する。
 
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "requestId": "42",
   "command": "track.add",
+  "expectedSequence": 18,
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
@@ -73,7 +85,7 @@ CLIは次の状態を編集できる。
 
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "requestId": "42",
   "ok": true,
   "sequence": 12,
@@ -81,11 +93,13 @@ CLIは次の状態を編集できる。
 }
 ```
 
-不正なJSON・Protocol version・要求形式は `invalidRequest`、未知のコマンドやCore・Hostの失敗は `commandFailed` として返す。応答の `requestId` は要求の値を保持する。
+不正なJSON・Protocol version・要求形式・params・unknown commandは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneではDesktop-onlyのRuntime commandを`runtimeUnavailable`として返す。
 
 ## Runtimeとの境界
 
-CLIはAudio Runtimeを起動しない。再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Adapterまたは専用Workerの責務である。CLIは音声デバイスやGUIのない環境でも、保存済みの制作状態を編集できる。
+LinuxのStandalone CLIはAudio Runtimeを起動しない。再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Adapterまたは専用Workerの責務である。CLIは音声デバイスやGUIのない環境でも、保存済みの制作状態を編集できる。WindowsのAttached CLIでは、これらのうち公開されたRuntime操作をDesktopのNamed Pipe経由で依頼できる。
+
+Linux Desktop Attachは未提供であり、将来追加する場合はネットワークポートではなくUnix Domain Socketを使う。
 
 LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。CLIのDataRoot所有とNative audio engineのデバイス所有は混在させない。
 

@@ -7,6 +7,22 @@ use crate::session::context::SessionContext;
 use crate::storage::SessionStore;
 use riffra_core::{AppCore, ApplicationError, CreativeSession};
 use std::path::Path;
+use tauri::Emitter;
+
+pub(crate) fn publish_canonical_state<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+) -> Result<riffra_core::CanonicalState, String> {
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
+    if let Some(app_handle) = context.app_handle
+        && let Err(error) = app_handle.emit("canonical-state-changed", &canonical)
+    {
+        tracing::warn!(error = %error, sequence = canonical.sequence, "canonical state event could not be emitted");
+    }
+    Ok(canonical)
+}
 
 /// Runs a Core application operation and updates the Desktop library index
 /// after the canonical commit succeeds.
@@ -21,9 +37,24 @@ where
         &SessionStore,
     ) -> Result<CreativeSession, ApplicationError>,
 {
+    let before_sequence = context
+        .core
+        .snapshot()
+        .map_err(|error| error.to_string())?
+        .sequence;
     let store = SessionStore::new(context.data_root);
     let committed = operation(context.core, &store).map_err(|error| error.to_string())?;
     crate::library::index::queue(context.data_root, &committed);
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
+    if canonical.sequence > before_sequence
+        && let Some(app_handle) = context.app_handle
+        && let Err(error) = app_handle.emit("canonical-state-changed", &canonical)
+    {
+        tracing::warn!(error = %error, sequence = canonical.sequence, "canonical state event could not be emitted");
+    }
     Ok(committed)
 }
 
@@ -32,9 +63,17 @@ where
 pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     session: CreativeSession,
-) -> ArrangementMutationResult {
+) -> Result<ArrangementMutationResult, String> {
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     if context.safe_mode {
-        return arrangement_mutation_without_projection(session);
+        return Ok(ArrangementMutationResult {
+            canonical,
+            session,
+            projection: ArrangementProjectionOutcome::NotRequired,
+        });
     }
     let projection = match crate::session::transport::sync_arrangement(context) {
         Ok(()) => ArrangementProjectionOutcome::Queued,
@@ -43,19 +82,25 @@ pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
             ArrangementProjectionOutcome::Failed { message }
         }
     };
-    ArrangementMutationResult {
+    Ok(ArrangementMutationResult {
+        canonical,
         session,
         projection,
-    }
+    })
 }
 
-pub(crate) fn arrangement_mutation_without_projection(
+pub(crate) fn arrangement_mutation_without_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     session: CreativeSession,
-) -> ArrangementMutationResult {
-    ArrangementMutationResult {
+) -> Result<ArrangementMutationResult, String> {
+    Ok(ArrangementMutationResult {
+        canonical: context
+            .core
+            .canonical_state()
+            .map_err(|error| error.to_string())?,
         session,
         projection: ArrangementProjectionOutcome::NotRequired,
-    }
+    })
 }
 
 /// Commits the fields owned by a completed recording onto the latest Core
@@ -72,6 +117,7 @@ pub(crate) fn commit_recording_session(
         .commit_recording(base, candidate)
         .map_err(|error| error.to_string())?;
     crate::library::index::queue(context.data_root, &committed);
+    publish_canonical_state(context)?;
     Ok(committed)
 }
 
@@ -88,7 +134,8 @@ pub fn import_session(
         .import_project(session)
         .map_err(|error| error.to_string())?;
     crate::library::index::queue(context.data_root, &committed);
-    Ok(arrangement_mutation_result(context, committed))
+    publish_canonical_state(context)?;
+    arrangement_mutation_result(context, committed)
 }
 
 /// Restores a saved generation through Core.
@@ -106,5 +153,6 @@ pub fn restore_generation(
         .restore_project(session)
         .map_err(|error| error.to_string())?;
     crate::library::index::queue(context.data_root, &committed);
-    Ok(arrangement_mutation_result(context, committed))
+    publish_canonical_state(context)?;
+    arrangement_mutation_result(context, committed)
 }

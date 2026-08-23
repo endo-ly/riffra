@@ -46,7 +46,8 @@ use riffra_core::{
 };
 
 pub(crate) use crate::session::commit::{
-    commit_core_application, commit_recording_session, import_session, restore_generation,
+    commit_core_application, commit_recording_session, import_session, publish_canonical_state,
+    restore_generation,
 };
 pub(crate) use crate::session::context::{SessionContext, current_session};
 pub(crate) use crate::session::transport::{
@@ -58,6 +59,34 @@ use riffra_core::application::{
     MidiNoteUpdate, SessionSettingsPatch,
 };
 use riffra_core::domain::TrackPatch;
+
+pub(crate) fn undo(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let store = SessionStore::new(context.data_root);
+    let session = context
+        .core
+        .application(&store)
+        .undo()
+        .map_err(|error| error.to_string())?;
+    crate::library::index::queue(context.data_root, &session);
+    publish_canonical_state(context)?;
+    crate::session::commit::arrangement_mutation_result(context, session)
+}
+
+pub(crate) fn redo(
+    context: &SessionContext<'_>,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    let store = SessionStore::new(context.data_root);
+    let session = context
+        .core
+        .application(&store)
+        .redo()
+        .map_err(|error| error.to_string())?;
+    crate::library::index::queue(context.data_root, &session);
+    publish_canonical_state(context)?;
+    crate::session::commit::arrangement_mutation_result(context, session)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +275,7 @@ mod tests {
             runtime,
             data_root: root,
             safe_mode: false,
+            app_handle: None,
         }
     }
 
@@ -450,6 +480,7 @@ mod tests {
             runtime: runtime.as_ref(),
             data_root: &root,
             safe_mode: false,
+            app_handle: None,
         };
 
         update_track(
@@ -476,6 +507,7 @@ mod tests {
                     runtime: runtime.as_ref(),
                     data_root: &root,
                     safe_mode: false,
+                    app_handle: None,
                 };
                 let result = update_track(
                     &context,

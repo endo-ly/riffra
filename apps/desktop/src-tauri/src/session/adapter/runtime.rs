@@ -51,7 +51,12 @@ pub fn set_master_gain_db(
             return Err(error);
         }
     };
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     Ok(SessionAudioPair {
+        canonical,
         session: committed,
         audio,
     })

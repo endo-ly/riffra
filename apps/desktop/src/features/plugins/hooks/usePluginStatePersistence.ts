@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeApi, NativeEventApi } from '@/native/native-api';
 import { getCurrentWindow } from '@/native/window';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -12,7 +12,7 @@ type PluginPersistenceApi = Pick<
 
 interface UsePluginStatePersistenceOptions {
   api: PluginPersistenceApi;
-  setSession: (session: CreativeSession) => void;
+  setSession: (session: CreativeSession, canonical?: CanonicalState) => void;
   setAutosaveError: (message: string | null) => void;
 }
 
@@ -89,13 +89,15 @@ export function usePluginStatePersistence({
           if (batch.length === 0) break;
           try {
             let latest: CreativeSession | null = null;
+            let latestCanonical: CanonicalState | null = null;
             let projectionError: string | null = null;
             for (const [, pending] of batch) {
               if (pending.state != null) {
                 applyArrangementMutation(
                   await persistTrackPluginState(pending.state),
-                  (session) => {
+                  (session, canonical) => {
                     latest = session;
+                    latestCanonical = canonical ?? null;
                   },
                   (message) => {
                     projectionError = message;
@@ -110,8 +112,9 @@ export function usePluginStatePersistence({
                     parameterIndex,
                     value,
                   }),
-                  (session) => {
+                  (session, canonical) => {
                     latest = session;
+                    latestCanonical = canonical ?? null;
                   },
                   (message) => {
                     projectionError = message;
@@ -120,7 +123,7 @@ export function usePluginStatePersistence({
               }
             }
             if (latest != null) {
-              setSession(latest);
+              setSession(latest, latestCanonical ?? undefined);
               setAutosaveError(projectionError);
             }
           } catch (error: unknown) {

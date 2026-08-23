@@ -2637,10 +2637,22 @@ name = "riffra-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "riffra-control",
  "riffra-core",
  "riffra-host",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "riffra-control"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2658,6 +2670,7 @@ dependencies = [
 name = "riffra-desktop"
 version = "0.1.0"
 dependencies = [
+ "riffra-control",
  "riffra-core",
  "riffra-host",
  "riffra-render-worker",

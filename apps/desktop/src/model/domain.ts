@@ -23,6 +23,7 @@ export type {
   AudioStatus,
   BackgroundJobStatus,
   BootstrapState,
+  CanonicalState,
   CreativeSession,
   DeviceChannels,
   DeviceKind,

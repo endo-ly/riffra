@@ -197,11 +197,10 @@ async fn validate_one(
                         stdout.append(&mut bytes);
                         stdout.push(b'\n');
                     }
-                    Some(CommandEvent::Stderr(bytes)) => {
-                        if stderr.len() < 1024 {
-                            stderr.push_str(&String::from_utf8_lossy(&bytes));
-                        }
+                    Some(CommandEvent::Stderr(bytes)) if stderr.len() < 1024 => {
+                        stderr.push_str(&String::from_utf8_lossy(&bytes));
                     }
+                    Some(CommandEvent::Stderr(_)) => {}
                     Some(CommandEvent::Error(error)) => {
                         if let Some(child) = child.take() {
                             let _ = child.kill();

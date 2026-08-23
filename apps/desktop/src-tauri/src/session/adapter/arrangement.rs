@@ -13,7 +13,7 @@ pub fn update_audio_clip(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_audio_clip(clip_id, patch)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn split_audio_clip(
@@ -25,7 +25,7 @@ pub fn split_audio_clip(
         core.application(store)
             .split_audio_clip(clip_id, split_tick)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn duplicate_audio_clip(
@@ -35,7 +35,7 @@ pub fn duplicate_audio_clip(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_audio_clip(clip_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn move_audio_clips(
@@ -45,7 +45,7 @@ pub fn move_audio_clips(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).move_audio_clips(moves)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_midi_clip(
@@ -56,7 +56,7 @@ pub fn update_midi_clip(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_midi_clip(clip_id, patch)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn move_midi_clips(
@@ -66,7 +66,7 @@ pub fn move_midi_clips(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).move_midi_clips(moves)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn trim_midi_clip(
@@ -79,7 +79,7 @@ pub fn trim_midi_clip(
         core.application(store)
             .trim_midi_clip(clip_id, start_tick, duration_ticks)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn split_midi_clip(
@@ -90,7 +90,7 @@ pub fn split_midi_clip(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).split_midi_clip(clip_id, split_tick)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn duplicate_midi_clip(
@@ -100,7 +100,7 @@ pub fn duplicate_midi_clip(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_midi_clip(clip_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn crossfade_audio_clips(
@@ -112,7 +112,7 @@ pub fn crossfade_audio_clips(
         core.application(store)
             .crossfade_audio_clips(first_id, second_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_timebase(
@@ -122,7 +122,7 @@ pub fn update_timebase(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_timebase(timebase)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_loop_range(
@@ -135,7 +135,7 @@ pub fn update_loop_range(
         core.application(store)
             .update_loop_range(enabled, start_tick, end_tick)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_punch_range(
@@ -148,7 +148,7 @@ pub fn update_punch_range(
         core.application(store)
             .update_punch_range(enabled, start_tick, end_tick)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn remove_timeline_clips(
@@ -160,7 +160,7 @@ pub fn remove_timeline_clips(
         core.application(store)
             .remove_timeline_clips(audio_clip_ids.to_owned(), midi_clip_ids.to_owned())
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn paste_timeline_clips(
@@ -176,7 +176,7 @@ pub fn paste_timeline_clips(
             start_tick,
         )
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn trim_audio_clip(
@@ -213,7 +213,7 @@ pub fn trim_audio_clip(
             (wav.data_len / frame_bytes) as u64,
         )
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Adds an audio clip referencing a canonical Asset and commits the session.
@@ -254,7 +254,7 @@ pub fn add_audio_clip(
             |id| asset::load(context.data_root, id).is_some(),
         )
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Creates an empty MIDI Clip through the Core Application boundary.
@@ -269,7 +269,7 @@ pub fn create_midi_clip(
         core.application(store)
             .create_midi_clip(track_id, start_tick, duration_ticks, name)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_session_settings(
@@ -280,11 +280,11 @@ pub fn update_session_settings(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_session_settings(patch)
     })?;
-    Ok(if metronome_changed {
+    if metronome_changed {
         arrangement_mutation_result(context, committed)
     } else {
-        arrangement_mutation_without_projection(committed)
-    })
+        arrangement_mutation_without_projection(context, committed)
+    }
 }
 
 pub fn add_track(
@@ -295,7 +295,7 @@ pub fn add_track(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).add_track(name, kind)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_track<D: RuntimeDriver>(
@@ -306,7 +306,7 @@ pub fn update_track<D: RuntimeDriver>(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_track(track_id, patch)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Replaces one Track Automation Lane in a single canonical edit.
@@ -323,7 +323,7 @@ pub fn set_track_automation(
         core.application(store)
             .set_track_automation(track_id, parameter, points)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Removes a Track and its Clips without deleting any referenced Asset.
@@ -334,7 +334,7 @@ pub fn remove_track(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_track(track_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Duplicates a Track and its non-destructive Clip references.
@@ -345,7 +345,7 @@ pub fn duplicate_track(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).duplicate_track(track_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Moves a Track to a zero-based position while preserving Clip ownership.
@@ -358,7 +358,7 @@ pub fn reorder_track(
         core.application(store)
             .reorder_track(track_id, target_index)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 // Marker operations. Markers are timeline authoring metadata with no audio
@@ -372,7 +372,7 @@ pub fn add_marker(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).add_marker(tick, name)
     })?;
-    Ok(arrangement_mutation_without_projection(committed))
+    arrangement_mutation_without_projection(context, committed)
 }
 
 pub fn update_marker(
@@ -385,7 +385,7 @@ pub fn update_marker(
         core.application(store)
             .update_marker(marker_id, MarkerPatch { name, tick })
     })?;
-    Ok(arrangement_mutation_without_projection(committed))
+    arrangement_mutation_without_projection(context, committed)
 }
 
 pub fn remove_marker(
@@ -395,7 +395,7 @@ pub fn remove_marker(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_marker(marker_id)
     })?;
-    Ok(arrangement_mutation_without_projection(committed))
+    arrangement_mutation_without_projection(context, committed)
 }
 
 /// Adds a single MIDI note to an existing MIDI clip. The note id is minted by
@@ -419,7 +419,7 @@ pub fn add_midi_note(
             channel,
         )
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Inserts identity-free MIDI notes through one Core Application operation.
@@ -431,7 +431,7 @@ pub fn insert_midi_notes(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).insert_midi_notes(clip_id, notes)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn update_midi_note(
@@ -458,7 +458,7 @@ pub fn update_midi_notes(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).update_midi_notes(clip_id, updates)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn remove_midi_note(
@@ -469,7 +469,7 @@ pub fn remove_midi_note(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).remove_midi_note(clip_id, note_id)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 /// Removes multiple MIDI notes through one Core Application operation.
@@ -482,7 +482,7 @@ pub fn remove_midi_notes(
         core.application(store)
             .remove_midi_notes(clip_id, note_ids.to_owned())
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn transform_midi_notes(
@@ -500,7 +500,7 @@ pub fn transform_midi_notes(
             velocity_offset,
         )
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn quantize_midi_notes(
@@ -513,7 +513,7 @@ pub fn quantize_midi_notes(
         core.application(store)
             .quantize_midi_notes(clip_id, note_ids.to_owned(), grid_ticks)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 pub fn duplicate_midi_notes(
@@ -526,7 +526,7 @@ pub fn duplicate_midi_notes(
         core.application(store)
             .duplicate_midi_notes(clip_id, note_ids.to_owned(), offset_ticks)
     })?;
-    Ok(arrangement_mutation_result(context, committed))
+    arrangement_mutation_result(context, committed)
 }
 
 // Audio + Session coupling operations.

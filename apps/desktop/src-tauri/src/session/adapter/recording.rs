@@ -11,9 +11,7 @@ pub fn set_audio_clip_take_variant(
         core.application(store)
             .set_audio_clip_take_variant(clip_id, variant)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn start_take_comparison(
@@ -100,9 +98,7 @@ pub fn activate_take(
         core.application(store)
             .activate_take(session_id, take_id, midi_clip)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn place_take_as_separate_clip(
@@ -133,7 +129,5 @@ pub fn place_take_as_separate_clip(
         core.application(store)
             .place_take_as_separate_clip(take_id, midi_clip)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }

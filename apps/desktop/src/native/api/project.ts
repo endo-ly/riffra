@@ -8,22 +8,34 @@ import { defaultSession } from '../browser-defaults';
 import { invokeOrFallback, invoke } from '../invoke';
 
 export async function undoSession(): Promise<ArrangementMutationResult> {
+  const session = defaultSession();
   return invokeOrFallback<ArrangementMutationResult>(
     'undo_session',
     {},
     {
-      session: defaultSession(),
+      canonical: {
+        session,
+        sequence: 0,
+        history: { canUndo: false, canRedo: false },
+      },
+      session,
       projection: { state: 'notRequired' },
     },
   );
 }
 
 export async function redoSession(): Promise<ArrangementMutationResult> {
+  const session = defaultSession();
   return invokeOrFallback<ArrangementMutationResult>(
     'redo_session',
     {},
     {
-      session: defaultSession(),
+      canonical: {
+        session,
+        sequence: 0,
+        history: { canUndo: false, canRedo: false },
+      },
+      session,
       projection: { state: 'notRequired' },
     },
   );

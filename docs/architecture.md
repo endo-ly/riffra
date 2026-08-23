@@ -95,6 +95,11 @@ CLI ホスト（apps/cli）
   ├─ ワンショット引数と対話型 JSON Lines を同じ Dispatcher へ渡す
   └─ Tauri・React・Desktop Adapter・Audio Runtimeに依存しない
 
+Attached CLI（apps/cli --attach）
+  ├─ Desktopのendpointを検出してローカル制御境界へ接続する
+  ├─ DesktopのAppCore / SessionStore / DataRootLeaseを所有しない
+  └─ Desktop Control Routerを通じてDesktop Adapterを利用する
+
 永続化・外部境界
   ├─ riffra-host: SessionStore / Asset Repository / Project package / file parsers
   ├─ SessionStore: scratch/current.json + generations（§6）
@@ -104,13 +109,19 @@ CLI ホスト（apps/cli）
 
 制作状態を変更する命令はCoreのApplication層を通り、確定したCreativeSessionが同じ順序でフロントエンドへ返る。選択やパネル状態などの表示状態はCreativeSessionとは分離してフロントエンドが保持する。
 
+### Desktopの外部制御
+
+Windows Desktopは起動時に制御サーバーをNamed Pipeへbindし、準備完了後にData Rootの`control/desktop.json`へendpoint descriptorを公開する。Attached CLIはdescriptorの読込、Named Pipe接続、Protocol handshakeを完了してから操作を送る。制御サーバーはTauri commandではなくDesktop Adapterへ直接ルーティングする。
+
+Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionStore・`AppCore<()>`を使う独立Hostである。Attached CLIだけがDesktopの`AppCore<AudioSupervisor>`、Undo/Redo履歴、canonical sequence、Audio RuntimeをGUIと共有する。
+
 ---
 
 ## 4. 制作状態とコミット
 
 ### 4.1 単一の正準状態
 
-CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。フロントエンドと音声サイドカーはその投影を扱う。
+CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。`AppCore`はCreativeSession、canonical sequence、Undo/Redo履歴を一体の状態として管理し、フロントエンドと音声サイドカーはその投影を扱う。
 
 ### 4.2 Core操作境界
 
@@ -203,7 +214,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
+DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopが保持するLeaseの所有下で制御要求だけを送る。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
 ---
 

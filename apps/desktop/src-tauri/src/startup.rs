@@ -364,6 +364,7 @@ fn restore_startup_runtime(state: &AppState, generation: u64) -> Result<(), Star
         runtime: &state.runtime,
         data_root: state.core.data_root(),
         safe_mode: false,
+        app_handle: Some(&state.app_handle),
     };
     if let Err(error) = session_adapter::sync_arrangement_runtime(&session_context) {
         failures.push(format!("arrangement runtime restoration failed: {error}"));

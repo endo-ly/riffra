@@ -285,6 +285,7 @@ fn reconcile_runtime_after_audio_device_change(
         runtime: context.runtime,
         data_root: context.data_root,
         safe_mode: context.safe_mode,
+        app_handle: None,
     })
     .map(|_| ())
 }

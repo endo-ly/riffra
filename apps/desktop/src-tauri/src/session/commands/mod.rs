@@ -77,6 +77,7 @@ fn app_context(state: &AppState) -> SessionContext<'_> {
         runtime: &state.runtime,
         data_root: state.core.data_root(),
         safe_mode: state.core.safe_mode(),
+        app_handle: Some(&state.app_handle),
     }
 }
 

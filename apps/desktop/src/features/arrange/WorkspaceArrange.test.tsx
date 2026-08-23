@@ -72,7 +72,11 @@ function Harness({
 }
 
 function mutationResult(session: CreativeSession): ArrangementMutationResult {
-  return { session, projection: { state: 'notRequired' } };
+  return {
+    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    session,
+    projection: { state: 'notRequired' },
+  };
 }
 
 describe('WorkspaceArrange', () => {

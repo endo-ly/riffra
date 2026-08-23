@@ -22,6 +22,8 @@
 mod analysis;
 mod asset;
 mod audio_preferences;
+#[cfg(windows)]
+mod control;
 mod diagnostics;
 mod host_commands;
 mod jobs;
@@ -68,6 +70,7 @@ static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
     _data_root_lease: riffra_host::DataRootLease,
+    app_handle: AppHandle,
     core: AppCore<AudioSupervisor>,
     command_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
@@ -298,6 +301,7 @@ pub fn run() {
             let startup_session = session.clone();
             app.manage(AppState {
                 _data_root_lease: data_root_lease,
+                app_handle: app.handle().clone(),
                 core,
                 command_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
@@ -306,6 +310,15 @@ pub fn run() {
                 audio_preferences: Mutex::new(effective_preferences),
                 jobs: jobs::JobRegistry::default(),
             });
+            #[cfg(windows)]
+            {
+                match control::start(app.handle().clone(), data_root.clone()) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        tracing::warn!(error = %error, "Desktop control server is unavailable");
+                    }
+                }
+            }
             queue_startup_maintenance(
                 app.handle().clone(),
                 startup_data_root,

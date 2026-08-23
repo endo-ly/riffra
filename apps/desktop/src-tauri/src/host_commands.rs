@@ -29,12 +29,13 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
             }
         };
         let recovered_from_generation = state.core.recovered_from_generation();
+        let canonical = state
+            .core
+            .canonical_state()
+            .map_err(|error| error.to_string())?;
         Ok(BootstrapState {
-            session: state
-                .core
-                .snapshot()
-                .map_err(|error| error.to_string())?
-                .session,
+            session: canonical.session.clone(),
+            canonical,
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),
             runtime_startup_finished: state.core.audio().startup_finished(),
@@ -381,6 +382,7 @@ pub(crate) async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, 
                 runtime: state.runtime.as_ref(),
                 data_root: state.core.data_root(),
                 safe_mode: false,
+                app_handle: Some(&state.app_handle),
             },
         )
         .map_err(|error| {

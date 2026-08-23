@@ -20,6 +20,18 @@ pub struct CanonicalSnapshot {
     pub sequence: u64,
 }
 
+/// Canonical production state and the history capabilities at one revision.
+#[derive(Clone, Debug, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonicalState {
+    /// Canonical production state at the revision boundary.
+    pub session: CreativeSession,
+    /// Process-local canonical commit revision.
+    pub sequence: u64,
+    /// Undo/Redo capabilities for this revision.
+    pub history: HistoryState,
+}
+
 /// A Core-produced candidate that can be inspected by an external runtime and
 /// later committed without recreating the production edit in an adapter.
 pub struct PreparedSession {
@@ -36,6 +48,13 @@ impl PreparedSession {
     /// Returns the canonical sequence from which this candidate was derived.
     pub fn sequence(&self) -> u64 {
         self.expected_sequence
+    }
+
+    /// Rebinds the candidate to a caller-provided optimistic-concurrency
+    /// revision before an external runtime validates it.
+    pub fn with_expected_sequence(mut self, expected_sequence: u64) -> Self {
+        self.expected_sequence = expected_sequence;
+        self
     }
 }
 
@@ -150,6 +169,33 @@ impl<A> AppCore<A> {
         }
     }
 
+    /// Captures the canonical session, revision, and history capabilities as
+    /// one consistent state for host synchronization.
+    pub fn canonical_state(&self) -> Result<CanonicalState, ApplicationError> {
+        let _operation = self
+            .operation_gate
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        let sequence = self.projection_version.load(Ordering::Acquire) / 2;
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?
+            .clone();
+        let history = self
+            .history
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        Ok(CanonicalState {
+            session,
+            sequence,
+            history: HistoryState {
+                can_undo: history.can_undo(),
+                can_redo: history.can_redo(),
+            },
+        })
+    }
+
     /// Commits one user-intent mutation through validation, persistence, the
     /// canonical state exchange, and Core-owned history.
     pub(crate) fn commit<S, F>(
@@ -210,9 +256,10 @@ impl<A> AppCore<A> {
             .clone();
         let current_sequence = self.projection_version.load(Ordering::Acquire) / 2;
         if current_sequence != prepared.expected_sequence {
-            return Err(ApplicationError::InvalidCommand(
-                "canonical session changed while the operation was being prepared".into(),
-            ));
+            return Err(ApplicationError::Conflict {
+                expected_sequence: prepared.expected_sequence,
+                current_sequence,
+            });
         }
         self.commit_candidate_locked(storage, current, prepared.session)
     }
@@ -1223,6 +1270,76 @@ mod tests {
         let snapshot = core.snapshot().unwrap();
         assert_eq!(snapshot.sequence, 0);
         assert_eq!(snapshot.session.session_id, "scratch-1");
+    }
+
+    #[test]
+    fn canonical_state_keeps_history_with_the_same_revision() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+
+        let initial = core.canonical_state().unwrap();
+        assert_eq!(initial.sequence, 0);
+        assert_eq!(initial.history, HistoryState::default());
+
+        core.application(&storage)
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let committed = core.canonical_state().unwrap();
+        assert_eq!(committed.sequence, 1);
+        assert!(committed.history.can_undo);
+        assert_eq!(committed.session.arrangement.tracks.len(), 1);
+
+        core.undo(&storage).unwrap();
+        let undone = core.canonical_state().unwrap();
+        assert_eq!(undone.sequence, 2);
+        assert!(!undone.history.can_undo);
+        assert!(undone.history.can_redo);
+    }
+
+    #[test]
+    fn stale_prepared_commit_returns_typed_conflict_without_mutating_state() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let track_id = track.arrangement.tracks[0].id.clone();
+        let prepared = application
+            .prepare_track_instrument(&track_id, "Synth".into(), "Synth.vst3".into())
+            .unwrap();
+        application
+            .update_session_settings(crate::application::SessionSettingsPatch {
+                project_name: Some(Some("Newer".into())),
+                ..Default::default()
+            })
+            .unwrap();
+        let current = core.canonical_state().unwrap();
+        let saved = storage.sessions.lock().unwrap().len();
+
+        let error = application.commit_prepared(prepared).unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::Conflict {
+                expected_sequence: 1,
+                current_sequence: 2,
+            }
+        );
+        assert_eq!(core.canonical_state().unwrap(), current);
+        assert_eq!(storage.sessions.lock().unwrap().len(), saved);
     }
 
     #[test]

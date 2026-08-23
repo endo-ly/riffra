@@ -43,6 +43,7 @@ use riffra_core::{
     ProvenanceOperation, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
     RecordingTakeRecord, TakeAudioSource, TimelineTick, TrackKind,
 };
+use tauri::AppHandle;
 
 #[cfg(test)]
 use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
@@ -55,6 +56,7 @@ pub struct RecordingContext<'a> {
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub data_root: &'a Path,
     pub safe_mode: bool,
+    pub app_handle: Option<&'a AppHandle>,
 }
 
 /// Starts a new hardware recording. The Audio Runtime begins writing into a
@@ -270,7 +272,12 @@ fn recording_stop_result(
         .snapshot()
         .map_err(|error| error.to_string())?
         .session;
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     Ok(RecordingStopResult {
+        canonical,
         session,
         audio,
         projection: ArrangementProjectionOutcome::NotRequired,
@@ -284,6 +291,7 @@ fn recording_stop_result_from_mutation(
     finalization: RecordingFinalizationOutcome,
 ) -> RecordingStopResult {
     RecordingStopResult {
+        canonical: mutation.canonical,
         session: mutation.session,
         audio,
         projection: mutation.projection,
@@ -481,9 +489,7 @@ fn preflight_track_outputs(
                     .min(processed_frames);
                 raw_end > raw_start || processed_end > processed_start
             });
-            if (track.kind == "instrument" && midi_source.is_none() && !has_audio_take)
-                || (track.kind != "instrument" && !has_audio_take)
-            {
+            if !has_audio_take && (track.kind != "instrument" || midi_source.is_none()) {
                 return Err(format!(
                     "Arrange recording track has no usable capture segment: {}",
                     track.track_id
@@ -1118,16 +1124,14 @@ fn finalize_arrange_recording(
         runtime: context.runtime,
         data_root: context.data_root,
         safe_mode: context.safe_mode,
+        app_handle: context.app_handle,
     };
     let committed = crate::session::adapter::commit_recording_session(
         &session_context,
         &base_session,
         candidate_session,
     )?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        &session_context,
-        committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(&session_context, committed)
 }
 
 fn next_recording_pass_ordinal(
@@ -1280,6 +1284,7 @@ fn place_recording_on_timeline(
         runtime: context.runtime,
         data_root: context.data_root,
         safe_mode: context.safe_mode,
+        app_handle: context.app_handle,
     };
     let mut session = context
         .core
@@ -1578,7 +1583,7 @@ fn place_recording_on_timeline(
     Ok(Some(crate::session::commit::arrangement_mutation_result(
         &session_context,
         committed,
-    )))
+    )?))
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read
@@ -1722,6 +1727,7 @@ mod tests {
             runtime,
             data_root,
             safe_mode,
+            app_handle: None,
         }
     }
 
@@ -1842,6 +1848,7 @@ mod tests {
             runtime: &runtime,
             data_root: &root,
             safe_mode: false,
+            app_handle: None,
         };
 
         let error = start_recording(&ctx).unwrap_err();

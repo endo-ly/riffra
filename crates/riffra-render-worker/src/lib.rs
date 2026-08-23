@@ -3,9 +3,12 @@
 use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use serde_json::Value;
 use std::{
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
 };
 use thiserror::Error;
 
@@ -32,9 +35,12 @@ pub enum RenderWorkerError {
     Rejected(String),
     #[error("render worker exited without completing the render")]
     Incomplete,
+    #[error("render worker was cancelled")]
+    Cancelled,
 }
 
 /// Launches one `riffra-render` process for each offline render request.
+#[derive(Clone)]
 pub struct RenderWorker {
     executable: PathBuf,
 }
@@ -67,6 +73,17 @@ impl RenderWorker {
     }
 
     fn render(&self, request: OfflineRenderRequest) -> Result<(), RenderWorkerError> {
+        self.render_with_cancellation(request, None)
+    }
+
+    fn render_with_cancellation(
+        &self,
+        request: OfflineRenderRequest,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<(), RenderWorkerError> {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err(RenderWorkerError::Cancelled);
+        }
         let payload = serde_json::json!({
             "type": "renderTimelineOffline",
             "protocolVersion": 1,
@@ -98,7 +115,57 @@ impl RenderWorker {
             .and_then(|()| input.write_all(b"\n"))
             .map_err(RenderWorkerError::Write)?;
         drop(input);
-        let output = child.wait_with_output().map_err(RenderWorkerError::Wait)?;
+        if cancelled.is_none() {
+            return self.handle_output(child.wait_with_output().map_err(RenderWorkerError::Wait)?);
+        }
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            RenderWorkerError::Wait(std::io::Error::other(
+                "render worker standard output is unavailable",
+            ))
+        })?;
+        let mut stderr = child.stderr.take().ok_or_else(|| {
+            RenderWorkerError::Wait(std::io::Error::other(
+                "render worker standard error is unavailable",
+            ))
+        })?;
+        let stdout_reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            stdout.read_to_end(&mut bytes).map(|_| bytes)
+        });
+        let stderr_reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).map(|_| bytes)
+        });
+        loop {
+            if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(RenderWorkerError::Cancelled);
+            }
+            match child.try_wait().map_err(RenderWorkerError::Wait)? {
+                Some(_) => break,
+                None => thread::sleep(Duration::from_millis(25)),
+            }
+        }
+        let status = child.wait().map_err(RenderWorkerError::Wait)?;
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| RenderWorkerError::Wait(std::io::Error::other("stdout reader panicked")))?
+            .map_err(RenderWorkerError::Wait)?;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| RenderWorkerError::Wait(std::io::Error::other("stderr reader panicked")))?
+            .map_err(RenderWorkerError::Wait)?;
+        self.handle_output(Output {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+
+    fn handle_output(&self, output: Output) -> Result<(), RenderWorkerError> {
         let response: Value =
             serde_json::from_slice(&output.stdout).map_err(RenderWorkerError::InvalidResponse)?;
         match response.get("type").and_then(Value::as_str) {
@@ -117,6 +184,20 @@ impl RenderWorker {
             None => Err(RenderWorkerError::MissingResponseType),
         }
     }
+
+    /// Runs one offline render while observing a cancellation flag.
+    ///
+    /// # Errors
+    /// Returns a host-provided description when the render cannot be completed
+    /// or the flag requests cancellation.
+    pub fn render_timeline_offline_cancellable(
+        &self,
+        request: OfflineRenderRequest,
+        cancelled: &AtomicBool,
+    ) -> Result<(), String> {
+        self.render_with_cancellation(request, Some(cancelled))
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl RenderRuntime for RenderWorker {
@@ -128,6 +209,7 @@ impl RenderRuntime for RenderWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn explicit_worker_path_is_preserved() {
@@ -140,5 +222,27 @@ mod tests {
 
         // Assert
         assert_eq!(worker.executable(), path);
+    }
+
+    #[test]
+    fn cancellation_is_observed_before_worker_spawn() {
+        let worker = RenderWorker::new(PathBuf::from("missing-render-worker"));
+        let cancelled = AtomicBool::new(true);
+        let request = OfflineRenderRequest {
+            snapshot: serde_json::json!({}),
+            destination: PathBuf::from("output.wav"),
+            start_tick: 0,
+            end_tick: 1,
+            sample_rate: 48_000,
+            block_size: 512,
+            master_gain_db: 0.0,
+            normalize: false,
+        };
+
+        let error = worker
+            .render_timeline_offline_cancellable(request, &cancelled)
+            .unwrap_err();
+
+        assert_eq!(error, "render worker was cancelled");
     }
 }

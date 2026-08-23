@@ -16,7 +16,11 @@ function renderApp(fake: FakeNativeApi) {
 }
 
 function mutationResult(session: CreativeSession) {
-  return { session, projection: { state: 'notRequired' as const } };
+  return {
+    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    session,
+    projection: { state: 'notRequired' as const },
+  };
 }
 
 async function waitForAppShell() {

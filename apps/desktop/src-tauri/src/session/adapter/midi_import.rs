@@ -29,7 +29,5 @@ pub fn add_midi_clip(
                 events,
             })
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }

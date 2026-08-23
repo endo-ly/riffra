@@ -9,6 +9,7 @@ use ts_rs::TS;
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAudioPair {
+    pub canonical: riffra_core::CanonicalState,
     pub session: riffra_core::CreativeSession,
     pub audio: AudioStatus,
 }
@@ -19,6 +20,7 @@ pub struct SessionAudioPair {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStopResult {
+    pub canonical: riffra_core::CanonicalState,
     pub session: riffra_core::CreativeSession,
     pub audio: AudioStatus,
     pub projection: ArrangementProjectionOutcome,
@@ -41,6 +43,8 @@ pub enum RecordingFinalizationOutcome {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrangementMutationResult {
+    pub canonical: riffra_core::CanonicalState,
+    /// Kept as the direct session field used by existing feature boundaries.
     pub session: riffra_core::CreativeSession,
     pub projection: ArrangementProjectionOutcome,
 }
@@ -104,6 +108,7 @@ pub struct RecoveryCandidate {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
+    pub canonical: riffra_core::CanonicalState,
     pub session: riffra_core::CreativeSession,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,

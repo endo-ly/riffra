@@ -21,6 +21,7 @@ default = []
 ipc-integration = ["tauri/test"]
 
 [dependencies]
+riffra-control = { path = "../../../crates/riffra-control" }
 riffra-core = { path = "../../../crates/riffra-core" }
 riffra-host = { path = "../../../crates/riffra-host" }
 riffra-render-worker = { path = "../../../crates/riffra-render-worker" }

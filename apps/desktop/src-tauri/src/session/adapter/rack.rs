@@ -41,9 +41,7 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
             return Err(repair_previous_arrangement(context, error));
         }
     };
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn set_track_audio_input(
@@ -55,9 +53,7 @@ pub fn set_track_audio_input(
         core.application(store)
             .set_track_audio_input(track_id, channel_index)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn set_track_midi_input(
@@ -69,15 +65,22 @@ pub fn set_track_midi_input(
         core.application(store)
             .set_track_midi_input(track_id, route)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn set_track_instrument(
     context: &SessionContext<'_>,
     track_id: &str,
     path: &str,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    set_track_instrument_with_expected_sequence(context, track_id, path, None)
+}
+
+pub(crate) fn set_track_instrument_with_expected_sequence(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    path: &str,
+    expected_sequence: Option<u64>,
 ) -> Result<crate::model::ArrangementMutationResult, String> {
     if context.safe_mode {
         return Err("Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.".into());
@@ -94,6 +97,10 @@ pub fn set_track_instrument(
             validated_path.to_string_lossy().into_owned(),
         )
         .map_err(|error| error.to_string())?;
+    let prepared = match expected_sequence {
+        Some(sequence) => prepared.with_expected_sequence(sequence),
+        None => prepared,
+    };
     commit_plugin_arrangement(context, prepared)
 }
 
@@ -104,15 +111,22 @@ pub fn clear_track_instrument(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).set_track_instrument(track_id, None)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn add_track_effect(
     context: &SessionContext<'_>,
     track_id: &str,
     path: &str,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    add_track_effect_with_expected_sequence(context, track_id, path, None)
+}
+
+pub(crate) fn add_track_effect_with_expected_sequence(
+    context: &SessionContext<'_>,
+    track_id: &str,
+    path: &str,
+    expected_sequence: Option<u64>,
 ) -> Result<crate::model::ArrangementMutationResult, String> {
     if context.safe_mode {
         return Err(
@@ -132,6 +146,10 @@ pub fn add_track_effect(
             validated_path.to_string_lossy().into_owned(),
         )
         .map_err(|error| error.to_string())?;
+    let prepared = match expected_sequence {
+        Some(sequence) => prepared.with_expected_sequence(sequence),
+        None => prepared,
+    };
     commit_plugin_arrangement(context, prepared)
 }
 
@@ -144,9 +162,7 @@ pub fn remove_track_effect(
         core.application(store)
             .remove_track_effect(track_id, device_id)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn reorder_track_effects(
@@ -158,9 +174,7 @@ pub fn reorder_track_effects(
         core.application(store)
             .reorder_track_effects(track_id, ordered_device_ids.to_owned())
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 pub fn set_track_device_bypassed(
@@ -199,7 +213,7 @@ pub fn set_track_device_bypassed(
     });
     match result {
         Ok(committed) => {
-            Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+            crate::session::commit::arrangement_mutation_without_projection(context, committed)
         }
         Err(error) => {
             let _ = context
@@ -253,7 +267,7 @@ pub fn set_track_device_parameter(
     });
     match result {
         Ok(committed) => {
-            Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+            crate::session::commit::arrangement_mutation_without_projection(context, committed)
         }
         Err(error) => {
             let _ = context.audio.set_track_device_parameter(
@@ -323,7 +337,7 @@ pub fn persist_track_plugin_state(
             bypassed,
         )
     })?;
-    Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+    crate::session::commit::arrangement_mutation_without_projection(context, committed)
 }
 
 /// Persists one editor-originated parameter without routing it back through
@@ -345,7 +359,7 @@ pub fn persist_track_plugin_parameter(
         core.application(store)
             .persist_track_plugin_parameter(track_id, device_id, index, value)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_without_projection(committed))
+    crate::session::commit::arrangement_mutation_without_projection(context, committed)
 }
 
 /// Rewrites every canonical Asset reference pointed to by `asset_id` to the
@@ -384,9 +398,7 @@ pub fn relink_missing_dependency(
         core.application(store)
             .replace_asset_references(&asset_id, new_asset_id)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 /// Marks a missing plugin device as a disabled placeholder so it no longer
@@ -399,9 +411,7 @@ pub fn disable_missing_plugin(
     let committed = commit_core_application(context, |core, store| {
         core.application(store).disable_missing_plugin(device_id)
     })?;
-    Ok(crate::session::commit::arrangement_mutation_result(
-        context, committed,
-    ))
+    crate::session::commit::arrangement_mutation_result(context, committed)
 }
 
 /// Replaces an unresolved Track Device in place so its chain position and id
@@ -410,6 +420,15 @@ pub fn replace_missing_track_plugin(
     context: &SessionContext<'_>,
     device_id: &str,
     new_path: &str,
+) -> Result<crate::model::ArrangementMutationResult, String> {
+    replace_missing_track_plugin_with_expected_sequence(context, device_id, new_path, None)
+}
+
+pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
+    context: &SessionContext<'_>,
+    device_id: &str,
+    new_path: &str,
+    expected_sequence: Option<u64>,
 ) -> Result<crate::model::ArrangementMutationResult, String> {
     let path = Path::new(new_path.trim());
     if !path.exists() {
@@ -427,5 +446,9 @@ pub fn replace_missing_track_plugin(
         .application(&store)
         .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
         .map_err(|error| error.to_string())?;
+    let prepared = match expected_sequence {
+        Some(sequence) => prepared.with_expected_sequence(sequence),
+        None => prepared,
+    };
     commit_plugin_arrangement(context, prepared)
 }

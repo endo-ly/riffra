@@ -7,7 +7,12 @@ import { defaultSession } from '@/native/browser-defaults';
 import { useArrangeCommands } from './useArrangeCommands';
 
 function result(projection: ArrangementMutationResult['projection']): ArrangementMutationResult {
-  return { session: defaultSession(), projection };
+  const session = defaultSession();
+  return {
+    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    session,
+    projection,
+  };
 }
 
 describe('useArrangeCommands', () => {

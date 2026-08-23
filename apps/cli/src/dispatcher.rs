@@ -1,4 +1,4 @@
-use crate::args::CommandRequest;
+use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
     MidiNoteUpdate,
@@ -19,21 +19,42 @@ use std::path::PathBuf;
 pub(crate) enum DispatchError {
     InvalidRequest(String),
     CommandFailed(String),
+    RuntimeUnavailable(String),
+    Conflict {
+        expected_sequence: u64,
+        current_sequence: u64,
+    },
 }
 
 impl fmt::Display for DispatchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRequest(error) | Self::CommandFailed(error) => formatter.write_str(error),
+            Self::InvalidRequest(error)
+            | Self::CommandFailed(error)
+            | Self::RuntimeUnavailable(error) => formatter.write_str(error),
+            Self::Conflict {
+                expected_sequence,
+                current_sequence,
+            } => write!(
+                formatter,
+                "canonical state changed: expected sequence {expected_sequence}, current sequence {current_sequence}"
+            ),
         }
     }
 }
 
 impl DispatchError {
-    pub(crate) fn code(&self) -> &'static str {
+    pub(crate) fn protocol_error(&self) -> ProtocolError {
         match self {
-            Self::InvalidRequest(_) => "invalidRequest",
-            Self::CommandFailed(_) => "commandFailed",
+            Self::InvalidRequest(message) => ProtocolError::new(ErrorCode::InvalidRequest, message),
+            Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
+            Self::RuntimeUnavailable(message) => {
+                ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
+            }
+            Self::Conflict {
+                expected_sequence,
+                current_sequence,
+            } => ProtocolError::conflict(*expected_sequence, *current_sequence),
         }
     }
 
@@ -56,7 +77,16 @@ impl From<&'static str> for DispatchError {
 
 impl From<ApplicationError> for DispatchError {
     fn from(error: ApplicationError) -> Self {
-        Self::CommandFailed(error.to_string())
+        match error {
+            ApplicationError::Conflict {
+                expected_sequence,
+                current_sequence,
+            } => Self::Conflict {
+                expected_sequence,
+                current_sequence,
+            },
+            error => Self::CommandFailed(error.to_string()),
+        }
     }
 }
 
@@ -97,8 +127,41 @@ impl Dispatcher {
         })
     }
 
-    pub fn dispatch(&self, request: CommandRequest) -> Result<DispatchResult, DispatchError> {
-        let result = match request.command.as_str() {
+    pub fn dispatch_request(
+        &self,
+        request: ControlRequest,
+    ) -> Result<DispatchResult, DispatchError> {
+        request
+            .validate()
+            .map_err(|error| DispatchError::InvalidRequest(error.message))?;
+        if is_desktop_only(&request.command) {
+            return Err(DispatchError::RuntimeUnavailable(
+                "this command requires --attach to a running Desktop Host".into(),
+            ));
+        }
+        if let Some(expected_sequence) = request.expected_sequence {
+            let current_sequence = self
+                .core
+                .snapshot()
+                .map_err(|error| DispatchError::CommandFailed(error.to_string()))?
+                .sequence;
+            if expected_sequence != current_sequence {
+                return Err(DispatchError::Conflict {
+                    expected_sequence,
+                    current_sequence,
+                });
+            }
+        }
+        self.dispatch(request.control_command())
+    }
+
+    pub fn dispatch(&self, request: ControlCommand) -> Result<DispatchResult, DispatchError> {
+        if is_desktop_only(&request.name) {
+            return Err(DispatchError::RuntimeUnavailable(
+                "this command requires --attach to a running Desktop Host".into(),
+            ));
+        }
+        let result = match request.name.as_str() {
             "session.get" => self.session(self.core.application(&self.storage).get_session()?),
             "session.settings.update" => self.session(
                 self.core
@@ -522,7 +585,7 @@ impl Dispatcher {
             _ => {
                 return Err(DispatchError::invalid_request(format!(
                     "unknown command: {}",
-                    request.command
+                    request.name
                 )));
             }
         };
@@ -621,6 +684,32 @@ impl Dispatcher {
             .map_err(|error| format!("Audio Asset could not be read: {error}"))?;
         Ok(riffra_host::parse_wav(&bytes)?.frame_count)
     }
+}
+
+fn is_desktop_only(command: &str) -> bool {
+    matches!(
+        command,
+        "runtime.projection.get"
+            | "runtime.projection.retry"
+            | "transport.play"
+            | "transport.stop"
+            | "transport.go-to-start"
+            | "transport.seek"
+            | "audio.status"
+            | "midi.send"
+            | "midi.panic"
+            | "plugin.catalog.list"
+            | "instrument.set"
+            | "effect.add"
+            | "device.parameter.set"
+            | "missing.list"
+            | "missing.relink"
+            | "missing.disable-plugin"
+            | "missing.replace-plugin"
+            | "render.start"
+            | "job.get"
+            | "job.cancel"
+    )
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, DispatchError> {
@@ -947,14 +1036,14 @@ struct DeviceBypassParams {
 #[cfg(test)]
 mod tests {
     use super::Dispatcher;
-    use crate::args::CommandRequest;
+    use riffra_control::ControlCommand;
     use riffra_host::now_ms;
     use serde_json::{Value, json};
     use std::fs;
 
-    fn request(command: &str, params: Value) -> CommandRequest {
-        CommandRequest {
-            command: command.into(),
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
             params,
         }
     }
