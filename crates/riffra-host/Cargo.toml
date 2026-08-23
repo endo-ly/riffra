@@ -1,0 +1,23 @@
+[package]
+name = "riffra-host"
+version = "0.1.0"
+description = "Shared filesystem host infrastructure for Riffra"
+authors = ["Riffra contributors"]
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+riffra-core = { path = "../riffra-core" }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }

@@ -5,11 +5,15 @@ description = "Headless command host for the Riffra production core"
 authors = ["Riffra contributors"]
 edition = "2024"
 rust-version = "1.88"
+autobins = false
+
+[[bin]]
+name = "riffra"
+path = "src/main.rs"
 
 [dependencies]
 riffra-core = { path = "../../crates/riffra-core" }
+riffra-host = { path = "../../crates/riffra-host" }
+clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

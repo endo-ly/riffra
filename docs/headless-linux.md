@@ -1,94 +1,107 @@
 # ヘッドレス Linux 対応
 
-本書は、Linuxで利用できるセッション編集とNative audio engineの境界、およびその検証方法を説明する。
+本書は、GUIを使わずにLinux上で制作状態を編集するCLIと、Native audio engineの境界および検証方法を説明する。
 
-## 現在の実装
+## CLI Host
 
-`riffra-core` は制作状態、編集規則、履歴を管理するOS非依存のApplication層である。現在、これをデスクトップアプリとは別のHostから利用できる実装として、`riffra-cli` がある。
+`riffra` は `riffra-core` のApplication操作を `riffra-host` の永続化へ接続するStandalone Hostである。
 
 ```text
 AI agent
    │ spawn
    ▼
-riffra-cli --interactive --session ./project.json
-   │ JSON Lines (stdin / stdout)
+riffra --data-root ./riffra-data --interactive
+   │ Protocol v1 JSON Lines
    ▼
-Dispatcher → riffra-core::AppCore → SessionFileStorage
+DataRootLease → SessionStore → AppCore<Application>
 ```
 
-CLIはセッションファイルを読み込み、`AppCore` のApplication APIを呼び出し、成功した変更を同じファイルへ保存する。デスクトップのレンダーワーカーやリアルタイム音声サイドカーは、このCLIからは起動されない。
+DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所有できない。
 
-### CLIの動作モード
+```text
+<data_root>/
+├─ scratch/
+│  ├─ current.json
+│  └─ generations/
+├─ library/
+│  └─ riffra.db
+├─ assets/
+├─ recordings/
+└─ exports/
+```
 
-ワンショットモードは、コマンドライン引数で1つの操作を実行して終了する。対話モードはプロセスを維持し、標準入力から複数の操作を受け付ける。`undo` と `redo` の履歴はプロセス内に保持されるため、対話モードでのみ利用できる。
+起動例:
 
 ```bash
-cargo run -p riffra-cli -- --session ./project.json add-track --name drums --kind audio
-cargo run -p riffra-cli -- --session ./project.json list-tracks
-cargo run -p riffra-cli -- --interactive --session ./project.json
+cargo run -p riffra-cli -- --data-root ./riffra-data session get
+cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --kind audio
+cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 ```
 
-現在のコマンドは次のとおりである。
+ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力からProtocol v1の要求を複数受け取り、要求ごとにJSON Linesで応答する。`undo` と `redo` の履歴はプロセス内に保持されるため、対話モードでのみ利用できる。
 
-| 分類               | コマンド                                   |
-| ------------------ | ------------------------------------------ |
-| セッション         | `get-session`                              |
-| トラック           | `list-tracks`、`add-track`、`remove-track` |
-| 設定               | `update-session-settings`                  |
-| 履歴（対話モード） | `undo`、`redo`                             |
+## 編集できる制作状態
 
-### CLIのJSON Lines境界
+CLIは次の状態を編集できる。
 
-対話モードでは、1行のJSON要求に対して1行のJSON応答を返す。要求は`requestId`とflattenされたコマンドを持つ。
+- Session設定、履歴、Undo / Redo
+- Trackの追加・更新・削除・複製・並べ替え
+- Audio / MIDI Input Routing
+- Audio ClipとMIDI Clipの配置・更新・移動・Trim・Split・複製
+- MIDI Noteの追加・一括挿入・更新・削除・Quantize・Transform・複製
+- Marker、Automation、Timebase、Loop、Punch
+- canonical MIDI AssetのimportとAudio / MIDI Assetの配置
+- Projectのexport / import
+- Instrumentの解除、Effectの削除・並べ替え、Device bypass
+
+引数の形式はCLIが検査する。Track、Clip、Note、Automationなどの制作上のValidationと正規化は `riffra-core::Application` が実行する。MIDI AssetのSMF検証、Audio ClipのWAV metadata解決、Project package、Asset参照の整合性は `riffra-host` が担当する。
+
+## JSON Lines境界
+
+要求は次の形式である。
 
 ```json
-{"requestId":"1","type":"addTrack","name":"Bass","kind":"instrument"}
-{"requestId":"2","type":"listTracks"}
-{"requestId":"3","type":"updateSessionSettings","loopEnabled":true}
+{
+  "protocolVersion": 1,
+  "requestId": "42",
+  "command": "track.add",
+  "params": { "name": "Bass", "kind": "instrument" }
+}
 ```
 
-成功応答は`ok`と`result`を持ち、失敗応答は`ok: false`と`error`を持つ。
+成功応答にはcanonical sequenceを含める。
 
 ```json
-{"requestId":"1","ok":true,"result":{}}
-{"requestId":"4","ok":false,"error":{"code":"commandFailed","message":"..."}}
+{
+  "protocolVersion": 1,
+  "requestId": "42",
+  "ok": true,
+  "sequence": 12,
+  "result": { "type": "session", "value": {} }
+}
 ```
 
-現在のCLIプロトコルには、`protocolVersion`、`params`、非同期イベント、ジョブ進捗通知、共通Diagnosticsフレームはない。ワンショットモードはコマンドライン引数を受け取り、1つのJSON結果を標準出力へ出して終了する。
+不正なJSON・Protocol version・要求形式は `invalidRequest`、未知のコマンドやCore・Hostの失敗は `commandFailed` として返す。応答の `requestId` は要求の値を保持する。
 
-## デスクトップに存在する別の境界
+## Runtimeとの境界
 
-デスクトップの`render_timeline`命令は、`riffra-render-worker`を1要求ごとに起動してオフラインレンダーを実行する。また、リアルタイム再生・録音・MIDI・デバイス制御は音声サイドカーが担当する。これらはデスクトップHostの境界であり、現在のCLIの機能には含まれない。詳細は [docs/ipc.md](ipc.md) を参照する。
+CLIはAudio Runtimeを起動しない。再生、録音、Live MIDI、デバイス制御、Preview、Render、Plugin scan、Plugin editor、VSTの追加・置換・パラメータ変更はDesktop Adapterまたは専用Workerの責務である。CLIは音声デバイスやGUIのない環境でも、保存済みの制作状態を編集できる。
 
-この分離により、CLIはオーディオデバイスやGUIのない環境でも、セッションの読み出しと最小限の制作状態編集を実行できる。CLIが外部プラグインをスキャンしたり、音声デバイスを開いたりすることはない。
-
-## Linux Hostの境界
-
-Linuxのセッション編集は`riffra-core`と`riffra-cli`が担当する。オーディオ処理はNative audio engineを別プロセスとして扱い、CLIへ音声デバイスの所有を追加しない。
-
-### オフラインレンダー
-
-CLIからレンダーを呼び出す必要が生じた場合は、現在のCLIコマンドへデスクトップ専用の処理を直接追加せず、CoreのRender Portとレンダーワーカーを利用するHost側の経路を追加する。音声デバイスを初期化しないレンダー経路として成立させ、プラグインを含む未対応トラックは成功扱いにせず、明示的なエラーとして返す。
-
-### Native audio engine
-
-LinuxのNative audio engineはALSAを使用する。WindowsのASIO/WASAPIとはオーディオデバイスの実装を分け、プロセス境界とJSON Linesの契約は共通にする。
-
-Linuxでは物理オーディオデバイスを持たない環境でも、CMakeのビルド、CTest、VST3のスキャンとランタイム検証を実行できる。実機デバイスの入出力は、ALSAデバイスを備えた環境で別途検証する。
-
-### プロトコルの拡張
-
-レンダーや長時間ジョブをCLIから操作する段階で、必要な要求のバージョン管理、パラメータの名前空間、非同期イベント、診断情報を追加する。その時点で実装した契約だけを [docs/ipc.md](ipc.md) とCLIのプロトコル定義へ反映する。
+LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。CLIのDataRoot所有とNative audio engineのデバイス所有は混在させない。
 
 ## Linuxでの検証
 
-Linuxでは、セッション操作とNative audio engineを別々の検証対象として扱う。CIでは、`riffra-core`、`riffra-cli`、Native audio engineのビルドとテストを実行する。Native audio engineのデバイスオープンは物理デバイスを必要とするため、CIのCTestには含めない。
+セッション編集とNative audio engineは別々に検証する。
 
 ```bash
-# CLI
+# Core / Host / CLI
+cargo test -p riffra-core
+cargo test -p riffra-host
 cargo test -p riffra-cli
-cargo run -p riffra-cli -- --session ./project.json get-session
+cargo run -p riffra-cli -- --data-root ./riffra-data session get
 
 # Native audio engine
 ./native/audio-engine/build.sh Debug
 ```
+
+Native audio engineのデバイスオープンは物理デバイスを必要とするため、CIではCMake configure、build、CTestをデバイス非依存の範囲で実行する。実機の入出力はALSAデバイスを備えた環境で検証する。

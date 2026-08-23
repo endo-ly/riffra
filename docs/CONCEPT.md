@@ -81,7 +81,7 @@ Riffraは、同じセッションと素材の上に、人と機械の二つの�
 | デスクトップGUI | 演奏者、制作する人         | 演奏、監視、録音、編集、曲作り（Arrange / Design）               |
 | ヘッドレスCLI   | スクリプト、AIエージェント | プロジェクト操作、トラック・クリップ編集、MIDI配置、レンダリング |
 
-CLIはGUIの操作を模したものではなく、同じriffra-coreのドメインモデルを直接操作する。AIエージェントはriffra-cliをサブプロセスとして起動し、標準入出力のJSON Linesで対話する。オフラインレンダリングを基盤に、ライブ音声を必要としない作業（音源生成、編集、書出し）を自動化できる。
+CLIはGUIの操作を模したものではなく、同じriffra-coreのドメインモデルを直接操作する。AIエージェントは `riffra` をサブプロセスとして起動し、標準入出力のJSON Linesで対話する。オフラインレンダリングを含む、ライブ音声を必要としない作業（音源生成、編集、書出し）を自動化できる。
 
 ```mermaid
 flowchart LR
@@ -90,7 +90,7 @@ flowchart LR
     end
     subgraph MACHINE["機械"]
         AGENT["AIエージェント"]
-        CLI["riffra-cli<br/>JSON Lines"]
+        CLI["riffra<br/>JSON Lines"]
     end
     GUI --> CORE["riffra-core<br/>Session / Asset / Rack / Timeline"]
     AGENT --> CLI --> CORE

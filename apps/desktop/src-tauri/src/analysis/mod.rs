@@ -26,14 +26,7 @@ pub struct AudioAnalysis {
     pub waveform: Vec<f64>,
 }
 
-pub(crate) struct WavData {
-    pub(crate) format: u16,
-    pub(crate) channels: u16,
-    pub(crate) sample_rate: u32,
-    pub(crate) bits_per_sample: u16,
-    pub(crate) data_offset: usize,
-    pub(crate) data_len: usize,
-}
+pub(crate) use riffra_host::parse_wav;
 
 pub fn analyze(path: &Path) -> Result<AudioAnalysis, String> {
     if !path.is_file() {
@@ -159,48 +152,6 @@ fn analyze_bytes(path: &Path, bytes: &[u8]) -> Result<AudioAnalysis, String> {
     })
 }
 
-pub(crate) fn parse_wav(bytes: &[u8]) -> Result<WavData, String> {
-    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err("Audio file is not a RIFF/WAVE file.".into());
-    }
-    let mut cursor = 12_usize;
-    let mut format = None;
-    let mut data = None;
-    while cursor + 8 <= bytes.len() {
-        let id = &bytes[cursor..cursor + 4];
-        let size = read_u32(&bytes[cursor + 4..cursor + 8])? as usize;
-        let start = cursor + 8;
-        let end = start
-            .checked_add(size)
-            .ok_or_else(|| "WAV chunk size overflowed.".to_string())?;
-        if end > bytes.len() {
-            return Err("WAV chunk exceeds the file boundary.".into());
-        }
-        if id == b"fmt " && size >= 16 {
-            format = Some((
-                read_u16(&bytes[start..start + 2])?,
-                read_u16(&bytes[start + 2..start + 4])?,
-                read_u32(&bytes[start + 4..start + 8])?,
-                read_u16(&bytes[start + 14..start + 16])?,
-            ));
-        } else if id == b"data" {
-            data = Some((start, size));
-        }
-        cursor = end + (size % 2);
-    }
-    let (format, channels, sample_rate, bits_per_sample) =
-        format.ok_or_else(|| "WAV fmt chunk is missing.".to_string())?;
-    let (data_offset, data_len) = data.ok_or_else(|| "WAV data chunk is missing.".to_string())?;
-    Ok(WavData {
-        format,
-        channels,
-        sample_rate,
-        bits_per_sample,
-        data_offset,
-        data_len,
-    })
-}
-
 pub(crate) fn decode_sample(bytes: &[u8], format: u16, bits: u16) -> Result<f64, String> {
     let sample = if format == 3 {
         f32::from_le_bytes(bytes.try_into().map_err(|_| "Invalid float sample.")?) as f64
@@ -264,18 +215,6 @@ fn linear_to_db(value: f64) -> f64 {
     } else {
         20.0 * value.log10()
     }
-}
-
-fn read_u16(bytes: &[u8]) -> Result<u16, String> {
-    Ok(u16::from_le_bytes(
-        bytes.try_into().map_err(|_| "Invalid WAV u16 field.")?,
-    ))
-}
-
-fn read_u32(bytes: &[u8]) -> Result<u32, String> {
-    Ok(u32::from_le_bytes(
-        bytes.try_into().map_err(|_| "Invalid WAV u32 field.")?,
-    ))
 }
 
 #[cfg(test)]

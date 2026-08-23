@@ -73,8 +73,13 @@ Tauri 命令層 (src-tauri/src/**/commands.rs)
   └─ 実行モード: run_blocking（重い操作は spawn_blocking）で async ワーカーを塞がない
 
 Desktop Adapter (apps/desktop/src-tauri/src)
-  ├─ SessionStore / AudioSupervisor / RuntimeReconciler を Core の Port に接続
+  ├─ riffra-host / AudioSupervisor / RuntimeReconciler を Core の Port に接続
   └─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
+
+riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
+  ├─ SessionStore / Asset Repository / Project package
+  ├─ WAV metadata / MIDI SMF parser
+  └─ DataRootLease（プロセス間の排他所有）
 
 riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
   ├─ domain: CreativeSession / Arrangement / Recording / Asset / Rack
@@ -85,11 +90,13 @@ riffra-core（crates/riffra-core）: プラットフォーム非依存のApplica
   └─ Tauri・WebView・OS統合を含まない
 
 CLI ホスト（apps/cli）
+  ├─ riffra-host のDataRootLease / SessionStoreを取得する
   ├─ AppCore と SessionStorage Port を直接利用する
   ├─ ワンショット引数と対話型 JSON Lines を同じ Dispatcher へ渡す
-  └─ Tauri・React・Desktop Adapter に依存しない
+  └─ Tauri・React・Desktop Adapter・Audio Runtimeに依存しない
 
 永続化・外部境界
+  ├─ riffra-host: SessionStore / Asset Repository / Project package / file parsers
   ├─ SessionStore: scratch/current.json + generations（§6）
   ├─ ライブラリ索引: SQLite リードモデル（§8）
   └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
@@ -107,7 +114,7 @@ CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリ
 
 ### 4.2 Core操作境界
 
-`AppCore` は主要な制作操作の入口であり、正準状態、操作順序、Undo/Redo履歴、ランタイム投影の順序を一体として管理する。ホストはPortを実装して永続化や音声ランタイムへ接続するが、正準状態の採否は決めない。これにより、Desktopと将来のCLIは同じ編集規則と履歴を共有できる。
+`AppCore` は主要な制作操作の入口であり、正準状態、操作順序、Undo/Redo履歴、ランタイム投影の順序を一体として管理する。ホストはPortを実装して永続化や音声ランタイムへ接続するが、正準状態の採否は決めない。DesktopとCLIは同じ編集規則と永続化規則を共有する。
 
 ### 4.3 コミットパイプライン
 
@@ -171,14 +178,14 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.2 アトミック保存と世代管理
 
-`storage.rs` の SessionStore は、クラッシュしても current.json が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
+`riffra-host::SessionStore` は、クラッシュしても current.json が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
 
 1. 現在の current.json を generations/ へコピー
 2. 新内容を `.tmp` へ書き、`sync_all`（fsync）
 3. `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`（Windows）または `rename` で置換
 4. 古い世代を20件を超えて削除
 
-保存前にスクラッチ領域の空き容量を検証し、容量不足では保存を拒否する（`EnsureStorageCapacity`）。保存はプロセス内のグローバルロックで直列化される。
+保存前にスクラッチ領域の空き容量を検証し、容量不足では保存を拒否する。保存はプロセス内のグローバルロックで直列化される。
 
 ### 6.3 ロードと回復
 
@@ -193,6 +200,10 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 ### 6.4 参照整合
 
 保存・ロードの両方で `asset::validate_session_references` が実行され、セッションが参照する全アセットIDが登録済みであることを保証する。コンテンツファイルの欠落は許容（MissingDependency としてUIに列挙）だが、**未登録のアセットIDを含むセッションは保存・ロードを拒否**する。
+
+### 6.5 DataRootの所有
+
+DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
 ---
 

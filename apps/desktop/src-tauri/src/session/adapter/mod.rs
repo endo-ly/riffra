@@ -30,7 +30,6 @@ pub(crate) use runtime::*;
 #[cfg(test)]
 use rack::commit_plugin_arrangement;
 
-use std::collections::HashMap;
 use std::{fs, path::Path};
 
 use crate::asset;
@@ -42,8 +41,8 @@ use crate::storage::SessionStore;
 use riffra_core::CreativeSession;
 use riffra_core::{
     AssetId, AssetKind, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter,
-    AutomationPoint, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind, MidiInputRoute,
-    MidiNote, ProjectTimebase, TimelineTick, TrackKind,
+    AutomationPoint, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick,
+    TrackKind,
 };
 
 pub(crate) use crate::session::commit::{

@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::asset::{load, resolve_content_location};
 use crate::model::AudioStatus;
 use crate::native_audio::AudioSupervisor;
-use crate::projects::unique_import_destination_with_ext;
-use crate::session::adapter::parse_midi_asset;
-use riffra_core::{AssetId, AssetKind, Provenance};
+use riffra_core::{AssetId, AssetKind};
 
 /// Concrete dependencies an Asset Application Operation needs.
 pub struct AssetPreviewContext<'a> {
@@ -89,27 +87,6 @@ pub fn preview_asset(
         .map_err(String::from)
 }
 
-/// Validates SMF bytes, persists them under `assets/imports/`, and registers a
-/// canonical MIDI Asset with Imported provenance. Shared by path-based import
-/// (dialog) and byte-payload import (HTML5 drag-and-drop).
-fn register_imported_midi(
-    data_root: &Path,
-    display_name: &str,
-    bytes: &[u8],
-) -> Result<AssetId, String> {
-    parse_midi_asset(bytes)?;
-    let destination = unique_import_destination_with_ext(data_root, display_name, "mid")?;
-    std::fs::write(&destination, bytes)
-        .map_err(|error| format!("MIDI file could not be imported: {error}"))?;
-    crate::asset::register(
-        data_root,
-        AssetKind::Midi,
-        display_name,
-        &destination.to_string_lossy(),
-        Some(Provenance::imported()),
-    )
-}
-
 /// Imports an external Standard MIDI File as a canonical MIDI Asset. The source
 /// file is validated as an SMF, copied under `assets/imports/`, and registered
 /// with `Provenance::imported` so the original file can be moved or deleted
@@ -129,26 +106,7 @@ pub fn import_midi_asset(
     source_path: &str,
     name: Option<&str>,
 ) -> Result<AssetId, String> {
-    let source = Path::new(source_path);
-    let is_midi = source
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("mid") || extension.eq_ignore_ascii_case("midi")
-        });
-    if !is_midi {
-        return Err("Selected file is not a Standard MIDI File (.mid / .midi).".into());
-    }
-    let bytes =
-        std::fs::read(source).map_err(|error| format!("MIDI file could not be read: {error}"))?;
-    let stem = source
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("midi");
-    let display_name = name
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(stem);
-    register_imported_midi(data_root, display_name, &bytes)
+    riffra_host::import_midi_asset(data_root, source_path, name)
 }
 
 /// Imports a Standard MIDI File delivered as an in-memory byte payload. Used by
@@ -159,10 +117,7 @@ pub fn import_midi_asset(
 /// Returns a string error when the name is empty, the bytes are not a valid
 /// SMF, the file cannot be written, or canonical registration fails.
 pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<AssetId, String> {
-    if name.trim().is_empty() {
-        return Err("MIDI asset name must not be empty.".into());
-    }
-    register_imported_midi(data_root, name, bytes)
+    riffra_host::import_midi_bytes(data_root, name, bytes)
 }
 
 #[cfg(test)]

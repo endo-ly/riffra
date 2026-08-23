@@ -2,8 +2,8 @@
 //!
 //! The authoritative Asset metadata lives in the same SQLite database the
 //! Library reads from. This module owns the canonical columns and the
-//! registration/load path; [`crate::library`] remains the search/read API over
-//! the same data.
+//! registration/load path; the Desktop library module remains the search/read
+//! API over the same data.
 //!
 //! Registration order (per design):
 //! 1. confirm the content file exists on disk;
@@ -19,6 +19,7 @@ use crate::storage::now_ms;
 use riffra_core::CreativeSession;
 use riffra_core::{Asset, AssetId, AssetKind, Provenance, ProvenanceOperation};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 const DERIVED_FROM: &str = "derived-from";
@@ -42,7 +43,7 @@ fn open(data_root: &Path) -> Result<Connection, String> {
 /// needed at startup. The Library module owns the `library_entries` table.
 /// The single canonical definition of the `assets` store, shared by the asset
 /// repository and the library read model so the two never drift apart.
-pub(crate) fn ensure_assets_schema(connection: &Connection) -> Result<(), String> {
+pub fn ensure_assets_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS assets (
@@ -150,7 +151,7 @@ pub fn register(
 /// # Errors
 /// Returns a string error when the content file is missing or the metadata
 /// could not be persisted.
-pub fn register_with_id(
+pub(crate) fn register_with_id(
     data_root: &Path,
     id: &AssetId,
     kind: AssetKind,
@@ -169,13 +170,16 @@ pub fn register_with_id(
             "Asset content file does not exist: {content_location}"
         ));
     }
-    if let Some(existing) = load(data_root, id)
-        && (existing.kind != kind || !same_content(&existing.content_location, content_location))
-    {
-        return Err(format!(
-            "Asset id conflict: {} already refers to different production content.",
-            id.as_str()
-        ));
+    if let Some(existing) = load(data_root, id) {
+        let content_missing = !Path::new(&existing.content_location).is_file();
+        if existing.kind != kind
+            || (!content_missing && !same_content(&existing.content_location, content_location))
+        {
+            return Err(format!(
+                "Asset id conflict: {} already refers to different production content.",
+                id.as_str()
+            ));
+        }
     }
     let now = now_ms();
     let mut connection = open(data_root)?;
@@ -428,12 +432,17 @@ pub fn validate_session_references(
     data_root: &Path,
     session: &CreativeSession,
 ) -> Result<(), String> {
-    let references = session
+    let mut references = session
         .arrangement
         .audio_clips
         .iter()
         .map(|clip| ("arrangement audio clip", clip.id.as_str(), &clip.asset_id))
         .collect::<Vec<_>>();
+    references.extend(session.arrangement.midi_clips.iter().filter_map(|clip| {
+        clip.asset_id
+            .as_ref()
+            .map(|asset_id| ("arrangement MIDI clip", clip.id.as_str(), asset_id))
+    }));
     if references.is_empty() {
         return Ok(());
     }
@@ -475,6 +484,93 @@ pub fn validate_session_references(
         }
     }
     Ok(())
+}
+
+/// Builds a collision-resistant destination under the canonical import folder.
+pub(crate) fn unique_import_destination(
+    data_root: &Path,
+    name: &str,
+    source: &Path,
+) -> Result<PathBuf, String> {
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("wav");
+    unique_import_destination_with_ext(data_root, name, extension)
+}
+
+/// Builds a collision-resistant destination under the canonical import folder
+/// with an explicit extension.
+pub(crate) fn unique_import_destination_with_ext(
+    data_root: &Path,
+    name: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
+    let directory = data_root.join("assets").join("imports");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Import asset folder could not be created: {error}"))?;
+    let safe = safe_name(name);
+    let extension = extension.trim_start_matches('.');
+    if extension.is_empty()
+        || !extension
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return Err("Import asset extension is invalid.".into());
+    }
+    let mut destination = directory.join(format!("{safe}-{}.{extension}", now_ms()));
+    let mut suffix = 1_u32;
+    while destination.exists() {
+        destination = directory.join(format!("{safe}-{}-{suffix}.{extension}", now_ms()));
+        suffix = suffix.saturating_add(1);
+    }
+    Ok(destination)
+}
+
+/// Imports a Standard MIDI File as an immutable canonical Asset.
+pub fn import_midi_asset(
+    data_root: &Path,
+    source_path: &str,
+    name: Option<&str>,
+) -> Result<AssetId, String> {
+    let source = Path::new(source_path);
+    let is_midi = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("mid") || extension.eq_ignore_ascii_case("midi")
+        });
+    if !is_midi {
+        return Err("Selected file is not a Standard MIDI File (.mid / .midi).".into());
+    }
+    let bytes =
+        fs::read(source).map_err(|error| format!("MIDI file could not be read: {error}"))?;
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("midi");
+    let display_name = name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(stem);
+    import_midi_bytes(data_root, display_name, &bytes)
+}
+
+/// Imports validated Standard MIDI File bytes as an immutable canonical Asset.
+pub fn import_midi_bytes(data_root: &Path, name: &str, bytes: &[u8]) -> Result<AssetId, String> {
+    if name.trim().is_empty() {
+        return Err("MIDI asset name must not be empty.".into());
+    }
+    crate::midi_file::parse_smf(bytes)?;
+    let destination = unique_import_destination_with_ext(data_root, name, "mid")?;
+    fs::write(&destination, bytes)
+        .map_err(|error| format!("MIDI file could not be imported: {error}"))?;
+    register(
+        data_root,
+        AssetKind::Midi,
+        name,
+        &destination.to_string_lossy(),
+        Some(Provenance::imported()),
+    )
 }
 
 /// Loads a full canonical [`Asset`] by id, including its provenance source ids.
@@ -577,10 +673,31 @@ fn u64_from_i64(value: i64) -> Option<u64> {
     u64::try_from(value).ok()
 }
 
+fn safe_name(value: &str) -> String {
+    let mut result = value
+        .chars()
+        .filter_map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                Some(character)
+            } else if character.is_whitespace() {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    result.truncate(80);
+    if result.is_empty() {
+        "asset".into()
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AudioClip, TimelineTick, Track};
+    use riffra_core::{AudioClip, MidiClip, TimelineTick, Track};
     use riffra_core::{ProvenanceOperation, mint_asset_id};
 
     fn root(label: &str) -> PathBuf {
@@ -696,6 +813,34 @@ mod tests {
 
         let error = validate_session_references(&root, &session).unwrap_err();
         assert!(error.contains("arrangement audio clip 'clip:unknown'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_reference_validation_rejects_unknown_midi_asset() {
+        let root = root("validate-midi-clip");
+        let asset_id = mint_asset_id();
+        let mut session = CreativeSession::new(1_000);
+        session
+            .arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "midi-clip:unknown".into(),
+            name: "unknown".into(),
+            track_id: "instrument".into(),
+            asset_id: Some(asset_id),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            notes: Vec::new(),
+            events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+
+        let error = validate_session_references(&root, &session).unwrap_err();
+        assert!(error.contains("arrangement MIDI clip 'midi-clip:unknown'"));
         let _ = std::fs::remove_dir_all(root);
     }
 

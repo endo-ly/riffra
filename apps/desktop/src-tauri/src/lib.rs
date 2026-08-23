@@ -67,6 +67,7 @@ const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
+    _data_root_lease: riffra_host::DataRootLease,
     core: AppCore<AudioSupervisor>,
     command_gate: Mutex<()>,
     recording_operation_gate: Mutex<()>,
@@ -227,6 +228,8 @@ pub fn run() {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
             std::fs::create_dir_all(&data_root)?;
+            let data_root_lease = riffra_host::DataRootLease::acquire(&data_root)
+                .map_err(|error| format!("Riffra data root could not be opened: {error}"))?;
             let preferences = audio_preferences::load_or_default(&data_root)?;
             let audio = if safe_mode {
                 AudioSupervisor::offline(
@@ -294,6 +297,7 @@ pub fn run() {
             let startup_data_root = data_root.clone();
             let startup_session = session.clone();
             app.manage(AppState {
+                _data_root_lease: data_root_lease,
                 core,
                 command_gate: Mutex::new(()),
                 recording_operation_gate: Mutex::new(()),
