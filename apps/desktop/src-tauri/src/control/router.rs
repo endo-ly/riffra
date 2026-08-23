@@ -583,7 +583,7 @@ fn route_command(
             let data_root = state.core.data_root().to_path_buf();
             let session = session.clone();
             let options = params.options.unwrap_or_default();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
+            std::mem::drop(tauri::async_runtime::spawn_blocking(move || {
                 let Some(cancelled) = registry.cancellation_flag(&id) else {
                     return;
                 };
@@ -611,7 +611,7 @@ fn route_command(
                     },
                     Err(error) => crate::jobs::fail(&registry, &data_root, &id, error),
                 }
-            });
+            }));
             let status = crate::jobs::to_background_status(status).map_err(RouteError::command)?;
             serialized("backgroundJob", &status)
         }
