@@ -114,7 +114,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     ignoreMissing,
     commandOpen,
     historyState,
-    setSession,
+    applyCanonicalState,
     setLibraryQuery,
     setLibrarySection,
     setCommandOpen,
@@ -139,7 +139,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     toggleRecording,
     api: nativeApi,
   } = useAppController(api);
-  const arrange = useArrangeShell(nativeApi, session, setSession);
+  const arrange = useArrangeShell(nativeApi, session, applyCanonicalState);
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
 
   useEffect(() => {
@@ -223,7 +223,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}
-        setSession={setSession}
+        applyCanonicalState={applyCanonicalState}
         setAudio={setAudio}
         transportPlaying={transportPlaying}
         onPlay={() => void playTransport()}
@@ -360,7 +360,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               audio={audio}
               recordingCommandPending={recordingCommandPending}
               session={session}
-              setSession={setSession}
+              applyCanonicalState={applyCanonicalState}
               arrangeSelection={arrange.selection}
               setArrangeSelection={arrange.setSelection}
               missingDependencies={missingDependencies}
@@ -385,7 +385,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         <section className={shellStyles.workspace}>
           <WorkspaceArrange
             session={session}
-            setSession={setSession}
+            applyCanonicalState={applyCanonicalState}
             selection={arrange.selection}
             setSelection={arrange.setSelection}
             api={nativeApi}

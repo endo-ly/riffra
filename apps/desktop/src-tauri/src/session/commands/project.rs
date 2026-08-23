@@ -110,7 +110,7 @@ pub async fn get_missing_dependencies(app: AppHandle) -> Result<Vec<MissingDepen
             .snapshot()
             .map_err(|error| error.to_string())?
             .session;
-        Ok(crate::missing::collect_missing(
+        Ok::<_, String>(crate::missing::collect_missing(
             state.core.data_root(),
             &session,
         ))

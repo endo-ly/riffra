@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TransportControls } from './TransportControls';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
 afterEach(cleanup);
@@ -30,7 +30,10 @@ function Harness({
   return (
     <TransportControls
       session={session}
-      setSession={setSession}
+      applyCanonicalState={(canonical) => {
+        setSession(canonical.session);
+        return true;
+      }}
       recordingActive={api.audio.recording.active}
       transportPlaying={transportPlaying}
       onPlay={onPlay}
@@ -46,7 +49,7 @@ function Harness({
 describe('TransportControls', () => {
   it('describes each transport control on hover', () => {
     const api = new FakeNativeApi({
-      bootstrapState: { session: defaultSession() },
+      bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });
     const onToggleRecording = vi.fn();
@@ -85,7 +88,9 @@ describe('TransportControls', () => {
   });
 
   it('delegates Play, Stop, and Go to start to the transport controller', () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
+    const api = new FakeNativeApi({
+      bootstrapState: { canonical: canonicalState(defaultSession()) },
+    });
     const onPlay = vi.fn();
     const onStop = vi.fn();
     const onGoToStart = vi.fn();
@@ -112,9 +117,11 @@ describe('TransportControls', () => {
   });
 
   it('delegates loop, metronome, and count-in edits to NativeApi', async () => {
-    const api = new FakeNativeApi({ bootstrapState: { session: defaultSession() } });
+    const api = new FakeNativeApi({
+      bootstrapState: { canonical: canonicalState(defaultSession()) },
+    });
     const mutation = () => ({
-      session: defaultSession(),
+      canonical: canonicalState(defaultSession()),
       projection: { state: 'notRequired' as const },
     });
     const updateLoop = vi.fn(mutation);
@@ -136,7 +143,7 @@ describe('TransportControls', () => {
 
   it('commits BPM and meter changes from the Arrange transport', async () => {
     const api = new FakeNativeApi({
-      bootstrapState: { session: defaultSession() },
+      bootstrapState: { canonical: canonicalState(defaultSession()) },
       audio: fakeAudioStatus(),
     });
     render(<Harness api={api} />);

@@ -1,4 +1,13 @@
-import type { CreativeSession } from '@/model/generated';
+import type { CanonicalState, CreativeSession } from '@/model/generated';
+
+/** Creates the canonical state used by browser fixtures and fallback paths. */
+export function canonicalState(session: CreativeSession): CanonicalState {
+  return {
+    session,
+    sequence: 0,
+    history: { canUndo: false, canRedo: false },
+  };
+}
 
 /** Minimal canonical session used by browser preview and native fallback paths. */
 export function defaultSession(): CreativeSession {

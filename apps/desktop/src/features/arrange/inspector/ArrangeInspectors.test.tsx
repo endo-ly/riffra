@@ -9,7 +9,7 @@ import { TakeInspector } from './TakeInspector';
 import { TrackInspector } from './TrackInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import type { CreativeSession } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 
@@ -109,14 +109,14 @@ describe('Arrange Inspectors', () => {
       rack: { devices: [], macros: [] },
     };
     session.arrangement.tracks.push(track);
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.setTrackMidiInput = vi.fn().mockRejectedValue(new Error('MIDI route failed'));
 
     render(
       <TrackInspector
         track={track}
         session={session}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         audio={fakeAudioStatus()}
         missingDeviceIds={[]}
         plugins={[]}
@@ -137,10 +137,10 @@ describe('Arrange Inspectors', () => {
     const canonical = structuredClone(initial);
     canonical.arrangement.audioClips[0].takeVariant = 'processed';
     const api = new FakeNativeApi({
-      bootstrapState: { session: initial },
+      bootstrapState: { canonical: canonicalState(initial) },
       responses: {
         setAudioClipTakeVariant: {
-          session: canonical,
+          canonical: canonicalState(canonical),
           projection: { state: 'notRequired' as const },
         },
       },
@@ -151,7 +151,10 @@ describe('Arrange Inspectors', () => {
         <>
           <ArrangeClipInspector
             session={session}
-            setSession={setSession}
+            applyCanonicalState={(canonical) => {
+              setSession(canonical.session);
+              return true;
+            }}
             selectedClipIds={['clip:a']}
             setSelectedClipIds={() => undefined}
             api={api}
@@ -175,13 +178,13 @@ describe('Arrange Inspectors', () => {
 
   it('keeps A/B audition independent from the Clip variant', async () => {
     const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const selection: ArrangeSelection = { kind: 'clips', clipIds: ['clip:a'] };
     render(
       <TakeInspector
         session={session}
         selection={selection}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
@@ -198,12 +201,12 @@ describe('Arrange Inspectors', () => {
 
   it('shows the current Take explicitly and provides a stop action for audition', async () => {
     const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(
       <TakeInspector
         session={session}
         selection={{ kind: 'track', trackId: 'track:audio' }}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
@@ -226,12 +229,12 @@ describe('Arrange Inspectors', () => {
 
   it('clears the audition when Native reports that preview playback ended', async () => {
     const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(
       <TakeInspector
         session={session}
         selection={{ kind: 'track', trackId: 'track:audio' }}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
@@ -253,13 +256,13 @@ describe('Arrange Inspectors', () => {
 
   it('routes Record another take to the selected recording group', () => {
     const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const onRecordAnotherTake = vi.fn();
     render(
       <TakeInspector
         session={session}
         selection={{ kind: 'track', trackId: 'track:audio' }}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={onRecordAnotherTake}
@@ -293,12 +296,12 @@ describe('Arrange Inspectors', () => {
         },
       ],
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(
       <TakeInspector
         session={session}
         selection={{ kind: 'track', trackId: 'track:audio' }}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
@@ -372,11 +375,11 @@ describe('Arrange Inspectors', () => {
       <TakeInspector
         session={session}
         selection={{ kind: 'clips', clipIds: ['clip:midi-take'] }}
-        setSession={() => undefined}
+        applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
         onRecordAnotherTake={() => undefined}
-        api={new FakeNativeApi({ bootstrapState: { session } })}
+        api={new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } })}
       />,
     );
 

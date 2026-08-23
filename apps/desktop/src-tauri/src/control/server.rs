@@ -10,8 +10,8 @@ use std::thread;
 #[cfg(windows)]
 use riffra_control::{
     ControlRequest, ControlResponse, EndpointDescriptor, ErrorCode, HelloRequest, HelloResponse,
-    PROTOCOL_VERSION, ProtocolError, endpoint_path, new_instance_id, publish_endpoint,
-    remove_endpoint_if_matches, transport,
+    ProtocolError, endpoint_path, new_instance_id, publish_endpoint, remove_endpoint_if_matches,
+    transport,
 };
 
 #[cfg(windows)]
@@ -73,7 +73,7 @@ fn handle_client(app: AppHandle, instance_id: String, mut stream: std::fs::File)
             return;
         }
     };
-    if hello.message_type != "hello" || hello.protocol_version != PROTOCOL_VERSION {
+    if hello.message_type != "hello" {
         let _ = transport::write_frame(
             &mut stream,
             &ProtocolError::new(

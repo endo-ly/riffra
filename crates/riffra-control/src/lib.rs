@@ -16,5 +16,5 @@ pub use endpoint::{
 };
 pub use protocol::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, HelloRequest, HelloResponse,
-    PROTOCOL_VERSION, ProtocolError,
+    ProtocolError,
 };

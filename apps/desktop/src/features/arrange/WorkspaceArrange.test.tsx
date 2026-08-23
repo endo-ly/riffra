@@ -11,7 +11,7 @@ import {
   type RuntimeProjectionStatus,
   type Track,
 } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
@@ -47,7 +47,10 @@ function Harness({
     <>
       <WorkspaceArrange
         session={session}
-        setSession={setSession}
+        applyCanonicalState={(canonical) => {
+          setSession(canonical.session);
+          return true;
+        }}
         selection={selection}
         setSelection={setSelection}
         api={api}
@@ -74,7 +77,6 @@ function Harness({
 function mutationResult(session: CreativeSession): ArrangementMutationResult {
   return {
     canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
-    session,
     projection: { state: 'notRequired' },
   };
 }
@@ -149,7 +151,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-range"]')!);
@@ -211,7 +213,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let finishQuantize: ((next: ArrangementMutationResult) => void) | undefined;
     api.quantizeMidiNotes = async (_clipId, _noteIds, _gridTicks) => {
       api.calls.push('quantizeMidiNotes');
@@ -279,7 +281,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:shortcuts"]')!);
@@ -333,7 +335,7 @@ describe('WorkspaceArrange', () => {
         ],
       },
     };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let createArgs: Parameters<FakeNativeApi['createMidiClip']> | undefined;
     api.createMidiClip = async (...args) => {
       createArgs = args;
@@ -393,7 +395,7 @@ describe('WorkspaceArrange', () => {
         ],
       },
     };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let createArgs: Parameters<FakeNativeApi['createMidiClip']> | undefined;
     api.createMidiClip = async (...args) => {
       createArgs = args;
@@ -465,7 +467,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let updateArgs: Parameters<FakeNativeApi['updateMidiNotes']> | undefined;
     api.updateMidiNotes = async (...args) => {
       updateArgs = args;
@@ -558,7 +560,7 @@ describe('WorkspaceArrange', () => {
         loopEnabled: false,
       },
     );
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-selection-a"]')!);
@@ -611,7 +613,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let addArgs: Parameters<FakeNativeApi['addMidiNote']> | undefined;
     api.addMidiNote = async (...args) => {
       addArgs = args;
@@ -669,7 +671,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:grid"]')!);
@@ -721,7 +723,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     // Act
@@ -763,7 +765,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const originalUpdateMidiNote = api.updateMidiNote.bind(api);
     let releaseUpdate!: () => void;
     api.updateMidiNote = (...args) => {
@@ -773,20 +775,23 @@ describe('WorkspaceArrange', () => {
           void canonical.then((next) =>
             resolve({
               ...next,
-              session: {
-                ...next.session,
-                arrangement: {
-                  ...next.session.arrangement,
-                  midiClips: next.session.arrangement.midiClips.map((clip) =>
-                    clip.id === 'clip:midi-move'
-                      ? {
-                          ...clip,
-                          notes: clip.notes.map((note) =>
-                            note.id === 'note:move' ? { ...note, startTick: 120 } : note,
-                          ),
-                        }
-                      : clip,
-                  ),
+              canonical: {
+                ...next.canonical,
+                session: {
+                  ...next.canonical.session,
+                  arrangement: {
+                    ...next.canonical.session.arrangement,
+                    midiClips: next.canonical.session.arrangement.midiClips.map((clip) =>
+                      clip.id === 'clip:midi-move'
+                        ? {
+                            ...clip,
+                            notes: clip.notes.map((note) =>
+                              note.id === 'note:move' ? { ...note, startTick: 120 } : note,
+                            ),
+                          }
+                        : clip,
+                    ),
+                  },
                 },
               },
             }),
@@ -861,7 +866,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const originalUpdateMidiNotes = api.updateMidiNotes.bind(api);
     let releaseUpdate!: () => void;
     api.updateMidiNotes = (...args) => {
@@ -926,7 +931,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-keyboard"]')!);
@@ -979,7 +984,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     // Act
@@ -1025,7 +1030,7 @@ describe('WorkspaceArrange', () => {
       fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const status: TransportStatus = {
       type: 'transportStatus',
       state: 'stopped',
@@ -1061,7 +1066,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.revision = 1;
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
     await waitFor(() => expect(api.calls).toContain('onTransportStatus'));
 
@@ -1119,7 +1124,7 @@ describe('WorkspaceArrange', () => {
       rack: { devices: [], macros: [] },
     }));
     session.arrangement.tracks.push(...tracks);
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
 
     // Act
     const { container } = render(<Harness api={api} initialSession={session} />);
@@ -1147,7 +1152,7 @@ describe('WorkspaceArrange', () => {
       midiInput: {},
       rack: { devices: [], macros: [] },
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
     const track = container.querySelector('[data-arrange-track]')!;
 
@@ -1222,7 +1227,7 @@ describe('WorkspaceArrange', () => {
       fadeShape: 'equalPower',
       takeVariant: 'raw',
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
     const clip = container.querySelector<HTMLElement>('[data-clip-id="clip:movable-audio"]')!;
 
@@ -1241,7 +1246,7 @@ describe('WorkspaceArrange', () => {
   it('disables the timeline loop from the ruler context menu', async () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     const ruler = screen.getByLabelText('Timeline ruler');
@@ -1256,7 +1261,7 @@ describe('WorkspaceArrange', () => {
   it('clears an active loop from the ruler band', async () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     const loopRange = screen.getByText('LOOP').parentElement!;
@@ -1270,7 +1275,7 @@ describe('WorkspaceArrange', () => {
   it('clears an active punch range from the ruler band without a time selection', async () => {
     const session = defaultSession();
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     expect(screen.queryByText(/Selection/)).not.toBeInTheDocument();
@@ -1286,7 +1291,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     fireEvent.contextMenu(screen.getByText('LOOP').parentElement!, {
@@ -1309,7 +1314,7 @@ describe('WorkspaceArrange', () => {
   it('renders draggable handles on the loop range band', () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     expect(screen.getByRole('slider', { name: 'Loop start' })).toBeInTheDocument();
@@ -1319,7 +1324,7 @@ describe('WorkspaceArrange', () => {
   it('renders draggable handles on the punch range band', () => {
     const session = defaultSession();
     session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     expect(screen.getByText('PUNCH')).toBeInTheDocument();
@@ -1333,7 +1338,7 @@ describe('WorkspaceArrange', () => {
     const canonical = structuredClone(session);
     canonical.arrangement.loopRange = { enabled: true, startTick: 960, endTick: 3840 };
     const api = new FakeNativeApi({
-      bootstrapState: { session },
+      bootstrapState: { canonical: canonicalState(session) },
       responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
@@ -1354,7 +1359,7 @@ describe('WorkspaceArrange', () => {
     const canonical = structuredClone(session);
     canonical.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
-      bootstrapState: { session },
+      bootstrapState: { canonical: canonicalState(session) },
       responses: { updateTimelineLoopRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
@@ -1375,7 +1380,7 @@ describe('WorkspaceArrange', () => {
     const canonical = structuredClone(session);
     canonical.arrangement.punchRange = { startTick: 0, endTick: 2880 };
     const api = new FakeNativeApi({
-      bootstrapState: { session },
+      bootstrapState: { canonical: canonicalState(session) },
       responses: { updateTimelinePunchRange: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
@@ -1396,7 +1401,7 @@ describe('WorkspaceArrange', () => {
     const canonical = structuredClone(session);
     canonical.arrangement.markers = [];
     const api = new FakeNativeApi({
-      bootstrapState: { session },
+      bootstrapState: { canonical: canonicalState(session) },
       responses: { removeMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
@@ -1510,7 +1515,7 @@ describe('WorkspaceArrange', () => {
         loopEnabled: false,
       },
     );
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
     const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
     Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
@@ -1541,7 +1546,7 @@ describe('WorkspaceArrange', () => {
   it('deletes a marker from its context menu without a success popup', async () => {
     const session = defaultSession();
     session.arrangement.markers.push({ id: 'marker:chorus', name: 'Chorus', tick: 0 });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     const marker = await screen.findByText('Chorus');
@@ -1558,7 +1563,7 @@ describe('WorkspaceArrange', () => {
     const canonical = structuredClone(session);
     canonical.arrangement.markers[0].name = 'Verse';
     const api = new FakeNativeApi({
-      bootstrapState: { session },
+      bootstrapState: { canonical: canonicalState(session) },
       responses: { updateMarker: mutationResult(canonical) },
     });
     render(<Harness api={api} initialSession={session} />);
@@ -1608,7 +1613,7 @@ describe('WorkspaceArrange', () => {
       midiInput: {},
       rack: { devices: [], macros: [] },
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
 
     fireEvent.click(await screen.findByLabelText('Audio 1 track menu'));
@@ -1672,7 +1677,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const committedSession: CreativeSession = {
       ...session,
       arrangement: {
@@ -1775,7 +1780,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:navigation"]')!);
@@ -1838,7 +1843,7 @@ describe('WorkspaceArrange', () => {
       muted: false,
       loopEnabled: false,
     });
-    const api = new FakeNativeApi({ bootstrapState: { session } });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Play Surface' }));

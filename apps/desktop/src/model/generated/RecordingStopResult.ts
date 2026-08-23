@@ -2,12 +2,12 @@
 import type { ArrangementProjectionOutcome } from "./ArrangementProjectionOutcome";
 import type { AudioStatus } from "./AudioStatus";
 import type { CanonicalState } from "./CanonicalState";
-import type { CreativeSession } from "./CreativeSession";
 import type { RecordingFinalizationOutcome } from "./RecordingFinalizationOutcome";
 
 /**
- * Result of stopping a recording, including the session visible after stop,
- * audio status, and separate finalization/projection outcomes. A recovery
- * result keeps stopped files visible even when no canonical commit occurred.
+ * Result of stopping a recording, including the canonical state visible after
+ * stop, audio status, and separate finalization/projection outcomes. A
+ * recovery result keeps stopped files visible even when no canonical commit
+ * occurred.
  */
-export type RecordingStopResult = { canonical: CanonicalState, session: CreativeSession, audio: AudioStatus, projection: ArrangementProjectionOutcome, finalization: RecordingFinalizationOutcome, };
+export type RecordingStopResult = { canonical: CanonicalState, audio: AudioStatus, projection: ArrangementProjectionOutcome, finalization: RecordingFinalizationOutcome, };

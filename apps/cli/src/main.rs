@@ -143,40 +143,20 @@ fn request_id_from_json(line: &str) -> String {
 mod tests {
     use super::handle_request;
     use crate::dispatcher::Dispatcher;
-    use riffra_control::{ErrorCode, PROTOCOL_VERSION};
+    use riffra_control::ErrorCode;
     use std::fs;
 
     #[test]
-    fn protocol_v2_requests_return_request_id_and_sequence() {
+    fn control_requests_return_request_id_and_sequence() {
         let root = std::env::temp_dir().join(format!("riffra-cli-protocol-{}", std::process::id()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"42","command":"session.get","params":{}}"#,
+            r#"{"requestId":"42","command":"session.get","params":{}}"#,
         );
         assert!(response.ok);
         assert_eq!(response.request_id, "42");
-        assert_eq!(response.protocol_version, PROTOCOL_VERSION);
         assert!(response.sequence.is_some());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn protocol_version_is_validated_before_dispatch() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-cli-protocol-invalid-{}",
-            std::process::id()
-        ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
-        let response = handle_request(
-            &dispatcher,
-            r#"{"protocolVersion":1,"requestId":"42","command":"session.get","params":{}}"#,
-        );
-        assert!(!response.ok);
-        assert_eq!(
-            response.error.as_ref().unwrap().code,
-            ErrorCode::InvalidRequest
-        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -187,7 +167,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"43","command":"track.add","params":{"name":"Bass"}}"#,
+            r#"{"requestId":"43","command":"track.add","params":{"name":"Bass"}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -206,7 +186,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"44","command":"unknown.command","params":{}}"#,
+            r#"{"requestId":"44","command":"unknown.command","params":{}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -225,7 +205,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"45","command":"track.list","expectedSequence":1,"params":{}}"#,
+            r#"{"requestId":"45","command":"track.list","expectedSequence":1,"params":{}}"#,
         );
         assert!(!response.ok);
         let error = response.error.as_ref().unwrap();
@@ -241,7 +221,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
+            r#"{"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -260,7 +240,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"45","command":"track.remove","params":{"trackId":"track:missing"}}"#,
+            r#"{"requestId":"45","command":"track.remove","params":{"trackId":"track:missing"}}"#,
         );
         assert!(!response.ok);
         assert_eq!(
@@ -279,7 +259,7 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
         let response = handle_request(
             &dispatcher,
-            r#"{"protocolVersion":2,"requestId":"46","command":"missing.list","params":{}}"#,
+            r#"{"requestId":"46","command":"missing.list","params":{}}"#,
         );
         assert!(!response.ok);
         assert_eq!(

@@ -77,15 +77,15 @@
 
 **起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
 
-| 命令                                                                   | 責務                                                    |
-| ---------------------------------------------------------------------- | ------------------------------------------------------- |
-| `get_bootstrap_state`                                                  | CreativeSession・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status`                                                     | 音声状態の照会                                          |
-| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）         |
-| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                |
-| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                      |
-| `restore_recovery_generation`                                          | 世代からの回復                                          |
-| `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ                |
+| 命令                                                                   | 責務                                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| `get_bootstrap_state`                                                  | CanonicalState・セーフモード・回復候補の初期状態を返す |
+| `get_audio_status`                                                     | 音声状態の照会                                         |
+| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）        |
+| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                               |
+| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                     |
+| `restore_recovery_generation`                                          | 世代からの回復                                         |
+| `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ               |
 
 **セッション・アレンジ（session/commands/）**
 
@@ -129,11 +129,11 @@
 
 - 全命令は `Result<T, String>` を返す。失敗は人間可読な説明文字列となり、`dataSafe` 相当の保証（音声・保存データは安全）はメッセージに含める
 - セーフモード中の音声系・プラグイン系命令は明示エラーを返す（`architecture.md §7`）
-- 制作状態を変更する命令が返す CreativeSession は「その操作を含む最新の正準セッション」であり、UI はそれを表示状態へ反映する
+- 制作状態を変更する命令の応答に含まれる `CanonicalState` は「その操作を含む最新の正準状態」であり、UI は `canonical.session` を表示状態へ反映する
 
 ### 3.4 UI呼び出しの順序
 
-制作状態を変更する命令の順序はCoreとDesktop command gateが所有する。応答はCoreの確定順序でCreativeSessionへ反映されるため、フロントエンド独自の直列化、時刻比較、セッション全体のマージは行わない。
+制作状態を変更する命令の順序はCoreとDesktop command gateが所有する。応答に含まれる `CanonicalState` はCoreの確定順序を表すため、フロントエンド独自の直列化、時刻比較、セッション全体のマージは行わない。
 
 連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
 
@@ -231,7 +231,7 @@
 
 Standaloneでは`DataRootLease`を取得してから`riffra-host::SessionStore`と`riffra-core::AppCore<()>`を開く。DesktopのTauri命令、音声サイドカー、レンダーワーカーは経由しない。同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。
 
-AttachedではDataRootLease、SessionStore、AppCore、Asset DBを開かない。Data Rootの`control/desktop.json`を読み、記載されたNamed Pipeへ接続する。Protocol versionと`instanceId`のhandshakeを終えてから、Desktop Control Routerへ要求を送る。Attached CLIはDesktopのAppCore、履歴、正準シーケンス、RuntimeをGUIと共有する。
+AttachedではDataRootLease、SessionStore、AppCore、Asset DBを開かない。Data Rootの`control/desktop.json`を読み、記載されたNamed Pipeへ接続する。`instanceId`のhandshakeを終えてから、Desktop Control Routerへ要求を送る。Attached CLIはDesktopのAppCore、履歴、正準シーケンス、RuntimeをGUIと共有する。
 
 DesktopはNamed Pipeの準備が整ってからdescriptorを一時ファイル経由で公開する。descriptorの存在だけではDesktopの稼働を判定せず、接続とhandshakeまで成功しない要求は`hostUnavailable`として扱う。`--attach`の失敗はStandaloneへ自動で切り替えない。
 
@@ -253,11 +253,10 @@ riffra --data-root ./data --interactive
 riffra --data-root ./data --attach --interactive
 ```
 
-StandaloneとAttachedのinteractive要求はProtocol v2の`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。
+StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。
 
 ```json
 {
-  "protocolVersion": 2,
   "requestId": "42",
   "command": "track.add",
   "expectedSequence": 18,
@@ -269,23 +268,21 @@ Attachedのinteractive modeは、標準入力の1行を1要求として読み、
 
 ### 8.2 応答とエラー
 
-成功応答にはProtocol v2と現在の正準シーケンスを含める。
+成功応答には現在の正準シーケンスを含める。
 
 ```json
 {
-  "protocolVersion": 2,
   "requestId": "42",
   "ok": true,
   "sequence": 12,
-  "result": { "type": "session", "value": {} }
+  "result": { "type": "canonicalState", "value": {} }
 }
 ```
 
-入力検証、必須`params`、型、unknown command、Protocol versionの不一致は`invalidRequest`として返す。Core、Host、保存処理の失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`、Desktopへ接続できない場合は`hostUnavailable`、セーフモードや音声Runtimeが利用できない場合は`runtimeUnavailable`である。機械判定にはerror codeを使い、message文字列を解析しない。
+入力検証、必須`params`、型、unknown commandは`invalidRequest`として返す。Core、Host、保存処理の失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`、Desktopへ接続できない場合は`hostUnavailable`、セーフモードや音声Runtimeが利用できない場合は`runtimeUnavailable`である。機械判定にはerror codeを使い、message文字列を解析しない。
 
 ```json
 {
-  "protocolVersion": 2,
   "requestId": "42",
   "ok": false,
   "sequence": 20,
@@ -337,7 +334,7 @@ Attachedでは、上記に加えてRuntime projection、Transport、Audio status
 
 `src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
 
-- 制作状態を変更するメソッドはCreativeSessionを返す
-- 起動時はCreativeSessionを受け取り、履歴操作の可否はCoreのHistoryStateを参照する
+- 制作状態を変更するメソッドは `CanonicalState` を含む結果を返す
+- 起動時は `CanonicalState` を受け取り、履歴操作の可否はCoreのHistoryStateを参照する
 - 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
 - テストでは `native-api-fake.ts` を注入し、呼び出し記録、設定済み応答・失敗、イベント発火だけを扱う。制作規則、履歴、validationはCoreのテストが担う

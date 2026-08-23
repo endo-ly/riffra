@@ -31,11 +31,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const canonicalStateRef = useRef<CanonicalState | null>(null);
   sessionRef.current = session;
 
-  const applyNativeSession = useCallback((nextSession: CreativeSession) => {
-    sessionRef.current = nextSession;
-    setSession(nextSession);
-  }, []);
-
   const applyCanonicalState = useCallback(
     (canonical: CanonicalState): boolean => {
       if (canonical.sequence < sequenceRef.current) return false;
@@ -44,9 +39,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
       sessionRef.current = canonical.session;
       setSession(canonical.session);
       setHistoryState(canonical.history);
-      setBoot((current) =>
-        current ? { ...current, canonical, session: canonical.session } : current,
-      );
+      setBoot((current) => (current ? { ...current, canonical } : current));
       return true;
     },
     [setBoot],
@@ -55,7 +48,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const mergeBootstrapState = useCallback((next: BootstrapState): BootstrapState => {
     const current = canonicalStateRef.current;
     if (!current || current.sequence <= next.canonical.sequence) return next;
-    return { ...next, canonical: current, session: current.session };
+    return { ...next, canonical: current };
   }, []);
 
   const refreshHistory = useCallback(async () => {
@@ -76,32 +69,30 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     try {
       const projectionFailed = applyArrangementMutation(
         await undoSession(),
-        applyNativeSession,
-        setAutosaveError,
         applyCanonicalState,
+        setAutosaveError,
       );
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, applyNativeSession, historyState.canUndo, refreshHistory, undoSession]);
+  }, [applyCanonicalState, historyState.canUndo, refreshHistory, undoSession]);
 
   const redo = useCallback(async () => {
     if (!historyState.canRedo) return;
     try {
       const projectionFailed = applyArrangementMutation(
         await redoSession(),
-        applyNativeSession,
-        setAutosaveError,
         applyCanonicalState,
+        setAutosaveError,
       );
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, applyNativeSession, historyState.canRedo, redoSession, refreshHistory]);
+  }, [applyCanonicalState, historyState.canRedo, redoSession, refreshHistory]);
 
   useEffect(() => {
     if (session) void refreshHistory();
@@ -114,12 +105,11 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     const name = next.trim().slice(0, 160);
     const projectionFailed = applyArrangementMutation(
       await updateSessionSettings({ projectName: name || null }),
-      applyNativeSession,
-      setAutosaveError,
       applyCanonicalState,
+      setAutosaveError,
     );
     if (!projectionFailed) setAutosaveError(null);
-  }, [applyCanonicalState, applyNativeSession, session, updateSessionSettings]);
+  }, [applyCanonicalState, session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
     const result = await exportSessionApi();
@@ -140,16 +130,15 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     }
     const projectionFailed = applyArrangementMutation(
       imported,
-      applyNativeSession,
-      setAutosaveError,
       applyCanonicalState,
+      setAutosaveError,
     );
     setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
     if (!projectionFailed) setAutosaveError(null);
     setExportMessage(
-      `Imported session: ${imported.session.projectName ?? imported.session.sessionId}`,
+      `Imported session: ${imported.canonical.session.projectName ?? imported.canonical.session.sessionId}`,
     );
-  }, [applyCanonicalState, applyNativeSession, importSessionApi, setBoot]);
+  }, [applyCanonicalState, importSessionApi, setBoot]);
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
@@ -168,17 +157,16 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
       }
       const projectionFailed = applyArrangementMutation(
         restored,
-        applyNativeSession,
-        setAutosaveError,
         applyCanonicalState,
+        setAutosaveError,
       );
       setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
       if (!projectionFailed) setAutosaveError(null);
       setExportMessage(
-        `Restored stable generation: ${restored.session.projectName ?? restored.session.sessionId}`,
+        `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
       );
     },
-    [applyCanonicalState, applyNativeSession, restoreRecoveryGeneration, setBoot],
+    [applyCanonicalState, restoreRecoveryGeneration, setBoot],
   );
 
   const dismissRecovery = useCallback(() => {
@@ -188,7 +176,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
 
   return {
     session,
-    setSession,
     applyCanonicalState,
     mergeBootstrapState,
     historyState,

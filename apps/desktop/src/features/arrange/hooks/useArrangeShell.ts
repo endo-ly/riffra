@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CreativeSession, PluginEntry } from '@/model/domain';
+import type { CanonicalState, CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import type { ArrangeSelection } from './useArrangeEditor';
@@ -9,7 +9,7 @@ import { toast } from '@/shared/toasts';
 export function useArrangeShell(
   api: Pick<ArrangeApi, 'setTrackInstrument' | 'addTrackEffect'>,
   session: CreativeSession | null,
-  setSession: (session: CreativeSession) => void,
+  applyCanonicalState: (canonical: CanonicalState) => boolean,
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
@@ -37,7 +37,9 @@ export function useArrangeShell(
         target === 'instrument'
           ? await api.setTrackInstrument(selectedTrack.id, plugin.path)
           : await api.addTrackEffect(selectedTrack.id, plugin.path);
-      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
+      applyArrangementMutation(next, applyCanonicalState, (message) =>
+        toast(message, { kind: 'error' }),
+      );
     } catch (error) {
       logNativeError('Add plugin to Track')(error);
     }

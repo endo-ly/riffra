@@ -4,16 +4,25 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::ptr::null_mut;
 
 use windows_sys::Win32::Foundation::{
-    ERROR_PIPE_CONNECTED, GetLastError, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HLOCAL,
+    INVALID_HANDLE_VALUE, LocalFree,
 };
+#[cfg(test)]
+use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION,
 };
-use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+#[cfg(test)]
+use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+use windows_sys::Win32::Security::{
+    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
+};
 use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Blocking listener for one user-scoped Windows Named Pipe.
 pub struct NamedPipeListener {
@@ -80,13 +89,11 @@ struct PipeSecurity {
 impl PipeSecurity {
     fn new() -> io::Result<Self> {
         let mut descriptor = null_mut();
-        let sddl: Vec<u16> = "D:P(A;;GA;;;CO)"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let sddl = current_user_sddl()?;
+        let encoded_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
         let converted = unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_ptr(),
+                encoded_sddl.as_ptr(),
                 SDDL_REVISION,
                 &mut descriptor,
                 null_mut(),
@@ -104,6 +111,31 @@ impl PipeSecurity {
             descriptor,
         })
     }
+
+    #[cfg(test)]
+    fn sddl(&self) -> io::Result<String> {
+        let mut descriptor = null_mut();
+        let mut length = 0;
+        let converted = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                self.descriptor,
+                SDDL_REVISION,
+                DACL_SECURITY_INFORMATION,
+                &mut descriptor,
+                &mut length,
+            )
+        };
+        if converted == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let sddl = unsafe {
+            String::from_utf16_lossy(std::slice::from_raw_parts(descriptor, length as usize))
+        };
+        unsafe {
+            let _ = LocalFree(descriptor as HLOCAL);
+        }
+        Ok(sddl)
+    }
 }
 
 impl Drop for PipeSecurity {
@@ -116,6 +148,69 @@ impl Drop for PipeSecurity {
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+struct TokenHandle(HANDLE);
+
+impl Drop for TokenHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+fn current_user_sid() -> io::Result<String> {
+    let mut token = std::ptr::null_mut();
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+    if opened == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token = TokenHandle(token);
+
+    let mut required = 0;
+    let first_call =
+        unsafe { GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut required) };
+    let first_error = unsafe { GetLastError() };
+    if first_call != 0 || first_error != ERROR_INSUFFICIENT_BUFFER || required == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut buffer = vec![0_u8; required as usize];
+    let read = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            required,
+            &mut required,
+        )
+    };
+    if read == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token_user = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_USER>()) };
+    let mut sid_string = std::ptr::null_mut();
+    let converted = unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) };
+    if converted == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let sid = unsafe {
+        let mut length = 0;
+        while *sid_string.add(length) != 0 {
+            length += 1;
+        }
+        String::from_utf16_lossy(std::slice::from_raw_parts(sid_string, length))
+    };
+    unsafe {
+        let _ = LocalFree(sid_string as HLOCAL);
+    }
+    Ok(sid)
+}
+
+fn current_user_sddl() -> io::Result<String> {
+    Ok(format!("D:P(A;;GA;;;{})", current_user_sid()?))
 }
 
 #[cfg(test)]
@@ -158,5 +253,15 @@ mod tests {
         }
 
         server.join().unwrap();
+    }
+
+    #[test]
+    fn pipe_security_allows_the_current_user_sid() {
+        let sid = current_user_sid().unwrap();
+        let sddl = current_user_sddl().unwrap();
+        let security = PipeSecurity::new().unwrap();
+
+        assert_eq!(sddl, format!("D:P(A;;GA;;;{sid})"));
+        assert_eq!(security.sddl().unwrap(), sddl);
     }
 }

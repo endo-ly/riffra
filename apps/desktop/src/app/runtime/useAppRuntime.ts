@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, BootstrapState, CanonicalState, CreativeSession } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
@@ -29,21 +29,8 @@ export function useAppRuntime(api: AppRuntimeApi) {
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const sessionHook = useProject(api, { setBoot });
-  const { setSession: setProjectSession } = sessionHook;
   const { applyCanonicalState, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
-
-  const setSession = useCallback(
-    (nextSession: CreativeSession, canonical?: CanonicalState) => {
-      if (canonical) {
-        applyCanonicalState(canonical);
-        return;
-      }
-      sessionRef.current = nextSession;
-      setProjectSession(nextSession);
-    },
-    [applyCanonicalState, setProjectSession],
-  );
 
   useEffect(() => {
     let disposed = false;
@@ -122,7 +109,7 @@ export function useAppRuntime(api: AppRuntimeApi) {
       unlistenCanonicalStateChanged();
       unlistenMeters();
     };
-  }, [api, applyCanonicalState, mergeBootstrapState, setSession]);
+  }, [api, applyCanonicalState, mergeBootstrapState]);
 
   return {
     ...sessionHook,
@@ -132,7 +119,6 @@ export function useAppRuntime(api: AppRuntimeApi) {
     runtimeStarted,
     runtimeStartupFinished,
     sessionRef,
-    setSession,
   };
 }
 

@@ -3,13 +3,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::PROTOCOL_VERSION;
-
 /// Filesystem descriptor used to discover one running Desktop instance.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndpointDescriptor {
-    pub protocol_version: u16,
     pub instance_id: String,
     pub pid: u32,
     pub pipe_name: String,
@@ -20,7 +17,6 @@ impl EndpointDescriptor {
     pub fn new(instance_id: impl Into<String>, pid: u32) -> Self {
         let instance_id = instance_id.into();
         Self {
-            protocol_version: PROTOCOL_VERSION,
             pipe_name: pipe_name(&instance_id),
             instance_id,
             pid,

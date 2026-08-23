@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
@@ -9,7 +9,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 
 interface MidiClipInspectorProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
   api: ArrangeInspectorApi;
@@ -33,7 +33,7 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
 
   const commit = async (operation: Promise<ArrangementMutationResult | null>) => {
     const next = await operation;
-    if (next) applyArrangementMutation(next, props.setSession, setMessage);
+    if (next) applyArrangementMutation(next, props.applyCanonicalState, setMessage);
   };
 
   const [quantizeGrid, setQuantizeGrid] = useState(

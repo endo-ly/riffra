@@ -2,7 +2,7 @@ use crate::AppState;
 use crate::asset;
 use crate::model::ArrangementMutationResult;
 use crate::render::RenderOptions;
-use crate::session::adapter;
+use crate::session::adapter::{self, AdapterError};
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
 use riffra_core::application::{MidiNoteInput, MidiNotePatch, MidiNoteUpdate};
 use riffra_core::{
@@ -15,13 +15,19 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::PathBuf;
 
+#[derive(Debug)]
 struct RouteResult {
     result_type: &'static str,
     value: Value,
 }
 
+#[derive(Debug)]
 enum RouteError {
     InvalidRequest(String),
+    Conflict {
+        expected_sequence: u64,
+        current_sequence: u64,
+    },
     CommandFailed(String),
     RuntimeUnavailable(String),
 }
@@ -39,13 +45,37 @@ impl RouteError {
         Self::RuntimeUnavailable(message.into())
     }
 
+    fn conflict(expected_sequence: u64, current_sequence: u64) -> Self {
+        Self::Conflict {
+            expected_sequence,
+            current_sequence,
+        }
+    }
+
     fn protocol_error(self) -> ProtocolError {
         match self {
             Self::InvalidRequest(message) => ProtocolError::new(ErrorCode::InvalidRequest, message),
+            Self::Conflict {
+                expected_sequence,
+                current_sequence,
+            } => ProtocolError::conflict(expected_sequence, current_sequence),
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
             Self::RuntimeUnavailable(message) => {
                 ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
             }
+        }
+    }
+}
+
+impl From<AdapterError> for RouteError {
+    fn from(error: AdapterError) -> Self {
+        match error {
+            AdapterError::Conflict {
+                expected_sequence,
+                current_sequence,
+            } => Self::conflict(expected_sequence, current_sequence),
+            AdapterError::RuntimeUnavailable(message) => Self::runtime(message),
+            AdapterError::CommandFailed(message) => Self::command(message),
         }
     }
 }
@@ -121,15 +151,6 @@ pub(crate) fn dispatch(state: &AppState, request: ControlRequest) -> ControlResp
         },
         Err(error) => {
             let current_sequence = state.core.snapshot().ok().map(|state| state.sequence);
-            if let Some(expected_sequence) = expected_sequence
-                && current_sequence.is_some_and(|sequence| sequence != expected_sequence)
-            {
-                return ControlResponse::failure(
-                    request_id,
-                    current_sequence,
-                    ProtocolError::conflict(expected_sequence, current_sequence.unwrap()),
-                );
-            }
             ControlResponse::failure(request_id, current_sequence, error.protocol_error())
         }
     }
@@ -767,17 +788,19 @@ fn empty() -> Result<RouteResult, RouteError> {
     serialized("ok", &())
 }
 
-fn mutation(result: Result<ArrangementMutationResult, String>) -> Result<RouteResult, RouteError> {
-    let result = result.map_err(RouteError::command)?;
-    serialized("session", &result.session)
+fn mutation(
+    result: Result<ArrangementMutationResult, AdapterError>,
+) -> Result<RouteResult, RouteError> {
+    let result = result.map_err(RouteError::from)?;
+    serialized("canonicalState", &result.canonical)
 }
 
 fn runtime_mutation(
-    result: Result<ArrangementMutationResult, String>,
+    result: Result<ArrangementMutationResult, AdapterError>,
 ) -> Result<RouteResult, RouteError> {
     result
-        .map_err(RouteError::runtime)
-        .and_then(|result| serialized("session", &result.session))
+        .map_err(RouteError::from)
+        .and_then(|result| serialized("canonicalState", &result.canonical))
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, RouteError> {
@@ -1170,4 +1193,69 @@ struct RenderParams {
 #[serde(rename_all = "camelCase")]
 struct JobIdParams {
     id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ArrangementProjectionOutcome;
+    use riffra_core::{CanonicalState, CreativeSession, HistoryState};
+
+    fn mutation_result() -> ArrangementMutationResult {
+        ArrangementMutationResult {
+            canonical: CanonicalState {
+                session: CreativeSession::new(1),
+                sequence: 7,
+                history: HistoryState {
+                    can_undo: true,
+                    can_redo: false,
+                },
+            },
+            projection: ArrangementProjectionOutcome::NotRequired,
+        }
+    }
+
+    #[test]
+    fn canonical_mutations_return_the_complete_canonical_state() {
+        let route = mutation(Ok(mutation_result())).unwrap();
+
+        assert_eq!(route.result_type, "canonicalState");
+        assert_eq!(route.value["sequence"], 7);
+        assert!(route.value["session"].is_object());
+        assert!(route.value.get("projection").is_none());
+    }
+
+    #[test]
+    fn adapter_errors_keep_their_protocol_classification() {
+        let conflict = RouteError::from(AdapterError::Conflict {
+            expected_sequence: 4,
+            current_sequence: 5,
+        })
+        .protocol_error();
+        assert_eq!(conflict.code, ErrorCode::Conflict);
+        assert_eq!(conflict.details.unwrap()["expectedSequence"], 4);
+
+        let runtime = runtime_mutation(Err(AdapterError::RuntimeUnavailable(
+            "audio sidecar unavailable".into(),
+        )))
+        .unwrap_err()
+        .protocol_error();
+        assert_eq!(runtime.code, ErrorCode::RuntimeUnavailable);
+
+        let command = runtime_mutation(Err(AdapterError::CommandFailed(
+            "track device is not registered".into(),
+        )))
+        .unwrap_err()
+        .protocol_error();
+        assert_eq!(command.code, ErrorCode::CommandFailed);
+    }
+
+    #[test]
+    fn missing_split_tick_is_an_invalid_request() {
+        let error = decode::<SplitParams>(serde_json::json!({ "clipId": "clip:1" }))
+            .unwrap_err()
+            .protocol_error();
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+    }
 }

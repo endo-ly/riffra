@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 
-/// Current wire protocol version.
-pub const PROTOCOL_VERSION: u16 = 2;
-
 /// Machine-readable failure classes exposed by the local control boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +70,6 @@ impl ProtocolError {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlRequest {
-    pub protocol_version: u16,
     pub request_id: String,
     pub command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,7 +85,6 @@ impl ControlRequest {
         expected_sequence: Option<u64>,
     ) -> Self {
         Self {
-            protocol_version: PROTOCOL_VERSION,
             request_id: request_id.into(),
             command: command.name,
             expected_sequence,
@@ -99,12 +94,6 @@ impl ControlRequest {
 
     /// Validates envelope fields before a backend is allowed to execute it.
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        if self.protocol_version != PROTOCOL_VERSION {
-            return Err(ProtocolError::new(
-                ErrorCode::InvalidRequest,
-                format!("unsupported protocol version: {}", self.protocol_version),
-            ));
-        }
         if self.request_id.trim().is_empty() {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
@@ -138,7 +127,6 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlResponse {
-    pub protocol_version: u16,
     pub request_id: String,
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,7 +141,6 @@ impl ControlResponse {
     /// Creates a successful response.
     pub fn success(request_id: impl Into<String>, sequence: u64, result: CommandResult) -> Self {
         Self {
-            protocol_version: PROTOCOL_VERSION,
             request_id: request_id.into(),
             ok: true,
             sequence: Some(sequence),
@@ -169,7 +156,6 @@ impl ControlResponse {
         error: ProtocolError,
     ) -> Self {
         Self {
-            protocol_version: PROTOCOL_VERSION,
             request_id: request_id.into(),
             ok: false,
             sequence,
@@ -185,7 +171,6 @@ impl ControlResponse {
 pub struct HelloRequest {
     #[serde(rename = "type")]
     pub message_type: String,
-    pub protocol_version: u16,
 }
 
 impl HelloRequest {
@@ -193,7 +178,6 @@ impl HelloRequest {
     pub fn new() -> Self {
         Self {
             message_type: "hello".into(),
-            protocol_version: PROTOCOL_VERSION,
         }
     }
 }
@@ -210,7 +194,6 @@ impl Default for HelloRequest {
 pub struct HelloResponse {
     #[serde(rename = "type")]
     pub message_type: String,
-    pub protocol_version: u16,
     pub instance_id: String,
     pub pid: u32,
 }
@@ -220,7 +203,6 @@ impl HelloResponse {
     pub fn new(instance_id: impl Into<String>, pid: u32) -> Self {
         Self {
             message_type: "hello".into(),
-            protocol_version: PROTOCOL_VERSION,
             instance_id: instance_id.into(),
             pid,
         }
@@ -232,7 +214,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_v2_round_trips_expected_sequence() {
+    fn control_request_round_trips_expected_sequence() {
         let request = ControlRequest::new(
             "42",
             ControlCommand::new("track.add", serde_json::json!({"name": "Bass"})),
@@ -243,13 +225,11 @@ mod tests {
         let decoded: ControlRequest = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded, request);
-        assert_eq!(decoded.protocol_version, PROTOCOL_VERSION);
     }
 
     #[test]
     fn invalid_envelope_fields_are_rejected() {
         let request = ControlRequest {
-            protocol_version: PROTOCOL_VERSION,
             request_id: String::new(),
             command: String::new(),
             expected_sequence: None,

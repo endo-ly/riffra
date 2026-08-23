@@ -3,14 +3,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ArrangementMutationResult } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { useArrangeCommands } from './useArrangeCommands';
 
 function result(projection: ArrangementMutationResult['projection']): ArrangementMutationResult {
   const session = defaultSession();
   return {
-    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
-    session,
+    canonical: canonicalState(session),
     projection,
   };
 }
@@ -20,7 +19,10 @@ describe('useArrangeCommands', () => {
     const sessions: string[] = [];
     const { result: hook } = renderHook(() =>
       useArrangeCommands({
-        setSession: (session) => sessions.push(session.sessionId),
+        applyCanonicalState: (canonical) => {
+          sessions.push(canonical.session.sessionId);
+          return true;
+        },
       }),
     );
 
@@ -40,7 +42,9 @@ describe('useArrangeCommands', () => {
   });
 
   it('does not report a queued or non-projecting mutation as an error', async () => {
-    const { result: hook } = renderHook(() => useArrangeCommands({ setSession: () => undefined }));
+    const { result: hook } = renderHook(() =>
+      useArrangeCommands({ applyCanonicalState: () => true }),
+    );
 
     await act(async () => {
       await hook.current.commit(Promise.resolve(result({ state: 'queued' })));

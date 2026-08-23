@@ -267,18 +267,12 @@ fn recording_stop_result(
     audio: AudioStatus,
     finalization: RecordingFinalizationOutcome,
 ) -> Result<RecordingStopResult, String> {
-    let session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
     let canonical = context
         .core
         .canonical_state()
         .map_err(|error| error.to_string())?;
     Ok(RecordingStopResult {
         canonical,
-        session,
         audio,
         projection: ArrangementProjectionOutcome::NotRequired,
         finalization,
@@ -292,7 +286,6 @@ fn recording_stop_result_from_mutation(
 ) -> RecordingStopResult {
     RecordingStopResult {
         canonical: mutation.canonical,
-        session: mutation.session,
         audio,
         projection: mutation.projection,
         finalization,
@@ -1126,12 +1119,13 @@ fn finalize_arrange_recording(
         safe_mode: context.safe_mode,
         app_handle: context.app_handle,
     };
-    let committed = crate::session::adapter::commit_recording_session(
+    crate::session::adapter::commit_recording_session(
         &session_context,
         &base_session,
         candidate_session,
-    )?;
-    crate::session::commit::arrangement_mutation_result(&session_context, committed)
+    )
+    .map_err(|error| error.to_string())?;
+    crate::session::commit::arrangement_mutation_result(&session_context)
 }
 
 fn next_recording_pass_ordinal(
@@ -1575,14 +1569,10 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    let committed = crate::session::adapter::commit_recording_session(
-        &session_context,
-        &base_session,
-        session,
-    )?;
+    crate::session::adapter::commit_recording_session(&session_context, &base_session, session)
+        .map_err(|error| error.to_string())?;
     Ok(Some(crate::session::commit::arrangement_mutation_result(
         &session_context,
-        committed,
     )?))
 }
 

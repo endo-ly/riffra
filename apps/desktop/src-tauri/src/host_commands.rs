@@ -34,7 +34,6 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
             .canonical_state()
             .map_err(|error| error.to_string())?;
         Ok(BootstrapState {
-            session: canonical.session.clone(),
             canonical,
             plugin_catalog,
             runtime_started: state.core.audio().startup_completed(),

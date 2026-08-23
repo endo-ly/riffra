@@ -4,24 +4,23 @@ use ts_rs::TS;
 // Shared production types live in feature modules; this module owns the
 // application-level audio and runtime status types.
 
-/// A paired session and audio status returned by operations that update both
+/// A canonical state and audio status returned by operations that update both
 /// the Audio Runtime and the persisted `CreativeSession`.
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAudioPair {
     pub canonical: riffra_core::CanonicalState,
-    pub session: riffra_core::CreativeSession,
     pub audio: AudioStatus,
 }
 
-/// Result of stopping a recording, including the session visible after stop,
-/// audio status, and separate finalization/projection outcomes. A recovery
-/// result keeps stopped files visible even when no canonical commit occurred.
+/// Result of stopping a recording, including the canonical state visible after
+/// stop, audio status, and separate finalization/projection outcomes. A
+/// recovery result keeps stopped files visible even when no canonical commit
+/// occurred.
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStopResult {
     pub canonical: riffra_core::CanonicalState,
-    pub session: riffra_core::CreativeSession,
     pub audio: AudioStatus,
     pub projection: ArrangementProjectionOutcome,
     pub finalization: RecordingFinalizationOutcome,
@@ -38,14 +37,12 @@ pub enum RecordingFinalizationOutcome {
 }
 
 /// Result of a canonical Arrangement mutation and its best-effort Audio
-/// Runtime projection. The canonical Session is committed before projection,
-/// so a failed projection is reported alongside the committed Session.
+/// Runtime projection. The canonical state is committed before projection, so
+/// a failed projection is reported alongside the committed canonical state.
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrangementMutationResult {
     pub canonical: riffra_core::CanonicalState,
-    /// Kept as the direct session field used by existing feature boundaries.
-    pub session: riffra_core::CreativeSession,
     pub projection: ArrangementProjectionOutcome,
 }
 
@@ -109,7 +106,6 @@ pub struct RecoveryCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub canonical: riffra_core::CanonicalState,
-    pub session: riffra_core::CreativeSession,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,

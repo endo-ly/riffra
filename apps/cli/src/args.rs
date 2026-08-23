@@ -10,7 +10,7 @@ pub struct Cli {
     /// Root directory containing the session, library, and Asset stores.
     #[arg(long)]
     pub data_root: PathBuf,
-    /// Read Protocol v2 JSON Lines requests from stdin.
+    /// Read JSON Lines requests from stdin.
     #[arg(long)]
     pub interactive: bool,
     /// Route commands to the running Desktop Host.

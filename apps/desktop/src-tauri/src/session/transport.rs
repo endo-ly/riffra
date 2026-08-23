@@ -4,6 +4,7 @@ use crate::asset;
 use crate::runtime::RuntimeReconciler;
 use crate::runtime::ports::RuntimeDriver;
 use crate::session::context::SessionContext;
+use crate::session::error::AdapterError;
 use riffra_core::{
     CreativeSession, DeviceKind, PortError, RuntimeProjection, RuntimeProjectionRequest,
     TimelineTick,
@@ -192,10 +193,13 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     candidate: &CreativeSession,
     expected_sequence: u64,
-) -> Result<crate::model::RuntimeProjectionStatus, String> {
-    let current = context.core.snapshot().map_err(|error| error.to_string())?;
+) -> Result<crate::model::RuntimeProjectionStatus, AdapterError> {
+    let current = context.core.snapshot()?;
     if current.sequence != expected_sequence {
-        return Err("Canonical Session changed while the VST candidate was being built.".into());
+        return Err(AdapterError::Conflict {
+            expected_sequence,
+            current_sequence: current.sequence,
+        });
     }
     context
         .runtime
@@ -207,7 +211,7 @@ pub(crate) fn prepare_arrangement_candidate<D: RuntimeDriver>(
             },
             ARRANGEMENT_RUNTIME_TIMEOUT,
         )
-        .map_err(String::from)
+        .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
 pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {

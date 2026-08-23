@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
   BootstrapState,
-  CreativeSession,
+  CanonicalState,
   MissingDependency,
   RecordingAsset,
 } from '@/model/domain';
@@ -22,7 +22,7 @@ type MissingDependenciesApi = Pick<
 interface UseMissingDependenciesOptions {
   api: MissingDependenciesApi;
   boot: BootstrapState | null;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   rescanPlugins: () => Promise<boolean>;
 }
 
@@ -30,7 +30,7 @@ interface UseMissingDependenciesOptions {
 export function useMissingDependencies({
   api,
   boot,
-  setSession,
+  applyCanonicalState,
   rescanPlugins,
 }: UseMissingDependenciesOptions) {
   const {
@@ -71,28 +71,34 @@ export function useMissingDependencies({
     async (item: MissingDependency, newPath: string) => {
       if (!item.assetId) return;
       const next = await relinkMissingDependency(item.assetId, newPath);
-      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
+      applyArrangementMutation(next, applyCanonicalState, (message) =>
+        toast(message, { kind: 'error' }),
+      );
       await reloadMissingDependencies();
     },
-    [relinkMissingDependency, reloadMissingDependencies, setSession],
+    [applyCanonicalState, relinkMissingDependency, reloadMissingDependencies],
   );
 
   const disableMissingPluginDevice = useCallback(
     async (deviceId: string) => {
       const next = await disableMissingPlugin(deviceId);
-      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
+      applyArrangementMutation(next, applyCanonicalState, (message) =>
+        toast(message, { kind: 'error' }),
+      );
       await reloadMissingDependencies();
     },
-    [disableMissingPlugin, reloadMissingDependencies, setSession],
+    [applyCanonicalState, disableMissingPlugin, reloadMissingDependencies],
   );
 
   const replaceMissingPluginDevice = useCallback(
     async (deviceId: string, newPath: string) => {
       const next = await replaceMissingTrackPlugin(deviceId, newPath);
-      applyArrangementMutation(next, setSession, (message) => toast(message, { kind: 'error' }));
+      applyArrangementMutation(next, applyCanonicalState, (message) =>
+        toast(message, { kind: 'error' }),
+      );
       await reloadMissingDependencies();
     },
-    [reloadMissingDependencies, replaceMissingTrackPlugin, setSession],
+    [applyCanonicalState, reloadMissingDependencies, replaceMissingTrackPlugin],
   );
 
   const rescanMissingPlugins = useCallback(async () => {

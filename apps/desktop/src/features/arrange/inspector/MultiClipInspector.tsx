@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
-import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { timelineObjectEndTick } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
@@ -9,7 +9,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 
 interface MultiClipInspectorProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   selectedAudioClipIds: string[];
   selectedMidiClipIds: string[];
   setSelectedClipIds: (ids: string[]) => void;
@@ -42,7 +42,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
           setMessage('The edit was not applied.');
           return;
         }
-        applyArrangementMutation(next, props.setSession, setMessage);
+        applyArrangementMutation(next, props.applyCanonicalState, setMessage);
         onSuccess?.();
       })
       .catch((error: unknown) => {

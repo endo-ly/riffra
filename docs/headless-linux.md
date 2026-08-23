@@ -11,7 +11,7 @@ AI agent
    │ spawn
    ▼
 riffra --data-root ./riffra-data --interactive
-   │ Protocol v2 JSON Lines
+   │ JSON Lines
    ▼
 DataRootLease → SessionStore → AppCore<Application>
 ```
@@ -49,7 +49,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --ki
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 ```
 
-ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力からProtocol v2の要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`はプロセス内の履歴を使うため、対話モードで利用する。
+ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力から要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`はプロセス内の履歴を使うため、対話モードで利用する。
 
 ## 編集できる制作状態
 
@@ -73,7 +73,6 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 
 ```json
 {
-  "protocolVersion": 2,
   "requestId": "42",
   "command": "track.add",
   "expectedSequence": 18,
@@ -85,7 +84,6 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 
 ```json
 {
-  "protocolVersion": 2,
   "requestId": "42",
   "ok": true,
   "sequence": 12,
@@ -93,7 +91,7 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 }
 ```
 
-不正なJSON、Protocol version、要求形式、`params`、unknown commandは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime commandを受けた場合は`runtimeUnavailable`として返す。
+不正なJSON、要求形式、`params`、unknown commandは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime commandを受けた場合は`runtimeUnavailable`として返す。
 
 ## Runtimeとの境界
 

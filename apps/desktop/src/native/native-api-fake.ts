@@ -604,7 +604,6 @@ export class FakeNativeApi implements NativeApi {
     this.bootstrapState = {
       ...this.bootstrapState,
       canonical: state,
-      session: state.session,
     };
     this.canonicalStateListeners.forEach((listener) => listener(state));
   }
@@ -700,7 +699,6 @@ export class FakeNativeApi implements NativeApi {
     if (name === 'stopArrangeRecording') {
       return Promise.resolve({
         canonical: this.bootstrapState.canonical,
-        session: this.bootstrapState.session,
         audio: this.audio,
         projection: { state: 'notRequired' },
         finalization: { state: 'notRequired' },
@@ -709,14 +707,12 @@ export class FakeNativeApi implements NativeApi {
     if (sessionAudioMethodNames.has(name)) {
       return Promise.resolve({
         canonical: this.bootstrapState.canonical,
-        session: this.bootstrapState.session,
         audio: this.audio,
       });
     }
     if (arrangementMutationMethodNames.has(name)) {
       const result: ArrangementMutationResult = {
         canonical: this.bootstrapState.canonical,
-        session: this.bootstrapState.session,
         projection: { state: 'notRequired' },
       };
       return Promise.resolve(result);
@@ -838,14 +834,11 @@ const voidMethodNames = new Set<keyof NativeApi>([
 ]);
 
 function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState {
-  const session = overrides.session ?? overrides.canonical?.session ?? defaultSession();
-  const canonical = overrides.canonical
-    ? { ...overrides.canonical, session: overrides.session ?? overrides.canonical.session }
-    : {
-        session,
-        sequence: 0,
-        history: { canUndo: false, canRedo: false },
-      };
+  const canonical = overrides.canonical ?? {
+    session: defaultSession(),
+    sequence: 0,
+    history: { canUndo: false, canRedo: false },
+  };
   return {
     pluginCatalog: [],
     runtimeStarted: true,
@@ -857,7 +850,6 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     dataRoot: 'C:\\Riffra',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
     ...overrides,
-    session: canonical.session,
     canonical,
   };
 }

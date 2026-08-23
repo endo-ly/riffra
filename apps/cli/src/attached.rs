@@ -1,6 +1,6 @@
 use riffra_control::{
-    ControlRequest, ControlResponse, ErrorCode, HelloRequest, HelloResponse, PROTOCOL_VERSION,
-    ProtocolError, read_endpoint, transport,
+    ControlRequest, ControlResponse, ErrorCode, HelloRequest, HelloResponse, ProtocolError,
+    read_endpoint, transport,
 };
 use serde_json::Value;
 use std::io::{BufRead, Write};
@@ -16,13 +16,6 @@ impl AttachedBackend {
     pub fn connect(data_root: &Path) -> Result<Self, String> {
         let descriptor = read_endpoint(data_root)
             .map_err(|message| format!("{}: {message}", ErrorCode::HostUnavailable))?;
-        if descriptor.protocol_version != PROTOCOL_VERSION {
-            return Err(format!(
-                "{}: Desktop control endpoint uses protocol version {}",
-                ErrorCode::HostUnavailable,
-                descriptor.protocol_version
-            ));
-        }
         let mut stream = transport::connect(&descriptor.pipe_name)
             .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))?;
         transport::write_frame(&mut stream, &HelloRequest::new()).map_err(|error| {
@@ -37,10 +30,7 @@ impl AttachedBackend {
                 ErrorCode::HostUnavailable
             )
         })?;
-        if hello.message_type != "hello"
-            || hello.protocol_version != PROTOCOL_VERSION
-            || hello.instance_id != descriptor.instance_id
-        {
+        if hello.message_type != "hello" || hello.instance_id != descriptor.instance_id {
             return Err(format!(
                 "{}: Desktop control endpoint handshake did not match the descriptor",
                 ErrorCode::HostUnavailable
@@ -68,7 +58,7 @@ impl AttachedBackend {
         })
     }
 
-    /// Forwards JSON Lines from stdin as framed Protocol v2 requests.
+    /// Forwards JSON Lines from stdin as framed control requests.
     pub fn run_interactive(mut self) -> Result<(), String> {
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout().lock();

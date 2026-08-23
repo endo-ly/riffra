@@ -50,6 +50,7 @@ pub(crate) use crate::session::commit::{
     restore_generation,
 };
 pub(crate) use crate::session::context::{SessionContext, current_session};
+pub(crate) use crate::session::error::AdapterError;
 pub(crate) use crate::session::transport::{
     go_to_start_timeline, play_timeline, prepare_arrangement_candidate,
     runtime_snapshot_for_recording, seek_timeline, stop_timeline, sync_arrangement_runtime,
@@ -62,30 +63,42 @@ use riffra_core::domain::TrackPatch;
 
 pub(crate) fn undo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, String> {
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
     let store = SessionStore::new(context.data_root);
     let session = context
         .core
         .application(&store)
         .undo()
-        .map_err(|error| error.to_string())?;
+        .map_err(AdapterError::from)?;
     crate::library::index::queue(context.data_root, &session);
     publish_canonical_state(context)?;
-    crate::session::commit::arrangement_mutation_result(context, session)
+    crate::session::adapter::arrangement_mutation_result(context)
 }
 
 pub(crate) fn redo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, String> {
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
     let store = SessionStore::new(context.data_root);
     let session = context
         .core
         .application(&store)
         .redo()
-        .map_err(|error| error.to_string())?;
+        .map_err(AdapterError::from)?;
     crate::library::index::queue(context.data_root, &session);
     publish_canonical_state(context)?;
-    crate::session::commit::arrangement_mutation_result(context, session)
+    crate::session::adapter::arrangement_mutation_result(context)
+}
+
+pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    crate::session::commit::arrangement_mutation_result(context).map_err(Into::into)
+}
+
+pub(crate) fn arrangement_mutation_without_projection<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    crate::session::commit::arrangement_mutation_without_projection(context).map_err(Into::into)
 }
 #[cfg(test)]
 mod tests {
@@ -405,11 +418,57 @@ mod tests {
         let result = commit_plugin_arrangement(&context, candidate);
 
         // Assert
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
         let current = core.snapshot().unwrap().session;
         assert_eq!(current.arrangement.revision, 1);
         assert!(current.arrangement.tracks[0].rack.devices.is_empty());
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stale_plugin_candidate_is_rejected_before_runtime_prepare() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-stale-{}",
+            crate::storage::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::runtime::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::native_audio::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            plugin_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let context = candidate_context(&root, &runtime, &audio, &core);
+        let candidate = prepared_plugin_candidate(&context);
+        let store = SessionStore::new(&root);
+        core.application(&store)
+            .add_marker(TimelineTick(7), "concurrent".into())
+            .unwrap();
+
+        // Act
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
+        assert!(driver.loaded.lock().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react';
-import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 
 interface ArrangeCommandOptions {
-  setSession: (session: CreativeSession, canonical?: CanonicalState) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
 }
 
 /** Owns canonical Arrange commands and their pending/error message for the editor. */
-export function useArrangeCommands({ setSession }: ArrangeCommandOptions) {
+export function useArrangeCommands({ applyCanonicalState }: ArrangeCommandOptions) {
   const [message, setMessage] = useState('');
 
   const commit = useCallback(
@@ -18,16 +18,16 @@ export function useArrangeCommands({ setSession }: ArrangeCommandOptions) {
           setMessage('The edit was not applied.');
           return null;
         }
-        setSession(next.session, next.canonical);
+        applyCanonicalState(next.canonical);
         if (next.projection.state === 'failed') setMessage(next.projection.message);
-        return next.session;
+        return next.canonical.session;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         setMessage(detail);
         return null;
       }
     },
-    [setSession],
+    [applyCanonicalState],
   );
 
   return {

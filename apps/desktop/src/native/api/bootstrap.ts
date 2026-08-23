@@ -11,7 +11,6 @@ export async function bootstrap(): Promise<BootstrapState> {
     'get_bootstrap_state',
     {},
     {
-      session,
       canonical: {
         session,
         sequence: 0,

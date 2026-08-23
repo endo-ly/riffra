@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { AudioStatus, CreativeSession, RecordingAsset } from '@/model/domain';
+import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
 import type { LibraryApi, RecordingApi } from '@/native/native-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -8,7 +8,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 interface UseRecordingOptions {
   audio: AudioStatus;
   setAudio: Dispatch<SetStateAction<AudioStatus>>;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   onCommandFailure: (message: string) => void;
   onProjectionFailure: (message: string) => void;
   onFinalizationFailure: (message: string) => void;
@@ -22,7 +22,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   const {
     audio,
     setAudio,
-    setSession,
+    applyCanonicalState,
     onCommandFailure,
     onProjectionFailure,
     onFinalizationFailure,
@@ -85,7 +85,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
       const succeeded = await runRecordingCommand(async () => {
         const result = await stopArrangeRecording();
         setAudio(result.audio);
-        applyArrangementMutation(result, setSession, onProjectionFailure);
+        applyArrangementMutation(result, applyCanonicalState, onProjectionFailure);
         if (result.finalization.state === 'recoveryRequired') {
           onFinalizationFailure(result.finalization.message);
         }
@@ -100,7 +100,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     refreshRecordings,
     runRecordingCommand,
     setAudio,
-    setSession,
+    applyCanonicalState,
     onProjectionFailure,
     onFinalizationFailure,
     startRecordingNow,

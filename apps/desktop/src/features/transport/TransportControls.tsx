@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import clsx from 'clsx';
 import { TransportIcon } from './TransportIcon';
 import type { TransportControlsApi } from './transport-api';
@@ -11,7 +11,7 @@ const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'
 
 interface TransportControlsProps {
   session: CreativeSession;
-  setSession: (session: CreativeSession) => void;
+  applyCanonicalState: (canonical: CanonicalState) => boolean;
   recordingActive: boolean;
   transportPlaying: boolean;
   onPlay: () => void;
@@ -25,7 +25,7 @@ interface TransportControlsProps {
 export function TransportControls(props: TransportControlsProps) {
   const {
     session,
-    setSession,
+    applyCanonicalState,
     recordingActive,
     transportPlaying,
     onPlay,
@@ -83,7 +83,7 @@ export function TransportControls(props: TransportControlsProps) {
         timeSignatureDenominator: denominator,
       })
       .then((result) =>
-        applyArrangementMutation(result, setSession, (message) =>
+        applyArrangementMutation(result, applyCanonicalState, (message) =>
           toast(message, { kind: 'error' }),
         ),
       )
@@ -123,7 +123,7 @@ export function TransportControls(props: TransportControlsProps) {
                   range.endTick > range.startTick ? range.endTick : barTicks * 4,
                 )
                 .then((result) =>
-                  applyArrangementMutation(result, setSession, (message) =>
+                  applyArrangementMutation(result, applyCanonicalState, (message) =>
                     toast(message, { kind: 'error' }),
                   ),
                 );
@@ -175,7 +175,7 @@ export function TransportControls(props: TransportControlsProps) {
                   metronomeEnabled: !session.settings.metronomeEnabled,
                 })
                 .then((result) =>
-                  applyArrangementMutation(result, setSession, (message) =>
+                  applyArrangementMutation(result, applyCanonicalState, (message) =>
                     toast(message, { kind: 'error' }),
                   ),
                 )
@@ -196,7 +196,7 @@ export function TransportControls(props: TransportControlsProps) {
               void api
                 .updateSessionSettings({ countInBeats: nextCountInBeats(session) })
                 .then((result) =>
-                  applyArrangementMutation(result, setSession, (message) =>
+                  applyArrangementMutation(result, applyCanonicalState, (message) =>
                     toast(message, { kind: 'error' }),
                   ),
                 )
