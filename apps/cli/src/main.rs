@@ -93,7 +93,7 @@ fn handle_request(dispatcher: &Dispatcher, line: &str) -> Response {
                 value: result.value,
             },
         ),
-        Err(error) => Response::failure(request_id, "commandFailed", error.to_string()),
+        Err(error) => Response::failure(request_id, error.code(), error.to_string()),
     }
 }
 
@@ -138,6 +138,50 @@ mod tests {
         );
         assert!(!response.ok);
         assert_eq!(response.error.as_ref().unwrap().code, "invalidRequest");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_command_params_return_invalid_request() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-cli-protocol-params-{}", std::process::id()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"protocolVersion":1,"requestId":"43","command":"track.add","params":{"name":"Bass"}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(response.error.as_ref().unwrap().code, "invalidRequest");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn split_tick_is_required_in_protocol_requests() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-cli-protocol-split-{}", std::process::id()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"protocolVersion":1,"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(response.error.as_ref().unwrap().code, "invalidRequest");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn core_failures_return_command_failed() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-protocol-command-{}",
+            std::process::id()
+        ));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"protocolVersion":1,"requestId":"45","command":"track.remove","params":{"trackId":"track:missing"}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(response.error.as_ref().unwrap().code, "commandFailed");
         let _ = fs::remove_dir_all(root);
     }
 }

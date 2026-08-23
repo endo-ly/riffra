@@ -135,7 +135,18 @@ pub fn export(
             .map(safe_name)
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| format!("asset-{}", index + 1));
-        let package_name = format!("{}-{}", index + 1, base);
+        let extension = source_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| {
+                !extension.is_empty()
+                    && extension
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+            })
+            .map(|extension| format!(".{extension}"))
+            .unwrap_or_default();
+        let package_name = format!("{}-{}{}", index + 1, base, extension);
         let package_path = Path::new("assets").join(&package_name);
         let destination = directory.join(&package_path);
         let (state, content_hash) = if source_path.is_file() {
@@ -361,9 +372,10 @@ fn referenced_asset_kind(session: &CreativeSession, asset_id: &AssetId) -> Asset
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::midi_file::parse_smf;
     use crate::storage::now_ms;
     use riffra_core::{AssetId, AssetKind, mint_asset_id};
-    use riffra_core::{AudioClip, CreativeSession, TimelineTick, Track};
+    use riffra_core::{AudioClip, CreativeSession, MidiClip, TimelineTick, Track};
 
     fn register(root: &Path, name: &str, content: &[u8]) -> AssetId {
         let path = root.join(name);
@@ -389,6 +401,29 @@ mod tests {
             4_800,
         ));
         let _ = root;
+        session
+    }
+
+    fn session_with_midi_clip(asset_id: AssetId) -> CreativeSession {
+        let mut session = CreativeSession::new(now_ms());
+        session.project_name = Some("MIDI Session".into());
+        session
+            .arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        session.arrangement.midi_clips.push(MidiClip {
+            id: "midi-clip:1".into(),
+            name: "bass".into(),
+            track_id: "instrument".into(),
+            asset_id: Some(asset_id),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            notes: Vec::new(),
+            events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
         session
     }
 
@@ -446,6 +481,56 @@ mod tests {
         assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
         let location = asset::resolve_content_location(&root, &asset_id).unwrap();
         assert_eq!(fs::read(&location).unwrap(), b"wav-bytes");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_import_preserves_midi_extension_and_content_format() {
+        let root = std::env::temp_dir().join(format!("riffra-project-midi-roundtrip-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let midi_bytes = {
+            let track = [
+                0x00, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 0x00, 0x00, 0xff, 0x2f, 0x00,
+            ];
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(b"MThd");
+            bytes.extend_from_slice(&[0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0]);
+            bytes.extend_from_slice(b"MTrk");
+            bytes.extend_from_slice(&(track.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(&track);
+            bytes
+        };
+        let source = root.join("bass.mid");
+        fs::write(&source, &midi_bytes).unwrap();
+        let asset_id = asset::register(
+            &root,
+            AssetKind::Midi,
+            "bass",
+            &source.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let session = session_with_midi_clip(asset_id.clone());
+        let exported = export(&root, &session, 11).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&exported.path).unwrap()).unwrap();
+        assert_eq!(manifest["assets"][0]["packagePath"], "assets/1-bass.mid");
+
+        fs::remove_file(asset::resolve_content_location(&root, &asset_id).unwrap()).unwrap();
+        let restored = import(&root, Path::new(&exported.path)).unwrap();
+        assert_eq!(
+            restored.arrangement.midi_clips[0].asset_id,
+            Some(asset_id.clone())
+        );
+
+        let restored_asset = asset::load(&root, &asset_id).unwrap();
+        assert_eq!(restored_asset.kind, AssetKind::Midi);
+        assert!(restored_asset.content_location.ends_with(".mid"));
+        let restored_bytes = fs::read(&restored_asset.content_location).unwrap();
+        assert_eq!(restored_bytes, midi_bytes);
+        let (_, notes, events) = parse_smf(&restored_bytes).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(events.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

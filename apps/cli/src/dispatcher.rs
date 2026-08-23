@@ -16,29 +16,47 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
-pub struct DispatchError(String);
+pub(crate) enum DispatchError {
+    InvalidRequest(String),
+    CommandFailed(String),
+}
 
 impl fmt::Display for DispatchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self {
+            Self::InvalidRequest(error) | Self::CommandFailed(error) => formatter.write_str(error),
+        }
+    }
+}
+
+impl DispatchError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidRequest(_) => "invalidRequest",
+            Self::CommandFailed(_) => "commandFailed",
+        }
+    }
+
+    fn invalid_request(error: impl Into<String>) -> Self {
+        Self::InvalidRequest(error.into())
     }
 }
 
 impl From<String> for DispatchError {
     fn from(error: String) -> Self {
-        Self(error)
+        Self::CommandFailed(error)
     }
 }
 
 impl From<&'static str> for DispatchError {
     fn from(error: &'static str) -> Self {
-        Self(error.into())
+        Self::CommandFailed(error.into())
     }
 }
 
 impl From<ApplicationError> for DispatchError {
     fn from(error: ApplicationError) -> Self {
-        Self(error.to_string())
+        Self::CommandFailed(error.to_string())
     }
 }
 
@@ -501,7 +519,12 @@ impl Dispatcher {
             }
             "undo" => self.session(self.core.application(&self.storage).undo()?),
             "redo" => self.session(self.core.application(&self.storage).redo()?),
-            _ => return Err(format!("unknown command: {}", request.command).into()),
+            _ => {
+                return Err(DispatchError::invalid_request(format!(
+                    "unknown command: {}",
+                    request.command
+                )));
+            }
         };
         let sequence = self
             .core
@@ -601,19 +624,23 @@ impl Dispatcher {
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, DispatchError> {
-    Ok(serde_json::from_value(value)
-        .map_err(|error| format!("invalid command parameters: {error}"))?)
+    serde_json::from_value(value).map_err(|error| {
+        DispatchError::invalid_request(format!("invalid command parameters: {error}"))
+    })
 }
 
 fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {
-    Ok(AssetId::from_normalized(value).map_err(|error| format!("Asset id is invalid: {error}"))?)
+    AssetId::from_normalized(value)
+        .map_err(|error| DispatchError::invalid_request(format!("Asset id is invalid: {error}")))
 }
 
 fn parse_track_kind(value: &str) -> Result<TrackKind, DispatchError> {
     match value {
         "audio" => Ok(TrackKind::Audio),
         "instrument" => Ok(TrackKind::Instrument),
-        _ => Err("track kind must be audio or instrument".into()),
+        _ => Err(DispatchError::invalid_request(
+            "track kind must be audio or instrument",
+        )),
     }
 }
 
@@ -621,7 +648,9 @@ fn parse_automation_parameter(value: &str) -> Result<AutomationParameter, Dispat
     match value {
         "volume" => Ok(AutomationParameter::Volume),
         "pan" => Ok(AutomationParameter::Pan),
-        _ => Err("automation parameter must be volume or pan".into()),
+        _ => Err(DispatchError::invalid_request(
+            "automation parameter must be volume or pan",
+        )),
     }
 }
 
@@ -701,7 +730,6 @@ struct AudioTrimParams {
 #[serde(rename_all = "camelCase")]
 struct SplitParams {
     clip_id: String,
-    #[serde(default)]
     split_tick: u64,
 }
 
