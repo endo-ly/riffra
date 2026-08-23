@@ -13,7 +13,7 @@ pub struct Cli {
     /// Read JSON Lines requests from stdin.
     #[arg(long)]
     pub interactive: bool,
-    /// Route commands to the running Desktop Host.
+    /// Route commands to the running Riffra Host.
     #[arg(long)]
     pub attach: bool,
     /// Require a specific canonical sequence for a one-shot mutation.
@@ -25,6 +25,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum CliCommand {
+    /// Start one foreground live Host and publish its local control endpoint.
+    Serve(ServeArgs),
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -127,6 +129,13 @@ pub enum CliCommand {
     },
     Undo,
     Redo,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct ServeArgs {
+    /// Keep native audio, MIDI, and external plugin processes offline.
+    #[arg(long)]
+    pub safe_mode: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -918,6 +927,9 @@ impl Cli {
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
     let request = match command {
+        CliCommand::Serve(_) => {
+            return Err("serve is a process mode and cannot be used as a one-shot command".into());
+        }
         CliCommand::Session { command } => match command {
             SessionCommand::Get => simple("session.get"),
             SessionCommand::Settings { command } => match command {

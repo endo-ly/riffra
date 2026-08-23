@@ -3,6 +3,7 @@ members = [
   "crates/riffra-core",
   "crates/riffra-control",
   "crates/riffra-host",
+  "crates/riffra-runtime",
   "crates/riffra-render-worker",
   "apps/cli",
   "apps/desktop/src-tauri",

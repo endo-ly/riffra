@@ -2640,8 +2640,10 @@ dependencies = [
  "riffra-control",
  "riffra-core",
  "riffra-host",
+ "riffra-runtime",
  "serde",
  "serde_json",
+ "signal-hook",
 ]
 
 [[package]]
@@ -2674,6 +2676,7 @@ dependencies = [
  "riffra-core",
  "riffra-host",
  "riffra-render-worker",
+ "riffra-runtime",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2708,6 +2711,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "riffra-runtime"
+version = "0.1.0"
+dependencies = [
+ "riffra-control",
+ "riffra-core",
+ "riffra-host",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "ts-rs",
 ]
 
 [[package]]

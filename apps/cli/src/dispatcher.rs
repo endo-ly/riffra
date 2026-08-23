@@ -134,9 +134,9 @@ impl Dispatcher {
         request
             .validate()
             .map_err(|error| DispatchError::InvalidRequest(error.message))?;
-        if is_desktop_only(&request.command) {
+        if is_runtime_host_only(&request.command) {
             return Err(DispatchError::RuntimeUnavailable(
-                "this command requires --attach to a running Desktop Host".into(),
+                "this command requires --attach to a running Riffra Host".into(),
             ));
         }
         if let Some(expected_sequence) = request.expected_sequence {
@@ -156,9 +156,9 @@ impl Dispatcher {
     }
 
     pub fn dispatch(&self, request: ControlCommand) -> Result<DispatchResult, DispatchError> {
-        if is_desktop_only(&request.name) {
+        if is_runtime_host_only(&request.name) {
             return Err(DispatchError::RuntimeUnavailable(
-                "this command requires --attach to a running Desktop Host".into(),
+                "this command requires --attach to a running Riffra Host".into(),
             ));
         }
         let result = match request.name.as_str() {
@@ -686,7 +686,7 @@ impl Dispatcher {
     }
 }
 
-fn is_desktop_only(command: &str) -> bool {
+fn is_runtime_host_only(command: &str) -> bool {
     matches!(
         command,
         "runtime.projection.get"

@@ -315,7 +315,7 @@ pub fn run() {
                 match control::start(app.handle().clone(), data_root.clone()) {
                     Ok(()) => {}
                     Err(error) => {
-                        tracing::warn!(error = %error, "Desktop control server is unavailable");
+                        tracing::warn!(error = %error, "Riffra Host control server is unavailable");
                     }
                 }
             }

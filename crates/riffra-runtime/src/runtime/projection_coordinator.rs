@@ -1,21 +1,20 @@
+use super::RuntimeError;
+use super::TIMELINE_PREPARE_TIMEOUT;
+use super::now_ms;
+use super::ports::ProjectionDriver;
 use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
-use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
-use crate::runtime::error::RuntimeError;
-use crate::runtime::ports::ProjectionDriver;
-use crate::storage::now_ms;
 use riffra_core::ProjectionKey;
 use serde_json::Value;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-pub(crate) type RuntimeRecovery =
-    Arc<dyn Fn(u64, Duration) -> Result<(), RuntimeError> + Send + Sync>;
+pub type RuntimeRecovery = Arc<dyn Fn(u64, Duration) -> Result<(), RuntimeError> + Send + Sync>;
 
 pub(crate) type ProjectionActivationHook =
     Arc<dyn Fn(ProjectionKey) -> Result<(), RuntimeError> + Send + Sync>;
 
-pub(crate) type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Sync>;
+pub type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProjectionOperation {

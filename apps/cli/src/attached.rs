@@ -6,17 +6,17 @@ use serde_json::Value;
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-/// Client-only backend for commands owned by a running Desktop process.
+/// Client-only backend for commands owned by a running Riffra Host.
 pub struct AttachedBackend {
     stream: Box<dyn transport::ReadWrite>,
 }
 
 impl AttachedBackend {
-    /// Connects and completes the Desktop handshake without opening the Data Root.
+    /// Connects and completes the Host handshake without opening the Data Root.
     pub fn connect(data_root: &Path) -> Result<Self, String> {
         let descriptor = read_endpoint(data_root)
             .map_err(|message| format!("{}: {message}", ErrorCode::HostUnavailable))?;
-        let mut stream = transport::connect(&descriptor.pipe_name)
+        let mut stream = transport::connect(descriptor.endpoint())
             .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))?;
         transport::write_frame(&mut stream, &HelloRequest::new()).map_err(|error| {
             format!(
@@ -32,7 +32,7 @@ impl AttachedBackend {
         })?;
         if hello.message_type != "hello" || hello.instance_id != descriptor.instance_id {
             return Err(format!(
-                "{}: Desktop control endpoint handshake did not match the descriptor",
+                "{}: Riffra Host control endpoint handshake did not match the descriptor",
                 ErrorCode::HostUnavailable
             ));
         }
@@ -109,10 +109,9 @@ fn format_protocol_error(error: &ProtocolError) -> String {
     format!("{}: {}", error.code, error.message)
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_control::transport::NamedPipeListener;
     use riffra_control::{
         CommandResult, ControlCommand, EndpointDescriptor, HelloRequest, HelloResponse,
     };
@@ -127,7 +126,8 @@ mod tests {
         ));
         let descriptor =
             EndpointDescriptor::new(riffra_control::new_instance_id(), std::process::id());
-        let mut listener = NamedPipeListener::bind(&descriptor.pipe_name).unwrap();
+        let mut listener =
+            riffra_control::transport::LocalControlListener::bind(descriptor.endpoint()).unwrap();
         riffra_control::publish_endpoint(&data_root, &descriptor).unwrap();
 
         let request = ControlRequest::new(

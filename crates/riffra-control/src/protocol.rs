@@ -188,7 +188,7 @@ impl Default for HelloRequest {
     }
 }
 
-/// Handshake response identifying the live Desktop instance.
+/// Handshake response identifying the live Host instance.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HelloResponse {

@@ -10,8 +10,8 @@ use std::thread;
 #[cfg(windows)]
 use riffra_control::{
     ControlRequest, ControlResponse, EndpointDescriptor, ErrorCode, HelloRequest, HelloResponse,
-    ProtocolError, endpoint_path, new_instance_id, publish_endpoint, remove_endpoint_if_matches,
-    transport,
+    LocalControlEndpoint, ProtocolError, endpoint_path, new_instance_id, publish_endpoint,
+    remove_endpoint_if_matches, transport,
 };
 
 #[cfg(windows)]
@@ -26,16 +26,20 @@ use tauri::Manager;
 #[cfg(windows)]
 pub(super) fn start(app: AppHandle, data_root: PathBuf) -> Result<(), String> {
     let instance_id = new_instance_id();
-    let descriptor = EndpointDescriptor::new(&instance_id, std::process::id());
-    let mut listener = transport::NamedPipeListener::bind(&descriptor.pipe_name)
-        .map_err(|error| format!("Desktop control pipe could not bind: {error}"))?;
+    let descriptor =
+        EndpointDescriptor::for_data_root(&data_root, &instance_id, std::process::id());
+    let LocalControlEndpoint::WindowsNamedPipe { name } = &descriptor.endpoint else {
+        return Err("Riffra Host control endpoint is not a Windows Named Pipe".into());
+    };
+    let mut listener = transport::NamedPipeListener::bind(name)
+        .map_err(|error| format!("Riffra Host control pipe could not bind: {error}"))?;
     publish_endpoint(&data_root, &descriptor)?;
     let endpoint = endpoint_path(&data_root);
     let cleanup_data_root = data_root.clone();
     let cleanup_instance_id = instance_id.clone();
 
     thread::Builder::new()
-        .name("riffra-desktop-control".into())
+        .name("riffra-host-control".into())
         .spawn(move || {
             loop {
                 match listener.accept() {
@@ -43,24 +47,24 @@ pub(super) fn start(app: AppHandle, data_root: PathBuf) -> Result<(), String> {
                         let client_app = app.clone();
                         let client_instance = instance_id.clone();
                         let _ = thread::Builder::new()
-                            .name("riffra-desktop-control-client".into())
+                            .name("riffra-host-control-client".into())
                             .spawn(move || handle_client(client_app, client_instance, stream));
                     }
                     Err(error) => {
-                        tracing::warn!(error = %error, "Desktop control pipe stopped accepting clients");
+                        tracing::warn!(error = %error, "Riffra Host control pipe stopped accepting clients");
                         break;
                     }
                 }
             }
             if let Err(error) = remove_endpoint_if_matches(&data_root, &instance_id) {
-                tracing::warn!(error = %error, "Desktop control endpoint cleanup failed");
+                tracing::warn!(error = %error, "Riffra Host control endpoint cleanup failed");
             }
         })
         .map_err(|error| {
             let _ = remove_endpoint_if_matches(&cleanup_data_root, &cleanup_instance_id);
-            format!("Desktop control server could not start: {error}")
+            format!("Riffra Host control server could not start: {error}")
         })?;
-    tracing::info!(path = %endpoint.display(), "Desktop control server is ready");
+    tracing::info!(path = %endpoint.display(), "Riffra Host control server is ready");
     Ok(())
 }
 
@@ -69,7 +73,7 @@ fn handle_client(app: AppHandle, instance_id: String, mut stream: std::fs::File)
     let hello: HelloRequest = match transport::read_frame(&mut stream) {
         Ok(hello) => hello,
         Err(error) => {
-            tracing::debug!(error = %error, "Desktop control client closed during handshake");
+            tracing::debug!(error = %error, "Riffra Host control client closed during handshake");
             return;
         }
     };
@@ -78,7 +82,7 @@ fn handle_client(app: AppHandle, instance_id: String, mut stream: std::fs::File)
             &mut stream,
             &ProtocolError::new(
                 ErrorCode::InvalidRequest,
-                "Desktop control handshake was rejected",
+                "Riffra Host control handshake was rejected",
             ),
         );
         return;
@@ -115,7 +119,7 @@ fn handle_client(app: AppHandle, instance_id: String, mut stream: std::fs::File)
                     transport::TransportError::Io(_) => {}
                     transport::TransportError::UnsupportedPlatform => {}
                 }
-                tracing::debug!(error = %error, "Desktop control client disconnected");
+                tracing::debug!(error = %error, "Riffra Host control client disconnected");
                 return;
             }
         };
@@ -150,12 +154,12 @@ fn handle_client(app: AppHandle, instance_id: String, mut stream: std::fs::File)
                     None,
                     ProtocolError::new(
                         ErrorCode::HostUnavailable,
-                        "Desktop application state is not ready",
+                        "Riffra Host application state is not ready",
                     ),
                 )
             });
         if let Err(error) = transport::write_frame(&mut stream, &response) {
-            tracing::debug!(error = %error, "Desktop control response could not be written");
+            tracing::debug!(error = %error, "Riffra Host control response could not be written");
             return;
         }
     }
@@ -172,5 +176,5 @@ fn request_id_from_value(value: &Value) -> String {
 
 #[cfg(not(windows))]
 pub(super) fn start(_app: AppHandle, _data_root: PathBuf) -> Result<(), String> {
-    Err("Desktop control server requires Windows Named Pipe support".into())
+    Err("Riffra Host control server requires Windows Named Pipe support".into())
 }

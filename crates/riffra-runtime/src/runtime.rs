@@ -1,21 +1,75 @@
-//! Public Runtime facade.
-//!
-//! Projection and Transport are implemented by independent components under
-//! runtime/. This module composes them for Session and Arrange callers while
-//! keeping the existing application-facing API stable.
+//! Shared projection reconciliation and transport ordering.
 
+mod ports;
+mod projection_coordinator;
+mod transport_executor;
+
+pub use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
+pub use self::projection_coordinator::{ProjectionStatusHook, RuntimeRecovery};
+
+use crate::audio::AudioError;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use thiserror::Error;
+
+/// Maximum time spent preparing one native graph.
+pub const TIMELINE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Errors raised by the live projection and transport boundary.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum RuntimeError {
+    #[error("runtime is unavailable: {0}")]
+    RuntimeUnavailable(String),
+    #[error("runtime operation timed out: {message}")]
+    Timeout { message: String },
+    #[error("runtime transport was lost: {message}")]
+    TransportLost { message: String },
+    #[error("runtime generation changed (expected {expected}, actual {actual})")]
+    GenerationChanged { expected: u64, actual: u64 },
+    #[error("runtime projection was superseded: {message}")]
+    Superseded { message: String },
+    #[error("runtime operation was cancelled: {message}")]
+    Cancelled { message: String },
+    #[error("native runtime rejected the operation: {0}")]
+    NativeRejected(String),
+    #[error("runtime is shutting down")]
+    ShuttingDown,
+    #[error("runtime state is unavailable: {0}")]
+    Internal(String),
+}
+
+impl From<AudioError> for RuntimeError {
+    fn from(error: AudioError) -> Self {
+        match error {
+            AudioError::Unavailable(message) => Self::RuntimeUnavailable(message),
+            AudioError::Process(message) => Self::TransportLost { message },
+            AudioError::StatePoisoned => Self::Internal("audio state lock was poisoned".into()),
+        }
+    }
+}
+
+impl From<RuntimeError> for String {
+    fn from(error: RuntimeError) -> Self {
+        error.to_string()
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+use self::projection_coordinator::ProjectionCoordinator;
+use self::transport_executor::TransportExecutor;
 use crate::model::RuntimeProjectionStatus;
-use crate::runtime::error::RuntimeError;
-use crate::runtime::ports::RuntimeDriver;
-use crate::runtime::projection_coordinator::{
-    ProjectionCoordinator, ProjectionStatusHook, RuntimeRecovery,
-};
-use crate::runtime::transport_executor::TransportExecutor;
 use riffra_core::ProjectionKey;
 use riffra_core::application::transport::{PlayDecision, StopDecision, TransportSequence};
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub struct RuntimeReconciler<D: RuntimeDriver> {
     projection: ProjectionCoordinator<D>,
@@ -23,12 +77,11 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
-    #[cfg(test)]
     pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, RuntimeError> {
         Self::with_status_listener(driver, recovery, Arc::new(|_| {}))
     }
 
-    pub(crate) fn with_status_listener(
+    pub fn with_status_listener(
         driver: Arc<D>,
         recovery: Option<RuntimeRecovery>,
         status_listener: ProjectionStatusHook,
@@ -60,26 +113,26 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.status()
     }
 
-    pub(crate) fn mark_projection_failed(&self, message: String) {
+    pub fn mark_projection_failed(&self, message: String) {
         self.projection.mark_failed(message)
     }
 
     /// Clears a failed candidate projection before the canonical graph is
     /// submitted again.
-    pub(crate) fn reset_for_repair(&self) -> bool {
+    pub fn reset_for_repair(&self) -> bool {
         self.projection.reset_for_repair()
     }
 
     /// Invalidates the active graph after the native audio device environment
     /// changes, so the canonical Session is prepared with the new sample rate
     /// and block size.
-    pub(crate) fn invalidate_for_audio_device_change(&self) -> bool {
+    pub fn invalidate_for_audio_device_change(&self) -> bool {
         self.projection.invalidate_for_audio_device_change()
     }
 
     /// Requeues the last active projection when a sidecar restart occurred
     /// without an in-flight projection operation.
-    pub(crate) fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
+    pub fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
         self.projection.requeue_after_runtime_restart(generation)
     }
 
@@ -93,7 +146,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     }
 
     /// Applies a proposed graph without making it the restart recovery source.
-    pub(crate) fn apply_candidate_and_wait(
+    pub fn apply_candidate_and_wait(
         &self,
         snapshot: Value,
         key: ProjectionKey,
@@ -206,11 +259,53 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     }
 }
 
+impl ProjectionDriver for crate::audio::AudioSupervisor {
+    fn prepare_timeline_snapshot(
+        &self,
+        snapshot: Value,
+        _timeout: Duration,
+    ) -> Result<(), RuntimeError> {
+        self.send(serde_json::json!({
+            "type": "prepareTimelineSnapshot",
+            "snapshot": snapshot,
+        }))
+        .map_err(RuntimeError::from)
+    }
+
+    fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), RuntimeError> {
+        self.send(serde_json::json!({"type": "commitTimelineSnapshot"}))
+            .map_err(RuntimeError::from)
+    }
+
+    fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), RuntimeError> {
+        self.send(serde_json::json!({"type": "discardTimelineSnapshot"}))
+            .map_err(RuntimeError::from)
+    }
+
+    fn runtime_generation(&self) -> u64 {
+        crate::audio::AudioSupervisor::runtime_generation(self)
+    }
+
+    fn force_shutdown(&self) {
+        crate::audio::AudioSupervisor::force_shutdown(self);
+    }
+}
+
+impl TransportDriver for crate::audio::AudioSupervisor {
+    fn play_timeline(&self) -> Result<(), RuntimeError> {
+        crate::audio::AudioSupervisor::play_timeline(self).map_err(RuntimeError::from)
+    }
+
+    fn stop_timeline(&self) -> Result<(), RuntimeError> {
+        crate::audio::AudioSupervisor::stop_timeline(self).map_err(RuntimeError::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::RuntimeError;
     use super::*;
     use crate::model::RuntimeProjectionState;
-    use crate::runtime::error::RuntimeError;
     use crate::runtime::ports::{ProjectionDriver, TransportDriver};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

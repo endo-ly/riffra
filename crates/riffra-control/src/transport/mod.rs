@@ -1,5 +1,9 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::path::PathBuf;
+
+use crate::LocalControlEndpoint;
 
 /// Maximum encoded payload accepted for one local control frame.
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
@@ -68,20 +72,58 @@ where
     Ok(serde_json::from_str(&payload)?)
 }
 
-/// Connects to a named-pipe endpoint on Windows.
-#[cfg(windows)]
-pub fn connect(pipe_name: &str) -> Result<Box<dyn ReadWrite>, TransportError> {
-    let stream = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(pipe_name)?;
-    Ok(Box::new(stream))
+/// Connects to a host-local endpoint.
+pub fn connect(endpoint: &LocalControlEndpoint) -> Result<Box<dyn ReadWrite>, TransportError> {
+    match endpoint {
+        #[cfg(windows)]
+        LocalControlEndpoint::WindowsNamedPipe { name } => {
+            let stream = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(name)?;
+            Ok(Box::new(stream))
+        }
+        #[cfg(unix)]
+        LocalControlEndpoint::UnixSocket { path } => {
+            Ok(Box::new(std::os::unix::net::UnixStream::connect(path)?))
+        }
+        _ => Err(TransportError::UnsupportedPlatform),
+    }
 }
 
-/// Named pipes are intentionally not implemented for non-Windows Desktop Attach.
-#[cfg(not(windows))]
-pub fn connect(_pipe_name: &str) -> Result<Box<dyn ReadWrite>, TransportError> {
-    Err(TransportError::UnsupportedPlatform)
+/// A platform-neutral listener for the local Host control endpoint.
+pub enum LocalControlListener {
+    #[cfg(windows)]
+    Windows(NamedPipeListener),
+    #[cfg(unix)]
+    Unix(UnixDomainListener),
+}
+
+impl LocalControlListener {
+    /// Binds the endpoint and removes an inactive stale Unix socket.
+    pub fn bind(endpoint: &LocalControlEndpoint) -> Result<Self, TransportError> {
+        match endpoint {
+            #[cfg(windows)]
+            LocalControlEndpoint::WindowsNamedPipe { name } => {
+                Ok(Self::Windows(NamedPipeListener::bind(name)?))
+            }
+            #[cfg(unix)]
+            LocalControlEndpoint::UnixSocket { path } => {
+                Ok(Self::Unix(UnixDomainListener::bind(path)?))
+            }
+            _ => Err(TransportError::UnsupportedPlatform),
+        }
+    }
+
+    /// Accepts the next local client.
+    pub fn accept(&mut self) -> Result<Box<dyn ReadWrite>, TransportError> {
+        match self {
+            #[cfg(windows)]
+            Self::Windows(listener) => Ok(Box::new(listener.accept()?)),
+            #[cfg(unix)]
+            Self::Unix(listener) => Ok(Box::new(listener.accept()?)),
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -89,6 +131,75 @@ mod windows;
 
 #[cfg(windows)]
 pub use windows::NamedPipeListener;
+
+#[cfg(unix)]
+pub struct UnixDomainListener {
+    listener: std::os::unix::net::UnixListener,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+impl UnixDomainListener {
+    fn bind(path: &std::path::Path) -> io::Result<Self> {
+        if path.exists() {
+            match std::os::unix::net::UnixStream::connect(path) {
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        "Riffra Host control socket is already in use",
+                    ));
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+                    ) =>
+                {
+                    std::fs::remove_file(path)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Self::prepare_socket_parent(path)?;
+        let listener = std::os::unix::net::UnixListener::bind(path)?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(Self {
+            listener,
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn accept(&self) -> io::Result<std::os::unix::net::UnixStream> {
+        self.listener.accept().map(|(stream, _)| stream)
+    }
+
+    fn prepare_socket_parent(path: &std::path::Path) -> io::Result<()> {
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Unix socket has no parent")
+        })?;
+        let existed = parent.exists();
+        std::fs::create_dir_all(parent)?;
+        use std::os::unix::fs::PermissionsExt;
+        let private_name = parent
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name == "control" || name == "riffra" || name.starts_with("riffra-")
+            });
+        if !existed || private_name {
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnixDomainListener {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -159,6 +270,69 @@ mod tests {
         let error = read_frame::<_, serde_json::Value>(&mut reader).unwrap_err();
 
         assert!(matches!(error, TransportError::InvalidJson(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_domain_socket_round_trips_and_reconnects() {
+        let path = std::env::temp_dir().join(format!(
+            "riffra-control-test-{}-{}.sock",
+            std::process::id(),
+            crate::new_instance_id()
+        ));
+        let endpoint = crate::LocalControlEndpoint::UnixSocket { path: path.clone() };
+        let mut listener = LocalControlListener::bind(&endpoint).unwrap();
+        let server = std::thread::spawn(move || {
+            for expected in [1, 2] {
+                let mut stream = listener.accept().unwrap();
+                let request: serde_json::Value = read_frame(&mut stream).unwrap();
+                assert_eq!(request["request"], expected);
+                write_frame(&mut stream, &serde_json::json!({"request": expected})).unwrap();
+            }
+        });
+        for expected in [1, 2] {
+            let mut stream = connect(&endpoint).unwrap();
+            write_frame(&mut stream, &serde_json::json!({"request": expected})).unwrap();
+            let response: serde_json::Value = read_frame(&mut stream).unwrap();
+            assert_eq!(response["request"], expected);
+        }
+        server.join().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_domain_socket_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "riffra-control-permissions-{}-{}.sock",
+            std::process::id(),
+            crate::new_instance_id()
+        ));
+        let endpoint = crate::LocalControlEndpoint::UnixSocket { path: path.clone() };
+        let listener = LocalControlListener::bind(&endpoint).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(listener);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_unix_domain_socket_is_replaced() {
+        let path = std::env::temp_dir().join(format!(
+            "riffra-control-stale-{}-{}.sock",
+            std::process::id(),
+            crate::new_instance_id()
+        ));
+        let endpoint = crate::LocalControlEndpoint::UnixSocket { path: path.clone() };
+        let stale = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        drop(stale);
+        let second = LocalControlListener::bind(&endpoint).unwrap();
+        drop(second);
     }
 
     struct Chunks {

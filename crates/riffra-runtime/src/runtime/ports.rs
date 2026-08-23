@@ -1,10 +1,10 @@
-use crate::runtime::error::RuntimeError;
+use super::RuntimeError;
 use serde_json::Value;
 use std::time::Duration;
 
 /// Port used by the projection coordinator. It contains no Transport
 /// operations, so a projection cannot accidentally acquire Transport state.
-pub(crate) trait ProjectionDriver: Send + Sync + 'static {
+pub trait ProjectionDriver: Send + Sync + 'static {
     fn prepare_timeline_snapshot(
         &self,
         snapshot: Value,
@@ -20,7 +20,7 @@ pub(crate) trait ProjectionDriver: Send + Sync + 'static {
 }
 
 /// Port used by the Transport executor. It contains no projection operations.
-pub(crate) trait TransportDriver: Send + Sync + 'static {
+pub trait TransportDriver: Send + Sync + 'static {
     fn play_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
 }
@@ -28,6 +28,6 @@ pub(crate) trait TransportDriver: Send + Sync + 'static {
 /// Compatibility bound for callers that own one AudioSupervisor for both
 /// ports. The implementation remains split at the coordinator/executor
 /// boundary.
-pub(crate) trait RuntimeDriver: ProjectionDriver + TransportDriver {}
+pub trait RuntimeDriver: ProjectionDriver + TransportDriver {}
 
 impl<T> RuntimeDriver for T where T: ProjectionDriver + TransportDriver {}

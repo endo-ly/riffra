@@ -1,18 +1,18 @@
-//! Runtime coordination internals.
-//!
-//! `ports` contains the two narrow native ports. `projection_coordinator` owns
-//! the latest-wins Prepare/Commit/Discard worker, while `transport_executor`
-//! applies Core transport decisions to the native runtime.
-//! The public application facade is [`RuntimeReconciler`].
+//! Desktop-facing re-exports of the shared live Runtime.
 
-pub(crate) mod error;
-pub(crate) mod ports;
-pub(crate) mod projection_coordinator;
-pub(crate) mod reconciler;
-pub(crate) mod transport_executor;
+pub(crate) mod error {
+    pub(crate) use riffra_runtime::RuntimeError;
+}
 
-pub(crate) use reconciler::RuntimeReconciler;
+pub(crate) mod ports {
+    pub(crate) use riffra_runtime::{ProjectionDriver, RuntimeDriver, TransportDriver};
+}
 
-use std::time::Duration;
+pub(crate) mod projection_coordinator {
+    pub(crate) use riffra_runtime::{ProjectionStatusHook, RuntimeRecovery};
+}
 
-pub(crate) const TIMELINE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) use riffra_runtime::RuntimeReconciler;
+
+pub(crate) const TIMELINE_PREPARE_TIMEOUT: std::time::Duration =
+    riffra_runtime::TIMELINE_PREPARE_TIMEOUT;

@@ -1,0 +1,17 @@
+[package]
+name = "riffra-runtime"
+version = "0.1.0"
+description = "Shared live Riffra DAW host runtime"
+authors = ["Riffra contributors"]
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+riffra-control = { path = "../riffra-control" }
+riffra-core = { path = "../riffra-core" }
+riffra-host = { path = "../riffra-host" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+ts-rs = "12"

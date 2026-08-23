@@ -8,7 +8,7 @@
 
 ```text
 ┌───────────────────────────────────────────────┐
-│  Tauri シェル（1プロセス）                      │
+│  Desktop Tauri シェル（1プロセス）              │
 │  React フロントエンド ── Tauri IPC ── Rust      │
 │  バックエンド（Core / Desktop Adapter）          │
 └──────┬──────────────────────┬─────────────────┘
@@ -20,6 +20,10 @@
 └─────────────────┘   └─────────────────┘  │ レンダリング   │
                                            └───────────────┘
 ```
+
+GUIを使わない場合は `riffra serve` が `riffra-runtime::DawHost` を起動する。
+DesktopとHeadless Hostは同じ正準状態・投影・ローカル制御契約を共有し、起動中のHostは
+`<data_root>/control/host.json` に接続情報を公開する。
 
 - リアルタイム音声は常に **riffra-audio サイドカー**（C++ / JUCE）が担当し、Tauri プロセスは音声コールバックやプラグインコードを実行しない
 - セッション・素材・由来の正準状態は **riffra-core**（Rust）が保持し、WebView と サイドカーは契約された型と命令のみで接続される
@@ -33,12 +37,13 @@
 | `apps/cli/`                    | `riffra-core` と `riffra-host` を利用するワンショット／JSON Lines CLI ホスト     |
 | `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-host/`          | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
+| `crates/riffra-runtime/`       | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
 | `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
 | `scripts/`                     | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
 | `docs/`                        | 設計・調整ドキュメント                                                           |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-host` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 
@@ -75,7 +80,12 @@ npm run typecheck      # tsc
 
 cargo run -p riffra-cli -- --data-root ./riffra-data session get
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
+cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
+cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
 ```
+
+`serve` はフォアグラウンドでHostを保持し、起動診断を標準エラーへ出力する。
+`--attach` は既存Hostへ接続し、DataRootを直接開かない。
 
 ## ドキュメント
 
