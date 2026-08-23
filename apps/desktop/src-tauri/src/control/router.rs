@@ -6,9 +6,9 @@ use crate::session::adapter::{self, AdapterError};
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
 use riffra_core::application::{MidiNoteInput, MidiNotePatch, MidiNoteUpdate};
 use riffra_core::{
-    AssetId, AudioClipMove, AudioClipPatch, AutomationParameter, AutomationPoint, FrameRange,
-    MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick, TrackKind,
-    TrackPatch,
+    AssetId, AudioClipMove, AudioClipPatch, AutomationParameter, AutomationPoint, CanonicalState,
+    FrameRange, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick,
+    TrackKind, TrackPatch,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -18,6 +18,7 @@ use std::path::PathBuf;
 #[derive(Debug)]
 struct RouteResult {
     result_type: &'static str,
+    sequence: u64,
     value: Value,
 }
 
@@ -105,7 +106,7 @@ pub(crate) fn dispatch(state: &AppState, request: ControlRequest) -> ControlResp
     } else {
         None
     };
-    let current = match state.core.snapshot() {
+    let current = match state.core.canonical_state() {
         Ok(current) => current,
         Err(error) => {
             return ControlResponse::failure(
@@ -128,32 +129,29 @@ pub(crate) fn dispatch(state: &AppState, request: ControlRequest) -> ControlResp
     let expected_sequence = request.expected_sequence;
     let result = route_command(
         state,
-        &current.session,
+        &current,
         request.control_command(),
         expected_sequence,
     );
     drop(gate);
     match result {
-        Ok(result) => match state.core.snapshot() {
-            Ok(canonical) => ControlResponse::success(
-                request_id,
-                canonical.sequence,
-                CommandResult {
-                    result_type: result.result_type.into(),
-                    value: result.value,
-                },
-            ),
-            Err(error) => ControlResponse::failure(
-                request_id,
-                None,
-                ProtocolError::new(ErrorCode::CommandFailed, error.to_string()),
-            ),
-        },
+        Ok(result) => success_response(request_id, result),
         Err(error) => {
             let current_sequence = state.core.snapshot().ok().map(|state| state.sequence);
             ControlResponse::failure(request_id, current_sequence, error.protocol_error())
         }
     }
+}
+
+fn success_response(request_id: String, result: RouteResult) -> ControlResponse {
+    ControlResponse::success(
+        request_id,
+        result.sequence,
+        CommandResult {
+            result_type: result.result_type.into(),
+            value: result.value,
+        },
+    )
 }
 
 fn requires_command_gate(command: &str) -> bool {
@@ -181,10 +179,11 @@ fn requires_command_gate(command: &str) -> bool {
 
 fn route_command(
     state: &AppState,
-    session: &riffra_core::CreativeSession,
+    canonical: &CanonicalState,
     request: riffra_control::ControlCommand,
     expected_sequence: Option<u64>,
 ) -> Result<RouteResult, RouteError> {
+    let session = &canonical.session;
     let context = adapter::SessionContext {
         core: &state.core,
         audio: state.core.audio(),
@@ -195,19 +194,12 @@ fn route_command(
     };
     let params = request.params;
     match request.name.as_str() {
-        "session.get" => serialized("session", session),
+        "session.get" => serialized(canonical.sequence, "session", session),
         "session.settings.update" => {
             mutation(adapter::update_session_settings(&context, decode(params)?))
         }
-        "history.get" => serialized(
-            "history",
-            &state
-                .core
-                .canonical_state()
-                .map_err(|error| RouteError::command(error.to_string()))?
-                .history,
-        ),
-        "track.list" => serialized("tracks", &session.arrangement.tracks),
+        "history.get" => serialized(canonical.sequence, "history", &canonical.history),
+        "track.list" => serialized(canonical.sequence, "tracks", &session.arrangement.tracks),
         "track.add" => {
             let params: TrackAddParams = decode(params)?;
             mutation(adapter::add_track(
@@ -275,7 +267,11 @@ fn route_command(
                 MidiInputRoute::default(),
             ))
         }
-        "audio-clip.list" => serialized("audioClips", &session.arrangement.audio_clips),
+        "audio-clip.list" => serialized(
+            canonical.sequence,
+            "audioClips",
+            &session.arrangement.audio_clips,
+        ),
         "audio-clip.add-asset" => {
             let params: AudioAddParams = decode(params)?;
             mutation(adapter::add_audio_clip(
@@ -327,7 +323,11 @@ fn route_command(
                 &params.second_clip_id,
             ))
         }
-        "midi-clip.list" => serialized("midiClips", &session.arrangement.midi_clips),
+        "midi-clip.list" => serialized(
+            canonical.sequence,
+            "midiClips",
+            &session.arrangement.midi_clips,
+        ),
         "midi-clip.create" => {
             let params: MidiClipCreateParams = decode(params)?;
             mutation(adapter::create_midi_clip(
@@ -548,13 +548,13 @@ fn route_command(
                 params.name.as_deref(),
             )
             .map_err(command)?;
-            serialized("assetId", &asset_id)
+            serialized(canonical.sequence, "assetId", &asset_id)
         }
         "project.export" => {
             let export =
                 crate::projects::export(state.core.data_root(), session, crate::storage::now_ms())
                     .map_err(command)?;
-            serialized("projectExport", &export)
+            serialized(canonical.sequence, "projectExport", &export)
         }
         "project.import" => {
             let params: ProjectImportParams = decode(params)?;
@@ -591,10 +591,18 @@ fn route_command(
         }
         "undo" => mutation(adapter::undo(&context)),
         "redo" => mutation(adapter::redo(&context)),
-        "runtime.projection.get" => serialized("runtimeProjection", &state.runtime.status()),
+        "runtime.projection.get" => serialized(
+            canonical.sequence,
+            "runtimeProjection",
+            &state.runtime.status(),
+        ),
         "runtime.projection.retry" => {
             adapter::sync_arrangement_runtime(&context).map_err(RouteError::runtime)?;
-            serialized("runtimeProjection", &state.runtime.status())
+            serialized(
+                canonical.sequence,
+                "runtimeProjection",
+                &state.runtime.status(),
+            )
         }
         "render.start" => {
             let params: RenderParams = decode(params)?;
@@ -634,7 +642,7 @@ fn route_command(
                 }
             }));
             let status = crate::jobs::to_background_status(status).map_err(RouteError::command)?;
-            serialized("backgroundJob", &status)
+            serialized(canonical.sequence, "backgroundJob", &status)
         }
         "job.get" => {
             let params: JobIdParams = decode(params)?;
@@ -644,7 +652,7 @@ fn route_command(
                 .map(crate::jobs::to_background_status)
                 .transpose()
                 .map_err(RouteError::command)?;
-            serialized("backgroundJob", &status)
+            serialized(canonical.sequence, "backgroundJob", &status)
         }
         "job.cancel" => {
             let params: JobIdParams = decode(params)?;
@@ -654,33 +662,34 @@ fn route_command(
                 .map(crate::jobs::to_background_status)
                 .transpose()
                 .map_err(RouteError::command)?;
-            serialized("backgroundJob", &status)
+            serialized(canonical.sequence, "backgroundJob", &status)
         }
         "transport.play" => {
             let params: TransportParams = decode(params)?;
             adapter::play_timeline(&context, params.transport_sequence)
                 .map_err(RouteError::runtime)?;
-            empty()
+            empty(canonical.sequence)
         }
         "transport.stop" => {
             let params: TransportParams = decode(params)?;
             adapter::stop_timeline(&context, params.transport_sequence)
                 .map_err(RouteError::runtime)?;
-            empty()
+            empty(canonical.sequence)
         }
         "transport.go-to-start" => {
             let params: TransportParams = decode(params)?;
             adapter::go_to_start_timeline(&context, params.transport_sequence)
                 .map_err(RouteError::runtime)?;
-            empty()
+            empty(canonical.sequence)
         }
         "transport.seek" => {
             let params: SeekParams = decode(params)?;
             adapter::seek_timeline(&context, TimelineTick(params.tick))
                 .map_err(RouteError::runtime)?;
-            empty()
+            empty(canonical.sequence)
         }
         "audio.status" => serialized(
+            canonical.sequence,
             "audioStatus",
             &state
                 .core
@@ -695,7 +704,7 @@ fn route_command(
                 .audio()
                 .send_track_midi(&params.track_id, &params.bytes)
                 .map_err(|error| RouteError::runtime(error.to_string()))?;
-            empty()
+            empty(canonical.sequence)
         }
         "midi.panic" => {
             let params: TrackIdParams = decode(params)?;
@@ -704,12 +713,12 @@ fn route_command(
                 .audio()
                 .panic_track_midi(&params.track_id)
                 .map_err(|error| RouteError::runtime(error.to_string()))?;
-            empty()
+            empty(canonical.sequence)
         }
         "plugin.catalog.list" => {
             let catalog = crate::plugin_catalog::load(state.core.data_root())
                 .map_err(|error| RouteError::command(error.to_string()))?;
-            serialized("pluginCatalog", &catalog)
+            serialized(canonical.sequence, "pluginCatalog", &catalog)
         }
         "instrument.set" => {
             let params: PluginPathParams = decode(params)?;
@@ -740,6 +749,7 @@ fn route_command(
             ))
         }
         "missing.list" => serialized(
+            canonical.sequence,
             "missingDependencies",
             &crate::missing::collect_missing(state.core.data_root(), session),
         ),
@@ -774,25 +784,31 @@ fn route_command(
 }
 
 fn serialized<T: serde::Serialize>(
+    sequence: u64,
     result_type: &'static str,
     value: &T,
 ) -> Result<RouteResult, RouteError> {
     Ok(RouteResult {
         result_type,
+        sequence,
         value: serde_json::to_value(value)
             .map_err(|error| RouteError::command(error.to_string()))?,
     })
 }
 
-fn empty() -> Result<RouteResult, RouteError> {
-    serialized("ok", &())
+fn empty(sequence: u64) -> Result<RouteResult, RouteError> {
+    serialized(sequence, "ok", &())
 }
 
 fn mutation(
     result: Result<ArrangementMutationResult, AdapterError>,
 ) -> Result<RouteResult, RouteError> {
     let result = result.map_err(RouteError::from)?;
-    serialized("canonicalState", &result.canonical)
+    serialized(
+        result.canonical.sequence,
+        "canonicalState",
+        &result.canonical,
+    )
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, RouteError> {
@@ -1212,9 +1228,26 @@ mod tests {
         let route = mutation(Ok(mutation_result())).unwrap();
 
         assert_eq!(route.result_type, "canonicalState");
+        assert_eq!(route.sequence, 7);
         assert_eq!(route.value["sequence"], 7);
         assert!(route.value["session"].is_object());
         assert!(route.value.get("projection").is_none());
+    }
+
+    #[test]
+    fn successful_responses_use_the_result_sequence() {
+        let response =
+            success_response("request-1".into(), mutation(Ok(mutation_result())).unwrap());
+
+        assert_eq!(response.sequence, Some(7));
+        assert_eq!(response.result.unwrap().value["sequence"], 7);
+    }
+
+    #[test]
+    fn serialized_results_keep_the_observed_canonical_sequence() {
+        let route = serialized(11, "session", &CreativeSession::new(1)).unwrap();
+
+        assert_eq!(route.sequence, 11);
     }
 
     #[test]
