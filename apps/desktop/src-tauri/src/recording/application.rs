@@ -1126,6 +1126,7 @@ fn finalize_arrange_recording(
     )
     .map_err(|error| error.to_string())?;
     crate::session::commit::arrangement_mutation_result(&session_context)
+        .map_err(|error| error.to_string())
 }
 
 fn next_recording_pass_ordinal(
@@ -1571,9 +1572,10 @@ fn place_recording_on_timeline(
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     crate::session::adapter::commit_recording_session(&session_context, &base_session, session)
         .map_err(|error| error.to_string())?;
-    Ok(Some(crate::session::commit::arrangement_mutation_result(
-        &session_context,
-    )?))
+    Ok(Some(
+        crate::session::commit::arrangement_mutation_result(&session_context)
+            .map_err(|error| error.to_string())?,
+    ))
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read

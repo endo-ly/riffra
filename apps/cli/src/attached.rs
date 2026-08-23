@@ -108,3 +108,71 @@ fn request_id_from_json(line: &str) -> String {
 fn format_protocol_error(error: &ProtocolError) -> String {
     format!("{}: {}", error.code, error.message)
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use riffra_control::transport::NamedPipeListener;
+    use riffra_control::{
+        CommandResult, ControlCommand, EndpointDescriptor, HelloRequest, HelloResponse,
+    };
+    use std::thread;
+
+    #[test]
+    fn attached_backend_discovers_endpoint_and_completes_handshake() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-cli-attached-{}-{}",
+            std::process::id(),
+            riffra_control::new_instance_id()
+        ));
+        let descriptor =
+            EndpointDescriptor::new(riffra_control::new_instance_id(), std::process::id());
+        let mut listener = NamedPipeListener::bind(&descriptor.pipe_name).unwrap();
+        riffra_control::publish_endpoint(&data_root, &descriptor).unwrap();
+
+        let request = ControlRequest::new(
+            "42",
+            ControlCommand::new("session.get", serde_json::json!({})),
+            Some(7),
+        );
+        let expected_request = request.clone();
+        let instance_id = descriptor.instance_id.clone();
+        let server = thread::spawn(move || {
+            let mut stream = listener.accept().unwrap();
+            let hello: HelloRequest = riffra_control::transport::read_frame(&mut stream).unwrap();
+            assert_eq!(hello, HelloRequest::new());
+            riffra_control::transport::write_frame(
+                &mut stream,
+                &HelloResponse::new(instance_id, std::process::id()),
+            )
+            .unwrap();
+
+            let received: ControlRequest =
+                riffra_control::transport::read_frame(&mut stream).unwrap();
+            assert_eq!(received, expected_request);
+            riffra_control::transport::write_frame(
+                &mut stream,
+                &ControlResponse::success(
+                    received.request_id,
+                    12,
+                    CommandResult {
+                        result_type: "canonicalState".into(),
+                        value: serde_json::json!({"sequence": 12}),
+                    },
+                ),
+            )
+            .unwrap();
+        });
+
+        let mut backend = AttachedBackend::connect(&data_root).unwrap();
+        let response = backend.request(&request).unwrap();
+
+        assert_eq!(response.request_id, "42");
+        assert_eq!(response.sequence, Some(12));
+        assert_eq!(response.result.unwrap().value["sequence"], 12);
+
+        server.join().unwrap();
+        riffra_control::remove_endpoint_if_matches(&data_root, &descriptor.instance_id).unwrap();
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+}

@@ -46,8 +46,8 @@ use riffra_core::{
 };
 
 pub(crate) use crate::session::commit::{
-    commit_core_application, commit_recording_session, import_session, publish_canonical_state,
-    restore_generation,
+    arrangement_mutation_result, arrangement_mutation_without_projection, commit_core_application,
+    commit_recording_session, import_session, publish_canonical_state, restore_generation,
 };
 pub(crate) use crate::session::context::{SessionContext, current_session};
 pub(crate) use crate::session::error::AdapterError;
@@ -89,17 +89,6 @@ pub(crate) fn redo(
     crate::session::adapter::arrangement_mutation_result(context)
 }
 
-pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
-    crate::session::commit::arrangement_mutation_result(context).map_err(Into::into)
-}
-
-pub(crate) fn arrangement_mutation_without_projection<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
-    crate::session::commit::arrangement_mutation_without_projection(context).map_err(Into::into)
-}
 #[cfg(test)]
 mod tests {
     use super::*;

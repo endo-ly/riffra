@@ -53,11 +53,8 @@ where
 /// failure to hide the already committed Session.
 pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
-) -> Result<ArrangementMutationResult, String> {
-    let canonical = context
-        .core
-        .canonical_state()
-        .map_err(|error| error.to_string())?;
+) -> Result<ArrangementMutationResult, AdapterError> {
+    let canonical = context.core.canonical_state()?;
     if context.safe_mode {
         return Ok(ArrangementMutationResult {
             canonical,
@@ -79,12 +76,9 @@ pub(crate) fn arrangement_mutation_result<D: RuntimeDriver>(
 
 pub(crate) fn arrangement_mutation_without_projection<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, AdapterError> {
     Ok(ArrangementMutationResult {
-        canonical: context
-            .core
-            .canonical_state()
-            .map_err(|error| error.to_string())?,
+        canonical: context.core.canonical_state()?,
         projection: ArrangementProjectionOutcome::NotRequired,
     })
 }
@@ -121,7 +115,7 @@ pub fn import_session(
         .map_err(AdapterError::from)?;
     crate::library::index::queue(context.data_root, &committed);
     publish_canonical_state(context)?;
-    arrangement_mutation_result(context).map_err(Into::into)
+    arrangement_mutation_result(context)
 }
 
 /// Restores a saved generation through Core.
@@ -144,5 +138,5 @@ pub fn restore_generation(
         .map_err(AdapterError::from)?;
     crate::library::index::queue(context.data_root, &committed);
     publish_canonical_state(context)?;
-    arrangement_mutation_result(context).map_err(Into::into)
+    arrangement_mutation_result(context)
 }

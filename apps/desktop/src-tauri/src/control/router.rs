@@ -582,7 +582,7 @@ fn route_command(
         }
         "device.bypass" => {
             let params: DeviceBypassParams = decode(params)?;
-            runtime_mutation(adapter::set_track_device_bypassed(
+            mutation(adapter::set_track_device_bypassed(
                 &context,
                 &params.track_id,
                 &params.device_id,
@@ -713,7 +713,7 @@ fn route_command(
         }
         "instrument.set" => {
             let params: PluginPathParams = decode(params)?;
-            runtime_mutation(adapter::set_track_instrument_with_expected_sequence(
+            mutation(adapter::set_track_instrument_with_expected_sequence(
                 &context,
                 &params.track_id,
                 &params.plugin_path,
@@ -722,7 +722,7 @@ fn route_command(
         }
         "effect.add" => {
             let params: PluginPathParams = decode(params)?;
-            runtime_mutation(adapter::add_track_effect_with_expected_sequence(
+            mutation(adapter::add_track_effect_with_expected_sequence(
                 &context,
                 &params.track_id,
                 &params.plugin_path,
@@ -731,7 +731,7 @@ fn route_command(
         }
         "device.parameter.set" => {
             let params: DeviceParameterParams = decode(params)?;
-            runtime_mutation(adapter::set_track_device_parameter(
+            mutation(adapter::set_track_device_parameter(
                 &context,
                 &params.track_id,
                 &params.device_id,
@@ -757,7 +757,7 @@ fn route_command(
         }
         "missing.replace-plugin" => {
             let params: MissingPluginReplaceParams = decode(params)?;
-            runtime_mutation(
+            mutation(
                 adapter::replace_missing_track_plugin_with_expected_sequence(
                     &context,
                     &params.device_id,
@@ -793,14 +793,6 @@ fn mutation(
 ) -> Result<RouteResult, RouteError> {
     let result = result.map_err(RouteError::from)?;
     serialized("canonicalState", &result.canonical)
-}
-
-fn runtime_mutation(
-    result: Result<ArrangementMutationResult, AdapterError>,
-) -> Result<RouteResult, RouteError> {
-    result
-        .map_err(RouteError::from)
-        .and_then(|result| serialized("canonicalState", &result.canonical))
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, RouteError> {
@@ -1235,14 +1227,14 @@ mod tests {
         assert_eq!(conflict.code, ErrorCode::Conflict);
         assert_eq!(conflict.details.unwrap()["expectedSequence"], 4);
 
-        let runtime = runtime_mutation(Err(AdapterError::RuntimeUnavailable(
+        let runtime = mutation(Err(AdapterError::RuntimeUnavailable(
             "audio sidecar unavailable".into(),
         )))
         .unwrap_err()
         .protocol_error();
         assert_eq!(runtime.code, ErrorCode::RuntimeUnavailable);
 
-        let command = runtime_mutation(Err(AdapterError::CommandFailed(
+        let command = mutation(Err(AdapterError::CommandFailed(
             "track device is not registered".into(),
         )))
         .unwrap_err()
