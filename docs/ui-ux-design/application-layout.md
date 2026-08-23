@@ -1,83 +1,46 @@
 # Riffra 共通画面構造
 
-Riffraの画面は、素材を探す場所、選択対象を調整する場所、時間軸で組み立てる場所、対象を深く編集する場所、演奏する場所を同時に扱います。領域を切り替えても、選択、検索、演奏先の文脈が失われないことを共通の基準にします。
+Riffra の制作画面は、音を探す場所、選択対象を調整する場所、時間軸で組み立てる場所、演奏内容を編集する場所、Instrument Track を演奏する場所を同時に扱える。各領域は表示の切替で入れ替えるのではなく、役割を保ったまま連携する。
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GLOBAL CONTROL BAR                                                           │
-│ Project / History          Transport                 Audio / Safety           │
+│ Project / History                    Transport             Audio / Safety     │
 ├────────────────────┬─────────────────────────────────────────────────────────┤
 │ BROWSER            │                                                         │
-│ 素材・録音・Plugin  │                        MAIN CANVAS                      │
-│                    │                        Timeline                         │
+│                    │                        MAIN CANVAS                      │
+│ Search             │                        Timeline                         │
+│ Assets             │                                                         │
+│ Recordings         │                                                         │
+│ Plugins            │                                                         │
 ├────────────────────┤                                                         │
 │ PROPERTIES         ├─────────────────────────────────────────────────────────┤
 │ Track / Clip /     │ DETAIL AREA                                             │
-│ Take                │ MIDI Editor / Devices                                  │
+│ Take properties    │ MIDI Editor / Devices                                  │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 1. Global Control Bar
+## Global Control Bar
 
-Global Control Barは、セッション全体へ作用する操作をまとめます。Project、履歴、Transport、音声状態、安全操作、検索、設定をここから辿ります。
+Global Control Bar は、セッション名、履歴、Transport、音声状態、安全操作、検索、設定をまとめる。Transport はこの領域の一部として扱い、独立した下部バーには置かない。
 
-Transportは画面下部の独立したバーではなく、この領域の一部です。どの編集面を開いていても、同じ再生位置、再生状態、録音状態を参照します。
+## Left Column
 
-## 2. Left Column
+Left Column は Browser と Properties を上下に並べる。Browser は素材の検索・試聴・投入を担当し、Properties は Arrange の選択状態に応じて Track、Clip、Take の内容を表示する。両方を同時に表示するため、選択対象が変わっても Browser の検索や表示文脈は維持される。
 
-Left ColumnはBrowserとPropertiesを上下に並べます。
+Left Column の幅は Main Canvas との境界で変更できる。Browser と Properties の境界は上下に変更でき、Browser の最低表示領域を保つ。
 
-| 領域       | 役割                                                                              |
-| ---------- | --------------------------------------------------------------------------------- |
-| Browser    | Asset、録音、Inbox、Instrument、Effectを検索・試聴し、TimelineやDevicesへ投入する |
-| Properties | 選択中のTrack、Clip、Takeの属性を確認・編集する                                   |
+## Main Canvas
 
-BrowserはPropertiesの選択が変わっても検索語と表示位置を保ちます。Left Columnの幅はMain Canvasとの境界で、BrowserとPropertiesの高さは二つの境界で変更できます。どちらも必要な情報を隠さない最低表示領域を保ちます。
+Main Canvas は現在の制作領域を表示する。Arrange では Timeline が中心となり、残りの横幅と高さを使って Track、Clip、Automation を表示する。
 
-## 3. Main Canvas
+## Detail Area
 
-Main Canvasは現在の制作領域を表示します。ArrangeではTimelineが中心となり、Track、Clip、Automation、Rulerを同じ時間軸で扱います。
+Detail Area は Timeline から開いた対象の編集場所である。Arrange では MIDI Editor を表示し、Instrument と Effect Chain を扱う Devices もこの領域に配置する。Resize、Collapse / Restore、Expand / Restore、Close を提供し、Properties の子には置かない。Detail Area に機能選択タブは置かず、対象を開く操作が編集面を決める。
 
-素材の検索はBrowser、選択対象の属性はProperties、時間軸の構成はMain Canvasという役割を保つことで、一つの領域へ機能を詰め込みません。
+## Play Surface
 
-## 4. Detail Area
-
-Detail Areaは、Timelineで選んだ対象を一段深く編集する場所です。ArrangeではMIDI EditorとDevicesを表示します。
-
-Detail AreaはPropertiesの子ではありません。独立した編集面として、次の表示操作を持ちます。
-
-- サイズ変更
-- 折りたたみと復元
-- 拡大表示と復元
-- 閉じる
-
-Detail Areaを閉じても、Timelineの選択状態とMIDI編集対象は保持します。編集面を開く操作が対象を決めるため、機能を選ぶだけのタブを置きません。
-
-## 5. Play Surface
-
-Play Surfaceは、Focused Instrument Trackを鍵盤、ドラムパッド、コンピューターキーボード、外部MIDIから演奏するための領域です。Main CanvasとDetail Areaから独立して開閉でき、MIDI Editorと同時に表示できます。
-
-演奏先は、Timelineで選択している対象やMIDI Editorで編集しているクリップとは別に保持します。これにより、曲を編集しながら同じ音源を弾いて確認できます。
-
-## 6. 状態の分け方
-
-画面全体で、似て見える状態を別の意味として扱います。
-
-| 状態                     | 意味                                      |
-| ------------------------ | ----------------------------------------- |
-| Selection                | Timelineで現在選択しているTrackまたはClip |
-| Track Context            | PropertiesとDevicesが編集対象にするTrack  |
-| Active MIDI Clip         | MIDI Editorが編集しているClip             |
-| Focused Instrument Track | Play Surfaceと演奏用MIDI入力の送り先      |
-| Record Arm               | 録音対象として準備されたTrack             |
-
-SelectionやActive MIDI Clipが変わっても、Focused Instrument Trackは必要な限り維持します。Record Armは録音の対象を決める状態であり、演奏先のFocusとは統合しません。
-
-## 7. 共通の操作原則
-
-選択、ドラッグ、試聴、取り消し、エラー表示は、ArrangeとDesignで同じ意味を持ちます。操作の結果はすぐ画面へ反映し、確定時にCoreから返された正準状態へ揃えます。
-
-Missing Asset、Missing Plugin、デバイス障害、ランタイムの同期ずれなど、制作へ影響する問題は対象に近い場所から復旧できるようにします。画面全体へ関係する状態だけをGlobal Control Barと全体通知へ広げます。
+Play Surface は Focused Instrument Track へ Keyboard または Drum Pads から入力するための領域である。Main Canvas と Detail Area から独立して開閉でき、MIDI Editor と同時に表示できる。
