@@ -3,17 +3,17 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::ptr::null_mut;
 
+#[cfg(test)]
+use windows_sys::Win32::Foundation::GENERIC_ALL;
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HLOCAL,
     INVALID_HANDLE_VALUE, LocalFree,
 };
-#[cfg(test)]
-use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION,
 };
 #[cfg(test)]
-use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+use windows_sys::Win32::Security::{ACCESS_ALLOWED_ACE, GetAce, GetSecurityDescriptorDacl};
 use windows_sys::Win32::Security::{
     GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
     TokenUser,
@@ -111,31 +111,6 @@ impl PipeSecurity {
             descriptor,
         })
     }
-
-    #[cfg(test)]
-    fn sddl(&self) -> io::Result<String> {
-        let mut descriptor = null_mut();
-        let mut length = 0;
-        let converted = unsafe {
-            ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                self.descriptor,
-                SDDL_REVISION,
-                DACL_SECURITY_INFORMATION,
-                &mut descriptor,
-                &mut length,
-            )
-        };
-        if converted == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let sddl = unsafe {
-            String::from_utf16_lossy(std::slice::from_raw_parts(descriptor, length as usize))
-        };
-        unsafe {
-            let _ = LocalFree(descriptor as HLOCAL);
-        }
-        Ok(sddl)
-    }
 }
 
 impl Drop for PipeSecurity {
@@ -190,8 +165,12 @@ fn current_user_sid() -> io::Result<String> {
         return Err(io::Error::last_os_error());
     }
     let token_user = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_USER>()) };
+    sid_to_string(token_user.User.Sid)
+}
+
+fn sid_to_string(sid: *mut core::ffi::c_void) -> io::Result<String> {
     let mut sid_string = std::ptr::null_mut();
-    let converted = unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) };
+    let converted = unsafe { ConvertSidToStringSidW(sid, &mut sid_string) };
     if converted == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -257,11 +236,47 @@ mod tests {
 
     #[test]
     fn pipe_security_allows_the_current_user_sid() {
-        let sid = current_user_sid().unwrap();
-        let sddl = current_user_sddl().unwrap();
         let security = PipeSecurity::new().unwrap();
+        let (descriptor_sid, access_mask) = security.allowed_sid_and_mask().unwrap();
 
-        assert_eq!(sddl, format!("D:P(A;;GA;;;{sid})"));
-        assert_eq!(security.sddl().unwrap(), sddl);
+        assert_eq!(descriptor_sid, current_user_sid().unwrap());
+        assert_eq!(access_mask, GENERIC_ALL);
+    }
+
+    impl PipeSecurity {
+        fn allowed_sid_and_mask(&self) -> io::Result<(String, u32)> {
+            let mut dacl_present = 0;
+            let mut dacl = null_mut();
+            let mut dacl_defaulted = 0;
+            let descriptor_read = unsafe {
+                GetSecurityDescriptorDacl(
+                    self.descriptor,
+                    &mut dacl_present,
+                    &mut dacl,
+                    &mut dacl_defaulted,
+                )
+            };
+            if descriptor_read == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if dacl_present == 0 || dacl.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "pipe security descriptor has no DACL",
+                ));
+            }
+
+            let mut ace = null_mut();
+            let ace_read = unsafe { GetAce(dacl, 0, &mut ace) };
+            if ace_read == 0 || ace.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "pipe security descriptor has no access rule",
+                ));
+            }
+            let allowed_ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            let sid = std::ptr::addr_of!(allowed_ace.SidStart).cast_mut().cast();
+            Ok((sid_to_string(sid)?, allowed_ace.Mask))
+        }
     }
 }
