@@ -1,852 +1,336 @@
-# Riffra Arrange 画面仕様
+# Riffra Arrange画面
 
-## 1. 位置付け
+Arrangeは、演奏、録音、音色調整、Audio/MIDIクリップの配置、MIDI編集を一つの時間軸でつなぐRiffraの主制作画面です。素材を探すBrowser、属性を調整するProperties、曲を組み立てるTimeline、詳細を編集するDetail Area、演奏するPlay Surfaceが同じセッションを参照します。
 
-本書は、Riffra の Arrange ワークスペースに固有の画面構造と操作仕様の正本である。Browser、Properties、Timeline、Detail Area、Play Surface の Arrange 上の配置と共通挙動を定義する。共通の画面骨格は [共通画面構造](application-layout.md) を参照する。
-
-Arrange は Riffra の主制作画面であり、演奏、監視、録音、音色調整、Audio / MIDI Clip の配置、MIDI 編集、再生確認を一つの Arrangement 上でつなぐ。Timeline を中心に曲を組み立て、Browser と Properties が素材探索・属性調整を支え、Detail Area が Clip や Track の内部編集、Play Surface が演奏入力を担当する。
-
-制作データは `../data-model.md`、アプリケーション内部の責務分担は `../architecture.md`、通信契約は `../ipc.md` を参照する。
+共通の画面骨格は [共通画面構造](application-layout.md)、データの意味は [データモデル](../data-model.md)、アプリケーションの責務は [アーキテクチャ](../architecture.md) を参照してください。
 
 ## 目次
 
-- [1. 位置付け](#1-位置付け)
-- [2. Arrange の作業構造](#2-arrange-の作業構造)
-- [3. Timeline](#3-timeline)
-- [4. Left Column](#4-left-column)
-- [5. Detail Area](#5-detail-area)
-- [6. Play Surface](#6-play-surface)
-- [7. 再生・録音とフィードバック](#7-再生録音とフィードバック)
-- [8. 操作文脈とショートカット](#8-操作文脈とショートカット)
-- [9. 基本制作シナリオ](#9-基本制作シナリオ)
+- [画面の骨格](#1-画面の骨格)
+- [操作対象の分け方](#2-操作対象の分け方)
+- [Timeline](#3-timeline)
+- [BrowserとProperties](#4-browserとproperties)
+- [Detail Area](#5-detail-area)
+- [Play SurfaceとTransport](#6-play-surfaceとtransport)
+- [状態と復旧](#7-状態と復旧)
+- [ショートカット](#8-ショートカット)
+- [基本的な制作の流れ](#9-基本的な制作の流れ)
 
----
-
-## 2. Arrange の作業構造
-
-### 2.1 画面構成
-
-Arrange の Main Canvas は Timeline である。Browser と Properties は Left Column に常時表示し、MIDI Editor は Timeline の下側に Detail Area として開く。Play Surface は演奏入力が必要な場面で独立して展開する。
+## 1. 画面の骨格
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GLOBAL CONTROL BAR                                                           │
-│ Project / History                 Transport                 Audio / Safety   │
+│ GLOBAL CONTROL BAR: Project / History / Transport / Audio / Safety           │
 ├────────────────────┬─────────────────────────────────────────────────────────┤
-│                    │ ARRANGE · MAIN CANVAS                                  │
-│ BROWSER            │ ┌─────────────────────────────────────────────────────┐ │
-│                    │ │ Arrange Toolbar                                     │ │
-│                    │ ├─────────────────────────────────────────────────────┤ │
-│                    │ │ Ruler                                               │ │
-│                    │ ├─────────────────────────────────────────────────────┤ │
-│                    │ │ Timeline · Tracks / Clips / Automation              │ │
-│                    │ ├─────────────────────────────────────────────────────┤ │
-│                    │ │ DETAIL AREA                                         │ │
-│ PROPERTIES         │ │ MIDI Editor / Devices                              │ │
+│ BROWSER            │ ARRANGE · MAIN CANVAS                                  │
+│ 素材・録音・Plugin  │ ┌─────────────────────────────────────────────────────┐ │
+│                    │ │ Arrange Toolbar / Ruler / Tracks / Clips            │ │
+├────────────────────┤ ├─────────────────────────────────────────────────────┤ │
+│ PROPERTIES         │ │ DETAIL AREA: MIDI Editor / Devices                  │ │
+│ Track / Clip / Take│ └─────────────────────────────────────────────────────┘ │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
-│ PLAY SURFACE · optional                                                      │
-│ Focused Instrument Track / Keyboard / Drum Pads / Octave / Velocity         │
+│ PLAY SURFACE: Focused Instrument Track / Keyboard / Drum Pads               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Detail Area は内部編集、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Detail Area の Devices で Instrument を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。
+| 領域               | 役割                                                  |
+| ------------------ | ----------------------------------------------------- |
+| Global Control Bar | セッション全体の状態、Transport、音声の安全操作を扱う |
+| Browser            | Asset、録音、Instrument、Effectを探して投入する       |
+| Properties         | 選択中のTrack、Clip、Takeの属性を編集する             |
+| Main Canvas        | Timeline上でTrack、Clip、Automationを構成する         |
+| Detail Area        | Active MIDI ClipのノートやTrackのDevicesを編集する    |
+| Play Surface       | Focused Instrument Trackを演奏する                    |
 
-### 2.2 選択・編集対象・演奏先
+Timelineを画面の中心に置き、他の領域は異なる役割を保ちます。PropertiesでTrackの入力を確認し、Detail AreaでInstrumentを調整し、Play Surfaceで弾きながらTimelineの結果を聞く、という流れを画面切替なしで進められます。
 
-Arrange では、似て見える状態を役割ごとに分けて扱う。
+## 2. 操作対象の分け方
 
-```text
-                         Arrange Selection
-                         Track / Clip(s)
-                               │
-                 ┌─────────────┴─────────────┐
-                 ▼                           ▼
-            Properties                  Track Context
-                                             │
-                                             ▼
-                                         Properties
+Arrangeでは、選択している対象、編集している対象、演奏している対象を別々に管理します。
 
-MIDI Clip を編集
-        │
-        ▼
-Active MIDI Clip ───────────────→ MIDI Editor
-        │
-        └────────────────────────→ MIDI Note Selection
+| 状態                     | 決めること                               | 主な表示先                 |
+| ------------------------ | ---------------------------------------- | -------------------------- |
+| Arrange Selection        | Timelineで選択しているTrackまたはClip群  | Properties、Timeline       |
+| Track Context            | PropertiesとDevicesが編集するTrack       | Properties、Detail Area    |
+| Active MIDI Clip         | MIDI Editorが編集するClip                | Detail Area                |
+| MIDI Note Selection      | Active MIDI Clip内で選択しているノート群 | MIDI Editor                |
+| Focused Instrument Track | Play Surfaceと演奏用MIDI入力の送り先     | Track Header、Play Surface |
+| Record Arm               | 録音するTrack                            | Track Header、Transport    |
 
-Focused Instrument Track ───────→ Play Surface / Computer MIDI
+単一Trackに属するClipを選択した場合は、そのTrackをTrack Contextにします。複数Trackにまたがる選択では、最後に明示したTrack Contextを保ち、どのDevicesを編集しているかを曖昧にしません。
 
-Active MIDI Clip の Track ──────→ MIDI Editor Note Preview
-```
+MIDI Clipを開くとActive MIDI Clipが決まります。MIDI Editorを表示したまま単一の別MIDI Clipを選択した場合は編集対象も追従し、複数選択ではActive MIDI Clipを保ちます。MIDI Clipの選択やNoteの編集はFocused Instrument Trackを変更しません。
 
-#### Arrange Selection
-
-Timeline 上で選択している Track または Clip 群を表す。Properties の内容は Arrange Selection に追従する。Browser の表示状態は素材探索の文脈として保持される。
-
-#### Track Context
-
-Properties が扱う Track を表す。Track を選択した場合はその Track、単一 Track に属する Clip を選択した場合は所属 Track が Track Context となる。
-
-複数 Track にまたがる Clip 群では、一つの Device Chain を操作する意味が曖昧になるため、最後に明示された Track Context を Properties に表示する。利用者は Track Header または Properties から対象 Track を切り替える。
-
-#### Active MIDI Clip
-
-MIDI Editor が編集している MIDI Clip を表す。MIDI Clip のダブルクリックや明示的な Edit 操作で Active MIDI Clip を設定し、Detail Area に MIDI Editor を開く。
-
-MIDI Editor が表示中で、単一の別 MIDI Clip を通常選択した場合は編集対象もその Clip へ追従する。複数選択では Active MIDI Clip を維持し、どの Clip の Note を編集しているかは MIDI Editor の編集対象として保持する。
-
-#### MIDI Note Selection
-
-Active MIDI Clip 内で選択している Note 群である。MIDI Editor の Pointer、Marquee、Keyboard Shortcut はこの Selection を対象とする。
-
-#### Focused Instrument Track
-
-Play Surface、Computer Keyboard、演奏用 MIDI 入力の送り先である。Arrange Selection と Active MIDI Clip から独立して保持し、曲を編集しながら同じ Instrument を演奏できる。
-
-Record Arm は Track の録音状態として Focus と分けて扱う。録音時は Arm 状態と Focus / MIDI routing の関係を画面上で確認できるようにする。
-
----
+Record Armは録音対象を決める状態です。Focusと分離することで、あるInstrument Trackを弾きながら別のTrackを編集したり、録音対象を明示したりできます。
 
 ## 3. Timeline
 
-### 3.1 Arrange Toolbar
-
-Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
-
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│ [Select|Split]  Snap [1/16 ▾]  [Follow] [Automation]                │
-│                                       Bars/Time   Zoom [−][＋] 100% │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-左側は編集操作、右側は表示操作としてまとまりを持たせる。
-
-| 要素          | 挙動                                          |
-| ------------- | --------------------------------------------- |
-| Select        | Clip の選択、移動、Trim、Marquee など通常編集 |
-| Split         | 指定位置で Clip を分割                        |
-| Snap          | Timeline の時間編集に使う Grid                |
-| Follow        | 再生中の Playhead を表示範囲へ追従            |
-| Automation    | 選択 Track の Automation Lane を開閉          |
-| Bars / Time   | Ruler の表示形式を切替                        |
-| Timeline Zoom | 時間方向の拡大・縮小                          |
-
-Snap は Clip 移動、Trim、Split、Time Selection、Marker 移動など Timeline 上の時間操作で共通に使う。
-
-### 3.2 Ruler と時間範囲
-
-```text
-        Marker
-          ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  1.1        1.2        1.3        1.4        2.1        2.2     │
-│      ├──────────── Loop ────────────┤                            │
-│                       │ Playhead                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-Ruler は時間位置の確認と範囲操作を担う。
-
-| 操作                        | 結果                                          |
-| --------------------------- | --------------------------------------------- |
-| クリック                    | Playhead をその位置へ移動                     |
-| ドラッグ                    | Time Selection を作成                         |
-| Marker ドラッグ             | Marker を移動                                 |
-| Loop / Punch の端をドラッグ | 範囲を変更                                    |
-| Context Menu                | Marker 追加、選択範囲から Loop / Punch を設定 |
-
-Playhead、Time Selection、Loop / Punch、Marker は同じ時間軸上で同時に認識できる表示を使う。
-
-### 3.3 Track Row
-
-Track Header は Track の識別と、演奏・録音中に頻繁に触る操作を持つ。
-
-```text
-┌──────────────────┬──────────────────────────────────────────────────────┐
-│ ● Guitar         │                                                      │
-│ AUDIO            │  [ Audio Clip ]        [ Audio Clip ]               │
-│ [M] [S] [R] [IN] │                                                      │
-│ VOL ─────  PAN   │                                                      │
-├──────────────────┼──────────────────────────────────────────────────────┤
-│ ● Synth          │      [ MIDI Clip ]                 [ MIDI Clip ]     │
-│ INSTRUMENT       │                                                      │
-│ [M] [S] [R]      │                                                      │
-│ VOL ─────  PAN   │                                                      │
-└──────────────────┴──────────────────────────────────────────────────────┘
-```
-
-| 項目              | 仕様                                     |
-| ----------------- | ---------------------------------------- |
-| Track Name        | 選択と名前変更の入口                     |
-| Track Kind        | Audio / Instrument の識別                |
-| Mute / Solo / Arm | Header から直接変更                      |
-| Monitoring        | Audio Track の現在状態を表示・変更       |
-| Mix               | 表示密度に応じて Volume / Pan を操作     |
-| Reorder           | Track の並べ替え                         |
-| Height            | Track ごとの表示密度変更                 |
-| Focus             | Instrument Track を演奏先として Focus    |
-| Properties        | Track の属性と状態を表示・編集する       |
-| Play Surface      | Focused Track として Play Surface を開く |
-
-Input、Monitoring、名称など Track 自体の詳細属性は Properties が扱う。既存の Track view に含まれる Instrument / Effect Chain の操作項目は Devices の編集面へ移す対象として扱い、Properties は Track 属性へ集中する。Volume / Pan は制作中の確認頻度が高いため Track Header に簡易操作を置き、Properties では数値確認と精密調整を行える。
-
-### 3.4 Clip 共通操作
-
-Audio Clip と MIDI Clip は Timeline 上の素材として共通の操作体系を持つ。
-
-| 操作                    | 結果                            |
-| ----------------------- | ------------------------------- |
-| クリック                | 単一選択                        |
-| Ctrl / Shift + クリック | 選択を追加・解除                |
-| 空白をドラッグ          | Marquee による複数選択          |
-| ドラッグ                | 時間位置または対応 Track を変更 |
-| 左右端をドラッグ        | Clip 範囲を Trim                |
-| Duplicate               | 直後へ複製                      |
-| Delete                  | 選択 Clip を削除                |
-| Split                   | Playhead または指定位置で分割   |
-| Mute / Loop             | Clip 単位の状態を変更           |
-| Context Menu            | Merge など補助操作へアクセス    |
-
-### 3.5 Audio Clip
-
-Audio Clip は波形を中心に表示し、素材の使用範囲と音の位置関係を Timeline 上で把握できるようにする。
+### Arrange Toolbar
 
-```text
-┌──────────────────────────────────────────┐
-│ Guitar Take 3                            │
-│ ▂▃▅▆▅▃▂▂▃▄▆▇▆▄▂▂▃▅▆▄▃                  │
-│ ◢                                      ◣ │
-└──────────────────────────────────────────┘
-  ↑ Trim / Fade                    Trim / Fade ↑
-```
+Arrange ToolbarはTimeline全体へ作用する操作をまとめます。
 
-左右端は Trim、Fade Handle は Fade In / Fade Out を担当する。Start、Length、Gain、Pan、Fade、Loop など数値確認を伴う属性は Properties からも調整できる。
+| 操作        | 役割                                                 |
+| ----------- | ---------------------------------------------------- |
+| Select      | Clipの選択、移動、範囲変更など通常編集               |
+| Split       | 指定位置でClipを分割                                 |
+| Snap        | 移動、範囲変更、分割、Markerの位置を時間軸へ合わせる |
+| Follow      | 再生中のPlayheadへ表示範囲を追従させる               |
+| Automation  | 選択TrackのAutomation Laneを開閉                     |
+| Bars / Time | Rulerの表示形式を切り替える                          |
+| Zoom        | 時間方向の表示倍率を変える                           |
 
-将来 Audio Editor を導入する場合は、Clip の内部波形や高度な音声処理を Detail Area で扱い、Timeline 上の構成編集との責務を分ける。
+### Rulerと範囲
 
-### 3.6 MIDI Clip
+Rulerは位置の確認と範囲の操作を担います。
 
-MIDI Clip は内部 Note の配置を簡易表示する。Clip のダブルクリックで Active MIDI Clip を設定し、Detail Area に MIDI Editor を開く。
+| 操作                          | 結果                                       |
+| ----------------------------- | ------------------------------------------ |
+| クリック                      | Playheadを移動                             |
+| ドラッグ                      | Time Selectionを作成                       |
+| Markerのドラッグ              | Markerを移動                               |
+| LoopまたはPunchの端をドラッグ | 範囲を変更                                 |
+| Context Menu                  | Markerの追加、選択範囲からLoop/Punchを設定 |
 
-Timeline 上の Trim は Clip が Arrangement 上で占める範囲を扱い、Note の開始・長さ・Velocity など演奏内容は MIDI Editor で扱う。
+Playhead、Time Selection、Loop、Punch、Markerは同じ時間軸の上で位置関係を確認できます。
 
-### 3.7 空 MIDI Clip の作成
+### Track Row
 
-Instrument Track の空白から、外部 MIDI ファイルを用意せずに打ち込みを始められる。
+Track Headerは、演奏と録音中に頻繁に触る操作を持ちます。
 
-```text
-Instrument Track の空白
-        │
-        ├─ Double Click
-        │
-        └─ Insert MIDI Clip
-                │
-                ▼
-          New MIDI Clip
-                │
-                ▼
-       Detail Area / MIDI Editor
-```
+| 項目              | 操作                                                   |
+| ----------------- | ------------------------------------------------------ |
+| Track Name / Kind | 名前の変更、AudioまたはInstrumentの確認                |
+| Mute / Solo / Arm | Track単位の状態変更                                    |
+| Monitoring        | Audio入力の監視状態の変更                              |
+| Volume / Pan      | 再生中に確認しやすい簡易調整。精密値はPropertiesで扱う |
+| Reorder / Height  | Trackの順序と表示密度の変更                            |
+| Focus             | Instrument Trackを演奏先に設定                         |
 
-作成位置は Timeline Snap に従う。Time Selection がある場合はその範囲を初期長として使い、通常時はクリック位置から一小節を初期長とする。作成後はその Clip を Active MIDI Clip として開き、すぐ Note 入力へ移れる状態にする。
+入力、監視、Instrument、Effect ChainなどTrackの詳細はPropertiesまたはDevicesで扱います。Headerへすべての設定を詰め込まず、頻繁な操作と詳細な編集を分けます。
 
-### 3.8 素材の投入
+### Clipの共通操作
 
-Browser または OS から Audio / MIDI 素材を Timeline へドラッグできる。ドラッグ中は投入候補 Track と配置位置を視覚的に示し、Track Kind と Asset Kind の関係も同じ場所で理解できるようにする。
+Audio ClipとMIDI Clipは、Timeline上で同じ基本操作を持ちます。
 
-Browser の Preview は素材確認、Transport の Play は Arrangement 全体の再生として状態を分けて表示する。
+| 操作                    | 結果                         |
+| ----------------------- | ---------------------------- |
+| クリック                | 単一選択                     |
+| Ctrl / Shift + クリック | 選択の追加または解除         |
+| 空白のドラッグ          | Marqueeによる複数選択        |
+| ドラッグ                | 時間位置またはTrackを変更    |
+| 左右端のドラッグ        | 使用範囲を変更               |
+| Duplicate               | 直後へ複製                   |
+| Delete                  | 削除                         |
+| Split                   | Playheadまたは指定位置で分割 |
+| Mute / Loop             | Clip単位の状態を変更         |
 
-### 3.9 空の Arrangement
+### Audio Clip
 
-空の Arrangement では Main Canvas 中央を制作開始の入口とする。
+Audio Clipは波形と使用範囲を表示します。左右端で範囲を調整し、Fade HandleでFade InとFade Outを調整します。開始位置、長さ、Gain、Pan、Fade、LoopはPropertiesでも確認・編集できます。
 
-```text
-┌───────────────────────────────────────────────┐
-│                                               │
-│                Start arranging                │
-│                                               │
-│      [ Add Audio Track ] [ Add Instrument ]   │
-│                                               │
-│           Drop Audio / MIDI here              │
-│                                               │
-└───────────────────────────────────────────────┘
-```
+Clipの編集は素材そのものを書き換えません。Assetの参照範囲とTimeline上の設定を変更し、内容を変える処理は新しいAssetとして保存します。
 
-Instrument Track の作成では Add Instrument Browser へつなぎ、音源選択後に Track と Focus を自然に設定できる。
+### MIDI Clip
 
-### 3.10 Automation
+MIDI Clipは内部のノート配置を簡易表示します。ダブルクリックまたはEdit操作でActive MIDI Clipを設定し、Detail AreaのMIDI Editorを開きます。
 
-Automation は対象 Track の直下へ Lane として展開し、Timeline と同じ時間軸を使う。
+Timeline上の範囲変更はClipが占める時間を扱います。ノートの開始位置、長さ、Pitch、Velocity、ChannelはMIDI Editorで編集します。
 
-```text
-Track: Synth
-├─ MIDI Clips        [======]       [======]
-└─ Automation: Volume
-       •───────•
-                ╲
-                 •────────────•
-```
+### 空のMIDI Clip
 
-Parameter Selector から編集対象を選び、Point の追加、移動、削除を Lane 上で行う。Playhead、Snap、Zoom は Clip と Automation で同じ基準を共有する。表示状態は Track ごとに保持する。
+Instrument Trackの空白から、外部ファイルを用意せずに打ち込みを始められます。
 
-### 3.11 録音中の表示
+1. Instrument Trackの空白をダブルクリックするか、`Insert MIDI Clip` を選ぶ。
+2. Snapに従った位置へ新しいClipを作る。
+3. Time Selectionがあればその範囲を初期長にし、なければ既定の長さを使う。
+4. 作成したClipをActive MIDI ClipとしてMIDI Editorを開く。
 
-録音中は、録音開始位置から現在位置までを対象 Track 上へ表示する。
+### Automationと録音表示
 
-```text
-Instrument Track
-│                     REC · PASS 2
-│              ├██████████████████│
-│              ▲                  ▲
-│           record start       current
-```
+Automationは対象Trackの直下へLaneとして展開し、Clipと同じ時間軸、Playhead、Snap、Zoomを共有します。Parameter Selectorで対象を選び、Pointを追加、移動、削除します。
 
-録音対象 Track、現在の Pass、録音範囲を一つの視線で確認できる構成とする。録音完了後に生成された Clip / Take は Arrange Selection と Properties から扱える。
+録音中は、開始位置から現在位置までを対象Trackへ表示します。Track、現在のPass、録音範囲を一つの視線で確認でき、録音完了後のClipとTakeはSelectionとPropertiesから扱えます。
 
----
+## 4. BrowserとProperties
 
-## 4. Left Column
+### Browser
 
-Arrange の Left Column は Browser と Properties を上下に常時表示する。本章では素材探索、選択対象の編集、縦分割のリサイズを含め、Arrange 固有の内容を定義する。
+BrowserはAsset、Recording、Inbox、Instrument、Effectを探し、TimelineまたはDevicesへつなぎます。
 
-### 4.1 Browser
+| 対象               | 投入先                    |
+| ------------------ | ------------------------- |
+| Audio / MIDI Asset | Timeline                  |
+| Recording / Inbox  | Timeline、Takeの確認      |
+| Instrument         | Instrument TrackのDevices |
+| Effect             | TrackのEffect Chain       |
 
-Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または Track の Devices へ投入する。
+Search、Preview、選択、Drag & Dropを一連の操作として扱います。追加ボタンから開くAdd Browserは、追加先のTrackと位置を引き継いで候補を絞ります。
 
-```text
-Browser
-├─ Audio / MIDI Assets ─────→ Timeline
-├─ Recordings / Inbox ──────→ Timeline / Take workflow
-├─ Instruments ─────────────→ Track / Devices
-└─ Effects ─────────────────→ Devices
-```
+### Properties
 
-Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、Instrument または Effect として Track の Devices へ追加する。
+PropertiesはArrange Selectionに追従します。Browserを閉じたり再読み込みしたりせず、素材探索の文脈を保ちます。
 
-Instrument や Effect の追加ボタンから開く Add Browser は、現在の追加先を引き継いで候補を絞る。
+| 選択対象       | 表示する内容                                     |
+| -------------- | ------------------------------------------------ |
+| Track          | 名前、種別、Input、Monitoring、Volume、Pan、状態 |
+| Audio Clip     | 名前、位置、長さ、Gain、Pan、Fade、Mute、Loop    |
+| MIDI Clip      | 名前、位置、長さ、Mute、Loop                     |
+| 複数Clip       | Start、Muteなど共通する属性                      |
+| Recording Take | 原音・加工音の比較、採用、別Clipとしての配置     |
 
-### 4.2 Properties
+InstrumentとEffect Chainの順序やパラメーターはDevicesで編集します。PropertiesはTrackやClip自体の属性に集中します。
 
-Properties は Arrange Selection に応じて内容を更新する。Browser はアンマウントせず、検索語と表示中の素材を維持する。
+### Takeの比較
 
-```text
-Arrange Selection
-      │
-      ├─ Track ─────────────→ Track Properties
-      ├─ Audio Clip ────────→ Audio Clip Properties
-      ├─ MIDI Clip ─────────→ MIDI Clip Properties
-      ├─ Multiple Clips ────→ Multi Clip Properties
-      └─ Recording Take ────→ Take Properties
-```
-
-#### Track Properties
-
-Track 自体の属性を扱う。
-
-| 領域       | 内容                                                                  |
-| ---------- | --------------------------------------------------------------------- |
-| Identity   | Track 名、種別                                                        |
-| Input      | Audio / MIDI Input routing                                            |
-| Monitoring | Input Monitoring                                                      |
-| Mix        | Volume / Pan の数値確認と精密調整                                     |
-| Status     | Input source、recording、missing dependency など Track に関係する状態 |
-
-Track Properties は Track 属性を編集する。Instrument と Effect Chain は Devices の編集面で扱う。
-
-#### Audio Clip Properties
-
-Audio Clip の属性を扱う。
-
-```text
-AUDIO CLIP
-────────────────
-Name
-Start / Length
-Gain / Pan
-Fade In / Fade Out
-Mute / Loop
-
-[Duplicate] [Delete]
-```
-
-Timeline 上の Trim / Fade と同じ Clip を参照しながら、数値確認と精密調整を行える。
-
-#### MIDI Clip Properties
-
-MIDI Clip 自体の属性を扱う。
-
-```text
-MIDI CLIP
-────────────────
-Name
-Start
-Length
-Mute / Loop
-
-[Duplicate] [Delete]
-```
-
-Pitch、Velocity、Note Length など演奏内容は MIDI Editor が担当する。
-
-#### Multi Clip Properties
-
-複数 Clip の共通属性をまとめて調整する。Audio / MIDI が混在する場合は Start、Mute など意味を共有できる項目を中心に表示する。変更結果が選択対象全体へどのように反映されるかを確認できる表示を使う。
-
-#### Take Properties
-
-Take Properties は同じ録音意図を持つ候補を比較し、採用と配置を行う。
-
-```text
-TAKES
-────────────────────────────────
-              [Record another take]
-Recording group       [Group 2]
-
-Take 1                         CURRENT
-          Audio source
-          ○ Raw    ○ Processed
-          [Place copy]                         [Preview]
-
-Take 2                         MIDI
-          [Use] [Place copy]
-
-Take 3
-          [Use] [Place copy]                   [Preview]
-```
-
-Raw / Processed の両方を持つ Audio Take は同じ位置から切り替えて比較できる。Use は録音グループの正準 Clip を更新し、Place copy は候補を別 Clip として Timeline へ配置する。
-
----
+RawとProcessedの両方を持つAudio Takeは、同じ位置から切り替えて比較します。`Use` は録音グループの正準Clipを更新し、`Place copy` は候補を別のClipとしてTimelineへ配置します。比較しても元のTakeは残ります。
 
 ## 5. Detail Area
 
-Detail Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集する。Arrange では MIDI Editor を表示し、Instrument と Effect Chain は Devices としてこの領域に配置する。
+Detail Areaは、Timelineで選択した対象の内部へ入る編集面です。MIDI EditorとDevicesを同時に置くのではなく、必要な面を開き、サイズ変更、折りたたみ、拡大、復元、閉じるを行います。閉じてもSelectionとActive MIDI Clipは維持します。
 
-Detail Area は、Timeline から明示的に開いた編集面を表示する。Arrange では MIDI Editor を表示し、Devices も同じ領域の責務として扱う。外側に対象名を繰り返す文言ヘッダーは置かず、各編集面自身の Toolbar と編集対象を保ったまま作業を続けられる。
+### MIDI Editor
 
-### 5.1 共通操作
+MIDI EditorはPiano Roll、Ruler、Velocity Laneで構成し、すべて同じ時間軸を共有します。Active MIDI ClipがArrangementのどこにあるかをRulerで確認できます。
 
-```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│ MIDI Editor toolbar                              Collapse  Expand   ×   │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                           Active MIDI Clip                               │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+| 操作              | 結果                                        |
+| ----------------- | ------------------------------------------- |
+| Pointer           | Noteの選択、移動、長さ変更                  |
+| Draw              | Noteの連続入力                              |
+| Snap              | Noteの開始位置と初期長をGridへ合わせる      |
+| Preview           | 編集中のNoteをActive MIDI ClipのTrackで試聴 |
+| Quantize          | 選択したNoteの位置をGridへ合わせる          |
+| Duplicate         | 選択フレーズを時間幅に沿って複製            |
+| Time / Pitch Zoom | 横方向と縦方向を独立して拡大・縮小          |
 
-Detail Area は、Resize、Collapse / Restore、Expand / Restore、Close を提供する。対象の切替は Timeline の MIDI Clip 選択から行い、Detail Area を閉じても Arrange Selection と Active MIDI Clip は維持する。Play Surface は Detail Area と独立して開閉できる。
+空白のダブルクリックでもNoteを作成できます。開始位置と初期長はGridを基準にし、Velocityは直前の入力値を引き継ぎます。複数Noteの移動や長さ変更では、選択群の相対関係を保ちます。
 
-### 5.2 MIDI Editor
+CopyはNoteの相対時間、Pitch、長さ、Velocity、Channelを保持します。Pasteでは先頭NoteをPlayheadへ合わせ、新しいIDを割り当て、貼り付けたNoteを選択します。
 
-#### 画面構造
+Piano KeyboardはPitchの目盛りとNote Previewを兼ねます。MIDI EditorのPreviewはActive MIDI ClipのTrackを対象にし、Play SurfaceはFocused Instrument Trackを対象にします。Clip切替やEditor終了時には、押されたままのNoteを解放します。
 
-```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│ [Pointer|Draw]  Snap [1/16 ▾]  [Preview]  [Quantize] [Duplicate]        │
-│ VEL [───●── 96]                  Time [−][＋]   Pitch [−][＋]           │
-├─────────────┬────────────────────────────────────────────────────────────┤
-│             │  9.1       9.2       9.3       9.4       10.1            │
-│ Piano       ├────────────────────────────────────────────────────────────┤
-│ Keyboard    │                                                            │
-│             │     ┌──────────┐             ┌──────┐                     │
-│ C5          │     │          │             │      │                     │
-│             │     └──────────┘     ┌──────────────┐                     │
-│ B4          │                      │              │                     │
-│             │                      └──────────────┘                     │
-│ A#4         │        ┌───────┐                                            │
-│             │        └───────┘                                            │
-│             │                         │ Playhead                           │
-├─────────────┼────────────────────────────────────────────────────────────┤
-│ Velocity    │        │       │        │        │                         │
-│             │        █       █        █        █                         │
-└─────────────┴────────────────────────────────────────────────────────────┘
-```
+### Devices
 
-Piano Roll、Musical Ruler、Velocity Lane は一つの時間軸を共有する。横 Scroll / Zoom も同じ基準で動き、Active MIDI Clip が Arrangement のどこに位置しているかを Ruler 上で把握できる。
+DevicesはTrack ContextのInstrumentとEffect Chainを編集します。処理順を左から右へ示し、Instrument TrackではInstrumentから、Audio TrackではAudio InputからEffect Chainへつながる構造を見せます。
 
-Toolbar は左側へ編集操作、右側へ表示操作をまとめる。Pointer / Draw、Snap、Preview、Quantize、Duplicate、Velocity、Time Zoom、Pitch Zoom が主な操作となる。
+| 操作                        | 結果                                           |
+| --------------------------- | ---------------------------------------------- |
+| Add Instrument / Add Effect | 追加位置へ候補を表示し、選択したデバイスを挿入 |
+| Reorder                     | 処理順を変更                                   |
+| Bypass                      | 一時的に処理経路から外す                       |
+| Replace                     | 別のPluginへ差し替える                         |
+| Remove                      | Chainから削除                                  |
+| Edit                        | Plugin Editorを開く                            |
+| Recover                     | Missing Pluginを再走査、差し替え、無効化       |
 
-#### Note の作成と編集
+追加位置の `+` から開くAdd Browserは、Instrument slotならInstrument、Effect ChainならEffectを候補にします。選択後は同じTrackのDevicesへ戻ります。
 
-Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空白のダブルクリックでも Note を作成できる。開始位置と初期長は現在の Grid を基準とし、Velocity は直前の入力値を引き継ぐ。
+DevicesとPlay Surfaceは同時に使えます。音源やEffectを調整し、その結果を演奏で確かめ、同じ編集面へ戻ることが基本の音作り導線です。
 
-| 操作                       | 結果                    |
-| -------------------------- | ----------------------- |
-| Note をクリック            | 単一選択                |
-| Ctrl / Shift + Note        | 選択を追加・解除        |
-| 空白をドラッグ             | Marquee 選択            |
-| Note をドラッグ            | 時間位置と Pitch を変更 |
-| Note 右端をドラッグ        | Note Length を変更      |
-| 空白をダブルクリック       | Note を作成             |
-| Draw でクリック / ドラッグ | Note を連続作成         |
+## 6. Play SurfaceとTransport
 
-複数 Note の移動では相対関係を保ち、時間と Pitch をまとめて変更する。Length 変更でも選択群へ同じ差分を適用できる。
+### 演奏先
 
-#### Clipboard と Duplicate
+Play Surface、コンピューターキーボード、演奏用MIDI入力はFocused Instrument Trackへ送ります。別のInstrument TrackへFocusを移すと、Play SurfaceのTrack名、Instrument、入力状態も切り替わります。
 
-Copy は Note 群の相対時間、Pitch、Length、Velocity、Channel を保持する。Paste では先頭 Note を Playhead へ合わせ、新しい ID を割り当てたうえで貼り付けた Note 群を選択する。
+MIDI Editorと併用する場合、MIDI EditorはActive MIDI Clipの演奏内容を、Play SurfaceはFocused Instrument Trackへのライブ入力を担当します。二つの対象はTrack HeaderとFocus表示で区別します。
 
-Duplicate は選択フレーズの時間幅を基準に直後へ複製する。
+### Transportと録音
 
-#### Quantize と Velocity
+再生、停止、録音、位置移動、Loop、Metronome、Count-in、Tempo、SignatureはGlobal Control BarのTransportで扱います。Timeline、MIDI Editor、Play Surfaceは同じPlayheadとRecording stateを参照します。
 
-Quantize は現在の Grid を基準に MIDI Note Selection へ適用する。Velocity Lane は Piano Roll と同じ Note Selection を共有し、複数 Note の Velocity をまとめて調整できる。
+録音を開始する前に、Focused Track、Record Arm、Input sourceを確認できます。ArmされたTrackがない場合は録音とTransportを開始せず、録音対象を準備するよう知らせます。録音中はTimelineへ進行を表示し、完了後はTake Propertiesで候補を比較します。
 
-```text
-Piano Roll        ┌───────┐       ┌──────────┐
-                  └───────┘       └──────────┘
+### Previewの区別
 
-Velocity              █                 █
-                      █          █      █
-                      █          █      █
-────────────────────────────────────────────────
-```
+Browser Asset Preview、Take Preview、MIDI Editor Note Preview、Plugin内の試聴は、対象単位のPreviewです。Arrangement全体を再生するTransport Playとは別の状態として表示します。
 
-#### Piano Keyboard と Note Preview
+## 7. 状態と復旧
 
-Piano Keyboard は Pitch の目盛りと Note Preview を兼ねる。Preview が有効な間、押した Key の Note On / Off を Active MIDI Clip の所属 Track へ送る。
+Hover、Selected、Focused、Active Tool、Pending、Recording、Warningの見た目は共通画面構造の規則に従います。Arrangeでは、Selection、Focused Instrument Track、Active MIDI Clip、Record Arm、Previewを区別できることを優先します。
 
-この Preview は「編集中の Note がどの音になるか」を確認する機能であり、Play Surface の演奏入力とは役割が異なる。Play Surface は Focused Instrument Track を演奏し、MIDI Editor Preview は Active MIDI Clip の所属 Track を確認対象とする。
+| 問題                   | 主な表示先                   | 復旧の入口                      |
+| ---------------------- | ---------------------------- | ------------------------------- |
+| Audio Runtime / device | Global Control Bar、全体通知 | Runtimeの回復、再試行、安全操作 |
+| Missing Plugin         | Devices、Track status        | 再走査、差し替え、無効化        |
+| Missing Audio source   | Clip、Properties             | Assetの再リンク                 |
+| Runtimeの同期ずれ      | Timeline status              | 最新状態からの再投影            |
+| 一時的な編集結果       | Toast                        | 操作の再試行またはUndo          |
 
-Clip 切替や Editor 終了時には Held Note を解放し、Preview の発音状態を終了させる。
+問題は影響を受ける対象の近くから辿れるようにします。保存済みの制作状態と一時的なランタイム障害を同じエラーとして表示しません。
 
-#### Ruler / Grid / Zoom
+## 8. ショートカット
 
-Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節目に置かれた Clip なら、Editor でも 9.1、9.2、9.3… と表示する。
+ショートカットは現在フォーカスしている編集文脈へ作用します。Text Inputにフォーカスがある場合は文字入力を優先します。
 
-Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
+| 文脈        | `Ctrl+A`   | `Delete` | `Ctrl+D`     |
+| ----------- | ---------- | -------- | ------------ |
+| Timeline    | 全Clip選択 | Clip削除 | Clip複製     |
+| MIDI Editor | 全Note選択 | Note削除 | Note複製     |
+| Text Input  | 文字列選択 | 文字削除 | OSの既定動作 |
 
-### 5.3 Devices
+### Timeline
 
-Devices は Track Context の Instrument と Effect Chain を扱う。Properties の子ではなく Detail Area の編集面として、Track の選択状態と同じ文脈で編集する。Detail Area に機能選択タブは置かず、対象を開く操作から編集面を表示する。
+| キー     | 操作                             |
+| -------- | -------------------------------- |
+| `Ctrl+C` | 選択ClipをCopy                   |
+| `Ctrl+V` | Playhead位置へPaste              |
+| `Ctrl+E` | Playhead位置でSplit              |
+| `M`      | Playhead位置へMarkerを追加       |
+| `Z`      | Time SelectionへZoom             |
+| `F`      | Arrangement全体が見える範囲へFit |
+| `Esc`    | 一時選択または一時UIを閉じる     |
 
-```text
-Track: Synth Lead
+### MIDI Editor
 
-[ Instrument ] → [ EQ ] → [ Compressor ] → [ Reverb ]
-```
+| キー                           | 操作                      |
+| ------------------------------ | ------------------------- |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | NoteのCopy、Cut、Paste    |
+| `Ctrl+D`                       | NoteをDuplicate           |
+| `←` / `→`                      | Grid単位で時間移動        |
+| `↑` / `↓`                      | 半音単位でPitch移動       |
+| `Shift + ↑` / `Shift + ↓`      | オクターブ単位でPitch移動 |
+| `Ctrl+Z` / `Ctrl+Y`            | Undo / Redo               |
+| `Esc`                          | Note Selectionを解除      |
 
-処理順を左から右へ表示し、Track の音がどの順序で生成・加工されるかを視覚的に対応させる。
+Transport、Workspace、Emergency Muteなどアプリ全体へ作用するショートカットはGlobal commandとして働きます。
 
-| 操作           | 内容                                      |
-| -------------- | ----------------------------------------- |
-| Add Instrument | Instrument Track の音源を選択             |
-| Add Effect     | 指定位置へ Effect を挿入                  |
-| Reorder        | Device の処理順を変更                     |
-| Bypass         | Device を一時的に処理経路から外す         |
-| Replace        | 別の Plugin へ差し替える                  |
-| Remove         | Chain から削除                            |
-| Edit           | Plugin Editor を開く                      |
-| Recover        | Missing Plugin の再走査・差し替え・無効化 |
+## 9. 基本的な制作の流れ
 
-Instrument Track では Instrument が信号列の先頭となり、その後へ Effect Chain が続く。Audio Track では Audio Input から Effect Chain へつながる。
+### MIDIを打ち込む
 
-#### Add Browser
+1. Instrument Trackを作り、Instrumentを選ぶ。
+2. Timelineの空白からMIDI Clipを作る。
+3. Detail AreaでNoteを入力し、移動、長さ、Velocity、Quantizeを調整する。
+4. Global Transportで再生し、DevicesとPlay Surfaceで音色を確認する。
+5. 必要なフレーズをDuplicateし、Arrangementへ組み立てる。
 
-Devices の追加位置にある `+` から Add Browser を開く。
+### Audio素材を配置する
 
-```text
-[Instrument] → [+] → [Compressor] → [+] → [Reverb]
-                 │
-                 ▼
-          Add Effect Browser
-```
+1. Browserで素材を検索し、Previewで確認する。
+2. Audio Trackへドラッグする。
+3. Timelineで移動、範囲変更、Fade、Splitを行う。
+4. Propertiesで数値を確認し、複製やLoopを設定する。
+5. Transportで再生してArrangement全体を確認する。
 
-Instrument slot から開いた場合は Instrument、Effect Chain から開いた場合は Effect を候補として提示する。選択後は同じ Track の Devices へ戻る。
+### 音色を作る
 
-#### Play Surface との連携
+1. Instrument TrackをFocusし、Devicesを開く。
+2. InstrumentとEffectの順序やパラメーターを調整する。
+3. Play Surfaceで演奏し、変更結果を聞く。
+4. Bypass、Reorder、Compareで候補を比べる。
+5. 必要な状態をSnapshotやAssetとして残す。
 
-Devices と Play Surface は同時に利用できる。
+### 演奏を録音する
 
-```text
-Devices
-[Instrument] → [EQ] → [Reverb]
-      ▲
-      │ parameter editing
-      │
-Play Surface
-[ Keyboard / Drum Pads ]
-      │
-      └─ play and evaluate
-```
+1. Instrument TrackをFocusする。
+2. Input sourceとRecord Armを確認する。
+3. MetronomeとCount-inを設定する。
+4. Global Transportから録音を開始し、Play SurfaceやMIDI機器で演奏する。
+5. Timelineで生成されたClipを確認し、Take Propertiesで候補を比較する。
 
-Instrument / Effect を調整した結果をすぐ演奏で確認し、同じ画面のまま調整へ戻れることを基本の音作り導線とする。
+### Takeを採用する
 
----
-
-## 6. Play Surface
-
-Play Surface の配置、Closed / Compact / Expanded の表示段階、Keyboard / Drum Pads の Mode Selector は本節で定義する。Arrange では、演奏先となる Focused Instrument Track と、録音・編集との関係を定義する。
-
-### 6.1 Focused Instrument Track
-
-Play Surface、Computer Keyboard、演奏用 MIDI 入力は Focused Instrument Track へ送る。
-
-Track Header の Focus / Play Surface 操作から演奏先を変更できる。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
-
-```text
-Arrange Selection ───────────────→ Properties / Timeline editing
-
-Active MIDI Clip ────────────────→ MIDI Editor
-
-Focused Instrument Track ────────→ Play Surface / Computer MIDI
-```
-
-別の Instrument Track を Focus すると、Play Surface の Track 名、Instrument、入力状態も同じ文脈へ更新する。
-
-### 6.2 Detail Area との連携
-
-Play Surface と Detail Area は同時に利用できる。特に Devices との組み合わせを、Instrument の音作りにおける基本導線とする。
-
-```text
-Devices
-[Instrument] → [EQ] → [Reverb]
-      ▲
-      │ parameter editing
-      │
-Play Surface
-[ Keyboard / Drum Pads ]
-      │
-      └─ play and evaluate
-```
-
-MIDI Editor と併用する場合は、MIDI Editor が Active MIDI Clip の演奏内容、Play Surface が Focused Instrument Track へのライブ入力を担当する。両者の対象は Header と Focus 表示から判別できる。
-
-### 6.3 録音との関係
-
-Play Surface から送られた MIDI は Focused Instrument Track で演奏される。録音時は Track の Record Arm と MIDI routing に従って Session へ記録する。
-
-録音開始前には Focused Track、Arm、Input source を確認できる状態を作る。Count-in、Metronome、Record の開始操作は Global Control Bar の Transport が担当し、録音中の進行は Timeline 上へ表示する。
-
----
-
-## 7. 再生・録音とフィードバック
-
-### 7.1 Global Transport との関係
-
-Arrange の再生・録音は Global Control Bar に含まれる Transport を使う。
-
-```text
-Global Control Bar
-Position / Go Start / Stop / Play / Record
-Loop / Metronome / Count-in / Tempo / Signature
-                │
-                ▼
-         Arrangement Transport
-                │
-      ┌─────────┼─────────┐
-      ▼         ▼         ▼
-   Timeline  MIDI Editor  Play Surface
-```
-
-Timeline、Detail Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
-
-Track Arm は録音対象の Track を選択する操作であり、Focus とは分離する。Global Record は Arm された Track の Timeline Recording を開始する操作で、Count-in の設定に従い Recording 開始とともに Arrangement Transport も進行する。Arm された Track が存在しない場合は Recording と Transport を開始せず、録音対象を Arm するよう利用者へ通知する。
-
-Browser Asset Preview、Take Preview、MIDI Editor Note Preview、Plugin 内部の試聴は、それぞれ対象単位の Preview として扱う。Transport Play と Preview の状態は画面上で判別できる。
-
-### 7.2 即時表示と確定
-
-Clip や Note の Drag、Velocity、Trim、Automation Point など連続操作は Pointer の動きへ追従して画面上の Preview を更新する。操作確定時に Canonical edit を実行し、Core から返る Session と一致させる。
-
-```text
-Pointer move
-    │
-    ▼
-UI Preview
-    │
-Pointer up
-    │
-    ▼
-Canonical edit
-    │
-    ▼
-Confirmed Session
-```
-
-利用者は操作結果を即座に確認でき、制作状態の正本は Core 側へ一本化される。
-
-### 7.3 状態と復旧
-
-Hover、Selected、Focused、Active Tool、Pending、Recording、Warning などの視覚表現は全体仕様と共通にする。Arrange では特に、Clip / Track Selection、Focused Instrument Track、Active MIDI Clip、Recording、Preview の違いを判別しやすくする。
-
-Missing source、Missing Plugin、Audio device fault、runtime out-of-sync など制作継続へ影響する問題は、作用範囲に応じて表示先を決める。
-
-| 問題                   | 主な表示先                     |
-| ---------------------- | ------------------------------ |
-| Audio runtime / device | Global Control Bar + 全体通知  |
-| Missing Plugin         | Devices / Track status         |
-| Missing Audio source   | Clip / Properties              |
-| Runtime sync           | Timeline status + retry action |
-| 一時的な編集結果       | Toast                          |
-
-復旧操作は問題が発生した対象の近くから辿れるようにする。
-
----
-
-## 8. 操作文脈とショートカット
-
-Keyboard Shortcut は現在の編集文脈へ作用する。
-
-| 文脈        | 主な対象 | `Ctrl+A`     | `Delete`  | `Ctrl+D`             |
-| ----------- | -------- | ------------ | --------- | -------------------- |
-| Timeline    | Clip     | 全 Clip 選択 | Clip 削除 | Clip 複製            |
-| MIDI Editor | Note     | 全 Note 選択 | Note 削除 | Note 複製            |
-| Text Input  | 文字列   | 文字列選択   | 文字削除  | OS / Text の既定動作 |
-
-Timeline の主要操作は次の通りである。
-
-| キー     | Timeline                           |
-| -------- | ---------------------------------- |
-| `Ctrl+A` | 全 Clip 選択                       |
-| `Ctrl+C` | 選択 Clip を Copy                  |
-| `Ctrl+V` | Playhead 位置へ Paste              |
-| `Ctrl+D` | 選択 Clip を直後へ Duplicate       |
-| `Ctrl+E` | Playhead 位置で Split              |
-| `Delete` | 選択 Clip / Marker / Range を削除  |
-| `M`      | Playhead 位置へ Marker を追加      |
-| `Z`      | Time Selection へ Zoom             |
-| `F`      | Arrangement 全体が見える範囲へ Fit |
-| `Esc`    | 現在の一時選択や一時 UI を閉じる   |
-
-MIDI Editor の主要操作は次の通りである。
-
-| キー              | MIDI Editor                 |
-| ----------------- | --------------------------- |
-| `Ctrl+A`          | 全 Note 選択                |
-| `Ctrl+C`          | Copy                        |
-| `Ctrl+X`          | Cut                         |
-| `Ctrl+V`          | Playhead へ Paste           |
-| `Ctrl+D`          | Duplicate                   |
-| `Delete`          | 選択 Note を削除            |
-| `← / →`           | Grid 単位で時間移動         |
-| `↑ / ↓`           | 半音単位で Pitch 移動       |
-| `Shift + ↑ / ↓`   | オクターブ単位で Pitch 移動 |
-| `Esc`             | Note Selection を解除       |
-| `Ctrl+Z / Ctrl+Y` | Undo / Redo                 |
-
-Transport、Workspace、Command、Emergency Mute などアプリ全体へ作用する Shortcut は Global command として働く。
-
-Computer Keyboard を演奏入力へ使う場合は Play Surface の入力モードを明示し、Text Input へ Focus がある間は文字入力を優先する。
-
----
-
-## 9. 基本制作シナリオ
-
-### 9.1 MIDI の打ち込み
-
-```text
-Add Instrument Track
-        ↓
-Choose Instrument
-        ↓
-Double Click empty lane
-        ↓
-MIDI Clip created
-        ↓
-Detail Area / MIDI Editor
-        ↓
-Draw / Double Click notes
-        ↓
-Move / Resize / Velocity / Quantize
-        ↓
-Duplicate phrase
-        ↓
-Play from Global Transport
-        ↓
-Edit while listening
-```
-
-Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Track の音色調整は Detail Area の Devices で行い、Clip 編集と Track 属性の意味を分ける。
-
-### 9.2 Audio 素材からの構成
-
-```text
-Open Browser
-      ↓
-Search / Preview audio
-      ↓
-Drag to Audio Track
-      ↓
-Move / Trim / Fade
-      ↓
-Adjust Clip properties in Properties
-      ↓
-Duplicate / Split / Arrange
-      ↓
-Play and review
-```
-
-素材探索、Timeline への投入、直接編集、属性調整が Browser、Properties、Main Canvas の間で連続する。
-
-### 9.3 Instrument と Effect の音作り
-
-```text
-Select / Focus Instrument Track
-        ↓
-Open Devices
-        ↓
-Open Play Surface
-        ↓
-Play
-        ↓
-Edit Instrument / Effect in Devices
-        ↓
-Play again
-        ↓
-Reorder / Bypass / Compare
-        ↓
-Return to Timeline
-```
-
-Devices と Play Surface を同時に使うことで、音色変更と演奏確認を画面切替に依存せず往復できる。
-
-### 9.4 演奏から録音
-
-```text
-Focus Instrument Track
-      ↓
-Open Play Surface
-      ↓
-Arm Track
-      ↓
-Set Metronome / Count-in
-      ↓
-Record from Global Transport
-      ↓
-Play Keyboard / Drum Pads / MIDI controller
-      ↓
-Recording appears on Timeline
-      ↓
-Stop
-      ↓
-Review Take
-```
-
-録音開始・停止は Global Transport、入力は Play Surface / MIDI controller、進行表示は Timeline、候補比較は Take Properties が担当する。
-
-### 9.5 Take の比較と採用
-
-```text
-Finish recording
-      ↓
-Open Take Properties
-      ↓
-Preview Raw / Processed
-      ↓
-Compare takes
-      ↓
-Use
-      ↓
-Canonical Clip updated
-
-or
-
-Place copy
-      ↓
-Alternative Clip placed on Timeline
-```
-
-Take の比較操作は録音素材の文脈へ集約し、Timeline は採用後の Arrangement 編集へ集中する。
+1. Take PropertiesでRaw、Processed、別テイクをPreviewする。
+2. 採用する候補は `Use` で正準Clipへ反映する。
+3. 別の配置で試す候補は `Place copy` でTimelineへ置く。
+4. 比較前の録音と由来を残したまま、Arrangementを続ける。

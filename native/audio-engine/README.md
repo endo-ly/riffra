@@ -1,58 +1,51 @@
-# Riffra native audio engine
+# Riffra Native Audio Engine
 
-This sidecar owns the real-time timing domain. The Tauri process supervises it and never runs audio callbacks or third-party plugin code.
+Native audio engineは、リアルタイム音声の時間管理を担うC++ / JUCEサイドカーです。Tauriプロセスはサイドカーを起動・監督しますが、音声コールバックや第三者プラグインのコードを実行しません。
 
-Current executable modes:
+IPC全体の契約は [IPC契約](../../docs/ipc.md) にまとめています。本書では、サイドカーの役割と開発時の扱いだけを説明します。
 
-- `riffra-audio --probe` enumerates platform audio device types without opening an audio stream.
-- `riffra-audio --serve` opens the default device in emergency-mute state and accepts one JSON command per stdin line.
+## 1. 実行モード
 
-Windows uses ASIO and WASAPI. Linux uses ALSA.
+```text
+riffra-audio --probe
+  デバイスの種類を列挙する。音声ストリームは開かない。
 
-The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed on a software-monitored input. Rust releases startup mute after this safety boundary; a failed VST graph is kept passive and reported separately from device safety. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
+riffra-audio --serve
+  音声デバイスを安全な状態で開き、標準入力からJSON Linesを受け取る。
+```
 
-## Protocol examples
+WindowsではASIOとWASAPI、LinuxではALSAを使います。デバイスの列挙、通常の音声処理、プラグインの走査は別の起動モードとして扱い、常駐する音声セッションへ不要な影響を与えません。
+
+## 2. 音声の安全
+
+サイドカーは、音声を出す前に安全側の状態を作ります。起動時のミュート、出力ゲインの制限、解除時のフェード、非有限値の拒否、出力の直流成分の遮断、音響フィードバックの検知を一つの安全経路として扱います。
+
+フィードバックを検知した場合は自動的にミュートし、状態通知へ原因を含めます。プラグインのロードやグラフ構築に失敗しても、デバイスの安全状態と保存済みデータの扱いを分けて報告します。Rustが安全条件を確認した後に、起動時のミュートを解除します。
+
+## 3. プロトコル
+
+`--serve` は1行のJSONを1要求として読み、JSON Linesで応答します。主な要求は、状態照会、タイムライン投影、Transport、デバイスと安全制御、トラックデバイス、録音、Preview、テイク比較、MIDIです。
 
 ```json
 {"type":"status"}
-{"type":"setEmergencyMute","muted":false}
-{"type":"setMasterGainDb","gainDb":-24.0}
-{"type":"loadTimelineSnapshot","snapshot":{...}}
-{"type":"setTrackDeviceParameter","trackId":"track:1","deviceId":"device:1","parameterIndex":0,"value":0.5}
+{"type":"setEmergencyMute","muted":true}
+{"type":"prepareTimelineSnapshot","snapshot":{}}
+{"type":"commitTimelineSnapshot"}
 {"type":"sendTrackMidi","trackId":"track:1","bytes":[144,60,100]}
-{"type":"recoverAudioDevice"}
-{"type":"previewSample","path":"C:\\path\\to\\processed.wav","startMs":0,"endMs":1000,"gain":1.0}
-{"type":"stopPreview"}
-{"type":"openMidiInput","name":"Controller Name"}
-{"type":"closeMidiInput"}
-{"type":"startArrangeRecording","directory":"C:\\path\\to\\recording"}
-{"type":"stopArrangeRecording"}
 {"type":"shutdown"}
 ```
 
-Responses are JSON Lines and always include an error scope and `dataSafe` when a request fails.
+応答には要求との相関に使うIDを含めます。失敗時は、音声デバイス、プラグイン、録音、プロトコルなどの範囲と、保存済みデータが保たれているかを伝えます。状態イベントは要求への応答を待っている間も流れます。
 
-Status replies include `feedbackSuspected` when the detector has engaged emergency mute due to acoustic feedback. The flag clears when emergency mute is released or the audio device is restarted.
+音声サイドカーはArrangementのスナップショットから一時的なグラフを作ります。グラフを保存済みセッションへ直接書き戻さず、Coreが確定した順序に従って準備・有効化・破棄を行います。
 
-When an input is open, live MIDI is routed to the matching Instrument Track.
-Arrange recording stores captured MIDI with the track's recording result.
+## 4. ビルド
 
-## Building
-
-The engine is built with CMake. Use the wrapper script for your platform:
+CMakeのラッパースクリプトを使います。
 
 ```powershell
 # Windows
 .\build.ps1 -Configuration Debug
-```
-
-The Windows wrapper defaults to the `Visual Studio 17 2022` generator and the
-`x64` architecture. Override either value when using another installed
-toolchain, for example:
-
-```powershell
-.\build.ps1 -Configuration Debug -Generator Ninja
-.\build.ps1 -Configuration Debug -Generator 'Visual Studio 16 2019' -Architecture x64
 ```
 
 ```bash
@@ -60,15 +53,8 @@ toolchain, for example:
 ./build.sh Debug
 ```
 
-The sidecar target triple follows the host platform by default. When
-cross-compiling, pass `-DRIFFRA_TARGET_TRIPLE=<triple>` to CMake.
+スクリプトは、CMakeの構成、`riffra-audio` と `riffra-plugin-scan` のビルド、CTest、デスクトップ用バイナリのインストールを順に実行します。生成物は `apps/desktop/src-tauri/binaries/` に配置されます。
 
-Both scripts do the following:
+別のジェネレーターやアーキテクチャを使う場合は、ラッパースクリプトの引数で指定します。クロスコンパイル時のターゲット指定はCMakeの `RIFFRA_TARGET_TRIPLE` を使います。
 
-1. Configure CMake.
-2. Build `riffra-audio` and `riffra-plugin-scan`.
-3. Run CTest.
-4. Install the sidecars to `apps/desktop/src-tauri/binaries/` with `cmake --install`.
-
-This directory can be built independently of npm. The Tauri application expects
-the sidecars to exist under `apps/desktop/src-tauri/binaries/` before it starts.
+デスクトップアプリはサイドカーが配置されてから起動します。音声デバイスを使わないビルドとCTestはCIで実行でき、実機の入出力は対応するOSとALSA、ASIO、WASAPIの機器を備えた環境で確認します。
