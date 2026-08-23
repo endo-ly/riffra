@@ -96,9 +96,9 @@ CLI ホスト（apps/cli）
   └─ Tauri・React・Desktop Adapter・Audio Runtimeに依存しない
 
 Attached CLI（apps/cli --attach）
-  ├─ Desktopのendpointを検出してローカル制御境界へ接続する
-  ├─ DesktopのAppCore / SessionStore / DataRootLeaseを所有しない
-  └─ Desktop Control Routerを通じてDesktop Adapterを利用する
+  ├─ Desktopが公開する制御エンドポイントを検出して接続する
+  ├─ DesktopのAppCore / SessionStore / DataRootLeaseを開かない
+  └─ Desktop Control Routerを通じてDesktop Adapterへ要求を渡す
 
 永続化・外部境界
   ├─ riffra-host: SessionStore / Asset Repository / Project package / file parsers
@@ -111,9 +111,9 @@ Attached CLI（apps/cli --attach）
 
 ### Desktopの外部制御
 
-Windows Desktopは起動時に制御サーバーをNamed Pipeへbindし、準備完了後にData Rootの`control/desktop.json`へendpoint descriptorを公開する。Attached CLIはdescriptorの読込、Named Pipe接続、Protocol handshakeを完了してから操作を送る。制御サーバーはTauri commandではなくDesktop Adapterへ直接ルーティングする。
+Windows Desktopは起動時にNamed Pipeの制御サーバーを開始し、準備が整ったらData Rootの`control/desktop.json`へ接続情報を公開する。Attached CLIはその情報を読み、Named Pipeへの接続とProtocol handshakeを完了してから要求を送る。要求はTauri commandを経由せず、Desktop Control RouterからDesktop Adapterへ渡る。
 
-Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionStore・`AppCore<()>`を使う独立Hostである。Attached CLIだけがDesktopの`AppCore<AudioSupervisor>`、Undo/Redo履歴、canonical sequence、Audio RuntimeをGUIと共有する。
+Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionStore・`AppCore<()>`を使う独立Hostである。Attached CLIだけがDesktopの`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio RuntimeをGUIと共有する。
 
 ---
 
@@ -121,7 +121,7 @@ Standalone CLIはこの境界を経由せず、自身のDataRootLease・SessionS
 
 ### 4.1 単一の正準状態
 
-CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。`AppCore`はCreativeSession、canonical sequence、Undo/Redo履歴を一体の状態として管理し、フロントエンドと音声サイドカーはその投影を扱う。
+CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリップ、テイク、トラック、ラック、設定など、永続化される制作状態の正準モデルである。`AppCore`はCreativeSession、正準シーケンス、Undo/Redo履歴を一体の状態として管理し、フロントエンドと音声サイドカーはその投影を扱う。
 
 ### 4.2 Core操作境界
 
@@ -214,7 +214,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopが保持するLeaseの所有下で制御要求だけを送る。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
+DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopが保持するLeaseの内側で制御要求だけを送る。ロックファイルの存在ではなくOSのファイルロックで排他するため、異常終了後に残ったロックファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
 ---
 

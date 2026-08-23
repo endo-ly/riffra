@@ -10,7 +10,7 @@
 - Tauri命令のカタログ（領域ごとの分類と責務、実行モード）
 - NativeApi TS契約とTauri命令との対応規則
 - サイドカー JSON Lines プロトコルの構造と規則（音声・レンダー・プローブ）
-- CLI / Desktop制御プロトコルの現在の境界
+- CLIとDesktop制御のプロトコル境界
 - 境界ごとのエラー・状態遷移の契約
 - 権限・ケイパビリティ設定
 
@@ -46,16 +46,16 @@
                 └──────────────┘
 ```
 
-| 境界 | 方向                              | 方式                                       | 用途                                                     |
-| ---- | --------------------------------- | ------------------------------------------ | -------------------------------------------------------- |
-| A    | WebView → Rust                    | `invoke`（Tauri command）                  | 一切の操作・編集・照会                                   |
-| B    | Rust → WebView                    | Tauri event                                | 音声状態・メーター・トランスポート・ランタイム回復の通知 |
-| C    | Rust ↔ riffra-audio               | 子プロセスの stdin/stdout（JSON Lines）    | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
-| D    | Rust → riffra-render-worker       | 子プロセスの stdin/stdout（JSON 1行）      | オフラインレンダリング（1要求1プロセス）                 |
-| E    | Rust ↔ riffra-audio（probe）      | 子プロセスの stdout（JSON 1行）/ 引数      | デバイス・チャンネル列挙、VST3スキャン                   |
-| F    | 外部Host ↔ Desktop Control Server | Windows Named Pipe（length-prefixed JSON） | Desktopのcanonical state / Runtimeを外部から操作         |
+| 境界 | 方向                              | 方式                                    | 用途                                                     |
+| ---- | --------------------------------- | --------------------------------------- | -------------------------------------------------------- |
+| A    | WebView → Rust                    | `invoke`（Tauri command）               | 一切の操作・編集・照会                                   |
+| B    | Rust → WebView                    | Tauri event                             | 音声状態・メーター・トランスポート・ランタイム回復の通知 |
+| C    | Rust ↔ riffra-audio               | 子プロセスの stdin/stdout（JSON Lines） | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
+| D    | Rust → riffra-render-worker       | 子プロセスの stdin/stdout（JSON 1行）   | オフラインレンダリング（1要求1プロセス）                 |
+| E    | Rust ↔ riffra-audio（probe）      | 子プロセスの stdout（JSON 1行）/ 引数   | デバイス・チャンネル列挙、VST3スキャン                   |
+| F    | 外部Host ↔ Desktop Control Server | Windows Named Pipe（長さ付きJSON）      | Desktopの正準状態とRuntimeを外部から操作                 |
 
-使い分け基準: 常時稼働で低レイテンシが必要な音声経路は C、完了まで数秒〜数分かかるバッチは D、UI の都度起動が不要な一括列挙は E、Desktopの状態を外部Hostから操作する経路は F、それ以外のデスクトップ操作は A。Standalone CLIの対話型入出力はFとは別の標準入出力境界である。
+使い分けは、低レイテンシの音声処理にC、時間のかかるバッチにD、デバイスやプラグインの列挙にEを使う。起動中のDesktopを外部Hostから操作するときはF、それ以外のデスクトップ操作はAを使う。Standalone CLIの標準入出力はFとは別の境界である。
 
 ---
 
@@ -151,7 +151,7 @@
 | `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                                            |
 | `runtime-projection-status`      | `RuntimeProjectionStatus`             | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
 | `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
-| `canonical-state-changed`        | `CanonicalState`                      | GUI以外のDesktop Adapter操作を含むcanonical session・sequence・historyの変更                                            |
+| `canonical-state-changed`        | `CanonicalState`                      | GUI以外のDesktop Adapter操作を含む正準セッション、シーケンス、履歴の変更                                                |
 | `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                                                |
 | `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                                              |
 
@@ -225,15 +225,15 @@
 
 ---
 
-## 8. 境界 F: CLI / Desktop control（`riffra`）
+## 8. 境界 F: CLIとDesktop制御（`riffra`）
 
-`riffra`は明示的なStandaloneとAttachedの2つの実行モードを持つ。コマンド構文は両モードで同じ`riffra-control::ControlCommand`へ変換される。
+`riffra`にはStandaloneとAttachedの二つの実行モードがある。どちらも同じ`riffra-control::ControlCommand`へコマンドを変換する。
 
-Standaloneでは`DataRootLease`を取得してから`riffra-host::SessionStore`と`riffra-core::AppCore<()>`を開く。DesktopのTauri命令、音声サイドカー、レンダーワーカーは経由せず、同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。
+Standaloneでは`DataRootLease`を取得してから`riffra-host::SessionStore`と`riffra-core::AppCore<()>`を開く。DesktopのTauri命令、音声サイドカー、レンダーワーカーは経由しない。同じDataRootをDesktopや別のCLIプロセスが所有している場合は起動に失敗する。
 
-AttachedではDataRootLease、SessionStore、AppCore、Asset DBを開かない。Data Rootの`control/desktop.json`を読み、そこに記載されたNamed Pipeへ接続し、handshakeでProtocol versionと`instanceId`を検証してからDesktop Control Routerへ要求を送る。Attached CLIはDesktopのAppCore、履歴、canonical sequence、RuntimeをGUIと共有する。
+AttachedではDataRootLease、SessionStore、AppCore、Asset DBを開かない。Data Rootの`control/desktop.json`を読み、記載されたNamed Pipeへ接続する。Protocol versionと`instanceId`のhandshakeを終えてから、Desktop Control Routerへ要求を送る。Attached CLIはDesktopのAppCore、履歴、正準シーケンス、RuntimeをGUIと共有する。
 
-Named PipeはDesktopがbindしてからdescriptorを一時ファイル経由で公開する。descriptorの存在だけではDesktopの稼働を判定せず、接続とhandshakeまで成功しない要求は`hostUnavailable`として扱う。`--attach`の失敗はStandaloneへ自動切替しない。
+DesktopはNamed Pipeの準備が整ってからdescriptorを一時ファイル経由で公開する。descriptorの存在だけではDesktopの稼働を判定せず、接続とhandshakeまで成功しない要求は`hostUnavailable`として扱う。`--attach`の失敗はStandaloneへ自動で切り替えない。
 
 ### 8.1 起動とフレーミング
 
@@ -253,7 +253,7 @@ riffra --data-root ./data --interactive
 riffra --data-root ./data --attach --interactive
 ```
 
-StandaloneとAttached interactiveの要求はProtocol v2の`command`、`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求はcanonical sequenceが一致するときだけ実行される。
+StandaloneとAttachedのinteractive要求はProtocol v2の`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。
 
 ```json
 {
@@ -265,11 +265,11 @@ StandaloneとAttached interactiveの要求はProtocol v2の`command`、`params`�
 }
 ```
 
-Attached interactiveは標準入力の1行を1要求として読み、Named Pipeへフレーム化して転送する。Desktopは1接続内で要求と応答を順番に処理し、CLIは応答を標準出力へ1行ずつflushする。フレームの長さは8 MiB以下でなければならず、UTF-8でないJSONや不正なJSONは実行前に拒否する。
+Attachedのinteractive modeは、標準入力の1行を1要求として読み、Named Pipeのフレームへ変換して転送する。Desktopは1接続内の要求と応答を順番に処理し、CLIは応答を標準出力へ1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONでなければならず、条件を満たさない入力は実行前に拒否する。
 
 ### 8.2 応答とエラー
 
-成功応答にはProtocol v2と現在のcanonical sequenceを含める。
+成功応答にはProtocol v2と現在の正準シーケンスを含める。
 
 ```json
 {
@@ -281,7 +281,7 @@ Attached interactiveは標準入力の1行を1要求として読み、Named Pipe
 }
 ```
 
-入力検証、必須params、型、unknown command、Protocol versionの不一致は`invalidRequest`、Core・Host・保存処理の失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。Desktopへ接続できない場合は`hostUnavailable`、セーフモードや音声Runtimeが利用できない場合は`runtimeUnavailable`とする。機械判定はerror codeを使い、message文字列を解析しない。
+入力検証、必須`params`、型、unknown command、Protocol versionの不一致は`invalidRequest`として返す。Core、Host、保存処理の失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`、Desktopへ接続できない場合は`hostUnavailable`、セーフモードや音声Runtimeが利用できない場合は`runtimeUnavailable`である。機械判定にはerror codeを使い、message文字列を解析しない。
 
 ```json
 {
@@ -314,9 +314,9 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Asset / Project        | `asset import-midi`、`project export`、`project import`                                                                                                                            |
 | Rack state             | `instrument clear`、`effect remove/reorder`、`device bypass`                                                                                                                       |
 
-Attachedでは、上記に加えてRuntime projection、Transport、Audio status、Live MIDI、Plugin catalog、VST instrument/effect、device parameter、missing dependency、Render、background jobをDesktopの既存Adapter / Runtime ownerへ送れる。Standaloneではこれらを`runtimeUnavailable`として扱う。録音 lifecycle、Preview、Plugin editor、VST scan、library metadata編集はこの公開制御境界には含めない。
+Attachedでは、上記に加えてRuntime projection、Transport、Audio status、Live MIDI、Plugin catalog、VST instrument/effect、device parameter、missing dependency、Render、background jobをDesktopの既存AdapterとRuntime ownerへ送れる。Standaloneではこれらを`runtimeUnavailable`として扱う。録音lifecycle、Preview、Plugin editor、VST scan、library metadataの編集は、この公開制御境界に含めない。
 
-`render start`はDesktopの`RenderWorker`を所有するbackground jobを開始し、job idを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
+`render start`はDesktopが所有する`RenderWorker`のbackground jobを開始し、job idを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
 
 ---
 
