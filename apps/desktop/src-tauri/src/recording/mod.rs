@@ -1,8 +1,7 @@
-pub(crate) mod application;
 pub(crate) mod commands;
-pub(crate) mod materialize;
-mod model;
-mod repository;
 
-pub(crate) use model::*;
-pub(crate) use repository::*;
+pub(crate) use riffra_runtime::recording::RecordingAsset;
+#[cfg(test)]
+pub(crate) use riffra_runtime::recording::{
+    DropoutInformation, RecordingCapture, RecordingCaptureStatus,
+};

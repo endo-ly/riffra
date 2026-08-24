@@ -22,9 +22,9 @@ where
 
 fn app_context(state: &AppState) -> AssetPreviewContext<'_> {
     AssetPreviewContext {
-        audio: state.core.audio(),
-        data_root: state.core.data_root(),
-        safe_mode: state.core.safe_mode(),
+        audio: state.host.core().audio(),
+        data_root: state.host.data_root(),
+        safe_mode: state.host.core().safe_mode(),
     }
 }
 
@@ -51,7 +51,7 @@ pub async fn import_midi_file(
     name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AssetId, String> {
-    let data_root = state.core.data_root().to_path_buf();
+    let data_root = state.host.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         application::import_midi_asset(&data_root, &path, name.as_deref())
     })
@@ -70,7 +70,7 @@ pub async fn import_midi_bytes(
     bytes: Vec<u8>,
     state: State<'_, AppState>,
 ) -> Result<AssetId, String> {
-    let data_root = state.core.data_root().to_path_buf();
+    let data_root = state.host.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         application::import_midi_bytes(&data_root, &name, &bytes)
     })

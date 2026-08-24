@@ -9,7 +9,8 @@ pub async fn send_midi_to_track(
     run_runtime_control(app, move |state| {
         validate_target_instrument_track(state, &track_id)?;
         state
-            .core
+            .host
+            .core()
             .audio()
             .send_track_midi(&track_id, &bytes)
             .map_err(|error| error.to_string())
@@ -22,7 +23,8 @@ pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), St
     run_runtime_control(app, move |state| {
         validate_target_instrument_track(state, &track_id)?;
         state
-            .core
+            .host
+            .core()
             .audio()
             .panic_track_midi(&track_id)
             .map_err(|error| error.to_string())

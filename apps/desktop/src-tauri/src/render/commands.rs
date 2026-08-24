@@ -1,31 +1,17 @@
 //! Tauri boundary for offline timeline rendering.
 
-use tauri::{AppHandle, Manager};
+use tauri::State;
 
 use crate::AppState;
-use crate::render::{self, RenderOptions, RenderResult};
-use crate::storage::now_ms;
+use crate::render::{RenderOptions, RenderResult};
 
 #[tauri::command]
-pub async fn render_timeline(
+pub fn render_timeline(
     options: Option<RenderOptions>,
-    app: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<RenderResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let session = state
-            .core
-            .snapshot()
-            .map_err(|error| error.to_string())?
-            .session;
-        render::render_timeline_with_options(
-            &state.render_worker,
-            state.core.data_root(),
-            &session,
-            now_ms(),
-            options.unwrap_or_default(),
-        )
-    })
-    .await
-    .map_err(|error| format!("Timeline render task failed: {error}"))?
+    state
+        .host
+        .render_timeline(options.unwrap_or_default())
+        .map_err(|error| error.to_string())
 }

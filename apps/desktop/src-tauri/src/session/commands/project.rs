@@ -13,9 +13,10 @@ pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, S
 #[tauri::command]
 pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
     run_blocking_without_command_gate(app, |state| {
-        let store = SessionStore::new(state.core.data_root());
+        let store = SessionStore::new(state.host.data_root());
         state
-            .core
+            .host
+            .core()
             .application(&store)
             .history_state()
             .map_err(|error| error.to_string())
@@ -106,12 +107,13 @@ pub async fn replace_missing_track_plugin(
 pub async fn get_missing_dependencies(app: AppHandle) -> Result<Vec<MissingDependency>, String> {
     run_blocking(app, |state| {
         let session = state
-            .core
+            .host
+            .core()
             .snapshot()
             .map_err(|error| error.to_string())?
             .session;
         Ok::<_, String>(crate::missing::collect_missing(
-            state.core.data_root(),
+            state.host.data_root(),
             &session,
         ))
     })

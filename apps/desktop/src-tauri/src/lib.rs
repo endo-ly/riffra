@@ -3,160 +3,147 @@
 //! `lib.rs` deliberately hosts only:
 //!
 //! - `mod` declarations,
-//! - the `AppState` struct and the `pub(crate)` queue helper used by feature
-//!   modules to refresh the Library index after a canonical-state change,
-//! - the Tauri `setup` hook (load session, start audio supervisor, register
-//!   managed state),
+//! - the `AppState` struct containing the shared Host,
+//! - the Tauri `setup` hook that creates and registers the shared Host,
 //! - the `invoke_handler` registration that wires Tauri commands to their
 //!   feature-level implementations,
 //! - startup state construction and the invoke registration table.
 //!
-//! riffra-core owns the production rules and the canonical Application /
-//! Domain operations. This crate hosts the filesystem, runtime, and OS
-//! integration: recording lifecycle and Inbox management in `recording`,
-//! background-job orchestration in `render` / `plugins`,
-//! session command hosting in `session`, library read-model queries in
-//! `library`, asset preview in `asset`, and app-level commands and native
-//! probes in `host_commands`.
+//! The Runtime crate owns the live DAW services. This crate contains only
+//! Tauri command adapters, Desktop bootstrap DTOs, resource-path resolution,
+//! and the event sink that forwards Host events to the WebView.
 
 mod analysis;
 mod asset;
 mod audio_preferences;
-#[cfg(windows)]
-mod control;
 mod diagnostics;
 mod host_commands;
 mod jobs;
 mod library;
 mod missing;
 mod model;
-mod native_audio;
 mod plugin_catalog;
-mod plugin_validation;
 mod plugins;
 mod projects;
 mod recording;
 mod render;
-mod runtime;
 mod session;
-mod startup;
 mod storage;
 #[cfg(test)]
 mod types;
 
 use host_commands::*;
-use model::{
-    AudioDeviceProbe, AudioDriverInfo, AudioStatus, BootstrapState, RecoveryCandidate,
-    RuntimeProjectionStatus, RuntimeStartupFinishedEvent,
-};
-use native_audio::{AudioDeviceReopenOutcome, AudioSupervisor};
-use riffra_core::{AppCore, CreativeSession};
-use riffra_render_worker::RenderWorker;
-use serde::Deserialize;
-use session::adapter as session_adapter;
-use std::{
-    sync::{Arc, Mutex, OnceLock},
-    time::Duration,
-};
+use model::{AudioDeviceProbe, AudioStatus, BootstrapState, RecoveryCandidate};
+use riffra_runtime::{DawHost, HostConfig, HostEvent, HostEventSink, RuntimeBinaries};
+use std::sync::Arc;
 use storage::SessionStore;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandEvent;
-
-const DEFAULT_VST3_ROOT: &str = r"C:\Program Files\Common Files\VST3";
-const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-
-static NATIVE_PROBE_GATE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 struct AppState {
-    _data_root_lease: riffra_host::DataRootLease,
-    app_handle: AppHandle,
-    core: AppCore<AudioSupervisor>,
-    command_gate: Mutex<()>,
-    recording_operation_gate: Mutex<()>,
-    runtime: Arc<runtime::RuntimeReconciler<AudioSupervisor>>,
-    render_worker: RenderWorker,
-    audio_preferences: Mutex<audio_preferences::AudioPreferences>,
-    jobs: jobs::JobRegistry,
+    host: DawHost,
 }
 
-/// Completes startup-only persistence and native reconciliation after Tauri
-/// has registered managed state. Audio-device initialization can involve a
-/// driver handshake, so it must not hold up the first WebView paint.
-fn queue_startup_maintenance(
-    app_handle: AppHandle,
-    data_root: std::path::PathBuf,
-    session: CreativeSession,
-    requested_preferences: audio_preferences::AudioPreferences,
-) {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app_handle.state::<AppState>();
-        let (status, runtime_started) = if state.core.safe_mode() {
-            (None, state.core.audio().startup_completed())
-        } else {
-            match startup::initialize_audio_runtime(&state, || {
-                library::index::queue(&data_root, &session);
-            }) {
-                Ok(initialization) => {
-                    let runtime_started = initialization.runtime_error.is_none();
-                    if let Some(error) = initialization.runtime_error.as_deref() {
-                        let _ = diagnostics::record(&data_root, "startup-runtime", error);
-                    }
-                    (Some(initialization.status), runtime_started)
-                }
-                Err(error) => {
-                    let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                    (None, false)
-                }
+fn default_vst3_root() -> String {
+    #[cfg(windows)]
+    {
+        r"C:\Program Files\Common Files\VST3".into()
+    }
+    #[cfg(not(windows))]
+    {
+        "/usr/lib/vst3".into()
+    }
+}
+
+struct TauriHostEventSink {
+    app: AppHandle,
+}
+
+impl HostEventSink for TauriHostEventSink {
+    fn emit(&self, event: HostEvent) {
+        let result = match event {
+            HostEvent::CanonicalStateChanged(value) => {
+                self.app.emit("canonical-state-changed", value)
+            }
+            HostEvent::RuntimeStartupFinished { succeeded } => self.app.emit(
+                "runtime-startup-finished",
+                serde_json::json!({"succeeded": succeeded}),
+            ),
+            HostEvent::RuntimeProjectionStatus(value) => {
+                self.app.emit("runtime-projection-status", value)
+            }
+            HostEvent::AudioStatus(value) => self.app.emit("audio-status", value),
+            HostEvent::AudioMeters(value) => self.app.emit("audio-meters", value),
+            HostEvent::TransportStatus(value) => self.app.emit("transport-status", value),
+            HostEvent::RuntimeRestarted { generation } => self.app.emit(
+                "runtime-restarted",
+                serde_json::json!({"generation": generation}),
+            ),
+            HostEvent::TrackPluginStateChanged(value) => {
+                self.app.emit("track-plugin-state-changed", value)
+            }
+            HostEvent::TrackPluginParameterChanged(value) => {
+                self.app.emit("track-plugin-parameter-changed", value)
             }
         };
-        let _ = app_handle.emit(
-            "runtime-startup-finished",
-            RuntimeStartupFinishedEvent {
-                succeeded: runtime_started,
-            },
-        );
-        state.core.audio().emit_status(&app_handle);
-
-        if state.core.safe_mode() {
-            library::index::queue(&data_root, &session);
-            return;
+        if let Err(error) = result {
+            tracing::debug!(error = %error, "Tauri Host event could not be delivered");
         }
+    }
+}
 
-        if let Some(status) = status {
-            match audio_preferences::AudioPreferences::from_effective_status(&status) {
-                Ok(effective) => {
-                    let preferences_unchanged = state
-                        .audio_preferences
-                        .lock()
-                        .map(|current| *current == requested_preferences)
-                        .unwrap_or(false);
-                    if preferences_unchanged {
-                        if let Err(error) =
-                            audio_preferences::AudioPreferencesStore::new(&data_root)
-                                .save(&effective)
-                        {
-                            let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                        }
-                        if let Err(error) = state
-                            .core
-                            .audio()
-                            .set_restart_preferences(effective.clone())
-                        {
-                            let message = error.to_string();
-                            let _ = diagnostics::record(&data_root, "startup-audio", &message);
-                        }
-                        if let Ok(mut current) = state.audio_preferences.lock() {
-                            *current = effective;
-                        }
-                    }
-                }
-                Err(error) => {
-                    let _ = diagnostics::record(&data_root, "startup-audio", &error);
-                }
-            }
+fn bundled_runtime_binaries(app: &AppHandle) -> Result<RuntimeBinaries, String> {
+    let directory = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Tauri resource directory is unavailable: {error}"))?
+        .join("binaries");
+    let target_triple = bundled_target_triple()?;
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let find = |name: &str| -> Result<std::path::PathBuf, String> {
+        let path = directory.join(format!("{name}-{target_triple}{suffix}"));
+        if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "bundled runtime binary is missing: {}",
+                path.display()
+            ))
         }
-    });
+    };
+    Ok(RuntimeBinaries::new(
+        find("riffra-audio")?,
+        find("riffra-plugin-scan")?,
+        find("riffra-render")?,
+    ))
+}
+
+fn bundled_target_triple() -> Result<&'static str, String> {
+    #[cfg(windows)]
+    {
+        return Ok("x86_64-pc-windows-msvc");
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-unknown-linux-gnu");
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-unknown-linux-gnu");
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-apple-darwin");
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-apple-darwin");
+    }
+    #[allow(unreachable_code)]
+    Err(format!(
+        "bundled runtime binaries are not defined for {}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ))
 }
 
 fn bootstrap_recovery_candidates(
@@ -183,11 +170,6 @@ fn bootstrap_recovery_candidates(
         })
 }
 
-fn abort_on_poison<T>(error: std::sync::PoisonError<T>) -> ! {
-    eprintln!("[riffra] Internal state lock was poisoned: {error}. Aborting.");
-    std::process::abort();
-}
-
 fn safe_mode_from_args<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -212,7 +194,6 @@ fn safe_mode_requested() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed)
@@ -220,9 +201,9 @@ pub fn run() {
             {
                 // The window is actually gone; the frontend has already had
                 // its chance to flush plugin state before calling destroy().
-                // Shutting the audio sidecar down only now keeps the runtime
+                // Shutting the shared Host down only now keeps the runtime
                 // alive while a close request is still cancellable.
-                state.core.audio().force_shutdown();
+                state.host.shutdown();
             }
         })
         .setup(|app| {
@@ -230,101 +211,19 @@ pub fn run() {
             let data_root = app.path().app_data_dir().map_err(|error| {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
-            std::fs::create_dir_all(&data_root)?;
-            let data_root_lease = riffra_host::DataRootLease::acquire(&data_root)
-                .map_err(|error| format!("Riffra data root could not be opened: {error}"))?;
-            let preferences = audio_preferences::load_or_default(&data_root)?;
-            let audio = if safe_mode {
-                AudioSupervisor::offline(
-                    "Safe Mode is active; native audio, MIDI, and external plugins remain isolated.",
-                )
-            } else {
-                AudioSupervisor::start(app.handle(), preferences.clone())
-            };
-            let loaded = match SessionStore::new(&data_root).load_or_create() {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    audio.force_shutdown();
-                    return Err(error.into());
-                }
-            };
-            let session = loaded.session;
-            let recovered_from_generation = loaded.recovered_from_generation;
-            let core = AppCore::new(
-                data_root.clone(),
-                session.clone(),
-                audio.clone(),
-                recovered_from_generation,
-                safe_mode,
-            );
-            let runtime_recovery:
-                Option<crate::runtime::projection_coordinator::RuntimeRecovery> = if safe_mode {
-                None
-            } else {
-                let runtime_audio = audio.clone();
-                let runtime_app = app.handle().clone();
-                Some(Arc::new(move |expected_generation, timeout| {
-                    runtime_audio.restart_sidecar_for_runtime(
-                        &runtime_app,
-                        expected_generation,
-                        timeout,
-                    )
-                    .map_err(crate::runtime::error::RuntimeError::from)
-                }) as crate::runtime::projection_coordinator::RuntimeRecovery)
-            };
-            let runtime_status_app = app.handle().clone();
-            let runtime_status_listener: crate::runtime::projection_coordinator::ProjectionStatusHook =
-                Arc::new(move |status: RuntimeProjectionStatus| {
-                    let _ = runtime_status_app.emit("runtime-projection-status", &status);
-                });
-            let runtime = Arc::new(runtime::RuntimeReconciler::with_status_listener(
-                Arc::new(audio.clone()),
-                runtime_recovery,
-                runtime_status_listener,
-            )?);
-            let runtime_for_restart = Arc::downgrade(&runtime);
-            audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
-                if let Some(runtime) = runtime_for_restart.upgrade()
-                    && !runtime.requeue_after_runtime_restart(generation)
-                    && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
-                {
-                    tracing::warn!(
-                        generation,
-                        error = %error,
-                        "Runtime restart had no graph to restore and mute release failed"
-                    );
-                }
-            }))?;
-            let effective_preferences = preferences.clone();
-            audio.set_restart_preferences(effective_preferences.clone())?;
-            let startup_data_root = data_root.clone();
-            let startup_session = session.clone();
-            app.manage(AppState {
-                _data_root_lease: data_root_lease,
-                app_handle: app.handle().clone(),
-                core,
-                command_gate: Mutex::new(()),
-                recording_operation_gate: Mutex::new(()),
-                runtime,
-                render_worker: RenderWorker::bundled()?,
-                audio_preferences: Mutex::new(effective_preferences),
-                jobs: jobs::JobRegistry::default(),
-            });
-            #[cfg(windows)]
-            {
-                match control::start(app.handle().clone(), data_root.clone()) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        tracing::warn!(error = %error, "Riffra Host control server is unavailable");
-                    }
-                }
-            }
-            queue_startup_maintenance(
-                app.handle().clone(),
-                startup_data_root,
-                startup_session,
-                preferences,
-            );
+            let binaries = bundled_runtime_binaries(app.handle())?;
+            let host = DawHost::open(
+                HostConfig {
+                    data_root: data_root.clone(),
+                    safe_mode,
+                    binaries: binaries.clone(),
+                },
+                Arc::new(TauriHostEventSink {
+                    app: app.handle().clone(),
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+            app.manage(AppState { host });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -451,49 +350,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{bootstrap_recovery_candidates, safe_mode_from_args};
-    use crate::host_commands::{NativeAudioProbe, parse_stdout};
-    use crate::model::DeviceChannels;
     use crate::storage::SessionStore;
     use riffra_core::CreativeSession;
-
-    #[test]
-    fn parses_audio_probe_with_unicode_device_names() {
-        let probe = parse_stdout::<NativeAudioProbe>(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}]}"#,
-            "audioDeviceProbe",
-        )
-        .unwrap();
-        assert_eq!(probe.drivers[0].name, "ASIO");
-        assert_eq!(probe.drivers[0].inputs[0].name, "Focusrite");
-        assert_eq!(probe.drivers[0].inputs[0].channels[0].name, "Input 1");
-        assert_eq!(probe.drivers[0].outputs[0].channels[0].index, 0);
-        assert_eq!(probe.drivers[0].outputs[0].channels[0].name, "Output 1");
-        assert_eq!(
-            probe.drivers[1].device_pairing,
-            crate::model::AudioDevicePairing::Independent
-        );
-        assert!(probe.drivers[1].inputs.is_empty());
-        assert!(probe.drivers[1].outputs.is_empty());
-    }
-
-    #[test]
-    fn parses_device_channels_detail() {
-        let detail = parse_stdout::<DeviceChannels>(
-            br#"{"type":"deviceChannels","driver":"ASIO","inputDevice":"Focusrite","inputChannels":[{"index":0,"name":"Analogue 1"}],"outputDevice":"Focusrite","outputChannels":[{"index":0,"name":"Output 1"}]}"#,
-            "deviceChannels",
-        )
-        .unwrap();
-        assert_eq!(detail.driver, "ASIO");
-        assert_eq!(detail.input_channels[0].name, "Analogue 1");
-        assert_eq!(detail.output_channels[0].name, "Output 1");
-    }
-
-    #[test]
-    fn rejects_non_probe_messages() {
-        let error = parse_stdout::<DeviceChannels>(br#"{"type":"audioStatus"}"#, "deviceChannels")
-            .unwrap_err();
-        assert!(error.contains("readable"));
-    }
 
     #[test]
     fn recognizes_safe_mode_only_from_explicit_flag() {
