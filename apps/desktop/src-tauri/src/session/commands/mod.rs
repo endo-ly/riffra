@@ -1,11 +1,11 @@
-//! Thin Tauri command boundary for Session Adapter operations.
+//! Thin Tauri command boundary for shared Session operations.
 //!
 //! Each command receives an `AppHandle`, moves synchronous work to the
 //! blocking pool, and builds a
-//! [`SessionContext`](super::adapter::SessionContext) of concrete
+//! [`SessionContext`](riffra_runtime::session::context::SessionContext) of concrete
 //! dependencies, delegates to the matching Core operation, and returns
 //! the resulting DTO. The production workflow (arrangement edit, runtime
-//! sync, validate/persist) is hosted by [`super::adapter`], which delegates
+//! sync, validate/persist) is hosted by the shared Runtime adapter, which delegates
 //! canonical edits to riffra-core; nothing here re-implements it.
 
 use tauri::{AppHandle, Manager};
@@ -13,8 +13,6 @@ use tauri::{AppHandle, Manager};
 use crate::AppState;
 use crate::missing::MissingDependency;
 use crate::model::{ArrangementMutationResult, RuntimeProjectionStatus, SessionAudioPair};
-use crate::session::adapter::{self, SessionContext};
-use crate::storage::SessionStore;
 use riffra_core::application::{
     MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SessionSettingsPatch,
 };
@@ -23,6 +21,7 @@ use riffra_core::{
     FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
     TimelineTick, TrackKind,
 };
+use riffra_runtime::session::{adapter, context::SessionContext};
 
 async fn run_blocking<T, E, F>(app: AppHandle, operation: F) -> Result<T, String>
 where
@@ -32,11 +31,10 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let _command_gate = state
-            .command_gate
-            .lock()
-            .map_err(|error| format!("Desktop command gate was poisoned: {error}"))?;
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| {
+            let _command_gate = state.host.lock_command_gate()?;
+            operation(state).map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
@@ -53,7 +51,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| operation(state).map_err(|error| error.to_string()))
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
@@ -70,7 +68,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| operation(state).map_err(|error| error.to_string()))
     })
     .await
     .map_err(|error| format!("Runtime control operation failed: {error}"))?
@@ -78,24 +76,25 @@ where
 
 fn app_context(state: &AppState) -> SessionContext<'_> {
     SessionContext {
-        core: &state.core,
-        audio: state.core.audio(),
-        runtime: &state.runtime,
-        data_root: state.core.data_root(),
-        safe_mode: state.core.safe_mode(),
-        app_handle: Some(&state.app_handle),
+        core: state.host.core(),
+        audio: state.host.core().audio(),
+        runtime: state.host.runtime(),
+        data_root: state.host.data_root(),
+        safe_mode: state.host.core().safe_mode(),
+        events: state.host.event_sink(),
     }
 }
 
 fn validate_target_instrument_track(state: &AppState, track_id: &str) -> Result<(), String> {
-    if state.core.safe_mode() {
+    if state.host.core().safe_mode() {
         return Err("Safe Mode does not allow targeted MIDI input.".into());
     }
     if track_id.trim().is_empty() {
         return Err("A target track is required for targeted MIDI.".into());
     }
     let session = state
-        .core
+        .host
+        .core()
         .snapshot()
         .map_err(|error| error.to_string())?
         .session;

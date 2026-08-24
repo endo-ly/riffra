@@ -4,7 +4,7 @@ use super::*;
 pub async fn get_runtime_projection_status(
     app: AppHandle,
 ) -> Result<RuntimeProjectionStatus, String> {
-    run_runtime_control(app, |state| Ok::<_, String>(state.runtime.status())).await
+    run_runtime_control(app, |state| Ok::<_, String>(state.host.runtime().status())).await
 }
 
 #[tauri::command]

@@ -87,9 +87,32 @@ jobs:
             ${{ runner.os }}-cargo-tauri-
 
       - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test -p riffra-runtime
       - run: cargo test -p riffra-control
       - run: cargo test -p riffra-cli
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  headless-process-linux:
+    name: Headless Host process (Linux)
+    needs: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: bash scripts/ci/headless-host-process.sh
+
+  headless-process-windows:
+    name: Headless Host process (Windows)
+    needs: rust-tauri
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: .\scripts\ci\headless-host-process.ps1
 
   native-linux:
     name: Native audio engine (Linux)
@@ -155,6 +178,14 @@ jobs:
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: ./native/audio-engine/build.sh Debug
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Exercise normal headless Host with native sidecars
+        shell: bash
+        env:
+          RIFFRA_HEADLESS_SAFE_MODE: '0'
+        run: bash scripts/ci/headless-host-process.sh
+
   native-windows:
     name: Native audio engine (Windows)
     runs-on: windows-2022
@@ -171,6 +202,14 @@ jobs:
       - name: Build and test on Windows
         shell: pwsh
         run: .\native\audio-engine\build.ps1 -Configuration Debug
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Exercise normal headless Host with native sidecars
+        shell: pwsh
+        env:
+          RIFFRA_HEADLESS_SAFE_MODE: '0'
+        run: .\scripts\ci\headless-host-process.ps1
 
       - name: Upload Windows sidecars
         uses: actions/upload-artifact@v7

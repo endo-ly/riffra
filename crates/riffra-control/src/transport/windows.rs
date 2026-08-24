@@ -216,9 +216,10 @@ mod tests {
             }
         });
 
+        let endpoint = crate::LocalControlEndpoint::WindowsNamedPipe { name };
         for expected in [1, 2] {
             let mut client = (0..200)
-                .find_map(|_| match connect(&name) {
+                .find_map(|_| match connect(&endpoint) {
                     Ok(stream) => Some(stream),
                     Err(_) => {
                         thread::sleep(Duration::from_millis(5));

@@ -21,15 +21,15 @@
 
 ## 2. プロセス構成
 
-Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成される。リアルタイム音声は常にサイドカーが担当し、Tauriプロセスは音声コールバックやプラグインコードを実行しない。
+Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構成される。GUIを使わない場合は、`riffra serve` が共有 `riffra-runtime::DawHost` をフォアグラウンドで起動する。どちらの構成でもリアルタイム音声はサイドカーが担当し、Hostプロセスは音声コールバックやプラグインコードを実行しない。
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │ Tauri シェル                                                     │
 │ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
 │ │ WebView (React)      │   │ Rust バックエンド                │ │
-│ │ 表示・操作・表示状態  │◀──▶│ Core / Desktop Adapter /       │ │
-│ │ NativeApi 経由で指令 │   │ ランタイム調整 / 永続化 / Jobs   │ │
+│ │ 表示・操作・表示状態  │◀──▶│ DawHost / Tauri adapter        │ │
+│ │ NativeApi 経由で指令 │   │ UI接続 / composition             │ │
 │ └──────────────────────┘   └──────────────────────────────────┘ │
 └──────┬──────────────────────────┬───────────────────────────────┘
        │ JSON Lines (stdin/stdout)
@@ -43,12 +43,13 @@ Riffraは1つのTauriシェルプロセスと複数の子プロセスで構成�
 └───────────────────────┘
 ```
 
-| プロセス             | 役割                                                       | 所有状態                                    |
-| -------------------- | ---------------------------------------------------------- | ------------------------------------------- |
-| Tauri シェル         | アプリ全体の監督。UI、Core接続、永続化、ジョブ管理         | CreativeSession（Core内）、SQLite索引、設定 |
-| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視   | ランタイムグラフ（投影される一時状態のみ）  |
-| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード） | なし                                        |
-| riffra-render-worker | タイムラインのオフラインレンダリング                       | なし                                        |
+| プロセス             | 役割                                                        | 所有状態                                   |
+| -------------------- | ----------------------------------------------------------- | ------------------------------------------ |
+| Tauri シェル         | DesktopのUI、DawHostのcomposition、Tauri event bridge       | UI接続、window、dialog                     |
+| `riffra serve` Host  | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
+| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
+| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
+| riffra-render-worker | タイムラインのオフラインレンダリング                        | なし                                       |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -69,12 +70,17 @@ React フロントエンド
   └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
 
 Tauri 命令層 (src-tauri/src/**/commands.rs)
-  ├─ 受け取った命令を Desktop Adapter へ委譲
+  ├─ 受け取った命令を共有Host serviceへ委譲
   └─ 実行モード: run_blocking（重い操作は spawn_blocking）で async ワーカーを塞がない
 
-Desktop Adapter (apps/desktop/src-tauri/src)
-  ├─ riffra-host / AudioSupervisor / RuntimeReconciler を Core の Port に接続
-  └─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
+Desktop adapter (apps/desktop/src-tauri/src)
+  ├─ Tauri command / event / windowの境界を担当
+  └─ riffra-runtime::DawHostへUI入力とbundle pathを接続
+
+riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
+  ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
+  ├─ AudioSupervisor / RuntimeReconciler / Transport ordering
+  └─ HostEventSink と Local Control Server
 
 riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
   ├─ SessionStore / Asset Repository / Project package
@@ -93,12 +99,12 @@ CLI ホスト（apps/cli）
   ├─ riffra-host のDataRootLease / SessionStoreを取得する
   ├─ AppCore と SessionStorage Port を直接利用する
   ├─ ワンショット引数と対話型 JSON Lines を同じ Dispatcher へ渡す
-  └─ Tauri・React・Desktop Adapter・Audio Runtimeに依存しない
+  └─ 永続編集だけを行うStandaloneモードと、DawHostを起動するserveモードを持つ
 
 Attached CLI（apps/cli --attach）
-  ├─ Desktopが公開する制御エンドポイントを検出して接続する
-  ├─ DesktopのAppCore / SessionStore / DataRootLeaseを開かない
-  └─ Desktop Control Routerを通じてDesktop Adapterへ要求を渡す
+  ├─ 起動中のRiffra Hostが公開する制御エンドポイントを検出して接続する
+  ├─ 接続先のAppCore / SessionStore / DataRootLeaseを開かない
+  └─ Host Control Serverを通じて正準操作を要求する
 
 永続化・外部境界
   ├─ riffra-host: SessionStore / Asset Repository / Project package / file parsers
@@ -109,11 +115,11 @@ Attached CLI（apps/cli --attach）
 
 制作状態を変更する命令はCoreのApplication層を通り、確定した`CanonicalState`が同じ順序でフロントエンドへ返る。選択やパネル状態などの表示状態はCreativeSessionとは分離してフロントエンドが保持する。
 
-### Desktopの外部制御
+### Hostの外部制御
 
-Windows Desktopは、起動中のアプリを外部Hostから操作する制御経路を持つ。Attached CLIはこの経路を介してDesktop Adapterへ要求を送り、DesktopのCoreとRuntimeを共有する。
+起動中のRiffra Hostは、外部クライアントから操作する制御経路を持つ。WindowsではNamed Pipe、LinuxではUnix Domain Socketを使い、接続情報を`<data_root>/control/host.json`へ公開する。Attached CLIはこの経路を介して接続先のCoreとRuntimeを共有する。
 
-Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立Hostである。Attached CLIはこれらを開かず、Desktopが保持するCore、Undo/Redo履歴、正準シーケンス、Audio RuntimeをGUIと共有する。
+Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立した永続編集モードである。`riffra serve`は自分のDataRootLease、`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio Runtimeを保持する。Attached CLIはこれらを開かず、接続先Hostの状態を利用する。
 
 ---
 
@@ -135,7 +141,7 @@ CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリ
 2. Domainが不変条件を検証し、正準化する
 3. SessionStorage Portを通じて更新候補を永続化する
 4. 保存成功後に正準状態を交換し、履歴と投影順序を更新する
-5. Desktop Adapterがライブラリ索引の更新と音声ランタイムへの投影を要求する
+5. 共有Runtime serviceがライブラリ索引の更新と音声ランタイムへの投影を要求する
 
 検証または永続化に失敗した更新候補は正準状態にも履歴にも反映されない。
 
@@ -149,7 +155,7 @@ CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリ
 
 ### 5.1 投影プロトコル
 
-Coreの `RuntimeProjection` Portは、正準スナップショットとその確定順序をホストの音声ランタイムへ渡す契約を定める。Desktopでは `RuntimeReconciler` がサイドカーとの接続を担う。
+Coreの `RuntimeProjection` Portは、正準スナップショットとその確定順序をホストの音声ランタイムへ渡す契約を定める。`riffra-runtime` の `RuntimeReconciler` がサイドカーとの接続、最新投影の採用、Transport orderingを担う。
 
 | 操作                                  | 意味                                                                              |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -159,11 +165,11 @@ Coreの `RuntimeProjection` Portは、正準スナップショットとその確
 
 ### 5.2 投影の整合性
 
-各投影要求にはCoreが採番した確定順序と、診断に使うセッションrevisionが付く。Desktopは投影要求を直列に処理し、より新しい要求が到着した場合は古い準備結果を有効化しない。準備中は現在のグラフを維持し、準備と有効化が完了した投影だけを再生に使う。失敗時の再試行やサイドカー再起動も最新の正準スナップショットを起点に行う。
+各投影要求にはCoreが採番した確定順序と、診断に使うセッションrevisionが付く。Hostは投影要求を直列に処理し、より新しい要求が到着した場合は古い準備結果を有効化しない。準備中は現在のグラフを維持し、準備と有効化が完了した投影だけを再生に使う。失敗時の再試行やサイドカー再起動も最新の正準スナップショットを起点に行う。
 
 ### 5.3 トランスポート
 
-Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が有効かどうかを判断する。Desktop Adapterは決定済みの要求を音声ランタイムへ伝える。古い要求や古い投影完了は現在の再生状態を上書きせず、投影が準備できていない場合は再生を待機または停止する。
+Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が有効かどうかを判断する。HostのTransport executorは決定済みの要求を音声ランタイムへ伝える。古い要求や古い投影完了は現在の再生状態を上書きせず、投影が準備できていない場合は再生を待機または停止する。
 
 ---
 
@@ -214,7 +220,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、Desktopへ制御要求だけを送る。
+DesktopとStandalone CLI、`riffra serve`は起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、接続先Hostへ制御要求だけを送る。
 
 排他にはロックファイルではなくOSのファイルロックを使うため、異常終了後に残ったファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
@@ -222,7 +228,7 @@ DesktopとStandalone CLIは起動時に `riffra-host::DataRootLease` を取得�
 
 ## 7. セーフモード
 
-`--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数（`1` / `true` / `yes` / `on`）で起動すると、サイドカーの起動・デバイスアクセス・プラグイン読み込みをすべて省略する。このとき `AudioSupervisor` はオフライン実装として生成され、外部デバイス・MIDI・プラグインから隔離される。
+`--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数（`1` / `true` / `yes` / `on`）で起動すると、サイドカーの起動・デバイスアクセス・プラグイン読み込みをすべて省略する。`riffra serve --safe-mode`でも同じ扱いとなり、`AudioSupervisor`はオフライン実装として生成される。
 
 - 初期化は「セッション読込 + ライブラリ索引」のみで完了し、`BootstrapState.safeMode: true` がUIに通知される
 - 音声・録音・再生・プレビュー・VST3読込系の命令はセーフモードではエラーとして無効化される。オフライン解析・書き出し・ライブラリ操作は通常モードと同一に利用できる
@@ -263,7 +269,7 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 | 素材コンテンツ | 生成済み素材のコンテンツは**不変**。内容変更は新しい Asset を mint する。変更できるのは管理メタデータ（name / tag / note）のみ              |
 | 参照整合       | セッションが参照する AssetId は必ず登録済みでなければならない（§6.4）                                                                       |
 | セッション     | ロード・保存前に `validate_and_normalize` を必ず通過。master gain などの安全限界は正準化でクランプされる                                    |
-| 更新順序       | Coreが制作状態の更新と投影を同じ確定順序で管理し、Desktop Adapterがその順序を保ってUIとランタイムへ渡す                                     |
+| 更新順序       | Coreが制作状態の更新と投影を同じ確定順序で管理し、Host Adapterがその順序を保ってUIとランタイムへ渡す                                        |
 | ランタイム     | 現役の投影グラフはセッションに保存されない。投影はいつでも破棄・再構築できる一時状態                                                        |
 | 安全           | サイドカーは緊急ミュート、起動時低ゲイン、非有限値拒否、DCブロック、音響フィードバック検知を安全チェーンとして持つ（`native/audio-engine`） |
 
@@ -273,4 +279,4 @@ riffra-core が `validate_and_normalize` と各モジュールで強制する不
 
 フロントエンドはCreativeSessionを描画し、ユーザー操作をFeature別NativeApi capabilityの命令へ変換する。制作状態を変更する命令の応答はCoreの確定順序で適用されるため、フロントエンドはセッション同士の競合解決、部分マージ、全体mutation queueを持たない。
 
-選択、パネル幅、ズーム、ダイアログはPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はDesktop Adapterへ委ねる。
+選択、パネル幅、ズーム、ダイアログはPresentation Stateであり、CreativeSessionとは別に管理する。Undo/Redoの可否はCoreが返す履歴状態を表示し、ランタイム投影の構築や再試行はHostのRuntimeへ委ねる。

@@ -68,7 +68,12 @@ Both scripts do the following:
 1. Configure CMake.
 2. Build `riffra-audio` and `riffra-plugin-scan`.
 3. Run CTest.
-4. Install the sidecars to `apps/desktop/src-tauri/binaries/` with `cmake --install`.
+4. Install the Tauri-named sidecars to `apps/desktop/src-tauri/binaries/` and
+   unsuffixed copies beside the matching Cargo CLI artifact (`target/debug/`
+   for Debug, `target/release/` otherwise) with `cmake --install`.
 
 This directory can be built independently of npm. The Tauri application expects
-the sidecars to exist under `apps/desktop/src-tauri/binaries/` before it starts.
+the target-triple-named sidecars under `apps/desktop/src-tauri/binaries/`, while
+`riffra serve` resolves the unsuffixed copies beside the `riffra` executable.
+Set `RIFFRA_HEADLESS_BINARIES_DESTINATION` to override the headless install
+destination when producing a distribution artifact.

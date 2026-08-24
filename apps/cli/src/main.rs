@@ -1,12 +1,12 @@
 mod args;
 mod attached;
-mod dispatcher;
+mod serve;
 
-use args::Cli;
+use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
-use dispatcher::Dispatcher;
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
+use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
 
 fn main() {
@@ -25,6 +25,18 @@ fn run() -> Result<(), String> {
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
     let expected_sequence = cli.expected_sequence;
+    if let Some(CliCommand::Serve(args)) = cli.command.as_ref() {
+        if attach {
+            return Err("serve cannot be combined with --attach".into());
+        }
+        if interactive {
+            return Err("serve cannot be combined with --interactive".into());
+        }
+        if expected_sequence.is_some() {
+            return Err("serve cannot be combined with --expected-sequence".into());
+        }
+        return serve::run(data_root, args.clone());
+    }
     let request = if interactive {
         None
     } else {
@@ -53,7 +65,7 @@ fn run() -> Result<(), String> {
         }
         let error = response
             .error
-            .ok_or_else(|| "Desktop returned an invalid failure response".to_string())?;
+            .ok_or_else(|| "Riffra Host returned an invalid failure response".to_string())?;
         return Err(format!("{}: {}", error.code, error.message));
     }
 
@@ -142,8 +154,8 @@ fn request_id_from_json(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::handle_request;
-    use crate::dispatcher::Dispatcher;
     use riffra_control::ErrorCode;
+    use riffra_runtime::Dispatcher;
     use std::fs;
 
     #[test]
@@ -251,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_only_commands_return_runtime_unavailable_in_standalone_mode() {
+    fn runtime_host_commands_return_runtime_unavailable_in_standalone_mode() {
         let root = std::env::temp_dir().join(format!(
             "riffra-cli-runtime-unavailable-{}",
             std::process::id()

@@ -12,11 +12,10 @@ use crate::jobs::{BackgroundJobStatus, JobKind, JobState};
 use crate::library::LibraryAsset;
 use crate::missing::MissingDependency;
 use crate::model::{
-    ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
-    AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState,
-    DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
-    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
-    SessionAudioPair,
+    ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
+    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, DeviceChannels,
+    MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult,
+    RecoveryCandidate, RuntimeProjectionStatus, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -33,6 +32,7 @@ use riffra_core::{
     RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange, Track,
     TrackKind,
 };
+use riffra_runtime::{ArrangementProjectionOutcome, RuntimeProjectionState};
 use ts_rs::{Config, TS};
 
 #[test]

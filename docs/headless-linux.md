@@ -1,22 +1,25 @@
 # ヘッドレス Linux 対応
 
-本書は、GUIを使わずにLinux上で制作状態を編集するCLIと、Native audio engineの境界および検証方法を説明する。
+本書は、GUIを使わずにLinux上で制作状態を編集・操作するCLI Hostと、Native audio engineの境界および検証方法を説明する。
 
 ## CLI Host
 
-Linuxの`riffra`は、`riffra-core`のApplication操作を`riffra-host`の永続化へ接続するStandalone Hostである。
+Linuxの`riffra`には、短時間のStandalone操作と、`riffra serve`で起動するLive Hostがある。Live Hostは共有`riffra-runtime::DawHost`を使い、Canonical state、Undo / Redo、Runtime projection、Transportを一つのDataRoot所有期間にまとめる。
 
 ```text
 AI agent
    │ spawn
    ▼
-riffra --data-root ./riffra-data --interactive
-   │ JSON Lines
+riffra --data-root ./riffra-data serve --safe-mode
+   │ foreground Host
    ▼
-DataRootLease → SessionStore → AppCore<()>
+DawHost → DataRootLease → AppCore<AudioSupervisor>
+   │ local control
+   ▼
+riffra --data-root ./riffra-data --attach session get
 ```
 
-DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所有できない。
+DataRootは次の構造を持つ。Desktop、Standalone CLI、Live Hostは同じDataRootを同時に所有できない。Attached CLIはDataRootを開かず、接続先Hostの所有する状態を利用する。
 
 ```text
 <data_root>/
@@ -27,7 +30,9 @@ DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所
 │  └─ riffra.db
 ├─ assets/
 ├─ recordings/
-└─ exports/
+├─ exports/
+└─ control/
+   └─ host.json
 ```
 
 起動例:
@@ -36,7 +41,17 @@ DataRootは次の構造を持つ。DesktopとCLIは同じDataRootを同時に所
 cargo run -p riffra-cli -- --data-root ./riffra-data session get
 cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --kind audio
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
+cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
+cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
+
+# Native audio engineを使う通常モード
+./native/audio-engine/build.sh Debug
+cargo run -p riffra-cli -- --data-root ./riffra-data serve
 ```
+
+`serve`は起動後に`control/host.json`を公開し、終了シグナルを受けるまでフォアグラウンドで動作する。LinuxのControl transportはowner-only Unix Domain Socketである。`--attach`はこのdescriptorを読み、handshake後に要求を転送する。
+
+Native build scriptはDesktop用のtriple付きバイナリを`apps/desktop/src-tauri/binaries/`へ、Headless用の`riffra-audio`、`riffra-plugin-scan`、`riffra-render`をCLI実行ファイルと同じ`target/debug/`または`target/release/`へインストールする。通常モードのHostは後者を自動解決する。実際の音声入力・出力にはALSAデバイスが必要で、デバイスが利用できない環境ではHostは起動してもRuntimeをReadyにできない。
 
 ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力から要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`はプロセス内の履歴を使うため、対話モードで利用する。
 
@@ -80,18 +95,24 @@ Standaloneの要求は次の形式である。`expectedSequence`は任意で、�
 }
 ```
 
-不正なJSON、要求形式、`params`、未知のコマンドは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでDesktop専用のRuntime操作を受けた場合は`runtimeUnavailable`として返す。
+不正なJSON、要求形式、`params`、未知のコマンドは`invalidRequest`、Core・Hostの失敗は`commandFailed`、`expectedSequence`の不一致は`conflict`として返す。応答の`requestId`は要求の値を保持する。StandaloneでRuntime操作を受けた場合は`runtimeUnavailable`として返す。
 
 ## Runtimeとの境界
 
-LinuxのStandalone CLIはAudio Runtimeを起動しない。保存済みの制作状態は、音声デバイスやGUIのない環境でも編集できる。RuntimeやDesktop専用サービスを必要とする操作は、このHostの範囲外である。
+Standaloneのワンショット／対話モードはAudio Runtimeを起動せず、保存済みの制作状態を編集する。`serve`は通常モードでは明示的に解決された`riffra-audio`を起動し、Safe Modeでは音声・MIDI・外部プラグインをオフラインにしてHostだけを起動する。
 
-| 範囲              | 例                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| Audio Runtime     | 再生、録音、Live MIDI、デバイス制御                                                               |
-| Desktopのサービス | プレビュー、レンダー、プラグインスキャン、プラグインエディタ、VST音源の追加・置換・パラメータ変更 |
+| 範囲               | Live Hostでの扱い                                                           |
+| ------------------ | --------------------------------------------------------------------------- |
+| Canonical state    | Session、History、Track操作、Undo / Redo                                    |
+| Runtime projection | 投影状態、Transport、Audio status / probe                                   |
+| Audio Runtime      | 通常モードで`riffra-audio --serve`を起動。Safe Modeでは`runtimeUnavailable` |
+| Plugin / Missing   | カタログ、スキャン、音源・エフェクト、欠落依存の操作をHostで実行            |
+| Recording          | Native capture、take確定、canonical Session反映をHostで実行                 |
+| Render / Jobs      | HostがRenderWorkerとJobRegistryを所有し、`job get/cancel`で状態を返す       |
+| Library / Analysis | 索引、検索、metadata更新、関連素材、音声解析をHostで実行                    |
+| Preview            | HostのAudio RuntimeへAsset previewを依頼（Safe Modeでは拒否）               |
 
-LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。CLIのDataRoot所有とNative audio engineのデバイス所有は混在させない。
+LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。Live HostのDataRoot所有とNative audio engineのデバイス所有はHostのライフサイクル内で分離される。
 
 ## Linuxでの検証
 
@@ -103,6 +124,10 @@ cargo test -p riffra-core
 cargo test -p riffra-host
 cargo test -p riffra-cli
 cargo run -p riffra-cli -- --data-root ./riffra-data session get
+cargo test -p riffra-control -p riffra-runtime
+cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
+# 別の端末から
+cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
 
 # Native audio engine
 ./native/audio-engine/build.sh Debug

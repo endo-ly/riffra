@@ -13,7 +13,7 @@ pub struct Cli {
     /// Read JSON Lines requests from stdin.
     #[arg(long)]
     pub interactive: bool,
-    /// Route commands to the running Desktop Host.
+    /// Route commands to the running Riffra Host.
     #[arg(long)]
     pub attach: bool,
     /// Require a specific canonical sequence for a one-shot mutation.
@@ -25,6 +25,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum CliCommand {
+    /// Start one foreground live Host and publish its local control endpoint.
+    Serve(ServeArgs),
+    Host {
+        #[command(subcommand)]
+        command: HostCommand,
+    },
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -109,6 +115,18 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: AudioCommand,
     },
+    Record {
+        #[command(subcommand)]
+        command: RecordCommand,
+    },
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
+    },
+    Analysis {
+        #[command(subcommand)]
+        command: AnalysisCommand,
+    },
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
@@ -127,6 +145,19 @@ pub enum CliCommand {
     },
     Undo,
     Redo,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct ServeArgs {
+    /// Keep native audio, MIDI, and external plugin processes offline.
+    #[arg(long)]
+    pub safe_mode: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HostCommand {
+    Status,
+    Shutdown,
 }
 
 #[derive(Debug, Subcommand)]
@@ -683,6 +714,8 @@ pub struct AutomationClearArgs {
 #[derive(Debug, Subcommand)]
 pub enum AssetCommand {
     ImportMidi(AssetImportMidiArgs),
+    Preview(AssetPreviewArgs),
+    StopPreview,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -691,6 +724,21 @@ pub struct AssetImportMidiArgs {
     pub path: PathBuf,
     #[arg(long)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetPreviewArgs {
+    #[arg(long)]
+    pub asset_id: String,
+    #[arg(long, default_value_t = 0)]
+    pub start_ms: u64,
+    #[arg(long)]
+    pub end_ms: Option<u64>,
+    #[arg(long)]
+    pub looped: bool,
+    #[arg(long, default_value_t = 1.0)]
+    pub gain: f32,
 }
 
 #[derive(Debug, Subcommand)]
@@ -817,6 +865,150 @@ pub struct LiveMidiSendArgs {
 #[derive(Debug, Subcommand)]
 pub enum AudioCommand {
     Status,
+    Probe,
+    ChannelsProbe(AudioChannelsProbeArgs),
+    Driver {
+        #[command(subcommand)]
+        command: AudioDriverCommand,
+    },
+    Recover,
+    StartupRetry,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AudioDriverCommand {
+    Get,
+    Set(AudioDriverArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioChannelsProbeArgs {
+    #[arg(long)]
+    pub driver: String,
+    #[arg(long)]
+    pub input_device: String,
+    #[arg(long)]
+    pub output_device: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDriverArgs {
+    #[arg(long)]
+    pub driver: String,
+    #[arg(long)]
+    pub input_device: Option<String>,
+    #[arg(long, default_value_t = 0)]
+    pub input_channel: u32,
+    #[arg(long)]
+    pub output_device: Option<String>,
+    #[arg(long)]
+    pub sample_rate: Option<u32>,
+    #[arg(long)]
+    pub buffer_size: Option<u32>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecordCommand {
+    Start(RecordStartArgs),
+    AnotherTake(RecordStartArgs),
+    Stop,
+    Status,
+    List(RecordListArgs),
+    Rename(RecordRenameArgs),
+    Archive(RecordIdArgs),
+    Promote(RecordIdArgs),
+    Tag(RecordTagArgs),
+    Delete(RecordIdArgs),
+    Duplicates,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordStartArgs {
+    #[arg(long)]
+    pub recording_session_id: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordListArgs {
+    #[arg(long)]
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordIdArgs {
+    #[arg(long)]
+    pub id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordRenameArgs {
+    #[arg(long)]
+    pub id: String,
+    #[arg(long)]
+    pub new_name: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordTagArgs {
+    #[arg(long)]
+    pub id: String,
+    #[arg(long)]
+    pub tag: Option<String>,
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryCommand {
+    Search(LibrarySearchArgs),
+    AssetUpdate(LibraryAssetUpdateArgs),
+    Related(LibraryIdArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySearchArgs {
+    #[arg(long)]
+    pub query: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryAssetUpdateArgs {
+    #[arg(long)]
+    pub id: String,
+    #[arg(long)]
+    pub tag: Option<String>,
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryIdArgs {
+    #[arg(long)]
+    pub id: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AnalysisCommand {
+    Start(AnalysisStartArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisStartArgs {
+    #[arg(long)]
+    pub asset_id: Option<String>,
+    #[arg(long)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -827,6 +1019,8 @@ pub enum PluginCommand {
     },
     Instrument(PluginPathArgs),
     Effect(PluginPathArgs),
+    Scan(PluginScanArgs),
+    ScanStart(PluginScanArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -841,6 +1035,13 @@ pub struct PluginPathArgs {
     pub track_id: String,
     #[arg(long)]
     pub plugin_path: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginScanArgs {
+    #[arg(long)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -918,6 +1119,13 @@ impl Cli {
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
     let request = match command {
+        CliCommand::Serve(_) => {
+            return Err("serve is a process mode and cannot be used as a one-shot command".into());
+        }
+        CliCommand::Host { command } => match command {
+            HostCommand::Status => simple("host.status"),
+            HostCommand::Shutdown => simple("host.shutdown"),
+        },
         CliCommand::Session { command } => match command {
             SessionCommand::Get => simple("session.get"),
             SessionCommand::Settings { command } => match command {
@@ -1041,6 +1249,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 "asset.import-midi",
                 json!({"path":args.path,"name":args.name}),
             ),
+            AssetCommand::Preview(args) => value("asset.preview", args),
+            AssetCommand::StopPreview => simple("asset.preview.stop"),
         },
         CliCommand::Project { command } => match command {
             ProjectCommand::Export => simple("project.export"),
@@ -1077,6 +1287,35 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         },
         CliCommand::Audio { command } => match command {
             AudioCommand::Status => simple("audio.status"),
+            AudioCommand::Probe => simple("audio.probe"),
+            AudioCommand::ChannelsProbe(args) => value("audio.channels.probe", args),
+            AudioCommand::Driver { command } => match command {
+                AudioDriverCommand::Get => simple("audio.driver.get"),
+                AudioDriverCommand::Set(args) => value("audio.driver.set", args),
+            },
+            AudioCommand::Recover => simple("audio.recover"),
+            AudioCommand::StartupRetry => simple("audio.startup.retry"),
+        },
+        CliCommand::Record { command } => match command {
+            RecordCommand::Start(args) => value("record.start", args),
+            RecordCommand::AnotherTake(args) => value("record.start", args),
+            RecordCommand::Stop => simple("record.stop"),
+            RecordCommand::Status => simple("record.status"),
+            RecordCommand::List(args) => value("record.list", args),
+            RecordCommand::Rename(args) => value("record.rename", args),
+            RecordCommand::Archive(args) => value("record.archive", args),
+            RecordCommand::Promote(args) => value("record.promote", args),
+            RecordCommand::Tag(args) => value("record.tag", args),
+            RecordCommand::Delete(args) => value("record.delete", args),
+            RecordCommand::Duplicates => simple("record.duplicates"),
+        },
+        CliCommand::Library { command } => match command {
+            LibraryCommand::Search(args) => value("library.search", args),
+            LibraryCommand::AssetUpdate(args) => value("library.asset.update", args),
+            LibraryCommand::Related(args) => value("library.related", args),
+        },
+        CliCommand::Analysis { command } => match command {
+            AnalysisCommand::Start(args) => value("analysis.start", args),
         },
         CliCommand::Plugin { command } => match command {
             PluginCommand::Catalog { command } => match command {
@@ -1084,6 +1323,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             },
             PluginCommand::Instrument(args) => value("instrument.set", args),
             PluginCommand::Effect(args) => value("effect.add", args),
+            PluginCommand::Scan(args) => value("plugin.scan", args),
+            PluginCommand::ScanStart(args) => value("plugin.scan.start", args),
         },
         CliCommand::Missing { command } => match command {
             MissingCommand::List => simple("missing.list"),
