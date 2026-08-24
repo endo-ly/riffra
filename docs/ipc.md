@@ -92,7 +92,6 @@ Riffra Host Control Server → Host state / Core
 | `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                               |
 | `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                     |
 | `restore_recovery_generation`                                          | 世代からの回復                                         |
-| `run_native_probe`（内部）                                             | probe サイドカーの直列実行コーディネータ               |
 
 **セッション・アレンジ（session/commands/）**
 
@@ -212,7 +211,7 @@ Riffra Host Control Server → Host state / Core
 
 ## 6. 境界 D: レンダーワーカー（riffra-render-worker）
 
-- 起動: `render_timeline` 命令のたびに `riffra-render` を1回起動する。実行ファイルは Tauri バイナリの隣（`RenderWorker::bundled`）
+- 起動: `render_timeline` 命令のたびに、Composition Rootから渡された `RuntimeBinaries` のレンダーワーカー実行ファイルを1回起動する。DesktopとHeadlessで同じ配置規則を使う
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
 - 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
@@ -228,7 +227,7 @@ Riffra Host Control Server → Host state / Core
 | `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                    |
 | `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化） |
 
-プローブは排他コーディネータ（`run_native_probe`）を通して直列に起動し、タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。
+プローブは共有RuntimeのProbe Coordinatorを通して直列に起動し、コーディネータの待機とプロセス実行の双方にタイムアウトを適用する。タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。
 
 ---
 
