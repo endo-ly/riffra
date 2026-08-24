@@ -279,7 +279,9 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 
 ### 8.2 応答とエラー
 
-成功応答には、結果が対応する正準シーケンスを含める。Hostが`CanonicalState`を返す結果では、`result.value.sequence`と応答の`sequence`が一致する。
+成功応答には、結果が対応する正準シーケンスを含める。`session.get`はStandalone、serve、Attachedの全経路で`result.type: "session"`と`CreativeSession`を返す。Rack、欠落依存、Undo/RedoなどRuntime投影と結び付くアレンジ変更は`result.type: "arrangementMutation"`とし、`result.value.canonical`が正準状態、`result.value.projection`が投影結果を表す。この場合は`result.value.canonical.sequence`と応答の`sequence`が一致する。その他の変更は各コマンド固有の結果型を使う。
+
+読み取りコマンドは1つの`CanonicalState`スナップショットから結果と応答シーケンスを構築する。応答を組み立てる途中で別の正準状態を読み直さない。
 
 ```json
 {
