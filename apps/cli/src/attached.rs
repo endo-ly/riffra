@@ -156,7 +156,7 @@ mod tests {
                     received.request_id,
                     12,
                     CommandResult {
-                        result_type: "canonicalState".into(),
+                        result_type: "session".into(),
                         value: serde_json::json!({"sequence": 12}),
                     },
                 ),

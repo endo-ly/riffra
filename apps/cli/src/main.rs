@@ -1,13 +1,12 @@
 mod args;
 mod attached;
-mod dispatcher;
 mod serve;
 
 use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
-use dispatcher::Dispatcher;
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
+use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
 
 fn main() {
@@ -155,8 +154,8 @@ fn request_id_from_json(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::handle_request;
-    use crate::dispatcher::Dispatcher;
     use riffra_control::ErrorCode;
+    use riffra_runtime::Dispatcher;
     use std::fs;
 
     #[test]
