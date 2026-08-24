@@ -25,9 +25,8 @@ pub trait TransportDriver: Send + Sync + 'static {
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
 }
 
-/// Compatibility bound for callers that own one AudioSupervisor for both
-/// ports. The implementation remains split at the coordinator/executor
-/// boundary.
+/// Combined runtime bound for a driver used by both projection and transport.
+/// The implementation remains split at the coordinator/executor boundary.
 pub trait RuntimeDriver: ProjectionDriver + TransportDriver {}
 
 impl<T> RuntimeDriver for T where T: ProjectionDriver + TransportDriver {}

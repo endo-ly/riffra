@@ -5,8 +5,8 @@ use riffra_control::{
     remove_endpoint_if_matches, transport,
 };
 use serde_json::Value;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 
 /// Shared local Host control server.
@@ -30,6 +30,7 @@ impl ControlServer {
         let thread_stop = Arc::clone(&stop);
         let thread_instance = instance_id.clone();
         let control_data_root = state.data_root.clone();
+        let weak_state = Arc::downgrade(&state);
         let thread = thread::Builder::new()
             .name("riffra-host-control".into())
             .spawn(move || {
@@ -39,7 +40,7 @@ impl ControlServer {
                             if thread_stop.load(Ordering::Acquire) {
                                 break;
                             }
-                            let client_state = Arc::clone(&state);
+                            let client_state = weak_state.clone();
                             let client_instance = thread_instance.clone();
                             let _ = thread::Builder::new()
                                 .name("riffra-host-control-client".into())
@@ -80,7 +81,7 @@ impl ControlServer {
 }
 
 fn handle_client(
-    state: Arc<HostState>,
+    state: Weak<HostState>,
     instance_id: String,
     mut stream: Box<dyn transport::ReadWrite>,
 ) {
@@ -140,7 +141,14 @@ fn handle_client(
             .unwrap_or_default()
             .to_owned();
         let response = match serde_json::from_value::<ControlRequest>(frame) {
-            Ok(request) => state.dispatch_request(request),
+            Ok(request) => match state.upgrade() {
+                Some(state) => state.dispatch_request(request),
+                None => riffra_control::ControlResponse::failure(
+                    request.request_id,
+                    None,
+                    ProtocolError::new(ErrorCode::HostUnavailable, "Riffra Host has shut down"),
+                ),
+            },
             Err(error) => riffra_control::ControlResponse::failure(
                 request_id,
                 None,

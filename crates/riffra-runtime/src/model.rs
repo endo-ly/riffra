@@ -1,5 +1,14 @@
+use riffra_core::CanonicalState;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+/// Canonical session and audio status returned by a coordinated operation.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAudioPair {
+    pub canonical: CanonicalState,
+    pub audio: AudioStatus,
+}
 
 /// Coarse state of the native audio runtime.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
@@ -164,7 +173,7 @@ pub enum RuntimeProjectionState {
     Failed,
 }
 
-/// Observable projection state shared by Desktop and Headless Hosts.
+/// Observable projection state shared by GUI and headless Hosts.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeProjectionStatus {
@@ -183,4 +192,43 @@ pub struct RuntimeProjectionStatus {
     pub last_native_response_at_ms: Option<u64>,
     pub discarded_preparation_count: u64,
     pub last_error: Option<String>,
+}
+
+/// Result of a canonical Arrangement mutation and its best-effort runtime
+/// projection.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ArrangementMutationResult {
+    pub canonical: riffra_core::CanonicalState,
+    pub projection: ArrangementProjectionOutcome,
+}
+
+/// Outcome of projecting a committed Arrangement mutation into the native
+/// runtime.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ArrangementProjectionOutcome {
+    NotRequired,
+    Queued,
+    Failed { message: String },
+}
+
+/// Result returned after a recording capture has been stopped.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingStopResult {
+    pub canonical: riffra_core::CanonicalState,
+    pub audio: AudioStatus,
+    pub projection: ArrangementProjectionOutcome,
+    pub finalization: RecordingFinalizationOutcome,
+}
+
+/// Describes whether stopped recording outputs were committed to the
+/// Arrangement or remain available for Inbox recovery.
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum RecordingFinalizationOutcome {
+    NotRequired,
+    Completed,
+    RecoveryRequired { message: String },
 }

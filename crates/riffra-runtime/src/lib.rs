@@ -4,28 +4,54 @@
 //! parser dependency. A composition root supplies executable paths and an
 //! event sink, then embeds the same [`DawHost`] in either shell.
 
+pub mod analysis;
+pub mod asset;
 mod audio;
 mod binaries;
 mod control;
+mod dispatcher;
 mod host;
+pub mod jobs;
+pub mod library;
+pub mod missing;
 mod model;
+pub mod plugin_catalog;
+pub mod plugin_validation;
+pub mod plugins;
+mod preferences;
+pub mod projects;
+pub mod recording;
+pub mod render;
 mod runtime;
+pub mod runtime_snapshot;
+pub mod session;
+mod startup;
 
-pub use audio::{AudioError, AudioSupervisor};
+use serde_json::Value;
+
+pub use audio::{
+    AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
+    RuntimeRestartHandler,
+};
 pub use binaries::RuntimeBinaries;
+pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
 pub use host::{DawHost, HostConfig, HostError};
 pub use model::{
-    AudioAccessMode, AudioChannelInfo, AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe,
-    AudioDriverInfo, AudioState, AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingStatus,
-    RuntimeProjectionState, RuntimeProjectionStatus,
+    ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
+    AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
+    AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
+};
+pub use preferences::{
+    AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
+    active_device_matches_preferences, load_or_default,
 };
 pub use runtime::{
     ProjectionDriver, ProjectionStatusHook, RuntimeDriver, RuntimeError, RuntimeReconciler,
     RuntimeRecovery, TIMELINE_PREPARE_TIMEOUT, TransportDriver,
 };
 
-use riffra_core::{CanonicalState, CreativeSession};
-use serde_json::Value;
+use riffra_core::CanonicalState;
 
 /// Typed notifications emitted by a live Host.
 #[derive(Clone, Debug)]
@@ -91,10 +117,4 @@ impl HostEventSink for RecordingHostEventSink {
             .expect("host event sink lock poisoned")
             .push(event);
     }
-}
-
-/// Returns a normalized session value for native projection payloads.
-pub(crate) fn session_value(session: &CreativeSession) -> Result<Value, RuntimeError> {
-    serde_json::to_value(session)
-        .map_err(|error| RuntimeError::Internal(format!("session could not be encoded: {error}")))
 }

@@ -7,7 +7,6 @@ mod transport_executor;
 pub use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
 pub use self::projection_coordinator::{ProjectionStatusHook, RuntimeRecovery};
 
-use crate::audio::AudioError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -35,16 +34,6 @@ pub enum RuntimeError {
     ShuttingDown,
     #[error("runtime state is unavailable: {0}")]
     Internal(String),
-}
-
-impl From<AudioError> for RuntimeError {
-    fn from(error: AudioError) -> Self {
-        match error {
-            AudioError::Unavailable(message) => Self::RuntimeUnavailable(message),
-            AudioError::Process(message) => Self::TransportLost { message },
-            AudioError::StatePoisoned => Self::Internal("audio state lock was poisoned".into()),
-        }
-    }
 }
 
 impl From<RuntimeError> for String {
@@ -256,48 +245,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.notify();
         lease.stop()?;
         seek()
-    }
-}
-
-impl ProjectionDriver for crate::audio::AudioSupervisor {
-    fn prepare_timeline_snapshot(
-        &self,
-        snapshot: Value,
-        _timeout: Duration,
-    ) -> Result<(), RuntimeError> {
-        self.send(serde_json::json!({
-            "type": "prepareTimelineSnapshot",
-            "snapshot": snapshot,
-        }))
-        .map_err(RuntimeError::from)
-    }
-
-    fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), RuntimeError> {
-        self.send(serde_json::json!({"type": "commitTimelineSnapshot"}))
-            .map_err(RuntimeError::from)
-    }
-
-    fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), RuntimeError> {
-        self.send(serde_json::json!({"type": "discardTimelineSnapshot"}))
-            .map_err(RuntimeError::from)
-    }
-
-    fn runtime_generation(&self) -> u64 {
-        crate::audio::AudioSupervisor::runtime_generation(self)
-    }
-
-    fn force_shutdown(&self) {
-        crate::audio::AudioSupervisor::force_shutdown(self);
-    }
-}
-
-impl TransportDriver for crate::audio::AudioSupervisor {
-    fn play_timeline(&self) -> Result<(), RuntimeError> {
-        crate::audio::AudioSupervisor::play_timeline(self).map_err(RuntimeError::from)
-    }
-
-    fn stop_timeline(&self) -> Result<(), RuntimeError> {
-        crate::audio::AudioSupervisor::stop_timeline(self).map_err(RuntimeError::from)
     }
 }
 

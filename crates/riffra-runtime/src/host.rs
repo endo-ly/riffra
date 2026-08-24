@@ -1,15 +1,28 @@
+use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::control::ControlServer;
-use crate::model::RuntimeProjectionStatus;
+use crate::dispatcher::HostDispatcher;
+use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
+use crate::model::{AudioStatus, RuntimeProjectionStatus};
+use crate::recording::service::RecordingService;
+use crate::render::{self, RenderOptions, RenderResult};
 use crate::runtime::{RuntimeError, RuntimeReconciler};
+use crate::session::{adapter as session_adapter, context::SessionContext};
+use crate::startup;
+use crate::{
+    AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
+    RuntimeRecovery, active_device_matches_preferences, load_or_default,
+};
 use crate::{HostEvent, SharedHostEventSink};
+use crate::{analysis, library, missing, plugin_catalog, plugin_validation, plugins};
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
-use riffra_core::{AppCore, CanonicalState, CreativeSession, TrackKind, TrackPatch};
-use riffra_host::{DataRootLease, SessionStore};
+use riffra_core::{AppCore, CanonicalState, CreativeSession};
+use riffra_host::{DataRootLease, SessionStore, now_ms};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
@@ -51,11 +64,19 @@ pub enum HostError {
 pub(crate) struct HostState {
     _lease: DataRootLease,
     pub(crate) data_root: PathBuf,
-    core: AppCore<AudioSupervisor>,
+    core: Arc<AppCore<AudioSupervisor>>,
     storage: SessionStore,
     runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     events: SharedHostEventSink,
+    binaries: RuntimeBinaries,
+    render_worker: riffra_render_worker::RenderWorker,
+    jobs: JobRegistry,
+    audio_preferences: Mutex<AudioPreferences>,
+    recording_gate: Mutex<()>,
     _command_gate: Mutex<()>,
+    startup_gate: Mutex<()>,
+    shutting_down: AtomicBool,
+    shutdown_requested: AtomicBool,
 }
 
 impl HostState {
@@ -86,8 +107,25 @@ impl HostState {
         ControlResponse::failure(request_id, None, error)
     }
 
+    fn session_context(&self) -> SessionContext<'_> {
+        SessionContext {
+            core: self.core.as_ref(),
+            audio: self.core.audio(),
+            runtime: self.runtime.as_ref(),
+            data_root: &self.data_root,
+            safe_mode: self.core.safe_mode(),
+            events: self.events.as_ref(),
+        }
+    }
+
     pub(crate) fn dispatch_request(&self, request: ControlRequest) -> ControlResponse {
-        let _command_gate = if is_canonical_command(request.command.as_str()) {
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Self::failure(
+                request.request_id,
+                ProtocolError::new(ErrorCode::HostUnavailable, "Riffra Host has shut down"),
+            );
+        }
+        let _command_gate = if requires_command_gate(request.command.as_str()) {
             Some(
                 self._command_gate
                     .lock()
@@ -126,6 +164,29 @@ impl HostState {
         params: Value,
         current: CanonicalState,
     ) -> Result<(&'static str, Value, u64), ProtocolError> {
+        if !is_host_runtime_command(command) {
+            if let Some(result) =
+                self.dispatch_shared_session(command, params.clone(), current.sequence)?
+            {
+                return Ok(result);
+            }
+            let current_sequence = current.sequence;
+            let result = HostDispatcher::borrowed(&self.core, &self.storage, &self.data_root)
+                .dispatch_with_canonical(
+                    riffra_control::ControlCommand::new(command, params),
+                    current,
+                )
+                .map_err(|error| error.protocol_error())?;
+            if result.sequence > current_sequence {
+                let latest = self
+                    .canonical()
+                    .map_err(|error| command_error(error.to_string()))?;
+                self.after_canonical_commit(&latest.session)?;
+                return Ok((result.result_type, result.value, latest.sequence));
+            }
+            return Ok((result.result_type, result.value, result.sequence));
+        }
+
         match command {
             "host.status" => Ok((
                 "hostStatus",
@@ -136,128 +197,43 @@ impl HostState {
                 }),
                 current.sequence,
             )),
-            "session.get" => Ok((
-                "canonicalState",
-                serde_json::to_value(&current).map_err(serialize_error)?,
-                current.sequence,
-            )),
-            "history.get" => Ok((
-                "history",
-                serde_json::to_value(current.history).map_err(serialize_error)?,
-                current.sequence,
-            )),
-            "track.list" => {
-                let tracks = self
-                    .core
-                    .application(&self.storage)
-                    .list_tracks()
-                    .map_err(application_error)?;
-                Ok((
-                    "tracks",
-                    serde_json::to_value(tracks).map_err(serialize_error)?,
-                    current.sequence,
-                ))
-            }
-            "track.add" => {
-                let params: TrackAddParams = decode(params)?;
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .add_track(params.name, parse_track_kind(&params.kind)?)
-                    .map_err(application_error)?;
-                self.after_canonical_commit(&session)?;
-                let canonical = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                let sequence = canonical.sequence;
-                Ok((
-                    "canonicalState",
-                    serde_json::to_value(canonical).map_err(serialize_error)?,
-                    sequence,
-                ))
-            }
-            "track.update" => {
-                let params: TrackUpdateParams = decode(params)?;
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .update_track(&params.track_id, params.patch)
-                    .map_err(application_error)?;
-                self.after_canonical_commit(&session)?;
-                let canonical = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                let sequence = canonical.sequence;
-                Ok((
-                    "canonicalState",
-                    serde_json::to_value(canonical).map_err(serialize_error)?,
-                    sequence,
-                ))
-            }
-            "track.remove" => {
-                let params: TrackIdParams = decode(params)?;
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .remove_track(&params.track_id)
-                    .map_err(application_error)?;
-                self.after_canonical_commit(&session)?;
-                let canonical = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                let sequence = canonical.sequence;
-                Ok((
-                    "canonicalState",
-                    serde_json::to_value(canonical).map_err(serialize_error)?,
-                    sequence,
-                ))
-            }
-            "undo" => {
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .undo()
-                    .map_err(application_error)?;
-                self.after_canonical_commit(&session)?;
-                let canonical = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                let sequence = canonical.sequence;
-                Ok((
-                    "canonicalState",
-                    serde_json::to_value(canonical).map_err(serialize_error)?,
-                    sequence,
-                ))
-            }
-            "redo" => {
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .redo()
-                    .map_err(application_error)?;
-                self.after_canonical_commit(&session)?;
-                let canonical = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                let sequence = canonical.sequence;
-                Ok((
-                    "canonicalState",
-                    serde_json::to_value(canonical).map_err(serialize_error)?,
-                    sequence,
-                ))
+            "host.shutdown" => {
+                self.shutdown_requested.store(true, Ordering::Release);
+                Ok(("ok", Value::Null, current.sequence))
             }
             "runtime.projection.get" => Ok((
                 "runtimeProjection",
                 serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
                 current.sequence,
             )),
+            "runtime.projection.retry" => {
+                if self.runtime.reset_for_repair() {
+                    Ok((
+                        "runtimeProjection",
+                        serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
+                        current.sequence,
+                    ))
+                } else {
+                    Err(ProtocolError::new(
+                        ErrorCode::CommandFailed,
+                        "runtime projection is not waiting for repair",
+                    ))
+                }
+            }
             "transport.play" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps transport playback offline",
+                    ));
+                }
                 let params: TransportParams = decode(params)?;
                 self.runtime
                     .apply_and_play(
                         params.transport_sequence,
-                        crate::session_value(&current.session)
-                            .map_err(|error| command_error(error.to_string()))?,
+                        crate::runtime_snapshot::runtime_timeline_snapshot(
+                            &self.data_root,
+                            &current.session,
+                        ),
                         riffra_core::ProjectionKey {
                             sequence: current.sequence,
                             session_revision: current.session.arrangement.revision,
@@ -268,17 +244,44 @@ impl HostState {
                 Ok(("ok", Value::Null, current.sequence))
             }
             "transport.stop" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps transport playback offline",
+                    ));
+                }
                 let params: TransportParams = decode(params)?;
                 self.runtime
                     .stop(params.transport_sequence)
                     .map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
+            "transport.go-to-start" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps transport playback offline",
+                    ));
+                }
+                let params: TransportParams = decode(params)?;
+                self.runtime
+                    .stop_and_seek_to_start(params.transport_sequence, || {
+                        self.core
+                            .audio()
+                            .seek_timeline(0)
+                            .map_err(RuntimeError::from)
+                    })
+                    .map_err(runtime_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
             "transport.seek" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps transport playback offline",
+                    ));
+                }
                 let params: SeekParams = decode(params)?;
                 self.core
                     .audio()
-                    .send(serde_json::json!({"type": "seekTimeline", "tick": params.tick}))
+                    .seek_timeline(params.tick)
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
@@ -289,18 +292,443 @@ impl HostState {
                 current.sequence,
             )),
             "audio.probe" => Ok((
-                "audioStatus",
+                "audioProbe",
                 if self.core.safe_mode() {
                     return Err(ProtocolError::new(
                         ErrorCode::RuntimeUnavailable,
                         "Safe Mode keeps audio device probing offline",
                     ));
                 } else {
-                    serde_json::to_value(self.core.audio().status().map_err(audio_error)?)
-                        .map_err(serialize_error)?
+                    serde_json::to_value(
+                        self.core
+                            .audio()
+                            .probe_devices(std::time::Duration::from_secs(10))
+                            .map_err(command_error)?,
+                    )
+                    .map_err(serialize_error)?
                 },
                 current.sequence,
             )),
+            "audio.channels.probe" => {
+                if self.core.safe_mode() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::RuntimeUnavailable,
+                        "Safe Mode keeps audio channel probing offline",
+                    ));
+                }
+                let params: AudioChannelsProbeParams = decode(params)?;
+                let channels = self
+                    .core
+                    .audio()
+                    .probe_device_channels(
+                        &params.driver,
+                        &params.input_device,
+                        &params.output_device,
+                        std::time::Duration::from_secs(10),
+                    )
+                    .map_err(command_error)?;
+                Ok((
+                    "deviceChannels",
+                    serde_json::to_value(channels).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "audio.recover" => {
+                if self.core.safe_mode() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::RuntimeUnavailable,
+                        "Safe Mode keeps external audio devices isolated",
+                    ));
+                }
+                let status = self
+                    .recover_audio_device()
+                    .map_err(|error| command_error(error.to_string()))?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "audio.startup.retry" => {
+                if self.core.safe_mode() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::RuntimeUnavailable,
+                        "Safe Mode keeps external audio devices isolated",
+                    ));
+                }
+                let status = self
+                    .retry_runtime_startup()
+                    .map_err(|error| command_error(error.to_string()))?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "audio.driver.get" => Ok((
+                "audioDriver",
+                serde_json::to_value(
+                    self.audio_preferences
+                        .lock()
+                        .map_err(|_| command_error("audio preferences lock was poisoned"))?
+                        .clone(),
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "audio.driver.set" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps external audio devices isolated",
+                    ));
+                }
+                let config: AudioDriverConfig = decode(params)?;
+                let status = self.set_audio_driver(config)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "asset.preview" => {
+                if self.core.safe_mode() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::RuntimeUnavailable,
+                        "Safe Mode blocks live sample preview",
+                    ));
+                }
+                let params: AssetPreviewParams = decode(params)?;
+                let asset_id =
+                    riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {
+                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
+                    })?;
+                let status = crate::asset::application::preview_asset(
+                    &AssetPreviewContext {
+                        audio: self.core.audio(),
+                        data_root: &self.data_root,
+                        safe_mode: false,
+                    },
+                    asset_id,
+                    AssetPreviewOptions {
+                        start_ms: params.start_ms,
+                        end_ms: params.end_ms,
+                        looped: params.looped,
+                        gain: params.gain,
+                    },
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "asset.preview.stop" => Ok((
+                "audioStatus",
+                serde_json::to_value(self.core.audio().stop_preview().map_err(audio_error)?)
+                    .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "midi.send" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
+                }
+                let params: MidiSendParams = decode(params)?;
+                self.core
+                    .audio()
+                    .send_track_midi(&params.track_id, &params.bytes)
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "midi.panic" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
+                }
+                let params: TrackIdParams = decode(params)?;
+                self.core
+                    .audio()
+                    .panic_track_midi(&params.track_id)
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "plugin.catalog.list" => {
+                let catalog = plugin_catalog::load(&self.data_root).map_err(|error| {
+                    command_error(format!("plugin catalog could not be loaded: {error}"))
+                })?;
+                Ok((
+                    "plugins",
+                    serde_json::to_value(catalog).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.scan" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode blocks VST3 discovery and load validation",
+                    ));
+                }
+                let params: PluginScanParams = decode(params)?;
+                let root = params
+                    .path
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_plugin_root);
+                let report = self
+                    .scan_plugins(root)
+                    .map_err(|error| command_error(format!("plugin scan failed: {error}")))?;
+                Ok((
+                    "pluginScan",
+                    serde_json::to_value(report).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.scan.start" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode blocks VST3 discovery and load validation",
+                    ));
+                }
+                let params: PluginScanParams = decode(params)?;
+                let root = params
+                    .path
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_plugin_root);
+                let status = self.start_plugin_scan(root).map_err(|error| {
+                    command_error(format!("plugin scan could not start: {error}"))
+                })?;
+                Ok((
+                    "job",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "missing.list" => {
+                let missing = missing::collect_missing(&self.data_root, &current.session);
+                Ok((
+                    "missing",
+                    serde_json::to_value(missing).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "record.start" | "record.stop" | "record.status" | "record.list" | "record.rename"
+            | "record.archive" | "record.promote" | "record.tag" | "record.delete"
+            | "record.duplicates" => {
+                let _recording = self
+                    .recording_gate
+                    .lock()
+                    .map_err(|_| command_error("recording operation lock was poisoned"))?;
+                let service = RecordingService {
+                    core: &self.core,
+                    audio: self.core.audio(),
+                    runtime: &self.runtime,
+                    data_root: &self.data_root,
+                    safe_mode: self.core.safe_mode(),
+                };
+                let mut sequence = current.sequence;
+                let value = match command {
+                    "record.start" => {
+                        if self.core.safe_mode() {
+                            return Err(runtime_unavailable(
+                                "Safe Mode keeps recording input offline",
+                            ));
+                        }
+                        let params: RecordStartParams = decode(params)?;
+                        service
+                            .start(params.recording_session_id.as_deref())
+                            .map_err(command_error)
+                            .and_then(|status| {
+                                serde_json::to_value(status).map_err(serialize_error)
+                            })?
+                    }
+                    "record.stop" => {
+                        let result = service.stop().map_err(command_error)?;
+                        sequence = result.canonical.sequence;
+                        if sequence > current.sequence {
+                            self.events
+                                .emit(HostEvent::CanonicalStateChanged(result.canonical.clone()));
+                        }
+                        serde_json::to_value(result).map_err(serialize_error)?
+                    }
+                    "record.status" => {
+                        serde_json::to_value(service.status().map_err(command_error)?)
+                            .map_err(serialize_error)?
+                    }
+                    "record.list" => {
+                        let params: RecordListParams = decode(params)?;
+                        serde_json::to_value(
+                            service
+                                .list(params.query.as_deref())
+                                .map_err(command_error)?,
+                        )
+                        .map_err(serialize_error)?
+                    }
+                    "record.rename" => {
+                        let params: RecordRenameParams = decode(params)?;
+                        serde_json::to_value(
+                            service
+                                .rename_recording(&params.id, &params.new_name)
+                                .map_err(command_error)?,
+                        )
+                        .map_err(serialize_error)?
+                    }
+                    "record.archive" => {
+                        let params: RecordIdParams = decode(params)?;
+                        serde_json::to_value(
+                            service
+                                .archive_recording(&params.id)
+                                .map_err(command_error)?,
+                        )
+                        .map_err(serialize_error)?
+                    }
+                    "record.promote" => {
+                        let params: RecordIdParams = decode(params)?;
+                        serde_json::to_value(
+                            service
+                                .promote_recording(&params.id)
+                                .map_err(command_error)?,
+                        )
+                        .map_err(serialize_error)?
+                    }
+                    "record.tag" => {
+                        let params: RecordTagParams = decode(params)?;
+                        serde_json::to_value(
+                            service
+                                .tag_recording(&params.id, params.tag, params.note)
+                                .map_err(command_error)?,
+                        )
+                        .map_err(serialize_error)?
+                    }
+                    "record.delete" => {
+                        let params: RecordIdParams = decode(params)?;
+                        service
+                            .delete_recording(&params.id)
+                            .map_err(command_error)?;
+                        Value::Null
+                    }
+                    "record.duplicates" => serde_json::to_value(
+                        service
+                            .detect_duplicate_recordings()
+                            .map_err(command_error)?,
+                    )
+                    .map_err(serialize_error)?,
+                    _ => unreachable!(),
+                };
+                Ok(("recording", value, sequence))
+            }
+            "render.start" => {
+                let params: RenderStartParams = decode(params)?;
+                let options = params.options.unwrap_or_default();
+                let session = current.session.clone();
+                let data_root = self.data_root.clone();
+                let worker = self.render_worker.clone();
+                let jobs = self.jobs.clone();
+                let (id, status) = jobs.start(JobKind::Render);
+                let Some(cancelled) = jobs.cancellation_flag(&id) else {
+                    return Err(command_error("render job could not be registered"));
+                };
+                let job_id = id.clone();
+                std::thread::Builder::new()
+                    .name("riffra-render-job".into())
+                    .spawn(move || {
+                        jobs.set_running(&job_id, "Rendering the canonical arrangement.");
+                        match render::render_timeline_with_cancellation(
+                            &worker,
+                            &data_root,
+                            &session,
+                            riffra_host::now_ms(),
+                            options,
+                            cancelled.as_ref(),
+                        ) {
+                            Ok(result) => match serde_json::to_value(result) {
+                                Ok(value) => {
+                                    jobs.complete(&job_id, value, "Offline render completed.")
+                                }
+                                Err(error) => {
+                                    jobs::fail(&jobs, &data_root, &job_id, error.to_string())
+                                }
+                            },
+                            Err(error) => jobs::fail(&jobs, &data_root, &job_id, error),
+                        }
+                    })
+                    .map_err(|error| {
+                        command_error(format!("render job could not start: {error}"))
+                    })?;
+                Ok((
+                    "job",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "job.get" | "job.cancel" => {
+                let params: JobIdParams = decode(params)?;
+                let status = if command == "job.cancel" {
+                    self.jobs.cancel(&params.id)
+                } else {
+                    self.jobs.status(&params.id)
+                }
+                .ok_or_else(|| command_error(format!("job is not registered: {}", params.id)))?;
+                Ok((
+                    "job",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.search" => {
+                let params: LibrarySearchParams = decode(params)?;
+                let result =
+                    library::search(&self.data_root, &params.query).map_err(command_error)?;
+                Ok((
+                    "library",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.asset.update" => {
+                let params: LibraryUpdateParams = decode(params)?;
+                let result =
+                    library::update_metadata(&self.data_root, &params.id, params.tag, params.note)
+                        .map_err(command_error)?;
+                Ok((
+                    "libraryAsset",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.related" => {
+                let params: LibraryIdParams = decode(params)?;
+                let result =
+                    library::related(&self.data_root, &params.id).map_err(command_error)?;
+                Ok((
+                    "library",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "analysis.start" => {
+                let params: AnalysisParams = decode(params)?;
+                let path = if let Some(asset_id) = params.asset_id {
+                    let id = riffra_core::AssetId::from_normalized(&asset_id).map_err(|error| {
+                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
+                    })?;
+                    PathBuf::from(
+                        crate::asset::resolve_content_location(&self.data_root, &id).ok_or_else(
+                            || command_error(format!("asset is not available: {id}")),
+                        )?,
+                    )
+                } else {
+                    params.path.map(PathBuf::from).ok_or_else(|| {
+                        ProtocolError::new(
+                            ErrorCode::InvalidRequest,
+                            "analysis requires assetId or path",
+                        )
+                    })?
+                };
+                let result = analysis::analyze(&path).map_err(command_error)?;
+                Ok((
+                    "analysis",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
             _ => Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 format!("unknown command: {command}"),
@@ -308,26 +736,561 @@ impl HostState {
         }
     }
 
-    fn after_canonical_commit(&self, session: &CreativeSession) -> Result<(), ProtocolError> {
+    fn dispatch_shared_session(
+        &self,
+        command: &str,
+        params: Value,
+        current_sequence: u64,
+    ) -> Result<Option<(&'static str, Value, u64)>, ProtocolError> {
+        let context = self.session_context();
+        let result = match command {
+            "track.audio-input.set" => {
+                let params: SessionTrackAudioInputParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_audio_input(
+                        &context,
+                        &params.track_id,
+                        Some(params.channel_index),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "track.audio-input.clear" => {
+                let params: SessionTrackIdParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_audio_input(&context, &params.track_id, None)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "track.midi-input.set" => {
+                let params: SessionTrackMidiInputParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_midi_input(
+                        &context,
+                        &params.track_id,
+                        riffra_core::MidiInputRoute {
+                            device_id: params.device_id,
+                            channel: params.channel,
+                        },
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "track.midi-input.clear" => {
+                let params: SessionTrackIdParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_midi_input(
+                        &context,
+                        &params.track_id,
+                        riffra_core::MidiInputRoute::default(),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "instrument.set" => {
+                let params: SessionPluginPathParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_instrument_with_expected_sequence(
+                        &context,
+                        &params.track_id,
+                        &params.plugin_path,
+                        Some(current_sequence),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "instrument.clear" => {
+                let params: SessionTrackIdParams = decode(params)?;
+                Some(
+                    session_adapter::clear_track_instrument(&context, &params.track_id)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "effect.add" => {
+                let params: SessionPluginPathParams = decode(params)?;
+                Some(
+                    session_adapter::add_track_effect_with_expected_sequence(
+                        &context,
+                        &params.track_id,
+                        &params.plugin_path,
+                        Some(current_sequence),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "effect.remove" => {
+                let params: SessionEffectParams = decode(params)?;
+                Some(
+                    session_adapter::remove_track_effect(
+                        &context,
+                        &params.track_id,
+                        &params.device_id,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "effect.reorder" => {
+                let params: SessionEffectReorderParams = decode(params)?;
+                Some(
+                    session_adapter::reorder_track_effects(
+                        &context,
+                        &params.track_id,
+                        &params.device_ids,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "device.bypass" => {
+                let params: SessionDeviceBypassParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_device_bypassed(
+                        &context,
+                        &params.track_id,
+                        &params.device_id,
+                        params.bypassed,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "device.parameter.set" => {
+                let params: SessionDeviceParameterParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_device_parameter(
+                        &context,
+                        &params.track_id,
+                        &params.device_id,
+                        params.parameter_index,
+                        params.value,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "missing.relink" => {
+                let params: SessionMissingRelinkParams = decode(params)?;
+                let asset_id =
+                    riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {
+                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
+                    })?;
+                Some(
+                    session_adapter::relink_missing_dependency(
+                        &context,
+                        asset_id,
+                        &params.new_path,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "missing.disable-plugin" => {
+                let params: SessionDeviceIdParams = decode(params)?;
+                Some(
+                    session_adapter::disable_missing_plugin(&context, &params.device_id)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "missing.replace-plugin" => {
+                let params: SessionMissingPluginReplaceParams = decode(params)?;
+                Some(
+                    session_adapter::replace_missing_track_plugin_with_expected_sequence(
+                        &context,
+                        &params.device_id,
+                        &params.new_path,
+                        Some(current_sequence),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "undo" => {
+                Some(session_adapter::undo(&context).map_err(|error| error.protocol_error())?)
+            }
+            "redo" => {
+                Some(session_adapter::redo(&context).map_err(|error| error.protocol_error())?)
+            }
+            _ => None,
+        };
+        Ok(result.map(|value| {
+            (
+                "arrangementMutation",
+                serde_json::to_value(value).expect("runtime mutation results serialize"),
+                self.core
+                    .canonical_state()
+                    .expect("canonical state is available after a mutation")
+                    .sequence,
+            )
+        }))
+    }
+
+    fn after_canonical_commit(&self, _session: &CreativeSession) -> Result<(), ProtocolError> {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
+        library::index::queue(&self.data_root, &canonical.session);
         self.events
-            .emit(HostEvent::CanonicalStateChanged(canonical));
+            .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         if self.core.safe_mode() {
             return Ok(());
         }
         let key = riffra_core::ProjectionKey {
-            sequence: self
-                .canonical()
-                .map_err(|error| command_error(error.to_string()))?
-                .sequence,
-            session_revision: session.arrangement.revision,
+            sequence: canonical.sequence,
+            session_revision: canonical.session.arrangement.revision,
         };
-        if let Ok(snapshot) = crate::session_value(session) {
-            let _ = self.runtime.submit_nonblocking(snapshot, key);
+        let snapshot =
+            crate::runtime_snapshot::runtime_timeline_snapshot(&self.data_root, &canonical.session);
+        let _ = self.runtime.submit_nonblocking(snapshot, key);
+        Ok(())
+    }
+
+    fn scan_plugins(&self, root: PathBuf) -> Result<plugins::ScanReport, String> {
+        if self.core.safe_mode() {
+            return Err("Safe Mode blocks VST3 discovery and load validation".into());
+        }
+        let mut report = plugins::discover(&root);
+        plugin_catalog::reuse_cached_scan_results(&self.data_root, &mut report);
+        let mut report = plugin_validation::validate_report(report, &self.binaries.plugin_scan)?;
+        report.finished_at_ms = now_ms();
+        plugin_catalog::save(&self.data_root, &report)
+            .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
+        library::sync_plugins(&self.data_root, &report.plugins)?;
+        Ok(report)
+    }
+
+    fn start_plugin_scan(&self, root: PathBuf) -> Result<BackgroundJobStatus, String> {
+        if self.core.safe_mode() {
+            return Err("Safe Mode blocks VST3 discovery and load validation".into());
+        }
+        let (id, status) = self.jobs.start(JobKind::Scan);
+        let registry = self.jobs.clone();
+        let data_root = self.data_root.clone();
+        let scanner = self.binaries.plugin_scan.clone();
+        let Some(cancelled) = registry.cancellation_flag(&id) else {
+            return Err("plugin scan job could not be registered".into());
+        };
+        let job_id = id.clone();
+        std::thread::Builder::new()
+            .name("riffra-plugin-scan-job".into())
+            .spawn(move || {
+                registry.set_running(
+                    &job_id,
+                    "Discovering and validating VST3 plugins in the background.",
+                );
+                let mut report =
+                    match plugins::discover_with_cancel(&root, Some(cancelled.as_ref())) {
+                        Ok(report) => report,
+                        Err(error) => {
+                            jobs::fail(&registry, &data_root, &job_id, error);
+                            return;
+                        }
+                    };
+                plugin_catalog::reuse_cached_scan_results(&data_root, &mut report);
+                let report = match plugin_validation::validate_report_with_cancel(
+                    report,
+                    &scanner,
+                    Some(cancelled.clone()),
+                ) {
+                    Ok(mut report) => {
+                        report.finished_at_ms = now_ms();
+                        report
+                    }
+                    Err(error) => {
+                        jobs::fail(&registry, &data_root, &job_id, error);
+                        return;
+                    }
+                };
+                if registry.is_cancelled(&job_id) {
+                    registry.mark_cancelled(&job_id);
+                    return;
+                }
+                if let Err(error) = plugin_catalog::save(&data_root, &report) {
+                    jobs::fail(
+                        &registry,
+                        &data_root,
+                        &job_id,
+                        format!("plugin catalog could not be saved: {error}"),
+                    );
+                    return;
+                }
+                if let Err(error) = library::sync_plugins(&data_root, &report.plugins) {
+                    jobs::fail(&registry, &data_root, &job_id, error);
+                    return;
+                }
+                match jobs::serialize_result(&report) {
+                    Ok(value) => registry.complete(&job_id, value, "VST3 scan completed."),
+                    Err(error) => jobs::fail(&registry, &data_root, &job_id, error),
+                }
+            })
+            .map_err(|error| format!("plugin scan job could not start: {error}"))?;
+        jobs::to_background_status(status)
+    }
+
+    fn set_audio_driver(&self, config: AudioDriverConfig) -> Result<AudioStatus, ProtocolError> {
+        let requested = AudioPreferences {
+            driver: config.driver,
+            input_device: config.input_device,
+            input_channel: config.input_channel,
+            output_device: config.output_device,
+            sample_rate: config.sample_rate,
+            buffer_size: config.buffer_size,
+        }
+        .validate_and_normalize()
+        .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
+        let previous = self
+            .audio_preferences
+            .lock()
+            .map_err(|_| command_error("audio preferences lock was poisoned"))?
+            .clone();
+        let outcome = match self
+            .core
+            .audio()
+            .set_audio_driver(&requested.as_driver_config())
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let reason = error.to_string();
+                return Err(command_error(self.rollback_audio_change(&previous, reason)));
+            }
+        };
+        let restarted = matches!(&outcome, AudioDeviceReopenOutcome::SidecarRestarted(_));
+        let mut status = match outcome {
+            AudioDeviceReopenOutcome::ReopenedInPlace(status) => status,
+            AudioDeviceReopenOutcome::SidecarRestarted(status) => status,
+        };
+        if !active_device_matches_preferences(&status, &requested) {
+            let reason = format!(
+                "requested audio device was not activated: {}",
+                status.message
+            );
+            return Err(command_error(if restarted {
+                self.restore_previous_audio_preferences(&previous)
+                    .map(|()| format!("{reason}; the previous audio device and dependent Runtime were restored"))
+                    .unwrap_or_else(|error| format!("{reason}; the previous audio device and dependent Runtime could not be restored: {error}"))
+            } else {
+                self.rollback_audio_change(&previous, reason)
+            }));
+        }
+        let effective = match AudioPreferences::from_effective_status(&status) {
+            Ok(effective) => effective,
+            Err(error) => {
+                return Err(command_error(self.rollback_audio_change(&previous, error)));
+            }
+        };
+        if let Err(error) = self.core.audio().set_restart_preferences(effective.clone()) {
+            return Err(command_error(self.rollback_audio_change(
+                &previous,
+                format!("audio runtime restart preferences could not be updated: {error}"),
+            )));
+        }
+        if !restarted && let Err(error) = self.reconcile_runtime_after_audio_device_change() {
+            return Err(command_error(self.rollback_audio_change(&previous, error)));
+        }
+        if let Err(error) = AudioPreferencesStore::new(&self.data_root).save(&effective) {
+            return Err(command_error(self.rollback_audio_change(
+                &previous,
+                format!("audio preferences could not be saved: {error}"),
+            )));
+        }
+        *self
+            .audio_preferences
+            .lock()
+            .map_err(|_| command_error("audio preferences lock was poisoned"))? = effective;
+        let access_message = match crate::access_mode_for_driver(
+            status.driver.as_deref().unwrap_or(&requested.driver),
+        ) {
+            crate::AudioAccessMode::Shared => None,
+            crate::AudioAccessMode::Exclusive => Some(
+                "Exclusive audio is active; other applications using this device will be paused.",
+            ),
+            crate::AudioAccessMode::DriverManaged => Some(
+                "Audio sharing is controlled by this driver; other applications may be paused.",
+            ),
+        };
+        if let Some(access_message) = access_message {
+            status.message = if status.message.is_empty() {
+                access_message.into()
+            } else {
+                format!("{access_message} {}", status.message)
+            };
+        }
+        Ok(status)
+    }
+
+    fn reconcile_runtime_after_audio_device_change(&self) -> Result<(), String> {
+        self.core
+            .audio()
+            .mark_runtime_recovery_mute()
+            .map_err(|error| format!("runtime recovery mute could not be recorded: {error}"))?;
+        if !self.runtime.invalidate_for_audio_device_change() {
+            return Err(
+                "audio runtime graph is busy; the audio device change can be retried shortly"
+                    .into(),
+            );
+        }
+        let snapshot = self.canonical().map_err(|error| error.to_string())?;
+        self.runtime
+            .apply_and_wait(
+                crate::runtime_snapshot::runtime_timeline_snapshot(
+                    &self.data_root,
+                    &snapshot.session,
+                ),
+                riffra_core::ProjectionKey {
+                    sequence: snapshot.sequence,
+                    session_revision: snapshot.session.arrangement.revision,
+                },
+                std::time::Duration::from_secs(60),
+            )
+            .map_err(|error| {
+                format!(
+                    "arrangement runtime restoration failed after the audio device change: {error}"
+                )
+            })?;
+        self.core
+            .audio()
+            .release_runtime_mute_if_allowed()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn confirm_restored_previous_device(&self, previous: &AudioPreferences) -> Result<(), String> {
+        self.core
+            .audio()
+            .set_restart_preferences(previous.clone())
+            .map_err(|error| error.to_string())?;
+        let status = self
+            .core
+            .audio()
+            .refresh_status()
+            .map_err(|error| error.to_string())?;
+        if !active_device_matches_preferences(&status, previous) {
+            return Err(format!(
+                "the previous audio device was not confirmed: {}",
+                status.message
+            ));
         }
         Ok(())
+    }
+
+    fn restore_previous_audio_preferences(
+        &self,
+        previous: &AudioPreferences,
+    ) -> Result<(), String> {
+        self.core
+            .audio()
+            .set_restart_preferences(previous.clone())
+            .map_err(|error| error.to_string())?;
+        match self
+            .core
+            .audio()
+            .set_audio_driver(&previous.as_driver_config())
+        {
+            Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)) => {
+                if !active_device_matches_preferences(&status, previous) {
+                    return Err(format!(
+                        "the previous audio device was not confirmed: {}",
+                        status.message
+                    ));
+                }
+                self.reconcile_runtime_after_audio_device_change()
+            }
+            Ok(AudioDeviceReopenOutcome::SidecarRestarted(_)) => {
+                self.confirm_restored_previous_device(previous)
+            }
+            Err(error) => {
+                let error = error.to_string();
+                self.confirm_restored_previous_device(previous)
+                    .map_err(|restore_error| format!("{error}; {restore_error}"))
+            }
+        }
+    }
+
+    fn rollback_audio_change(&self, previous: &AudioPreferences, reason: String) -> String {
+        match self.restore_previous_audio_preferences(previous) {
+            Ok(()) => {
+                format!("{reason}; the previous audio device and dependent Runtime were restored")
+            }
+            Err(error) => format!(
+                "{reason}; the previous audio device and dependent Runtime could not be restored: {error}"
+            ),
+        }
+    }
+
+    fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
+        if self.core.safe_mode() {
+            return Err(HostError::State(
+                "Safe Mode keeps external audio devices isolated".into(),
+            ));
+        }
+        let outcome = self
+            .core
+            .audio()
+            .recover_audio_device()
+            .map_err(|error| HostError::State(error.to_string()))?;
+        if matches!(outcome, AudioDeviceReopenOutcome::SidecarRestarted(_)) {
+            return self
+                .core
+                .audio()
+                .refresh_status()
+                .map_err(|error| HostError::State(error.to_string()));
+        }
+        let snapshot = self.canonical()?;
+        self.runtime.invalidate_for_audio_device_change();
+        self.runtime
+            .apply_and_wait(
+                crate::runtime_snapshot::runtime_timeline_snapshot(
+                    &self.data_root,
+                    &snapshot.session,
+                ),
+                riffra_core::ProjectionKey {
+                    sequence: snapshot.sequence,
+                    session_revision: snapshot.session.arrangement.revision,
+                },
+                std::time::Duration::from_secs(60),
+            )
+            .map_err(|error| HostError::State(error.to_string()))?;
+        self.core
+            .audio()
+            .release_runtime_mute_if_allowed()
+            .map_err(|error| HostError::State(error.to_string()))?;
+        self.core
+            .audio()
+            .refresh_status()
+            .map_err(|error| HostError::State(error.to_string()))
+    }
+
+    fn retry_runtime_startup(&self) -> Result<AudioStatus, HostError> {
+        if self.core.safe_mode() {
+            return Err(HostError::State(
+                "Safe Mode keeps external audio devices isolated".into(),
+            ));
+        }
+        let _startup = self
+            .startup_gate
+            .lock()
+            .map_err(|_| HostError::State("Host startup gate was poisoned".into()))?;
+        if self.core.audio().startup_completed() {
+            return self
+                .core
+                .audio()
+                .refresh_status()
+                .map_err(|error| HostError::State(error.to_string()));
+        }
+        self.core.audio().mark_startup_pending();
+        let initialized = startup::initialize_runtime(
+            &self.core,
+            &self.runtime,
+            &self.data_root,
+            &self.shutting_down,
+        );
+        let succeeded = initialized
+            .as_ref()
+            .is_ok_and(|initialization| initialization.runtime_error.is_none());
+        self.events
+            .emit(HostEvent::RuntimeStartupFinished { succeeded });
+        match initialized {
+            Ok(initialization) => initialization
+                .runtime_error
+                .map_or(Ok(initialization.status), |error| {
+                    Err(HostError::State(error))
+                }),
+            Err(error) => Err(HostError::State(error)),
+        }
     }
 }
 
@@ -335,6 +1298,7 @@ impl HostState {
 pub struct DawHost {
     state: Arc<HostState>,
     control: Mutex<Option<ControlServer>>,
+    startup: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl DawHost {
@@ -349,20 +1313,30 @@ impl DawHost {
         let loaded = storage
             .load_or_create()
             .map_err(|error| HostError::Session(error.to_string()))?;
+        let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
         let audio = if config.safe_mode {
-            AudioSupervisor::offline(
+            AudioSupervisor::offline_with_events(
                 "Safe Mode is active; native audio, MIDI, and external plugins remain isolated",
                 Arc::clone(&events),
             )
         } else {
-            let arguments = vec!["--serve".to_string()];
-            AudioSupervisor::start(&config.binaries, &arguments, Arc::clone(&events))
+            AudioSupervisor::start(&config.binaries, preferences.clone(), Arc::clone(&events))
         };
         let audio = Arc::new(audio);
         let runtime_events = Arc::clone(&events);
+        let runtime_recovery: Option<RuntimeRecovery> = if config.safe_mode {
+            None
+        } else {
+            let recovery_audio = Arc::clone(&audio);
+            Some(Arc::new(move |generation, timeout| {
+                recovery_audio
+                    .restart_sidecar_for_runtime(generation, timeout)
+                    .map_err(RuntimeError::from)
+            }))
+        };
         let runtime = match RuntimeReconciler::with_status_listener(
             Arc::clone(&audio),
-            None,
+            runtime_recovery,
             Arc::new(move |status| {
                 runtime_events.emit(HostEvent::RuntimeProjectionStatus(status));
             }),
@@ -376,22 +1350,63 @@ impl DawHost {
         let state = Arc::new(HostState {
             _lease: lease,
             data_root: config.data_root.clone(),
-            core: AppCore::new(
+            core: Arc::new(AppCore::new(
                 config.data_root.clone(),
                 loaded.session,
                 (*audio).clone(),
                 loaded.recovered_from_generation,
                 config.safe_mode,
-            ),
+            )),
             storage,
             runtime,
             events,
+            binaries: config.binaries.clone(),
+            render_worker: riffra_render_worker::RenderWorker::new(config.binaries.render.clone()),
+            jobs: JobRegistry::default(),
+            audio_preferences: Mutex::new(preferences.clone()),
+            recording_gate: Mutex::new(()),
             _command_gate: Mutex::new(()),
+            startup_gate: Mutex::new(()),
+            shutting_down: AtomicBool::new(false),
+            shutdown_requested: AtomicBool::new(false),
         });
-        let control = ControlServer::start(Arc::clone(&state)).map_err(HostError::Control)?;
+        if let Err(error) = audio.set_restart_preferences(preferences) {
+            audio.force_shutdown();
+            return Err(HostError::State(error.to_string()));
+        }
+        let runtime_for_restart = Arc::downgrade(&state.runtime);
+        if let Err(error) =
+            audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
+                if let Some(runtime) = runtime_for_restart.upgrade()
+                    && !runtime.requeue_after_runtime_restart(generation)
+                    && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
+                {
+                    tracing::warn!(
+                        generation,
+                        error = %error,
+                        "audio runtime restarted without an active graph"
+                    );
+                }
+            }))
+        {
+            audio.force_shutdown();
+            return Err(HostError::State(error.to_string()));
+        }
+        if let Ok(canonical) = state.canonical() {
+            library::index::queue(&state.data_root, &canonical.session);
+        }
+        let control = match ControlServer::start(Arc::clone(&state)) {
+            Ok(control) => control,
+            Err(error) => {
+                audio.force_shutdown();
+                return Err(HostError::Control(error));
+            }
+        };
+        let startup = queue_runtime_startup(Arc::clone(&state), config.safe_mode);
         Ok(Self {
             state,
             control: Mutex::new(Some(control)),
+            startup: Mutex::new(startup),
         })
     }
 
@@ -405,15 +1420,231 @@ impl DawHost {
         Ok(self.state.runtime.status())
     }
 
+    /// Locks the Host-wide canonical operation gate.
+    pub fn lock_command_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.state
+            ._command_gate
+            .lock()
+            .map_err(|_| "Host command gate was poisoned".to_owned())
+    }
+
+    /// Locks the Host-wide recording operation gate.
+    pub fn lock_recording_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.state
+            .recording_gate
+            .lock()
+            .map_err(|_| "Host recording operation gate was poisoned".to_owned())
+    }
+
+    /// Returns the event sink owned by this Host.
+    pub fn event_sink(&self) -> &dyn crate::HostEventSink {
+        self.state.events.as_ref()
+    }
+
+    /// Returns whether a connected client requested graceful process shutdown.
+    pub fn shutdown_requested(&self) -> bool {
+        self.state.shutdown_requested.load(Ordering::Acquire)
+    }
+
+    /// Queries audio devices through the Host-owned native process adapter.
+    pub fn probe_devices(&self) -> Result<crate::AudioDeviceProbe, HostError> {
+        if self.state.core.safe_mode() {
+            return Ok(crate::AudioDeviceProbe {
+                drivers: Vec::new(),
+                refreshed_at_ms: now_ms(),
+                message: "Safe Mode skipped audio device discovery.".into(),
+            });
+        }
+        self.state
+            .core
+            .audio()
+            .probe_devices(std::time::Duration::from_secs(10))
+            .map_err(HostError::State)
+    }
+
+    /// Queries the selected device channel layout through the shared audio
+    /// process adapter.
+    pub fn probe_device_channels(
+        &self,
+        driver: &str,
+        input_device: &str,
+        output_device: &str,
+    ) -> Result<crate::DeviceChannels, HostError> {
+        if self.state.core.safe_mode() {
+            return Err(HostError::State(
+                "Safe Mode skipped audio channel discovery.".into(),
+            ));
+        }
+        self.state
+            .core
+            .audio()
+            .probe_device_channels(
+                driver,
+                input_device,
+                output_device,
+                std::time::Duration::from_secs(10),
+            )
+            .map_err(HostError::State)
+    }
+
+    /// Renders the canonical session using the Host-owned render worker.
+    pub fn render_timeline(&self, options: RenderOptions) -> Result<RenderResult, HostError> {
+        let snapshot = self
+            .state
+            .core
+            .snapshot()
+            .map_err(|error| HostError::State(error.to_string()))?;
+        render::render_timeline_with_options(
+            &self.state.render_worker,
+            &self.state.data_root,
+            &snapshot.session,
+            now_ms(),
+            options,
+        )
+        .map_err(HostError::State)
+    }
+
+    /// Returns one Host-owned background job status.
+    pub fn background_job(&self, id: &str) -> Result<Option<BackgroundJobStatus>, HostError> {
+        self.state
+            .jobs
+            .status(id)
+            .map(jobs::to_background_status)
+            .transpose()
+            .map_err(HostError::State)
+    }
+
+    /// Requests cancellation of one Host-owned background job.
+    pub fn cancel_background_job(
+        &self,
+        id: &str,
+    ) -> Result<Option<BackgroundJobStatus>, HostError> {
+        self.state
+            .jobs
+            .cancel(id)
+            .map(jobs::to_background_status)
+            .transpose()
+            .map_err(HostError::State)
+    }
+
+    /// Runs a synchronous plugin discovery/validation pass in the Host.
+    pub fn scan_plugins(&self, path: Option<PathBuf>) -> Result<plugins::ScanReport, HostError> {
+        self.state
+            .scan_plugins(path.unwrap_or_else(default_plugin_root))
+            .map_err(HostError::State)
+    }
+
+    /// Starts a cancellable Host-owned plugin scan job.
+    pub fn start_plugin_scan(
+        &self,
+        path: Option<PathBuf>,
+    ) -> Result<BackgroundJobStatus, HostError> {
+        self.state
+            .start_plugin_scan(path.unwrap_or_else(default_plugin_root))
+            .map_err(HostError::State)
+    }
+
+    /// Applies and persists a Host-wide audio-device selection.
+    pub fn set_audio_driver(&self, config: AudioDriverConfig) -> Result<AudioStatus, HostError> {
+        self.state
+            .set_audio_driver(config)
+            .map_err(|error| HostError::State(error.message))
+    }
+
+    /// Returns the canonical Core shared with the Host's control server.
+    pub fn core(&self) -> &AppCore<AudioSupervisor> {
+        &self.state.core
+    }
+
+    /// Returns the Runtime reconciler shared with the Host.
+    pub fn runtime(&self) -> &RuntimeReconciler<AudioSupervisor> {
+        &self.state.runtime
+    }
+
+    /// Returns the Data Root owned by the Host.
+    pub fn data_root(&self) -> &std::path::Path {
+        &self.state.data_root
+    }
+
+    /// Reopens the configured audio device and restores the active graph.
+    pub fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
+        self.state.recover_audio_device()
+    }
+
+    /// Retries the initial native graph handshake synchronously.
+    pub fn retry_runtime_startup(&self) -> Result<AudioStatus, HostError> {
+        self.state.retry_runtime_startup()
+    }
+
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
+        self.state.shutting_down.store(true, Ordering::Release);
         if let Ok(mut control) = self.control.lock()
             && let Some(control) = control.take()
         {
             control.shutdown();
         }
+        self.state.jobs.cancel_all();
         self.state.core.audio().force_shutdown();
+        if let Ok(mut startup) = self.startup.lock()
+            && let Some(startup) = startup.take()
+        {
+            let _ = startup.join();
+        }
     }
+}
+
+fn queue_runtime_startup(
+    state: Arc<HostState>,
+    safe_mode: bool,
+) -> Option<std::thread::JoinHandle<()>> {
+    if safe_mode {
+        state
+            .events
+            .emit(HostEvent::RuntimeStartupFinished { succeeded: false });
+        return None;
+    }
+    let weak_state = Arc::downgrade(&state);
+    std::thread::Builder::new()
+        .name("riffra-runtime-startup".into())
+        .spawn(move || {
+            let Some(state) = weak_state.upgrade() else {
+                return;
+            };
+            if state.shutting_down.load(Ordering::Acquire) {
+                return;
+            }
+            let audio = state.core.audio();
+            let _startup = state
+                .startup_gate
+                .lock()
+                .expect("Host startup gate was poisoned");
+            let initialized = startup::initialize_runtime(
+                &state.core,
+                &state.runtime,
+                &state.data_root,
+                &state.shutting_down,
+            );
+            let succeeded = initialized
+                .as_ref()
+                .is_ok_and(|initialization| initialization.runtime_error.is_none());
+            if let Ok(initialization) = &initialized
+                && let Some(error) = initialization.runtime_error.as_deref()
+            {
+                tracing::warn!(error, "shared runtime startup did not complete");
+            }
+            if let Err(error) = &initialized {
+                tracing::warn!(error, "shared runtime startup did not complete");
+            }
+            audio.emit_status();
+            state
+                .events
+                .emit(HostEvent::RuntimeStartupFinished { succeeded });
+        })
+        .map_err(|error| {
+            tracing::warn!(error = %error, "shared runtime startup thread could not be created");
+        })
+        .ok()
 }
 
 impl Drop for DawHost {
@@ -431,29 +1662,12 @@ fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError
     })
 }
 
-fn parse_track_kind(value: &str) -> Result<TrackKind, ProtocolError> {
-    match value {
-        "audio" => Ok(TrackKind::Audio),
-        "instrument" => Ok(TrackKind::Instrument),
-        _ => Err(ProtocolError::new(
-            ErrorCode::InvalidRequest,
-            "track kind must be audio or instrument",
-        )),
-    }
-}
-
-fn application_error(error: riffra_core::ApplicationError) -> ProtocolError {
-    match error {
-        riffra_core::ApplicationError::Conflict {
-            expected_sequence,
-            current_sequence,
-        } => ProtocolError::conflict(expected_sequence, current_sequence),
-        error => command_error(error.to_string()),
-    }
-}
-
 fn command_error(message: impl Into<String>) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, message)
+}
+
+fn runtime_unavailable(message: impl Into<String>) -> ProtocolError {
+    ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
 }
 
 fn runtime_error(error: RuntimeError) -> ProtocolError {
@@ -461,11 +1675,14 @@ fn runtime_error(error: RuntimeError) -> ProtocolError {
         RuntimeError::RuntimeUnavailable(message) => {
             ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
         }
+        RuntimeError::ShuttingDown => {
+            ProtocolError::new(ErrorCode::RuntimeUnavailable, "runtime is shutting down")
+        }
         error => ProtocolError::new(ErrorCode::CommandFailed, error.to_string()),
     }
 }
 
-fn audio_error(error: crate::AudioError) -> ProtocolError {
+fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
 }
 
@@ -473,32 +1690,80 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
     command_error(error.to_string())
 }
 
-fn is_canonical_command(command: &str) -> bool {
+fn requires_command_gate(command: &str) -> bool {
+    !is_host_runtime_command(command)
+        && !matches!(
+            command,
+            // These operations validate and prepare an external VST candidate
+            // before attempting the canonical commit. Their expected
+            // sequence is checked by the adapter at commit time, so holding
+            // the short canonical-operation gate across process work would
+            // only block unrelated reads and transport controls.
+            "instrument.set" | "effect.add" | "missing.replace-plugin"
+        )
+}
+
+fn is_host_runtime_command(command: &str) -> bool {
     matches!(
         command,
-        "track.add" | "track.update" | "track.remove" | "undo" | "redo"
+        "host.status"
+            | "host.shutdown"
+            | "runtime.projection.get"
+            | "runtime.projection.retry"
+            | "transport.play"
+            | "transport.stop"
+            | "transport.go-to-start"
+            | "transport.seek"
+            | "audio.status"
+            | "audio.probe"
+            | "audio.channels.probe"
+            | "audio.recover"
+            | "audio.startup.retry"
+            | "audio.driver.set"
+            | "audio.driver.get"
+            | "asset.preview"
+            | "asset.preview.stop"
+            | "midi.send"
+            | "midi.panic"
+            | "plugin.catalog.list"
+            | "plugin.scan"
+            | "plugin.scan.start"
+            | "missing.list"
+            | "record.start"
+            | "record.stop"
+            | "record.status"
+            | "record.list"
+            | "record.rename"
+            | "record.archive"
+            | "record.promote"
+            | "record.tag"
+            | "record.delete"
+            | "record.duplicates"
+            | "render.start"
+            | "job.get"
+            | "job.cancel"
+            | "library.search"
+            | "library.asset.update"
+            | "library.related"
+            | "analysis.start"
     )
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TrackAddParams {
-    name: String,
-    kind: String,
+fn default_plugin_root() -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(r"C:\Program Files\Common Files\VST3")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/usr/lib/vst3")
+    }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TrackIdParams {
     track_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TrackUpdateParams {
-    track_id: String,
-    #[serde(flatten)]
-    patch: TrackPatch,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,6 +1776,196 @@ struct SeekParams {
 #[serde(rename_all = "camelCase")]
 struct TransportParams {
     transport_sequence: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiSendParams {
+    track_id: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginScanParams {
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioChannelsProbeParams {
+    driver: String,
+    input_device: String,
+    output_device: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetPreviewParams {
+    asset_id: String,
+    #[serde(default)]
+    start_ms: u64,
+    #[serde(default)]
+    end_ms: Option<u64>,
+    #[serde(default)]
+    looped: bool,
+    #[serde(default = "default_preview_gain")]
+    gain: f32,
+}
+
+fn default_preview_gain() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordStartParams {
+    recording_session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordListParams {
+    query: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordIdParams {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordRenameParams {
+    id: String,
+    new_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordTagParams {
+    id: String,
+    tag: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderStartParams {
+    options: Option<RenderOptions>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JobIdParams {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibrarySearchParams {
+    query: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryUpdateParams {
+    id: String,
+    tag: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryIdParams {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisParams {
+    asset_id: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTrackIdParams {
+    track_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTrackAudioInputParams {
+    track_id: String,
+    channel_index: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTrackMidiInputParams {
+    track_id: String,
+    device_id: Option<String>,
+    channel: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionPluginPathParams {
+    track_id: String,
+    plugin_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionEffectParams {
+    track_id: String,
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionEffectReorderParams {
+    track_id: String,
+    device_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionDeviceBypassParams {
+    track_id: String,
+    device_id: String,
+    bypassed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionDeviceParameterParams {
+    track_id: String,
+    device_id: String,
+    parameter_index: u32,
+    value: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionMissingRelinkParams {
+    asset_id: String,
+    new_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionDeviceIdParams {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionMissingPluginReplaceParams {
+    device_id: String,
+    new_path: String,
 }
 
 #[cfg(test)]
@@ -546,6 +2001,26 @@ mod tests {
             let hello: HelloResponse = transport::read_frame(&mut stream).unwrap();
             assert_eq!(hello.instance_id, descriptor.instance_id);
 
+            transport::write_frame(
+                &mut stream,
+                &ControlRequest::new(
+                    "session-get",
+                    ControlCommand::new("session.get", serde_json::json!({})),
+                    Some(0),
+                ),
+            )
+            .unwrap();
+            let session_response: ControlResponse = transport::read_frame(&mut stream).unwrap();
+            assert!(session_response.ok);
+            assert_eq!(session_response.sequence, Some(0));
+            assert_eq!(
+                session_response
+                    .result
+                    .as_ref()
+                    .map(|result| result.result_type.as_str()),
+                Some("session")
+            );
+
             let request = ControlRequest::new(
                 "host-test",
                 ControlCommand::new(
@@ -567,6 +2042,83 @@ mod tests {
         host.shutdown();
         assert!(!endpoint_path(&data_root).exists());
         drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn an_open_client_cannot_mutate_after_shutdown_and_the_root_reopens() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-shutdown-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+        let descriptor = read_endpoint(&data_root).unwrap();
+        let mut stream = transport::connect(descriptor.endpoint()).unwrap();
+        transport::write_frame(&mut stream, &HelloRequest::new()).unwrap();
+        let _: HelloResponse = transport::read_frame(&mut stream).unwrap();
+
+        host.shutdown();
+        transport::write_frame(
+            &mut stream,
+            &ControlRequest::new(
+                "after-shutdown",
+                ControlCommand::new(
+                    "track.add",
+                    serde_json::json!({"name": "Rejected", "kind": "audio"}),
+                ),
+                Some(0),
+            ),
+        )
+        .unwrap();
+        let response: ControlResponse = transport::read_frame(&mut stream).unwrap();
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::HostUnavailable)
+        );
+        drop(stream);
+        drop(host);
+
+        let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        assert_eq!(reopened.canonical_state().unwrap().sequence, 0);
+        reopened.shutdown();
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn normal_host_shutdown_releases_the_startup_worker_before_reopen() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-startup-shutdown-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+        host.shutdown();
+        drop(host);
+
+        let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        reopened.shutdown();
+        drop(reopened);
         let _ = std::fs::remove_dir_all(data_root);
     }
 }
