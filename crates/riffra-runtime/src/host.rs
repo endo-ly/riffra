@@ -204,6 +204,7 @@ impl HostState {
             )),
             "host.shutdown" => {
                 self.shutdown_requested.store(true, Ordering::Release);
+                self.shutting_down.store(true, Ordering::Release);
                 Ok(("ok", Value::Null, current.sequence))
             }
             "runtime.projection.get" => Ok((
@@ -2093,7 +2094,17 @@ mod tests {
         transport::write_frame(&mut stream, &HelloRequest::new()).unwrap();
         let _: HelloResponse = transport::read_frame(&mut stream).unwrap();
 
-        host.shutdown();
+        transport::write_frame(
+            &mut stream,
+            &ControlRequest::new(
+                "shutdown-request",
+                ControlCommand::new("host.shutdown", serde_json::json!({})),
+                Some(0),
+            ),
+        )
+        .unwrap();
+        let shutdown_response: ControlResponse = transport::read_frame(&mut stream).unwrap();
+        assert!(shutdown_response.ok);
         transport::write_frame(
             &mut stream,
             &ControlRequest::new(
