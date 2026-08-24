@@ -28,8 +28,8 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 │ Tauri シェル                                                     │
 │ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
 │ │ WebView (React)      │   │ Rust バックエンド                │ │
-│ │ 表示・操作・表示状態  │◀──▶│ Core / Desktop Adapter /       │ │
-│ │ NativeApi 経由で指令 │   │ ランタイム調整 / 永続化 / Jobs   │ │
+│ │ 表示・操作・表示状態  │◀──▶│ DawHost / Tauri adapter        │ │
+│ │ NativeApi 経由で指令 │   │ UI接続 / composition             │ │
 │ └──────────────────────┘   └──────────────────────────────────┘ │
 └──────┬──────────────────────────┬───────────────────────────────┘
        │ JSON Lines (stdin/stdout)
@@ -43,13 +43,13 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 └───────────────────────┘
 ```
 
-| プロセス             | 役割                                                        | 所有状態                                    |
-| -------------------- | ----------------------------------------------------------- | ------------------------------------------- |
-| Tauri シェル         | DesktopのUI、Core接続、永続化、ジョブ管理                   | CreativeSession（Core内）、SQLite索引、設定 |
-| `riffra serve` Host  | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態         |
-| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ）  |
-| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                        |
-| riffra-render-worker | タイムラインのオフラインレンダリング                        | なし                                        |
+| プロセス             | 役割                                                        | 所有状態                                   |
+| -------------------- | ----------------------------------------------------------- | ------------------------------------------ |
+| Tauri シェル         | DesktopのUI、DawHostのcomposition、Tauri event bridge       | UI接続、window、dialog                     |
+| `riffra serve` Host  | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
+| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
+| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
+| riffra-render-worker | タイムラインのオフラインレンダリング                        | なし                                       |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -70,12 +70,12 @@ React フロントエンド
   └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
 
 Tauri 命令層 (src-tauri/src/**/commands.rs)
-  ├─ 受け取った命令を Desktop Adapter へ委譲
+  ├─ 受け取った命令を共有Host serviceへ委譲
   └─ 実行モード: run_blocking（重い操作は spawn_blocking）で async ワーカーを塞がない
 
-Desktop Adapter (apps/desktop/src-tauri/src)
-  ├─ riffra-host / riffra-runtime を Core の Port とTauri境界に接続
-  └─ ファイル・音声・ジョブを伴うホスト固有の調整を担当
+Desktop adapter (apps/desktop/src-tauri/src)
+  ├─ Tauri command / event / windowの境界を担当
+  └─ riffra-runtime::DawHostへUI入力とbundle pathを接続
 
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
   ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
@@ -141,7 +141,7 @@ CreativeSession（`riffra-core/src/domain/session`）が、アレンジ、クリ
 2. Domainが不変条件を検証し、正準化する
 3. SessionStorage Portを通じて更新候補を永続化する
 4. 保存成功後に正準状態を交換し、履歴と投影順序を更新する
-5. Desktop Adapterがライブラリ索引の更新と音声ランタイムへの投影を要求する
+5. 共有Runtime serviceがライブラリ索引の更新と音声ランタイムへの投影を要求する
 
 検証または永続化に失敗した更新候補は正準状態にも履歴にも反映されない。
 

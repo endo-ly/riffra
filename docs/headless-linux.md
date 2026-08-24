@@ -43,9 +43,15 @@ cargo run -p riffra-cli -- --data-root ./riffra-data track add --name drums --ki
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
 cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
+
+# Native audio engineを使う通常モード
+./native/audio-engine/build.sh Debug
+cargo run -p riffra-cli -- --data-root ./riffra-data serve
 ```
 
 `serve`は起動後に`control/host.json`を公開し、終了シグナルを受けるまでフォアグラウンドで動作する。LinuxのControl transportはowner-only Unix Domain Socketである。`--attach`はこのdescriptorを読み、handshake後に要求を転送する。
+
+Native build scriptはDesktop用のtriple付きバイナリを`apps/desktop/src-tauri/binaries/`へ、Headless用の`riffra-audio`、`riffra-plugin-scan`、`riffra-render`をCLI実行ファイルと同じ`target/debug/`または`target/release/`へインストールする。通常モードのHostは後者を自動解決する。実際の音声入力・出力にはALSAデバイスが必要で、デバイスが利用できない環境ではHostは起動してもRuntimeをReadyにできない。
 
 ワンショットは1つの操作を実行してJSONを出力する。対話モードは標準入力から要求を複数受け取り、要求ごとにJSON Linesで応答する。Standaloneの`undo`と`redo`はプロセス内の履歴を使うため、対話モードで利用する。
 
@@ -100,7 +106,11 @@ Standaloneのワンショット／対話モードはAudio Runtimeを起動せず
 | Canonical state    | Session、History、Track操作、Undo / Redo                                    |
 | Runtime projection | 投影状態、Transport、Audio status / probe                                   |
 | Audio Runtime      | 通常モードで`riffra-audio --serve`を起動。Safe Modeでは`runtimeUnavailable` |
-| Desktopのサービス  | プレビュー、レンダー、プラグインスキャン、録音、ライブラリ処理は対象外      |
+| Plugin / Missing   | カタログ、スキャン、音源・エフェクト、欠落依存の操作をHostで実行            |
+| Recording          | Native capture、take確定、canonical Session反映をHostで実行                 |
+| Render / Jobs      | HostがRenderWorkerとJobRegistryを所有し、`job get/cancel`で状態を返す       |
+| Library / Analysis | 索引、検索、metadata更新、関連素材、音声解析をHostで実行                    |
+| Preview            | HostのAudio RuntimeへAsset previewを依頼（Safe Modeでは拒否）               |
 
 LinuxのNative audio engineはCLIとは別プロセスのC++ / JUCEサイドカーであり、ALSAを使用する。Live HostのDataRoot所有とNative audio engineのデバイス所有はHostのライフサイクル内で分離される。
 

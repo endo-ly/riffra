@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the native audio engine, run tests, and install sidecar binaries
-# to apps/desktop/src-tauri/binaries.
+# Build the native audio engine, run tests, and install sidecar binaries.
 set -euo pipefail
 
 CONFIG="${1:-Release}"
@@ -8,6 +7,14 @@ ENGINE_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ENGINE_DIR/../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ENGINE_DIR/build}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
+
+if [[ -n "${RIFFRA_HEADLESS_BINARIES_DESTINATION:-}" ]]; then
+  headless_destination="$RIFFRA_HEADLESS_BINARIES_DESTINATION"
+elif [[ "$CONFIG" == "Debug" ]]; then
+  headless_destination="target/debug"
+else
+  headless_destination="target/release"
+fi
 
 CMAKE="${CMAKE:-$(command -v cmake || true)}"
 if [ -z "$CMAKE" ]; then
@@ -22,7 +29,12 @@ if [ -z "$CTEST" ]; then
 fi
 
 cd "$ENGINE_DIR"
-configure_args=(-S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CONFIG")
+configure_args=(
+  -S .
+  -B "$BUILD_DIR"
+  -DCMAKE_BUILD_TYPE="$CONFIG"
+  -DRIFFRA_HEADLESS_BINARIES_DESTINATION="$headless_destination"
+)
 if [ -n "${CMAKE_C_COMPILER_LAUNCHER:-}" ]; then
   configure_args+=("-DCMAKE_C_COMPILER_LAUNCHER=$CMAKE_C_COMPILER_LAUNCHER")
 fi
@@ -40,4 +52,4 @@ if [ "$SKIP_TESTS" -ne 1 ]; then
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"
 
-echo "Audio engine built, tested, and installed to apps/desktop/src-tauri/binaries"
+echo "Audio engine built, tested, and installed to apps/desktop/src-tauri/binaries and $headless_destination"

@@ -10,7 +10,7 @@
 ┌───────────────────────────────────────────────┐
 │  Desktop Tauri シェル（1プロセス）              │
 │  React フロントエンド ── Tauri IPC ── Rust      │
-│  バックエンド（Core / Desktop Adapter）          │
+│  Tauri adapter ── riffra-runtime::DawHost       │
 └──────┬──────────────────────┬─────────────────┘
        │ JSON Lines (stdin/stdout)
 ┌──────▼──────────┐   ┌───────▼─────────┐  ┌──────▼────────┐
@@ -34,7 +34,7 @@ DesktopとHeadless Hostは同じ正準状態・投影・ローカル制御契約
 | パス                           | 内容                                                                             |
 | ------------------------------ | -------------------------------------------------------------------------------- |
 | `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
-| `apps/cli/`                    | `riffra-core` と `riffra-host` を利用するワンショット／JSON Lines CLI ホスト     |
+| `apps/cli/`                    | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
 | `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
 | `crates/riffra-host/`          | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
 | `crates/riffra-runtime/`       | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
@@ -61,7 +61,7 @@ DesktopとHeadless Hostは同じ正準状態・投影・ローカル制御契約
 
 - Node.js と npm
 - Rust toolchain（`Cargo.toml` の `rust-version` を確認）
-- ネイティブ音声エンジンのビルド済みサイドカー（`native/audio-engine/` 参照。ビルドは `apps/desktop/src-tauri/binaries/` へ配置される）
+- ネイティブ音声エンジンのビルド済みサイドカー（`native/audio-engine/` 参照。ビルドはDesktop用に `apps/desktop/src-tauri/binaries/`、Headless用に `target/debug/` または `target/release/` へ配置される）
 
 ### コマンド
 
@@ -82,6 +82,10 @@ cargo run -p riffra-cli -- --data-root ./riffra-data session get
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
 cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
+
+# Native audio engineを使うLive Host
+./native/audio-engine/build.sh Debug
+cargo run -p riffra-cli -- --data-root ./riffra-data serve
 ```
 
 `serve` はフォアグラウンドでHostを保持し、起動診断を標準エラーへ出力する。

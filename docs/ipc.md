@@ -170,7 +170,7 @@ Riffra Host Control Server → Host state / Core
 
 ### 5.1 接続とフレーミング
 
-- 起動: `riffra-audio.exe --serve`。Tauri 側は起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
+- 起動: `riffra-audio.exe --serve`。`riffra-runtime::AudioSupervisor`が起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
 - 送受信: Rust は **1コマンド = 1行のJSON** を stdin に書き、サイドカーは **1行のJSON** で応答する（JSON Lines）
 - 相関: コマンドバス（`command_bus.rs`）が各コマンドに `requestId`（原子カウンタ）を付与する。応答は同一 `requestId` を返し、`Condvar` で待機側へ届く
 - タイムアウト: 通常コマンドは `COMMAND_ACK_TIMEOUT`。投影の `prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` に制限（遅いVSTはセッション操作をブロックしない）
@@ -286,7 +286,7 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
   "requestId": "42",
   "ok": true,
   "sequence": 12,
-  "result": { "type": "canonicalState", "value": {} }
+  "result": { "type": "session", "value": {} }
 }
 ```
 
@@ -319,18 +319,19 @@ Standaloneの`undo`と`redo`はそのプロセス内の履歴を使う。serve�
 
 CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
 
-| 分類                   | コマンド                                                                                                                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session / History      | `session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                            |
-| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                       |
-| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                        |
-| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/quantize/transform/duplicate` |
-| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                    |
-| Automation             | `automation set`、`automation clear`                                                                                                                                               |
-| Asset / Project        | `asset import-midi`、`project export`、`project import`                                                                                                                            |
-| Rack state             | `instrument clear`、`effect remove/reorder`、`device bypass`                                                                                                                       |
+| 分類                   | コマンド                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session / History      | `session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                                               |
+| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                          |
+| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                           |
+| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/quantize/transform/duplicate`                                                                                                                                                    |
+| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                       |
+| Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                  |
+| Asset / Project        | `asset import-midi`、`asset preview`、`project export`、`project import`                                                                                                                                                                                                                                                              |
+| Rack state             | `plugin catalog list`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass/parameter-set`                                                                                                                                                                               |
+| Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
-Live HostのControl Serverが公開する操作は、正準状態、履歴、Track、Runtime投影、Transport、Audio status / probeである。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
+Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
 
 DesktopのTauri command境界が所有する機能と、Live HostのControl Serverが所有する機能は次のように分かれる。
 
@@ -338,13 +339,15 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 | ------------------------------------------------------ | --------------------- | -------------------- |
 | Runtime投影・トランスポート                            | HostのRuntime         | `runtimeUnavailable` |
 | 音声状態・Live MIDI                                    | HostのAudio Runtime   | `runtimeUnavailable` |
-| プラグイン一覧・VST音源/エフェクト・デバイスパラメータ | Desktop Adapter       | `runtimeUnavailable` |
-| 欠落依存                                               | Desktop Adapter       | `runtimeUnavailable` |
-| レンダー・ジョブ                                       | DesktopのRenderWorker | `runtimeUnavailable` |
+| プラグイン一覧・VST音源/エフェクト・デバイスパラメータ | HostのPlugin Runtime  | `runtimeUnavailable` |
+| 欠落依存                                               | HostのMissing service | `runtimeUnavailable` |
+| 録音                                                   | HostのRecording       | `runtimeUnavailable` |
+| レンダー・ジョブ                                       | HostのRenderWorker    | `runtimeUnavailable` |
+| ライブラリ・解析・Asset preview                        | Hostのshared service  | `runtimeUnavailable` |
 
-録音の開始から完了まで、プレビュー、プラグインエディタ、VSTスキャン、ライブラリメタデータはLive HostのControl Serverに含めず、既存のDesktop専用APIが扱う。
+プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。録音、プレビュー、VSTスキャン、ライブラリmetadata、解析はLive HostのControl Serverからも同じRuntime serviceを使う。
 
-`render start`はDesktopが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
+`render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
 
 ---
 
@@ -352,12 +355,10 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 
 メインウィンドウは最小ケイパビリティで構成する。
 
-| 権限                                           | 内容                                                                                                                                           |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core:default` / `core:window:allow-destroy`   | コア操作とウィンドウ破棄                                                                                                                       |
-| `dialog:default`                               | ファイルダイアログ                                                                                                                             |
-| `shell:allow-spawn`                            | サイドカー起動のみ許可。`riffra-audio` は引数バリデータ `--(serve\|probe\|probe-channels)` で起動モードを限定、`riffra-plugin-scan` は引数自由 |
-| `shell:allow-stdin-write` / `shell:allow-kill` | サイドカーへの標準入力書き込みと終了制御                                                                                                       |
+| 権限                                         | 内容                     |
+| -------------------------------------------- | ------------------------ |
+| `core:default` / `core:window:allow-destroy` | コア操作とウィンドウ破棄 |
+| `dialog:default`                             | ファイルダイアログ       |
 
 ---
 
