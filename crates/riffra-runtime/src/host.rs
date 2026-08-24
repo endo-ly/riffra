@@ -1446,6 +1446,26 @@ impl DawHost {
             .map_err(|_| "Host command gate was poisoned".to_owned())
     }
 
+    /// Runs a shell operation while the Host remains in its active lifecycle.
+    ///
+    /// The read barrier makes Desktop invocations obey the same shutdown rule
+    /// as attached control clients: shutdown waits for an accepted operation,
+    /// while new operations are rejected after shutdown has begun.
+    pub fn with_lifecycle<T, F>(&self, operation: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Result<T, String>,
+    {
+        let _lifecycle = self
+            .state
+            .lifecycle_gate
+            .read()
+            .map_err(|_| "Host lifecycle gate was poisoned".to_owned())?;
+        if self.state.shutting_down.load(Ordering::Acquire) {
+            return Err("Riffra Host has shut down".to_owned());
+        }
+        operation()
+    }
+
     /// Locks the Host-wide recording operation gate.
     pub fn lock_recording_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
         self.state
@@ -2197,6 +2217,35 @@ mod tests {
         let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         reopened.shutdown();
         drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn lifecycle_operations_are_rejected_after_shutdown() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-lifecycle-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        assert_eq!(host.with_lifecycle(|| Ok::<_, String>(7)), Ok(7));
+        host.shutdown();
+        assert_eq!(
+            host.with_lifecycle(|| Ok::<_, String>(7)),
+            Err("Riffra Host has shut down".to_owned())
+        );
+
+        drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
 }
