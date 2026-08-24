@@ -22,6 +22,7 @@ mod sidecar_process;
 
 use command_bus::CommandBus;
 pub use error::{NativeAudioError, NativeAudioResult};
+use probe::ProbeCoordinator;
 use recovery::RecoveryState;
 pub use recovery::{AudioDeviceReopenOutcome, MuteCause, RuntimeRestartHandler};
 use sidecar_process::SidecarProcess;
@@ -55,6 +56,7 @@ pub struct AudioSupervisor {
     recovery: Arc<RecoveryState>,
     startup_state: Arc<AtomicU8>,
     startup_transition_gate: Arc<Mutex<()>>,
+    probe_coordinator: Arc<ProbeCoordinator>,
     binaries: Arc<RuntimeBinaries>,
     events: SharedHostEventSink,
 }

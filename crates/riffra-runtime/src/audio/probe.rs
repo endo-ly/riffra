@@ -2,13 +2,69 @@ use super::AudioSupervisor;
 use crate::model::{AudioDeviceProbe, DeviceChannels};
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[derive(Default)]
+pub(super) struct ProbeCoordinator {
+    in_use: Mutex<bool>,
+    available: Condvar,
+}
+
+struct ProbePermit<'a> {
+    coordinator: &'a ProbeCoordinator,
+}
+
+impl ProbeCoordinator {
+    fn acquire(&self, timeout: Duration) -> Result<ProbePermit<'_>, String> {
+        let deadline = Instant::now() + timeout;
+        let mut in_use = self
+            .in_use
+            .lock()
+            .map_err(|_| "audio probe coordinator lock was poisoned".to_owned())?;
+        while *in_use {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(
+                    "audio probe coordinator timed out waiting for another probe".to_owned(),
+                );
+            }
+            let (guard, result) = self
+                .available
+                .wait_timeout(in_use, remaining)
+                .map_err(|_| "audio probe coordinator lock was poisoned".to_owned())?;
+            in_use = guard;
+            if result.timed_out() && *in_use {
+                return Err(
+                    "audio probe coordinator timed out waiting for another probe".to_owned(),
+                );
+            }
+        }
+        *in_use = true;
+        Ok(ProbePermit { coordinator: self })
+    }
+}
+
+impl Drop for ProbePermit<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut in_use) = self.coordinator.in_use.lock() {
+            *in_use = false;
+            self.coordinator.available.notify_one();
+        }
+    }
+}
 
 impl AudioSupervisor {
     /// Probes devices through the same native executable used by the live runtime.
     pub fn probe_devices(&self, timeout: Duration) -> Result<AudioDeviceProbe, String> {
-        let output = run_probe(&self.binaries.audio, ["--probe"], timeout)?;
+        let deadline = Instant::now() + timeout;
+        let _permit = self.probe_coordinator.acquire(timeout)?;
+        let output = run_probe(
+            &self.binaries.audio,
+            ["--probe"],
+            deadline.saturating_duration_since(Instant::now()),
+        )?;
         if !output.status.success() {
             return Err(format_probe_failure(&output));
         }
@@ -23,6 +79,8 @@ impl AudioSupervisor {
         output_device: &str,
         timeout: Duration,
     ) -> Result<DeviceChannels, String> {
+        let deadline = Instant::now() + timeout;
+        let _permit = self.probe_coordinator.acquire(timeout)?;
         let output = run_probe(
             &self.binaries.audio,
             [
@@ -34,7 +92,7 @@ impl AudioSupervisor {
                 "--output-device",
                 output_device,
             ],
-            timeout,
+            deadline.saturating_duration_since(Instant::now()),
         )?;
         if !output.status.success() {
             return Err(format_probe_failure(&output));
@@ -159,8 +217,9 @@ fn format_probe_failure(output: &std::process::Output) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_probe;
+    use super::{ProbeCoordinator, parse_probe};
     use crate::{AudioDevicePairing, AudioDeviceProbe, DeviceChannels};
+    use std::time::Duration;
 
     #[test]
     fn parses_audio_probe_with_unicode_device_names() {
@@ -202,5 +261,20 @@ mod tests {
             .unwrap_err();
 
         assert!(error.contains("no deviceChannels response"));
+    }
+
+    #[test]
+    fn probe_coordinator_times_out_while_busy_and_releases_after_drop() {
+        let coordinator = ProbeCoordinator::default();
+        let permit = coordinator.acquire(Duration::from_millis(10)).unwrap();
+
+        let error = match coordinator.acquire(Duration::from_millis(1)) {
+            Ok(_) => panic!("a second probe must wait for the first probe"),
+            Err(error) => error,
+        };
+        assert!(error.contains("timed out waiting"));
+
+        drop(permit);
+        assert!(coordinator.acquire(Duration::from_millis(10)).is_ok());
     }
 }

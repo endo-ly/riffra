@@ -67,6 +67,7 @@ impl AudioSupervisor {
                 StartupState::Completed as u8,
             )),
             startup_transition_gate,
+            probe_coordinator: Arc::new(super::probe::ProbeCoordinator::default()),
             binaries: Arc::new(RuntimeBinaries::new(
                 std::path::PathBuf::new(),
                 std::path::PathBuf::new(),
@@ -117,6 +118,7 @@ impl AudioSupervisor {
                 StartupState::Pending as u8,
             )),
             startup_transition_gate,
+            probe_coordinator: Arc::new(super::probe::ProbeCoordinator::default()),
             binaries: Arc::new(binaries.clone()),
             events,
         };
