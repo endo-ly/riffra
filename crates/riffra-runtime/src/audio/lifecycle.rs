@@ -278,12 +278,6 @@ impl AudioSupervisor {
                     if event_generation.load(Ordering::Acquire) != generation {
                         break;
                     }
-                    let Ok(_event_gate) = event_process.command_gate.lock() else {
-                        continue;
-                    };
-                    if event_generation.load(Ordering::Acquire) != generation {
-                        continue;
-                    }
                     let bytes = line.as_bytes();
                     if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(bytes) {
                         match payload.get("type").and_then(serde_json::Value::as_str) {
@@ -352,7 +346,6 @@ impl AudioSupervisor {
         let stderr_status = Arc::clone(&self.status);
         let stderr_events = Arc::clone(&self.events);
         let stderr_generation = Arc::clone(&self.process.generation);
-        let stderr_process = Arc::clone(&self.process);
         if let Err(error) = thread::Builder::new()
             .name("riffra-audio-stderr".into())
             .spawn(move || {
@@ -360,9 +353,6 @@ impl AudioSupervisor {
                     if stderr_generation.load(Ordering::Acquire) != generation {
                         break;
                     }
-                    let Ok(_event_gate) = stderr_process.command_gate.lock() else {
-                        continue;
-                    };
                     set_faulted(
                         &stderr_status,
                         format!(
