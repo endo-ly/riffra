@@ -156,6 +156,9 @@ fn monitor_shutdown_request(app: AppHandle) {
                     .try_state::<AppState>()
                     .is_some_and(|state| state.host.shutdown_requested());
                 if requested {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        state.host.shutdown();
+                    }
                     app.exit(0);
                     break;
                 }
