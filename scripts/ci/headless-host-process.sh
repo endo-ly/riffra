@@ -62,6 +62,10 @@ jq -e '.ok == true and .result.type == "arrangementMutation" and .sequence == 2'
     "$data_root/undo.json" >/dev/null
 
 if [[ "$safe_mode" == 1 ]]; then
+    "$binary" --data-root "$data_root" --attach audio status >"$data_root/safe-audio.json"
+    jq -e '.ok == true and .result.type == "audioStatus"' \
+        "$data_root/safe-audio.json" >/dev/null
+
     if "$binary" --data-root "$data_root" --attach transport play \
         --transport-sequence 1 >"$data_root/transport.stdout.log" 2>"$data_root/transport.stderr.log"; then
         echo 'transport play unexpectedly succeeded in Safe Mode' >&2

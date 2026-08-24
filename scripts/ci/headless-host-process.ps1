@@ -57,6 +57,14 @@ try {
     }
 
     if ($safeMode -eq '1') {
+        & $binary --data-root $dataRoot --attach audio status |
+            Out-File (Join-Path $dataRoot 'safe-audio.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Safe Mode audio.status failed' }
+        $safeAudio = Get-Content (Join-Path $dataRoot 'safe-audio.json') | ConvertFrom-Json
+        if (-not $safeAudio.ok -or $safeAudio.result.type -ne 'audioStatus') {
+            throw 'Safe Mode audio.status returned an invalid contract'
+        }
+
         $transportOutput = & $binary --data-root $dataRoot --attach transport play --transport-sequence 1 2>&1
         $transportExitCode = $LASTEXITCODE
         if ($transportExitCode -eq 0) { throw 'transport play unexpectedly succeeded in Safe Mode' }
