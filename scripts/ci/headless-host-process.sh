@@ -71,21 +71,21 @@ if [[ "$safe_mode" == 1 ]]; then
         echo 'transport play unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
-    rg -q 'runtimeUnavailable' "$data_root/transport.stderr.log"
+    grep -q 'runtimeUnavailable' "$data_root/transport.stderr.log"
 
     if "$binary" --data-root "$data_root" --attach audio probe \
         >"$data_root/probe.stdout.log" 2>"$data_root/probe.stderr.log"; then
         echo 'audio probe unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
-    rg -q 'runtimeUnavailable' "$data_root/probe.stderr.log"
+    grep -q 'runtimeUnavailable' "$data_root/probe.stderr.log"
 
     if "$binary" --data-root "$data_root" --attach plugin scan \
         --path "$data_root" >"$data_root/plugin.stdout.log" 2>"$data_root/plugin.stderr.log"; then
         echo 'plugin scan unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
-    rg -q 'runtimeUnavailable' "$data_root/plugin.stderr.log"
+    grep -q 'runtimeUnavailable' "$data_root/plugin.stderr.log"
 else
     "$binary" --data-root "$data_root" --attach host status >"$data_root/host.json"
     jq -e '.ok == true and .result.type == "hostStatus"' "$data_root/host.json" >/dev/null
