@@ -101,28 +101,30 @@ pub(crate) fn cancel_background_job(
 // nor the Asset registry.
 
 #[tauri::command]
-pub(crate) fn probe_audio_devices(state: State<'_, AppState>) -> Result<AudioDeviceProbe, String> {
-    state.with_host_lifecycle(|state| {
+pub(crate) async fn probe_audio_devices(app: AppHandle) -> Result<AudioDeviceProbe, String> {
+    run_blocking(app, |state| {
         state
             .host
             .probe_devices()
             .map_err(|error| error.to_string())
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn probe_device_channels(
-    state: State<'_, AppState>,
+pub(crate) async fn probe_device_channels(
+    app: AppHandle,
     driver: String,
     input_device: String,
     output_device: String,
 ) -> Result<model::DeviceChannels, String> {
-    state.with_host_lifecycle(|state| {
+    run_blocking(app, move |state| {
         state
             .host
             .probe_device_channels(&driver, &input_device, &output_device)
             .map_err(|error| error.to_string())
     })
+    .await
 }
 
 // Low-level Audio Runtime passthroughs with no canonical-session mutation.
