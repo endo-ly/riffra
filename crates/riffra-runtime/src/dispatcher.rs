@@ -1,3 +1,4 @@
+use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome};
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
@@ -779,6 +780,18 @@ impl<'a, A> HostDispatcher<'a, A> {
                 .map_err(|error| error.to_string())?
                 .sequence
         };
+        if is_arrangement_mutation_command(&request.name) {
+            let canonical = self.core.canonical_state()?;
+            return Ok(DispatchResult {
+                result_type: "arrangementMutation",
+                value: serde_json::to_value(ArrangementMutationResult {
+                    canonical: canonical.clone(),
+                    projection: ArrangementProjectionOutcome::NotRequired,
+                })
+                .expect("arrangement mutation results serialize"),
+                sequence: canonical.sequence,
+            });
+        }
         Ok(DispatchResult {
             result_type: result.result_type,
             value: result.value,
@@ -880,6 +893,28 @@ fn is_read_command(command: &str) -> bool {
             | "audio-clip.list"
             | "midi-clip.list"
             | "project.export"
+    )
+}
+
+fn is_arrangement_mutation_command(command: &str) -> bool {
+    matches!(
+        command,
+        "track.audio-input.set"
+            | "track.audio-input.clear"
+            | "track.midi-input.set"
+            | "track.midi-input.clear"
+            | "instrument.set"
+            | "instrument.clear"
+            | "effect.add"
+            | "effect.remove"
+            | "effect.reorder"
+            | "device.bypass"
+            | "device.parameter.set"
+            | "missing.relink"
+            | "missing.disable-plugin"
+            | "missing.replace-plugin"
+            | "undo"
+            | "redo"
     )
 }
 
@@ -1381,12 +1416,24 @@ mod tests {
             .unwrap();
 
         let undone = dispatcher.dispatch(request("undo", json!({}))).unwrap();
-        let undone: riffra_core::CreativeSession = serde_json::from_value(undone.value).unwrap();
-        assert!(undone.arrangement.tracks.is_empty());
+        assert_eq!(undone.result_type, "arrangementMutation");
+        assert_eq!(
+            undone.value["canonical"]["session"]["arrangement"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
 
         let redone = dispatcher.dispatch(request("redo", json!({}))).unwrap();
-        let redone: riffra_core::CreativeSession = serde_json::from_value(redone.value).unwrap();
-        assert_eq!(redone.arrangement.tracks.len(), 1);
+        assert_eq!(redone.result_type, "arrangementMutation");
+        assert_eq!(
+            redone.value["canonical"]["session"]["arrangement"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
