@@ -1124,7 +1124,7 @@ fn commit_recording_session(
         .application(&store)
         .commit_recording(base, candidate)
         .map_err(|error| error.to_string())?;
-    crate::library::index::queue(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &committed);
     Ok(())
 }
 

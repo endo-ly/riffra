@@ -34,7 +34,7 @@ where
     let before_sequence = context.core.snapshot()?.sequence;
     let store = SessionStore::new(context.data_root);
     let committed = operation(context.core, &store)?;
-    crate::library::index::queue(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &committed);
     let canonical = context.core.canonical_state()?;
     if canonical.sequence > before_sequence {
         context
@@ -90,7 +90,7 @@ pub fn import_session(
         .application(&store)
         .import_project(session)
         .map_err(AdapterError::from)?;
-    crate::library::index::queue(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &committed);
     publish_canonical_state(context)?;
     arrangement_mutation_result(context)
 }
@@ -113,7 +113,7 @@ pub fn restore_generation(
         .application(&store)
         .restore_project(session)
         .map_err(AdapterError::from)?;
-    crate::library::index::queue(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &committed);
     publish_canonical_state(context)?;
     arrangement_mutation_result(context)
 }

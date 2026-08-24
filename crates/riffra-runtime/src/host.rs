@@ -632,32 +632,29 @@ impl HostState {
                     return Err(command_error("render job could not be registered"));
                 };
                 let job_id = id.clone();
-                std::thread::Builder::new()
-                    .name("riffra-render-job".into())
-                    .spawn(move || {
-                        jobs.set_running(&job_id, "Rendering the canonical arrangement.");
-                        match render::render_timeline_with_cancellation(
-                            &worker,
-                            &data_root,
-                            &session,
-                            riffra_host::now_ms(),
-                            options,
-                            cancelled.as_ref(),
-                        ) {
-                            Ok(result) => match serde_json::to_value(result) {
-                                Ok(value) => {
-                                    jobs.complete(&job_id, value, "Offline render completed.")
-                                }
-                                Err(error) => {
-                                    jobs::fail(&jobs, &data_root, &job_id, error.to_string())
-                                }
-                            },
-                            Err(error) => jobs::fail(&jobs, &data_root, &job_id, error),
-                        }
-                    })
-                    .map_err(|error| {
-                        command_error(format!("render job could not start: {error}"))
-                    })?;
+                let worker_jobs = jobs.clone();
+                jobs.spawn_worker(&id, "riffra-render-job", move || {
+                    worker_jobs.set_running(&job_id, "Rendering the canonical arrangement.");
+                    match render::render_timeline_with_cancellation(
+                        &worker,
+                        &data_root,
+                        &session,
+                        riffra_host::now_ms(),
+                        options,
+                        cancelled.as_ref(),
+                    ) {
+                        Ok(result) => match serde_json::to_value(result) {
+                            Ok(value) => {
+                                worker_jobs.complete(&job_id, value, "Offline render completed.")
+                            }
+                            Err(error) => {
+                                jobs::fail(&worker_jobs, &data_root, &job_id, error.to_string())
+                            }
+                        },
+                        Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+                    }
+                })
+                .map_err(|error| command_error(format!("render job could not start: {error}")))?;
                 Ok((
                     "job",
                     serde_json::to_value(status).map_err(serialize_error)?,
@@ -927,7 +924,7 @@ impl HostState {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
-        library::index::queue(&self.data_root, &canonical.session);
+        library::index::refresh(&self.data_root, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         if self.core.safe_mode() {
@@ -969,9 +966,8 @@ impl HostState {
             return Err("plugin scan job could not be registered".into());
         };
         let job_id = id.clone();
-        std::thread::Builder::new()
-            .name("riffra-plugin-scan-job".into())
-            .spawn(move || {
+        self.jobs
+            .spawn_worker(&id, "riffra-plugin-scan-job", move || {
                 registry.set_running(
                     &job_id,
                     "Discovering and validating VST3 plugins in the background.",
@@ -1398,7 +1394,7 @@ impl DawHost {
             return Err(HostError::State(error.to_string()));
         }
         if let Ok(canonical) = state.canonical() {
-            library::index::queue(&state.data_root, &canonical.session);
+            library::index::refresh(&state.data_root, &canonical.session);
         }
         let control = match ControlServer::start(Arc::clone(&state)) {
             Ok(control) => control,
@@ -1611,7 +1607,7 @@ impl DawHost {
         {
             control.shutdown();
         }
-        self.state.jobs.cancel_all();
+        self.state.jobs.cancel_all_and_wait();
         self.state.core.audio().force_shutdown();
         if let Ok(mut startup) = self.startup.lock()
             && let Some(startup) = startup.take()

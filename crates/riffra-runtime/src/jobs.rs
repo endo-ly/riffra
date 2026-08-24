@@ -9,6 +9,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    thread::{self, JoinHandle},
 };
 use ts_rs::TS;
 
@@ -126,6 +127,7 @@ struct JobRecord {
 #[derive(Clone, Default)]
 pub struct JobRegistry {
     records: Arc<Mutex<HashMap<String, Arc<JobRecord>>>>,
+    workers: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     sequence: Arc<AtomicU64>,
 }
 
@@ -253,6 +255,42 @@ impl JobRegistry {
         }
     }
 
+    pub(crate) fn spawn_worker<F>(&self, id: &str, name: &str, worker: F) -> Result<(), String>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let (start_sender, start_receiver) = std::sync::mpsc::sync_channel(0);
+        let handle = thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                if start_receiver.recv().is_ok() {
+                    worker();
+                }
+            })
+            .map_err(|error| format!("job worker could not start: {error}"))?;
+        self.workers
+            .lock()
+            .map_err(|_| "job worker registry was poisoned".to_owned())?
+            .insert(id.to_owned(), handle);
+        start_sender
+            .send(())
+            .map_err(|_| "job worker could not be released".to_owned())
+    }
+
+    pub(crate) fn cancel_all_and_wait(&self) {
+        self.cancel_all();
+        let workers: Vec<JoinHandle<()>> = self
+            .workers
+            .lock()
+            .map(|mut workers| workers.drain().map(|(_, worker)| worker).collect())
+            .unwrap_or_default();
+        for worker in workers {
+            if worker.join().is_err() {
+                tracing::warn!("background job worker panicked during Host shutdown");
+            }
+        }
+    }
+
     pub fn mark_cancelled(&self, id: &str) {
         self.update(id, |status, _| {
             status.state = JobState::Cancelled;
@@ -311,5 +349,23 @@ mod tests {
         let status = registry.status(&id).unwrap();
         assert_eq!(status.state, JobState::Cancelled);
         assert!(status.result.is_none());
+    }
+
+    #[test]
+    fn shutdown_waits_for_registered_workers() {
+        let registry = JobRegistry::default();
+        let (id, _) = registry.start(JobKind::Render);
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::clone(&finished);
+        registry
+            .spawn_worker(&id, "test-job-worker", move || {
+                thread::sleep(std::time::Duration::from_millis(10));
+                worker_finished.store(true, Ordering::Release);
+            })
+            .unwrap();
+
+        registry.cancel_all_and_wait();
+
+        assert!(finished.load(Ordering::Acquire));
     }
 }

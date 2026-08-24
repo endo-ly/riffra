@@ -70,7 +70,7 @@ pub fn undo(
         .application(&store)
         .undo()
         .map_err(AdapterError::from)?;
-    crate::library::index::queue(context.data_root, &session);
+    crate::library::index::refresh(context.data_root, &session);
     publish_canonical_state(context)?;
     crate::session::adapter::arrangement_mutation_result(context)
 }
@@ -84,7 +84,7 @@ pub fn redo(
         .application(&store)
         .redo()
         .map_err(AdapterError::from)?;
-    crate::library::index::queue(context.data_root, &session);
+    crate::library::index::refresh(context.data_root, &session);
     publish_canonical_state(context)?;
     crate::session::adapter::arrangement_mutation_result(context)
 }
