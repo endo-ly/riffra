@@ -1,6 +1,6 @@
 //! Thin Tauri command boundary for Asset Application Operations.
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 use crate::asset::application::{self, AssetPreviewContext, AssetPreviewOptions};
@@ -14,7 +14,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner())
+        state.with_host_lifecycle(operation)
     })
     .await
     .map_err(|error| format!("Asset blocking operation failed: {error}"))?
@@ -49,11 +49,13 @@ pub async fn preview_asset(
 pub async fn import_midi_file(
     path: String,
     name: Option<String>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AssetId, String> {
-    let data_root = state.host.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
-        application::import_midi_asset(&data_root, &path, name.as_deref())
+        let state = app.state::<AppState>();
+        state.with_host_lifecycle(|state| {
+            application::import_midi_asset(state.host.data_root(), &path, name.as_deref())
+        })
     })
     .await
     .map_err(|error| format!("MIDI import task failed: {error}"))?
@@ -68,11 +70,13 @@ pub async fn import_midi_file(
 pub async fn import_midi_bytes(
     name: String,
     bytes: Vec<u8>,
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<AssetId, String> {
-    let data_root = state.host.data_root().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
-        application::import_midi_bytes(&data_root, &name, &bytes)
+        let state = app.state::<AppState>();
+        state.with_host_lifecycle(|state| {
+            application::import_midi_bytes(state.host.data_root(), &name, &bytes)
+        })
     })
     .await
     .map_err(|error| format!("MIDI import task failed: {error}"))?

@@ -8,7 +8,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner())
+        state.with_host_lifecycle(operation)
     })
     .await
     .map_err(|error| format!("Native blocking operation failed: {error}"))?
@@ -74,10 +74,12 @@ pub(crate) fn get_background_job(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<jobs::BackgroundJobStatus>, String> {
-    state
-        .host
-        .background_job(&id)
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .background_job(&id)
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[tauri::command]
@@ -85,10 +87,12 @@ pub(crate) fn cancel_background_job(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<jobs::BackgroundJobStatus>, String> {
-    state
-        .host
-        .cancel_background_job(&id)
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .cancel_background_job(&id)
+            .map_err(|error| error.to_string())
+    })
 }
 
 // App-level audio device discovery. The native sidecar owns the actual probe;
@@ -98,10 +102,12 @@ pub(crate) fn cancel_background_job(
 
 #[tauri::command]
 pub(crate) fn probe_audio_devices(state: State<'_, AppState>) -> Result<AudioDeviceProbe, String> {
-    state
-        .host
-        .probe_devices()
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .probe_devices()
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[tauri::command]
@@ -111,10 +117,12 @@ pub(crate) fn probe_device_channels(
     input_device: String,
     output_device: String,
 ) -> Result<model::DeviceChannels, String> {
-    state
-        .host
-        .probe_device_channels(&driver, &input_device, &output_device)
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .probe_device_channels(&driver, &input_device, &output_device)
+            .map_err(|error| error.to_string())
+    })
 }
 
 // Low-level Audio Runtime passthroughs with no canonical-session mutation.

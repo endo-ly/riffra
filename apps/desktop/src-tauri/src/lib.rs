@@ -35,10 +35,20 @@ use host_commands::*;
 use model::{AudioDeviceProbe, AudioStatus, BootstrapState, RecoveryCandidate};
 use riffra_runtime::{DawHost, HostConfig, HostEvent, HostEventSink, RuntimeBinaries};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppState {
     host: DawHost,
+}
+
+impl AppState {
+    pub(crate) fn with_host_lifecycle<T, F>(&self, operation: F) -> Result<T, String>
+    where
+        F: FnOnce(&Self) -> Result<T, String>,
+    {
+        self.host.with_lifecycle(|| operation(self))
+    }
 }
 
 fn default_vst3_root() -> String {
@@ -89,61 +99,6 @@ impl HostEventSink for TauriHostEventSink {
     }
 }
 
-fn bundled_runtime_binaries(app: &AppHandle) -> Result<RuntimeBinaries, String> {
-    let directory = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("Tauri resource directory is unavailable: {error}"))?
-        .join("binaries");
-    let target_triple = bundled_target_triple()?;
-    let suffix = std::env::consts::EXE_SUFFIX;
-    let find = |name: &str| -> Result<std::path::PathBuf, String> {
-        let path = directory.join(format!("{name}-{target_triple}{suffix}"));
-        if path.is_file() {
-            Ok(path)
-        } else {
-            Err(format!(
-                "bundled runtime binary is missing: {}",
-                path.display()
-            ))
-        }
-    };
-    Ok(RuntimeBinaries::new(
-        find("riffra-audio")?,
-        find("riffra-plugin-scan")?,
-        find("riffra-render")?,
-    ))
-}
-
-fn bundled_target_triple() -> Result<&'static str, String> {
-    #[cfg(windows)]
-    {
-        return Ok("x86_64-pc-windows-msvc");
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        return Ok("x86_64-unknown-linux-gnu");
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        return Ok("aarch64-unknown-linux-gnu");
-    }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        return Ok("x86_64-apple-darwin");
-    }
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        return Ok("aarch64-apple-darwin");
-    }
-    #[allow(unreachable_code)]
-    Err(format!(
-        "bundled runtime binaries are not defined for {}-{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ))
-}
-
 fn map_recovery_candidates(
     candidates: Vec<riffra_host::RecoveryCandidate>,
 ) -> Vec<RecoveryCandidate> {
@@ -192,6 +147,23 @@ fn safe_mode_requested() -> bool {
             .unwrap_or(false)
 }
 
+fn monitor_shutdown_request(app: AppHandle) {
+    let _ = std::thread::Builder::new()
+        .name("riffra-desktop-shutdown".into())
+        .spawn(move || {
+            loop {
+                let requested = app
+                    .try_state::<AppState>()
+                    .is_some_and(|state| state.host.shutdown_requested());
+                if requested {
+                    app.exit(0);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -212,7 +184,7 @@ pub fn run() {
             let data_root = app.path().app_data_dir().map_err(|error| {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
-            let binaries = bundled_runtime_binaries(app.handle())?;
+            let binaries = RuntimeBinaries::beside_current_executable()?;
             let host = DawHost::open(
                 HostConfig {
                     data_root: data_root.clone(),
@@ -225,6 +197,7 @@ pub fn run() {
             )
             .map_err(|error| error.to_string())?;
             app.manage(AppState { host });
+            monitor_shutdown_request(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

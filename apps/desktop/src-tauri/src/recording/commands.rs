@@ -15,8 +15,10 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let _recording_operation = state.host.lock_recording_gate()?;
-        operation(state.inner())
+        state.with_host_lifecycle(|state| {
+            let _recording_operation = state.host.lock_recording_gate()?;
+            operation(state)
+        })
     })
     .await
     .map_err(|error| format!("Recording blocking operation failed: {error}"))?

@@ -10,8 +10,10 @@ pub fn set_audio_driver(
     config: AudioDriverConfig,
     state: State<'_, AppState>,
 ) -> Result<AudioStatus, String> {
-    state
-        .host
-        .set_audio_driver(config)
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .set_audio_driver(config)
+            .map_err(|error| error.to_string())
+    })
 }

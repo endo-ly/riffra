@@ -10,8 +10,10 @@ pub fn render_timeline(
     options: Option<RenderOptions>,
     state: State<'_, AppState>,
 ) -> Result<RenderResult, String> {
-    state
-        .host
-        .render_timeline(options.unwrap_or_default())
-        .map_err(|error| error.to_string())
+    state.with_host_lifecycle(|state| {
+        state
+            .host
+            .render_timeline(options.unwrap_or_default())
+            .map_err(|error| error.to_string())
+    })
 }

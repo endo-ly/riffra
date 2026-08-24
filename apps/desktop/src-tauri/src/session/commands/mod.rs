@@ -31,8 +31,10 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let _command_gate = state.host.lock_command_gate()?;
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| {
+            let _command_gate = state.host.lock_command_gate()?;
+            operation(state).map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
@@ -49,7 +51,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| operation(state).map_err(|error| error.to_string()))
     })
     .await
     .map_err(|error| format!("Session blocking operation failed: {error}"))?
@@ -66,7 +68,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        operation(state.inner()).map_err(|error| error.to_string())
+        state.with_host_lifecycle(|state| operation(state).map_err(|error| error.to_string()))
     })
     .await
     .map_err(|error| format!("Runtime control operation failed: {error}"))?
