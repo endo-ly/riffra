@@ -13,11 +13,8 @@ pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, S
 #[tauri::command]
 pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
     run_blocking_without_command_gate(app, |state| {
-        let store = SessionStore::new(state.host.data_root());
         state
             .host
-            .core()
-            .application(&store)
             .history_state()
             .map_err(|error| error.to_string())
     })

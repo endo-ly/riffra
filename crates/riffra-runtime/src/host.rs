@@ -1415,6 +1415,23 @@ impl DawHost {
         self.state.canonical()
     }
 
+    /// Returns the canonical history state owned by this Host.
+    pub fn history_state(&self) -> Result<riffra_core::HistoryState, HostError> {
+        self.state
+            .core
+            .application(&self.state.storage)
+            .history_state()
+            .map_err(|error| HostError::State(error.to_string()))
+    }
+
+    /// Returns recovery candidates from the Host-owned session store.
+    pub fn recovery_candidates(&self) -> Result<Vec<riffra_host::RecoveryCandidate>, HostError> {
+        self.state
+            .storage
+            .recovery_candidates()
+            .map_err(|error| HostError::State(error.to_string()))
+    }
+
     /// Returns the current projection status.
     pub fn runtime_status(&self) -> Result<RuntimeProjectionStatus, HostError> {
         Ok(self.state.runtime.status())

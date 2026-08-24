@@ -28,7 +28,6 @@ mod projects;
 mod recording;
 mod render;
 mod session;
-mod storage;
 #[cfg(test)]
 mod types;
 
@@ -36,7 +35,6 @@ use host_commands::*;
 use model::{AudioDeviceProbe, AudioStatus, BootstrapState, RecoveryCandidate};
 use riffra_runtime::{DawHost, HostConfig, HostEvent, HostEventSink, RuntimeBinaries};
 use std::sync::Arc;
-use storage::SessionStore;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppState {
@@ -146,28 +144,31 @@ fn bundled_target_triple() -> Result<&'static str, String> {
     ))
 }
 
+fn map_recovery_candidates(
+    candidates: Vec<riffra_host::RecoveryCandidate>,
+) -> Vec<RecoveryCandidate> {
+    candidates
+        .into_iter()
+        .map(|candidate| RecoveryCandidate {
+            file_name: candidate.file_name,
+            updated_at_ms: candidate.updated_at_ms,
+            session_id: candidate.session_id,
+            project_name: candidate.project_name,
+            note: candidate.note,
+        })
+        .collect()
+}
+
 fn bootstrap_recovery_candidates(
-    data_root: &std::path::Path,
+    host: &DawHost,
     recovered_from_generation: bool,
 ) -> Result<Vec<RecoveryCandidate>, String> {
     if !recovered_from_generation {
         return Ok(Vec::new());
     }
-    SessionStore::new(data_root)
-        .recovery_candidates()
+    host.recovery_candidates()
+        .map(map_recovery_candidates)
         .map_err(|error| format!("Recovery candidates could not be read: {error}"))
-        .map(|candidates| {
-            candidates
-                .into_iter()
-                .map(|candidate| RecoveryCandidate {
-                    file_name: candidate.file_name,
-                    updated_at_ms: candidate.updated_at_ms,
-                    session_id: candidate.session_id,
-                    project_name: candidate.project_name,
-                    note: candidate.note,
-                })
-                .collect()
-        })
 }
 
 fn safe_mode_from_args<I, S>(args: I) -> bool
@@ -349,9 +350,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{bootstrap_recovery_candidates, safe_mode_from_args};
-    use crate::storage::SessionStore;
+    use super::{map_recovery_candidates, safe_mode_from_args};
     use riffra_core::CreativeSession;
+    use riffra_host::SessionStore;
 
     #[test]
     fn recognizes_safe_mode_only_from_explicit_flag() {
@@ -374,8 +375,8 @@ mod tests {
         std::fs::write(root.join("scratch/generations/1-1.json"), payload).unwrap();
 
         // Act
-        let normal = bootstrap_recovery_candidates(&root, false).unwrap();
-        let recovered = bootstrap_recovery_candidates(&root, true).unwrap();
+        let normal = map_recovery_candidates(Vec::new());
+        let recovered = map_recovery_candidates(store.recovery_candidates().unwrap());
 
         // Assert
         assert!(normal.is_empty());

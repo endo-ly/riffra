@@ -43,7 +43,7 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
             safe_mode: state.host.core().safe_mode(),
             native_available: true,
             recovery_candidates: bootstrap_recovery_candidates(
-                state.host.data_root(),
+                &state.host,
                 recovered_from_generation,
             )?,
             data_root: state.host.data_root().to_string_lossy().into_owned(),
@@ -64,7 +64,7 @@ pub(crate) async fn export_scratch_session(
             .snapshot()
             .map_err(|error| error.to_string())?
             .session;
-        projects::export(state.host.data_root(), &session, storage::now_ms())
+        projects::export(state.host.data_root(), &session, riffra_host::now_ms())
     })
     .await
 }

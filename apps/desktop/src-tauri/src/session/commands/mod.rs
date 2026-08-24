@@ -13,7 +13,6 @@ use tauri::{AppHandle, Manager};
 use crate::AppState;
 use crate::missing::MissingDependency;
 use crate::model::{ArrangementMutationResult, RuntimeProjectionStatus, SessionAudioPair};
-use crate::storage::SessionStore;
 use riffra_core::application::{
     MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SessionSettingsPatch,
 };
