@@ -23,7 +23,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 
 /// Composition configuration for one live Host.
@@ -75,6 +75,7 @@ pub(crate) struct HostState {
     recording_gate: Mutex<()>,
     _command_gate: Mutex<()>,
     startup_gate: Mutex<()>,
+    lifecycle_gate: RwLock<()>,
     shutting_down: AtomicBool,
     shutdown_requested: AtomicBool,
 }
@@ -119,6 +120,10 @@ impl HostState {
     }
 
     pub(crate) fn dispatch_request(&self, request: ControlRequest) -> ControlResponse {
+        let _lifecycle = self
+            .lifecycle_gate
+            .read()
+            .expect("Host lifecycle gate was poisoned");
         if self.shutting_down.load(Ordering::Acquire) {
             return Self::failure(
                 request.request_id,
@@ -908,13 +913,11 @@ impl HostState {
             _ => None,
         };
         Ok(result.map(|value| {
+            let sequence = value.canonical.sequence;
             (
                 "arrangementMutation",
                 serde_json::to_value(value).expect("runtime mutation results serialize"),
-                self.core
-                    .canonical_state()
-                    .expect("canonical state is available after a mutation")
-                    .sequence,
+                sequence,
             )
         }))
     }
@@ -1367,6 +1370,7 @@ impl DawHost {
             recording_gate: Mutex::new(()),
             _command_gate: Mutex::new(()),
             startup_gate: Mutex::new(()),
+            lifecycle_gate: RwLock::new(()),
             shutting_down: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
         });
@@ -1596,6 +1600,11 @@ impl DawHost {
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.shutting_down.store(true, Ordering::Release);
+        let _lifecycle_shutdown = self
+            .state
+            .lifecycle_gate
+            .write()
+            .expect("Host lifecycle gate was poisoned");
         if let Ok(mut control) = self.control.lock()
             && let Some(control) = control.take()
         {
@@ -2110,6 +2119,51 @@ mod tests {
         assert_eq!(reopened.canonical_state().unwrap().sequence, 0);
         reopened.shutdown();
         drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn shutdown_waits_for_inflight_host_operations() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-shutdown-gate-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = Arc::new(DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap());
+        let inflight = host
+            .state
+            .lifecycle_gate
+            .read()
+            .expect("Host lifecycle gate was not poisoned");
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let shutdown_host = Arc::clone(&host);
+        let shutdown_thread = std::thread::spawn(move || {
+            shutdown_host.shutdown();
+            finished_tx.send(()).unwrap();
+        });
+
+        assert!(
+            finished_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err()
+        );
+        drop(inflight);
+        assert!(
+            finished_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok()
+        );
+        shutdown_thread.join().unwrap();
+        drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
 
