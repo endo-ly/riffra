@@ -80,7 +80,13 @@ Desktop adapter (apps/desktop/src-tauri/src)
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
   ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
   ├─ AudioSupervisor / RuntimeReconciler / Transport ordering
-  └─ HostEventSink と Local Control Server
+  ├─ HostEventSink / HostEventHub / Host bootstrap
+  └─ Local Control Server（command connection / events connection）
+
+riffra-control（crates/riffra-control）: current-user Local Host接続基盤
+  ├─ Host identity / endpoint descriptor / Local Host Registry
+  ├─ LocalHostClient / command request-response / event stream
+  └─ Named Pipe / Unix Domain Socketのframingと権限境界
 
 riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
   ├─ SessionStore / Asset Repository / Project package
@@ -117,7 +123,9 @@ Attached CLI（apps/cli --attach）
 
 ### Hostの外部制御
 
-起動中のRiffra Hostは、外部クライアントから操作する制御経路を持つ。WindowsではNamed Pipe、LinuxではUnix Domain Socketを使い、接続情報を`<data_root>/control/host.json`へ公開する。Attached CLIはこの経路を介して接続先のCoreとRuntimeを共有する。
+起動中のRiffra Hostは、外部クライアントから操作する制御経路を持つ。WindowsではNamed Pipe、LinuxではUnix Domain Socketを使い、接続情報を`<data_root>/control/host.json`へ公開する。同時にcurrent-user Local Host Registryへinstanceごとのentryを登録し、Discoveryはentryのendpointへhandshakeと`host.status`を行ってから利用可能と判断する。Attached CLIはcommand connectionでHostのCoreとRuntimeを操作し、eventを購読するLocal Host clientは別のevents connectionでHostEventHubの通知を受け取る。
+
+Hostの初期同期はevents connectionを先に確立し、command connectionの`host.bootstrap`でcanonical state、plugin catalog、Runtime projection、Audio status、recovery情報を一括取得する。`riffra-control`はevent payloadをJSONとして扱い、RuntimeやCoreのDomain型には依存しない。
 
 Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立した永続編集モードである。`riffra serve`は自分のDataRootLease、`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio Runtimeを保持する。Attached CLIはこれらを開かず、接続先Hostの状態を利用する。
 

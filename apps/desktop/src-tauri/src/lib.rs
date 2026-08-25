@@ -16,13 +16,11 @@
 mod analysis;
 mod asset;
 mod audio_preferences;
-mod diagnostics;
 mod host_commands;
 mod jobs;
 mod library;
 mod missing;
 mod model;
-mod plugin_catalog;
 mod plugins;
 mod projects;
 mod recording;
@@ -112,18 +110,6 @@ fn map_recovery_candidates(
             note: candidate.note,
         })
         .collect()
-}
-
-fn bootstrap_recovery_candidates(
-    host: &DawHost,
-    recovered_from_generation: bool,
-) -> Result<Vec<RecoveryCandidate>, String> {
-    if !recovered_from_generation {
-        return Ok(Vec::new());
-    }
-    host.recovery_candidates()
-        .map(map_recovery_candidates)
-        .map_err(|error| format!("Recovery candidates could not be read: {error}"))
 }
 
 fn safe_mode_from_args<I, S>(args: I) -> bool

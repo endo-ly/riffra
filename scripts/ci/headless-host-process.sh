@@ -53,6 +53,11 @@ test -f "$data_root/control/host.json"
     >"$data_root/session.json"
 jq -e '.ok == true and .result.type == "session" and .sequence == 0' \
     "$data_root/session.json" >/dev/null
+printf '%s\n' '{"requestId":"bootstrap","command":"host.bootstrap","params":{}}' |
+    "$binary" --data-root "$data_root" --attach --interactive \
+    >"$data_root/bootstrap.json"
+jq -e '.ok == true and .result.type == "hostBootstrap" and .result.value.canonical.sequence == 0' \
+    "$data_root/bootstrap.json" >/dev/null
 "$binary" --data-root "$data_root" --attach track add \
     --name "Process Test" --kind instrument >"$data_root/track.json"
 jq -e '.ok == true and .result.type == "session" and .sequence == 1' \

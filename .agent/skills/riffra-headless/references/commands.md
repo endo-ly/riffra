@@ -166,7 +166,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
 ```
 
-- `serve` は終了シグナル(SIGINT / SIGTERM)を受けるまでフォアグラウンドで動作する。エージェントからはバックグラウンド起動し、`<data_root>/control/host.json` の出現を ready 判定に使う。起動診断は標準エラーへ出る(`riffra serve ready: ...`)
+- `serve` は終了シグナル(SIGINT / SIGTERM)を受けるまでフォアグラウンドで動作する。エージェントからはバックグラウンド起動し、`<data_root>/control/host.json` の出現を起動準備の目安にしたうえで、実際の利用可否はhandshakeで確認する。起動診断は標準エラーへ出る(`riffra serve ready: ...`)
 - 通常モードは Native audio engine サイドカー(`riffra-audio`)を実行ファイルと同じ `target/debug/` か `target/release/` から自動解決する。無ければ `native/audio-engine/build.ps1`(Windows)/ `build.sh`(Linux・macOS)でビルドする。Safe Mode ではサイドカー不要
 - Linux の通常モードは ALSA 入出力デバイスを必要とする。デバイスを開けない環境では Host は起動できても Runtime が Ready にならない(`--attach audio status` で確認)
 
@@ -179,7 +179,8 @@ riffra --data-root ./riffra-data --attach --interactive   # 1 接続で連続要
 riffra --data-root ./riffra-data --attach host shutdown
 ```
 
-- `--attach` は `control/host.json` を読み、handshake(`instanceId` 一致)後に要求を転送する。DataRoot の排他所有は Host が持つため、attach 側が開き直すことはない
+- `--attach` は `control/host.json` を読み、handshake(`instanceId` と `pid` 一致)後に要求を転送する。DataRoot の排他所有は Host が持つため、attach 側が開き直すことはない
+- 初期状態を取得するprotocol clientはevents connectionを先に確立し、command connectionで`host.bootstrap`を要求する。bootstrap中のeventは受信順に適用する
 - 接続できない場合は `hostUnavailable`。Standalone への自動フォールバックはないので、Host の生存を確認してから再試行する
 - Host の停止は `host shutdown`、またはプロセスへの SIGINT / SIGTERM
 

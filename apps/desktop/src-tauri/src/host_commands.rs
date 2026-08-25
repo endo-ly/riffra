@@ -17,36 +17,17 @@ where
 #[tauri::command]
 pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
     run_blocking(app, |state| {
-        let plugin_catalog = match plugin_catalog::load(state.host.data_root()) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                let _ = diagnostics::record(
-                    state.host.data_root(),
-                    "plugin-catalog",
-                    &error.to_string(),
-                );
-                Vec::new()
-            }
-        };
-        let recovered_from_generation = state.host.core().recovered_from_generation();
-        let canonical = state
-            .host
-            .core()
-            .canonical_state()
-            .map_err(|error| error.to_string())?;
+        let bootstrap = state.host.bootstrap().map_err(|error| error.to_string())?;
         Ok(BootstrapState {
-            canonical,
-            plugin_catalog,
-            runtime_started: state.host.core().audio().startup_completed(),
-            runtime_startup_finished: state.host.core().audio().startup_finished(),
-            recovered_from_generation,
-            safe_mode: state.host.core().safe_mode(),
+            canonical: bootstrap.canonical,
+            plugin_catalog: bootstrap.plugin_catalog,
+            runtime_started: bootstrap.runtime_started,
+            runtime_startup_finished: bootstrap.runtime_startup_finished,
+            recovered_from_generation: bootstrap.recovered_from_generation,
+            safe_mode: bootstrap.safe_mode,
             native_available: true,
-            recovery_candidates: bootstrap_recovery_candidates(
-                &state.host,
-                recovered_from_generation,
-            )?,
-            data_root: state.host.data_root().to_string_lossy().into_owned(),
+            recovery_candidates: map_recovery_candidates(bootstrap.recovery_candidates),
+            data_root: bootstrap.data_root.to_string_lossy().into_owned(),
             vst3_root: default_vst3_root(),
         })
     })

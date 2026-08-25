@@ -49,8 +49,10 @@
 ```text
 外部クライアント（`riffra --attach`）
         │ F: Named Pipe / Unix Domain Socket
+        ├─ command connection
+        └─ events connection
         ▼
-Riffra Host Control Server → Host state / Core
+Riffra Host Control Server → HostEventHub → Host state / Core
 ```
 
 | 境界 | 方向                                          | 方式                                                    | 用途                                                     |
@@ -60,7 +62,7 @@ Riffra Host Control Server → Host state / Core
 | C    | Rust ↔ riffra-audio                           | 子プロセスの stdin/stdout（JSON Lines）                 | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
 | D    | Rust → riffra-render-worker                   | 子プロセスの stdin/stdout（JSON 1行）                   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe）                  | 子プロセスの stdout（JSON 1行）/ 引数                   | デバイス・チャンネル列挙、VST3スキャン                   |
-| F    | 外部クライアント ↔ Riffra Host Control Server | Windows Named Pipe / Unix Domain Socket（長さ付きJSON） | Hostの正準状態とRuntimeを外部から操作                    |
+| F    | 外部クライアント ↔ Riffra Host Control Server | Windows Named Pipe / Unix Domain Socket（長さ付きJSON） | Hostの正準状態・Runtime操作とHost event購読              |
 
 低レイテンシの音声処理はC、時間のかかるバッチはD、デバイスやプラグインの列挙はEを使う。起動中のRiffra Hostを外部クライアントから操作する経路がFで、WebViewからの操作はAを使う。Standalone CLIの標準入出力はFを使わない。
 
@@ -243,7 +245,18 @@ Riffra Host Control Server → Host state / Core
 
 同じDataRootを別のHostが所有している場合は起動に失敗する。Attached CLIはDataRootのストレージを開かず、接続先Hostが保持する正準シーケンスを共有する。
 
-HostはNamed PipeまたはUnix Domain Socketの準備後に`<data_root>/control/host.json`へ接続情報を公開する。Attached CLIは接続と`instanceId`のhandshakeが完了してから要求を送り、接続できない場合は`hostUnavailable`を返す。`--attach`の失敗はStandaloneへ自動で切り替えない。
+HostはNamed PipeまたはUnix Domain Socketの準備後に`<data_root>/control/host.json`へ接続情報を公開し、同一OSユーザーのruntime registryへ`<instance-id>.json`を登録する。registry entryは接続先を知らない状態からのDiscovery用indexであり、DataRootを既知とする場合は`host.json`を直接使う。Discoveryはentryごとにcommand handshakeと`host.status`を行い、接続不能・instanceId不一致・PID不一致のentryをstaleとして削除する。
+
+Helloではconnection roleを明示する。
+
+```json
+{"type":"hello","role":"command"}
+{"type":"hello","role":"events"}
+```
+
+Command connectionは要求と応答を、events connectionは`HostEventFrame { event, payload }`を順番に運ぶ。`HostEventFrame`は`riffra-control`が所有し、payloadにRuntimeのDomain型を定義しない。HostはRuntime eventをHostEventHubでshell sinkと複数のlocal subscriberへ配信する。subscriber queueはboundedで、最新値で足りるmeter・transport telemetryはcoalesce可能、canonical・lifecycleなどのcritical eventでqueueが溢れた場合は接続を終了してbootstrapから再同期する。
+
+外部Hostへの初期同期ではevents connectionを先に確立し、その後command connectionから`host.bootstrap`を取得する。bootstrap取得中に発生したeventはevent connectionのbuffer順で適用する。
 
 ### 8.1 起動とフレーミング
 

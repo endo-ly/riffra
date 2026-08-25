@@ -14,12 +14,14 @@ use crate::{
     AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
     RuntimeRecovery, active_device_matches_preferences, load_or_default,
 };
-use crate::{HostEvent, SharedHostEventSink};
+use crate::{HostEvent, HostEventHub, HostEventSubscription, SharedHostEventSink};
 use crate::{analysis, library, missing, plugin_catalog, plugin_validation, plugins};
-use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
+use riffra_control::{
+    CommandResult, ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError,
+};
 use riffra_core::{AppCore, CanonicalState, CreativeSession};
 use riffra_host::{DataRootLease, SessionStore, now_ms};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,13 +63,31 @@ pub enum HostError {
     State(String),
 }
 
+/// Host-owned state required to initialize an embedded or attached Desktop.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostBootstrap {
+    pub canonical: CanonicalState,
+    pub plugin_catalog: Vec<plugins::PluginEntry>,
+    pub runtime_started: bool,
+    pub runtime_startup_finished: bool,
+    pub runtime_projection: RuntimeProjectionStatus,
+    pub audio_status: AudioStatus,
+    pub recovered_from_generation: bool,
+    pub safe_mode: bool,
+    pub recovery_candidates: Vec<riffra_host::RecoveryCandidate>,
+    pub data_root: PathBuf,
+}
+
 pub(crate) struct HostState {
     _lease: DataRootLease,
+    identity: HostIdentity,
     pub(crate) data_root: PathBuf,
     core: Arc<AppCore<AudioSupervisor>>,
     storage: SessionStore,
     runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     events: SharedHostEventSink,
+    event_hub: Arc<HostEventHub>,
     binaries: RuntimeBinaries,
     render_worker: riffra_render_worker::RenderWorker,
     jobs: JobRegistry,
@@ -81,10 +101,46 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
+    fn identity(&self) -> &HostIdentity {
+        &self.identity
+    }
+
+    pub(crate) fn subscribe_events(&self) -> Option<HostEventSubscription> {
+        self.event_hub.subscribe()
+    }
+
     fn canonical(&self) -> Result<CanonicalState, HostError> {
         self.core
             .canonical_state()
             .map_err(|error| HostError::State(error.to_string()))
+    }
+
+    fn bootstrap(&self) -> Result<HostBootstrap, HostError> {
+        let recovered_from_generation = self.core.recovered_from_generation();
+        let recovery_candidates = if recovered_from_generation {
+            self.storage
+                .recovery_candidates()
+                .map_err(|error| HostError::State(error.to_string()))?
+        } else {
+            Vec::new()
+        };
+        Ok(HostBootstrap {
+            canonical: self.canonical()?,
+            plugin_catalog: plugin_catalog::load(&self.data_root)
+                .map_err(|error| HostError::State(error.to_string()))?,
+            runtime_started: self.core.audio().startup_completed(),
+            runtime_startup_finished: self.core.audio().startup_finished(),
+            runtime_projection: self.runtime.status(),
+            audio_status: self
+                .core
+                .audio()
+                .status()
+                .map_err(|error| HostError::State(error.to_string()))?,
+            recovered_from_generation,
+            safe_mode: self.core.safe_mode(),
+            recovery_candidates,
+            data_root: self.data_root.clone(),
+        })
     }
 
     fn response(
@@ -196,10 +252,21 @@ impl HostState {
             "host.status" => Ok((
                 "hostStatus",
                 serde_json::json!({
+                    "instanceId": self.identity().instance_id.clone(),
+                    "pid": self.identity().pid,
                     "safeMode": self.core.safe_mode(),
-                    "dataRoot": self.data_root,
+                    "dataRoot": self.data_root.to_string_lossy(),
                     "runtimeGeneration": self.core.audio().runtime_generation(),
                 }),
+                current.sequence,
+            )),
+            "host.bootstrap" => Ok((
+                "hostBootstrap",
+                serde_json::to_value(
+                    self.bootstrap()
+                        .map_err(|error| command_error(error.to_string()))?,
+                )
+                .map_err(serialize_error)?,
                 current.sequence,
             )),
             "host.shutdown" => {
@@ -1297,6 +1364,7 @@ impl HostState {
 /// One live canonical Host and its shared runtime services.
 pub struct DawHost {
     state: Arc<HostState>,
+    identity: HostIdentity,
     control: Mutex<Option<ControlServer>>,
     startup: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -1305,6 +1373,7 @@ impl DawHost {
     /// Opens a live Host, acquires its Data Root lease, and publishes Host
     /// control after canonical state is ready.
     pub fn open(config: HostConfig, events: SharedHostEventSink) -> Result<Self, HostError> {
+        let identity = HostIdentity::new();
         std::fs::create_dir_all(&config.data_root)
             .map_err(|error| HostError::DataRoot(error.to_string()))?;
         let lease = DataRootLease::acquire(&config.data_root)
@@ -1314,6 +1383,8 @@ impl DawHost {
             .load_or_create()
             .map_err(|error| HostError::Session(error.to_string()))?;
         let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
+        let event_hub = HostEventHub::new(events);
+        let events: SharedHostEventSink = event_hub.clone();
         let audio = if config.safe_mode {
             AudioSupervisor::offline_with_events(
                 "Safe Mode is active; native audio, MIDI, and external plugins remain isolated",
@@ -1349,6 +1420,7 @@ impl DawHost {
         };
         let state = Arc::new(HostState {
             _lease: lease,
+            identity: identity.clone(),
             data_root: config.data_root.clone(),
             core: Arc::new(AppCore::new(
                 config.data_root.clone(),
@@ -1360,6 +1432,7 @@ impl DawHost {
             storage,
             runtime,
             events,
+            event_hub,
             binaries: config.binaries.clone(),
             render_worker: riffra_render_worker::RenderWorker::new(config.binaries.render.clone()),
             jobs: JobRegistry::default(),
@@ -1396,7 +1469,7 @@ impl DawHost {
         if let Ok(canonical) = state.canonical() {
             library::index::refresh(&state.data_root, &canonical.session);
         }
-        let control = match ControlServer::start(Arc::clone(&state)) {
+        let control = match ControlServer::start(Arc::clone(&state), identity.clone()) {
             Ok(control) => control,
             Err(error) => {
                 audio.force_shutdown();
@@ -1406,6 +1479,7 @@ impl DawHost {
         let startup = queue_runtime_startup(Arc::clone(&state), config.safe_mode);
         Ok(Self {
             state,
+            identity,
             control: Mutex::new(Some(control)),
             startup: Mutex::new(startup),
         })
@@ -1416,20 +1490,27 @@ impl DawHost {
         self.state.canonical()
     }
 
+    /// Returns the Host-owned bootstrap snapshot used by Desktop shells.
+    pub fn bootstrap(&self) -> Result<HostBootstrap, HostError> {
+        self.state.bootstrap()
+    }
+
+    /// Dispatches one shared Control request through the in-process Host.
+    pub fn dispatch_control(&self, request: ControlRequest) -> ControlResponse {
+        self.state.dispatch_request(request)
+    }
+
+    /// Returns the identity allocated for this Host process.
+    pub fn identity(&self) -> &HostIdentity {
+        &self.identity
+    }
+
     /// Returns the canonical history state owned by this Host.
     pub fn history_state(&self) -> Result<riffra_core::HistoryState, HostError> {
         self.state
             .core
             .application(&self.state.storage)
             .history_state()
-            .map_err(|error| HostError::State(error.to_string()))
-    }
-
-    /// Returns recovery candidates from the Host-owned session store.
-    pub fn recovery_candidates(&self) -> Result<Vec<riffra_host::RecoveryCandidate>, HostError> {
-        self.state
-            .storage
-            .recovery_candidates()
             .map_err(|error| HostError::State(error.to_string()))
     }
 
@@ -1617,6 +1698,7 @@ impl DawHost {
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.shutting_down.store(true, Ordering::Release);
+        self.state.event_hub.close();
         let _lifecycle_shutdown = self
             .state
             .lifecycle_gate
@@ -1750,6 +1832,7 @@ fn is_host_runtime_command(command: &str) -> bool {
     matches!(
         command,
         "host.status"
+            | "host.bootstrap"
             | "host.shutdown"
             | "runtime.projection.get"
             | "runtime.projection.retry"
@@ -2015,8 +2098,8 @@ struct SessionMissingPluginReplaceParams {
 mod tests {
     use super::*;
     use riffra_control::{
-        ControlCommand, HelloRequest, HelloResponse, endpoint_path, new_instance_id, read_endpoint,
-        transport,
+        ControlCommand, HelloRequest, HelloResponse, LocalHostClient, LocalHostRegistry,
+        endpoint_path, new_instance_id, read_endpoint, transport,
     };
 
     #[test]
@@ -2082,6 +2165,67 @@ mod tests {
             host.runtime_status().unwrap().state,
             crate::RuntimeProjectionState::Idle
         );
+        host.shutdown();
+        assert!(!endpoint_path(&data_root).exists());
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn shared_client_receives_bootstrap_and_canonical_events() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-client-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let client = LocalHostClient::connect_data_root(&data_root).unwrap();
+        let mut events = client.open_event_stream().unwrap();
+
+        let bootstrap = client
+            .request(&ControlRequest::new(
+                "bootstrap",
+                ControlCommand::new("host.bootstrap", serde_json::json!({})),
+                Some(0),
+            ))
+            .unwrap();
+        assert!(bootstrap.ok);
+        let bootstrap: HostBootstrap =
+            serde_json::from_value(bootstrap.result.unwrap().value).unwrap();
+        assert_eq!(bootstrap.canonical.sequence, 0);
+
+        let mutation = client
+            .request(&ControlRequest::new(
+                "track-add",
+                ControlCommand::new(
+                    "track.add",
+                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
+                ),
+                Some(0),
+            ))
+            .unwrap();
+        assert!(mutation.ok);
+        let event = events.next().unwrap();
+        assert_eq!(event.event, "canonical-state-changed");
+        assert_eq!(event.payload["sequence"], 1);
+
+        let discovered = LocalHostRegistry::current_user()
+            .discover()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.registration.instance_id == host.identity().instance_id);
+        assert!(discovered.is_some());
+        drop(discovered);
+
         host.shutdown();
         assert!(!endpoint_path(&data_root).exists());
         drop(host);

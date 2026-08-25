@@ -23,7 +23,8 @@
 
 GUIを使わない場合は `riffra serve` が `riffra-runtime::DawHost` を起動する。
 DesktopとHeadless Hostは同じ正準状態・投影・ローカル制御契約を共有し、起動中のHostは
-`<data_root>/control/host.json` に接続情報を公開する。
+`<data_root>/control/host.json` に接続情報を公開し、current-user Local Host Registryへ
+instanceごとのentryを登録する。
 
 - リアルタイム音声は常に **riffra-audio サイドカー**（C++ / JUCE）が担当し、Tauri プロセスは音声コールバックやプラグインコードを実行しない
 - セッション・素材・由来の正準状態は **riffra-core**（Rust）が保持し、WebView と サイドカーは契約された型と命令のみで接続される

@@ -27,7 +27,10 @@ pub mod runtime_snapshot;
 pub mod session;
 mod startup;
 
+use riffra_control::HostEventFrame;
 use serde_json::Value;
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 
 pub use audio::{
     AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
@@ -35,7 +38,7 @@ pub use audio::{
 };
 pub use binaries::RuntimeBinaries;
 pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
-pub use host::{DawHost, HostConfig, HostError};
+pub use host::{DawHost, HostBootstrap, HostConfig, HostError};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
@@ -76,6 +79,45 @@ pub enum HostEvent {
     TrackPluginParameterChanged(Value),
 }
 
+impl HostEvent {
+    /// Converts a Runtime event to the Domain-free local control frame.
+    fn to_control_frame(&self) -> Result<HostEventFrame, serde_json::Error> {
+        let (event, payload) = match self {
+            Self::CanonicalStateChanged(value) => {
+                ("canonical-state-changed", serde_json::to_value(value))
+            }
+            Self::RuntimeStartupFinished { succeeded } => (
+                "runtime-startup-finished",
+                Ok(serde_json::json!({"succeeded": succeeded})),
+            ),
+            Self::RuntimeProjectionStatus(value) => {
+                ("runtime-projection-status", serde_json::to_value(value))
+            }
+            Self::AudioStatus(value) => ("audio-status", serde_json::to_value(value)),
+            Self::AudioMeters(value) => ("audio-meters", Ok(value.clone())),
+            Self::TransportStatus(value) => ("transport-status", Ok(value.clone())),
+            Self::RuntimeRestarted { generation } => (
+                "runtime-restarted",
+                Ok(serde_json::json!({"generation": generation})),
+            ),
+            Self::TrackPluginStateChanged(value) => {
+                ("track-plugin-state-changed", Ok(value.clone()))
+            }
+            Self::TrackPluginParameterChanged(value) => {
+                ("track-plugin-parameter-changed", Ok(value.clone()))
+            }
+        };
+        Ok(HostEventFrame::new(event, payload?))
+    }
+
+    fn is_coalescible(&self) -> bool {
+        matches!(
+            self,
+            Self::AudioMeters(_) | Self::TransportStatus(_) | Self::TrackPluginParameterChanged(_)
+        )
+    }
+}
+
 /// Boundary for turning Host events into a shell-specific event system.
 pub trait HostEventSink: Send + Sync + 'static {
     /// Delivers one event. Implementations must not panic when a shell is
@@ -94,6 +136,105 @@ impl HostEventSink for NoopHostEventSink {
 /// Convenient shared ownership for event sinks supplied to a Host.
 pub type SharedHostEventSink = std::sync::Arc<dyn HostEventSink>;
 
+const HOST_EVENT_QUEUE_CAPACITY: usize = 256;
+
+/// Fans Host events out to the shell and to independent local event clients.
+pub struct HostEventHub {
+    shell: SharedHostEventSink,
+    emit_gate: Mutex<()>,
+    subscribers: Mutex<Vec<SyncSender<HostEventFrame>>>,
+    closed: std::sync::atomic::AtomicBool,
+}
+
+impl HostEventHub {
+    /// Creates a hub using the supplied shell sink as its first consumer.
+    pub fn new(shell: SharedHostEventSink) -> Arc<Self> {
+        Arc::new(Self {
+            shell,
+            emit_gate: Mutex::new(()),
+            subscribers: Mutex::new(Vec::new()),
+            closed: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    /// Subscribes one bounded local event consumer.
+    pub fn subscribe(&self) -> Option<HostEventSubscription> {
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        let (sender, receiver) = mpsc::sync_channel(HOST_EVENT_QUEUE_CAPACITY);
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned");
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        subscribers.push(sender);
+        Some(HostEventSubscription { receiver })
+    }
+
+    /// Closes all event subscriptions during orderly Host shutdown.
+    pub fn close(&self) {
+        let _emit_gate = self
+            .emit_gate
+            .lock()
+            .expect("Host event emit gate was poisoned");
+        self.closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned")
+            .clear();
+    }
+}
+
+impl HostEventSink for HostEventHub {
+    fn emit(&self, event: HostEvent) {
+        let _emit_gate = self
+            .emit_gate
+            .lock()
+            .expect("Host event emit gate was poisoned");
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        self.shell.emit(event.clone());
+        let frame = match event.to_control_frame() {
+            Ok(frame) => frame,
+            Err(error) => {
+                tracing::warn!(error = %error, "local Host event could not be serialized");
+                return;
+            }
+        };
+        let coalescible = event.is_coalescible();
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned");
+        subscribers.retain(|subscriber| match subscriber.try_send(frame.clone()) {
+            Ok(()) => true,
+            Err(TrySendError::Disconnected(_)) => false,
+            Err(TrySendError::Full(_)) if coalescible => true,
+            Err(TrySendError::Full(_)) => {
+                tracing::warn!("local Host event subscriber fell behind; closing connection");
+                false
+            }
+        });
+    }
+}
+
+/// A bounded sequence of Host event frames.
+pub struct HostEventSubscription {
+    receiver: Receiver<HostEventFrame>,
+}
+
+impl HostEventSubscription {
+    /// Waits for the next event or for the Host to close the subscription.
+    pub fn recv(&self) -> Result<HostEventFrame, mpsc::RecvError> {
+        self.receiver.recv()
+    }
+}
+
 /// A small event sink useful to tests and embedding applications.
 #[derive(Debug, Default)]
 pub struct RecordingHostEventSink {
@@ -107,6 +248,47 @@ impl RecordingHostEventSink {
             .lock()
             .expect("host event sink lock poisoned")
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_hub_fans_out_shell_and_local_frames() {
+        let shell = Arc::new(RecordingHostEventSink::default());
+        let hub = HostEventHub::new(shell.clone());
+        let subscription = hub.subscribe().unwrap();
+
+        hub.emit(HostEvent::RuntimeRestarted { generation: 4 });
+
+        let frame = subscription.recv().unwrap();
+        assert_eq!(frame.event, "runtime-restarted");
+        assert_eq!(frame.payload["generation"], 4);
+        let shell_events = shell.events();
+        assert_eq!(shell_events.len(), 1);
+        assert!(matches!(
+            &shell_events[0],
+            HostEvent::RuntimeRestarted { generation: 4 }
+        ));
+    }
+
+    #[test]
+    fn event_hub_closes_a_slow_critical_subscriber() {
+        let shell = Arc::new(NoopHostEventSink);
+        let hub = HostEventHub::new(shell);
+        let subscription = hub.subscribe().unwrap();
+
+        for generation in 0..=HOST_EVENT_QUEUE_CAPACITY as u64 {
+            hub.emit(HostEvent::RuntimeRestarted { generation });
+        }
+
+        let mut received = 0;
+        while subscription.recv().is_ok() {
+            received += 1;
+        }
+        assert_eq!(received, HOST_EVENT_QUEUE_CAPACITY);
     }
 }
 
