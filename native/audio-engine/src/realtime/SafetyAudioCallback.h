@@ -89,12 +89,12 @@ private:
 
     static constexpr float kMaximumGainDb = 0.0f;
     static constexpr float kLimiterCeiling = 0.98f;
-    static constexpr double kFadeInSeconds = 0.5;
+    static constexpr double kFadeInSeconds = 0.05;
 
     std::atomic<bool> emergencyMuted{true};
     std::atomic<bool> deviceFaulted{false};
-    std::atomic<float> targetGainLinear{juce::Decibels::decibelsToGain(-18.0f)};
-    std::atomic<float> masterGainDb{-18.0f};
+    std::atomic<float> targetGainLinear{1.0f};
+    std::atomic<float> masterGainDb{0.0f};
     std::atomic<int> inputChannel{0};
     mutable std::atomic<float> inputPeak{0.0f};
     mutable std::atomic<float> outputPeak{0.0f};

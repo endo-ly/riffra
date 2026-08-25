@@ -9,7 +9,7 @@ Current executable modes:
 
 Windows uses ASIO and WASAPI. Linux uses ALSA.
 
-The safety chain is deliberately small and auditable: immediate emergency mute, −18 dB conservative startup gain, 500 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed on a software-monitored input. Rust releases startup mute after this safety boundary; a failed VST graph is kept passive and reported separately from device safety. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
+The safety chain is deliberately small and auditable: immediate emergency mute, a 50 ms fade-in after unmute, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that auto-mutes when sustained near-peak input is observed on a software-monitored input. The session master gain defaults to 0 dB and is applied by the safety callback. Rust releases startup mute after this safety boundary; a failed VST graph is kept passive and reported separately from device safety. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
 
 ## Protocol examples
 

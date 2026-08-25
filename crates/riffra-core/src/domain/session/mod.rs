@@ -57,7 +57,7 @@ impl CreativeSession {
             project_name: None,
             arrangement: Arrangement::default(),
             settings: SessionSettings {
-                master_db: -18.0,
+                master_db: 0.0,
                 loop_enabled: false,
                 count_in_beats: 0,
                 metronome_enabled: false,
@@ -1103,9 +1103,10 @@ mod tests {
     }
 
     #[test]
-    fn new_session_has_empty_arrangement() {
+    fn new_session_has_empty_arrangement_and_unity_master() {
         let session = CreativeSession::new(0);
         assert!(session.arrangement.tracks.is_empty());
+        assert_eq!(session.settings.master_db, 0.0);
         // An unused provenance reference keeps the asset import meaningful here.
         let _ = Provenance::recorded_root();
     }

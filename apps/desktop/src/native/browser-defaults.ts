@@ -34,7 +34,7 @@ export function defaultSession(): CreativeSession {
       takes: [],
     },
     settings: {
-      masterDb: -18,
+      masterDb: 0,
       loopEnabled: false,
       countInBeats: 0,
       metronomeEnabled: false,

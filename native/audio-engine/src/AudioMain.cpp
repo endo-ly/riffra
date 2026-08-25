@@ -378,7 +378,6 @@ juce::var discoverAudioDevices() {
     result->setProperty("type", "audioDeviceProbe");
     result->setProperty("drivers", driverTypes);
     result->setProperty("emergencyMuted", true);
-    result->setProperty("startupGainDb", -18.0);
     result->setProperty("limiterCeiling", 0.98);
     return juce::var(result);
 }
@@ -698,7 +697,6 @@ int serve(const std::optional<std::uint32_t> parentPid,
     midiMonitor.setAudioCallback(&callback);
     midiMonitor.setTimelineEngine(&timelineEngine);
     callback.setEmergencyMuted(true);
-    callback.setMasterGainDb(-18.0f);
 
     auto reopenAllMidiInputs = [&] {
         const std::lock_guard lock(midiInputsLock);
@@ -873,7 +871,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 continue;
             }
             if (type == "setMasterGainDb") {
-                callback.setMasterGainDb(static_cast<float>(command.getProperty("gainDb", -18.0)));
+                callback.setMasterGainDb(
+                    static_cast<float>(command.getProperty("gainDb", callback.getMasterGainDb())));
                 writeJson(currentStatus(manager, callback, &midiMonitor));
                 continue;
             }

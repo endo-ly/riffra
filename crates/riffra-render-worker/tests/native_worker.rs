@@ -32,7 +32,7 @@ fn renders_wave_without_an_audio_device() {
         end_tick: 960,
         sample_rate: 48_000,
         block_size: 512,
-        master_gain_db: -18.0,
+        master_gain_db: 0.0,
         normalize: false,
     };
 

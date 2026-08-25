@@ -544,7 +544,7 @@ mod tests {
     fn keeps_output_muted_while_retrying_transport_loss_on_a_new_generation() {
         let audio = FakeStartupAudio::new(AudioState::Muted, true);
 
-        let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Muted);
         assert_eq!(
@@ -557,7 +557,7 @@ mod tests {
     fn does_not_release_mute_for_a_faulted_status() {
         let audio = FakeStartupAudio::new(AudioState::Faulted, false);
 
-        let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Faulted);
         assert!(!safe_for_startup_restore(&status));
@@ -567,7 +567,7 @@ mod tests {
     fn retains_a_muted_status_while_preparing_the_runtime() {
         let audio = FakeStartupAudio::new(AudioState::Muted, false);
 
-        let status = initialize_audio_safety_with(&audio, -18.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Muted);
         assert!(safe_for_startup_restore(&status));

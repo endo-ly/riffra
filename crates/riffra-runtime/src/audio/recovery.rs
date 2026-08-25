@@ -49,7 +49,7 @@ pub(crate) struct RuntimeControlState {
 impl Default for RuntimeControlState {
     fn default() -> Self {
         Self {
-            master_gain_db: -18.0,
+            master_gain_db: 0.0,
             midi_listening: false,
             emergency_muted: true,
             mute_cause: Some(MuteCause::Startup),
