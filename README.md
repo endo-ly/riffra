@@ -31,17 +31,18 @@ DesktopとHeadless Hostは同じ正準状態・投影・ローカル制御契約
 
 ## リポジトリ構成
 
-| パス                           | 内容                                                                             |
-| ------------------------------ | -------------------------------------------------------------------------------- |
-| `apps/desktop/`                | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
-| `apps/cli/`                    | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
-| `crates/riffra-core/`          | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
-| `crates/riffra-host/`          | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
-| `crates/riffra-runtime/`       | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
-| `crates/riffra-render-worker/` | オフラインレンダリングの子プロセスバイナリ                                       |
-| `native/audio-engine/`         | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
-| `scripts/`                     | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
-| `docs/`                        | 設計・調整ドキュメント                                                           |
+| パス                             | 内容                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| `apps/desktop/`                  | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
+| `apps/cli/`                      | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
+| `crates/riffra-core/`            | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
+| `crates/riffra-host/`            | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
+| `crates/riffra-runtime/`         | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
+| `crates/riffra-render-worker/`   | オフラインレンダリングの子プロセスバイナリ                                       |
+| `native/audio-engine/`           | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
+| `scripts/`                       | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
+| `docs/`                          | 設計・調整ドキュメント                                                           |
+| `.agent/skills/riffra-headless/` | AI エージェントが CLI でヘッドレス操作するためのスキル                           |
 
 依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
 
@@ -90,6 +91,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 
 `serve` はフォアグラウンドでHostを保持し、起動診断を標準エラーへ出力する。
 `--attach` は既存Hostへ接続し、DataRootを直接開かない。
+ヘッドレス操作のコマンドカタログと運用手順は `.agent/skills/riffra-headless/` を参照。
 
 ## ドキュメント
 
@@ -102,4 +104,3 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 | [docs/ui-ux-design/application-layout.md](docs/ui-ux-design/application-layout.md) | 共通画面構造（Global Control Bar / Left Column / Main Canvas / Detail Area / Play Surface） |
 | [docs/ui-ux-design/arrange-screen.md](docs/ui-ux-design/arrange-screen.md)         | Arrange 画面の設計（レイアウト・操作・ショートカット）                                      |
 | [docs/test-strategy.md](docs/test-strategy.md)                                     | テスト戦略                                                                                  |
-| [docs/headless-linux.md](docs/headless-linux.md)                                   | ヘッドレス Linux でのビルド・実行                                                           |
