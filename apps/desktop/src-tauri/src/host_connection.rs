@@ -6,7 +6,8 @@ use riffra_control::{
     LocalHostDiscovery, LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
 };
 use riffra_runtime::{
-    DawHost, HostBootstrap, HostConfig, HostEvent, HostEventSink, RuntimeBinaries,
+    AudioStatus, DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink,
+    RuntimeBinaries,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -16,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use ts_rs::TS;
 
@@ -83,8 +85,7 @@ enum ActiveHost {
         instance_id: String,
         pid: u32,
         generation: u64,
-        stop: Arc<AtomicBool>,
-        close: LocalHostEventStreamHandle,
+        events: AttachedEventStream,
     },
     Disconnected {
         data_root: Option<PathBuf>,
@@ -93,6 +94,40 @@ enum ActiveHost {
         generation: u64,
         reason: String,
     },
+}
+
+/// The Desktop-side half of one attached Host event connection.
+struct AttachedEventStream {
+    stop: Arc<AtomicBool>,
+    closer: LocalHostEventStreamHandle,
+    reader: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl AttachedEventStream {
+    /// Closes the connection and stops a blocked reader promptly.
+    ///
+    /// Windows pipe reads here are synchronous, so closing the stream alone
+    /// cannot wake the reader; its pending read is cancelled on its own
+    /// thread. The bounded retries close the window where a reader re-enters
+    /// its blocking read after one cancellation.
+    fn halt(&self) {
+        self.stop.store(true, Ordering::Release);
+        let Ok(reader) = self.reader.lock() else {
+            return;
+        };
+        let Some(handle) = reader.as_ref() else {
+            return;
+        };
+        for _ in 0..100 {
+            self.closer.close();
+            #[cfg(windows)]
+            riffra_control::transport::cancel_synchronous_io(handle);
+            if handle.is_finished() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 impl ActiveHost {
@@ -172,9 +207,41 @@ enum ConnectionMessage {
     },
 }
 
-/// Converts Host events from every source into generation-aware Tauri events.
-struct DesktopEventRouter {
+/// Boundary that delivers generation-aware connection events to the shell,
+/// kept abstract so the switching logic is testable without a Tauri app.
+trait ConnectionEventOutlet: Send + Sync + 'static {
+    fn emit_host_event(&self, event: &str, payload: Value);
+    fn emit_connection_changed(&self, connection: &HostConnectionBootstrap);
+    fn emit_invalidated(&self, state: &HostConnectionState, bootstrap: Option<&BootstrapState>);
+}
+
+/// Delivers Host events to the WebView through Tauri.
+struct TauriConnectionOutlet {
     app: AppHandle,
+}
+
+impl ConnectionEventOutlet for TauriConnectionOutlet {
+    fn emit_host_event(&self, event: &str, payload: Value) {
+        if let Err(error) = self.app.emit(event, payload) {
+            tracing::debug!(error = %error, "Desktop Host event could not be delivered");
+        }
+    }
+
+    fn emit_connection_changed(&self, connection: &HostConnectionBootstrap) {
+        let _ = self.app.emit("host-connection-changed", connection);
+    }
+
+    fn emit_invalidated(&self, state: &HostConnectionState, bootstrap: Option<&BootstrapState>) {
+        let _ = self.app.emit(
+            "host-connection-changed",
+            json!({"state": state, "bootstrap": bootstrap}),
+        );
+    }
+}
+
+/// Converts Host events from every source into generation-aware shell events.
+struct DesktopEventRouter {
+    outlet: Arc<dyn ConnectionEventOutlet>,
     active_generation: AtomicU64,
     discarded_through: AtomicU64,
     delivery: Mutex<()>,
@@ -182,9 +249,9 @@ struct DesktopEventRouter {
 }
 
 impl DesktopEventRouter {
-    fn new(app: AppHandle) -> Arc<Self> {
+    fn new(outlet: Arc<dyn ConnectionEventOutlet>) -> Arc<Self> {
         Arc::new(Self {
-            app,
+            outlet,
             active_generation: AtomicU64::new(0),
             discarded_through: AtomicU64::new(0),
             delivery: Mutex::new(()),
@@ -250,7 +317,7 @@ impl DesktopEventRouter {
             .lock()
             .expect("Host event buffer was poisoned")
             .retain(|queued_generation, _| *queued_generation >= generation);
-        let _ = self.app.emit("host-connection-changed", connection);
+        self.outlet.emit_connection_changed(connection);
         let queued = self
             .pending
             .lock()
@@ -277,13 +344,7 @@ impl DesktopEventRouter {
             .lock()
             .expect("Host event buffer was poisoned")
             .retain(|queued_generation, _| *queued_generation >= generation);
-        let _ = self.app.emit(
-            "host-connection-changed",
-            json!({
-                "state": connection,
-                "bootstrap": bootstrap,
-            }),
-        );
+        self.outlet.emit_invalidated(connection, bootstrap);
     }
 
     fn emit_host_event(&self, generation: u64, event: HostEvent) {
@@ -292,9 +353,8 @@ impl DesktopEventRouter {
     }
 
     fn emit_frame(&self, frame: HostEventFrame) {
-        if let Err(error) = self.app.emit(&frame.event, frame.payload) {
-            tracing::debug!(error = %error, "Desktop Host event could not be delivered");
-        }
+        self.outlet
+            .emit_host_event(&frame.event.clone(), frame.payload);
     }
 }
 
@@ -317,6 +377,7 @@ pub struct HostConnectionManager {
     switch_mutex: Mutex<()>,
     next_generation: AtomicU64,
     settings: EmbeddedHostSettings,
+    registry: LocalHostRegistry,
     router: Arc<DesktopEventRouter>,
     messages: Sender<ConnectionMessage>,
 }
@@ -331,7 +392,19 @@ pub struct EmbeddedHostSettings {
 impl HostConnectionManager {
     /// Creates the manager and starts the Desktop's initial Host.
     pub fn open(app: AppHandle, settings: EmbeddedHostSettings) -> Result<Arc<Self>, String> {
-        let router = DesktopEventRouter::new(app);
+        Self::start(
+            Arc::new(TauriConnectionOutlet { app }),
+            settings,
+            LocalHostRegistry::current_user(),
+        )
+    }
+
+    fn start(
+        outlet: Arc<dyn ConnectionEventOutlet>,
+        settings: EmbeddedHostSettings,
+        registry: LocalHostRegistry,
+    ) -> Result<Arc<Self>, String> {
+        let router = DesktopEventRouter::new(outlet);
         let (messages, receiver) = mpsc::channel();
         let manager = Arc::new(Self {
             active: RwLock::new(ActiveHost::Disconnected {
@@ -346,6 +419,7 @@ impl HostConnectionManager {
             switch_mutex: Mutex::new(()),
             next_generation: AtomicU64::new(1),
             settings,
+            registry,
             router,
             messages,
         });
@@ -355,10 +429,11 @@ impl HostConnectionManager {
 
     fn initialize(self: &Arc<Self>) -> Result<Arc<Self>, String> {
         let generation = 1;
-        let embedded = self.prepare_embedded(generation);
-        let prepared = match embedded {
+        let prepared = match self.prepare_embedded(generation) {
             Ok(prepared) => prepared,
-            Err(error) if is_data_root_conflict(&error) => {
+            Err(HostError::DataRootInUse) => {
+                // The Desktop Data Root is owned by a live external Host;
+                // attach to it instead of opening the root again.
                 self.prepare_attached_data_root(&self.settings.data_root, generation)
                     .map_err(|attach_error| {
                         format!(
@@ -366,7 +441,7 @@ impl HostConnectionManager {
                         )
                     })?
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.to_string()),
         };
         self.install_prepared(prepared)?;
         Ok(Arc::clone(self))
@@ -434,12 +509,10 @@ impl HostConnectionManager {
                 data_root,
                 instance_id,
                 pid,
-                stop,
-                close,
+                events,
                 ..
             } => {
-                stop.store(true, Ordering::Release);
-                close.close();
+                events.halt();
                 (Some(data_root), Some(instance_id), Some(pid))
             }
             other => {
@@ -499,7 +572,7 @@ impl HostConnectionManager {
         Ok(())
     }
 
-    fn prepare_embedded(&self, generation: u64) -> Result<PreparedHost, String> {
+    fn prepare_embedded(&self, generation: u64) -> Result<PreparedHost, HostError> {
         let host = DawHost::open(
             HostConfig {
                 data_root: self.settings.data_root.clone(),
@@ -510,13 +583,12 @@ impl HostConnectionManager {
                 router: Arc::clone(&self.router),
                 generation,
             }),
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         let bootstrap = match host.bootstrap() {
             Ok(bootstrap) => bootstrap,
             Err(error) => {
                 host.shutdown();
-                return Err(error.to_string());
+                return Err(error);
             }
         };
         Ok(PreparedHost {
@@ -547,7 +619,7 @@ impl HostConnectionManager {
         let mut event_stream = client
             .open_event_stream()
             .map_err(|error| error.to_string())?;
-        let close = event_stream
+        let closer = event_stream
             .close_handle()
             .map_err(|error| error.to_string())?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -559,7 +631,7 @@ impl HostConnectionManager {
             .name(format!("riffra-host-events-{generation}"))
             .spawn(move || {
                 loop {
-                    match event_stream.next() {
+                    match event_stream.recv() {
                         Ok(frame) if !reader_stop.load(Ordering::Acquire) => {
                             if messages
                                 .send(ConnectionMessage::Event { generation, frame })
@@ -582,18 +654,22 @@ impl HostConnectionManager {
                         }
                     }
                 }
-            })
-            .map_err(|error| format!("Host event reader could not start: {error}"));
-        if let Err(error) = reader {
-            stop.store(true, Ordering::Release);
-            close.close();
-            return Err(error);
-        }
+            });
+        let reader = match reader {
+            Ok(reader) => reader,
+            // A failed spawn drops the reader closure and its stream, which
+            // closes the event connection.
+            Err(error) => return Err(format!("Host event reader could not start: {error}")),
+        };
+        let events = AttachedEventStream {
+            stop,
+            closer,
+            reader: Mutex::new(Some(reader)),
+        };
         let bootstrap = match self.request_bootstrap(&client) {
             Ok(bootstrap) => bootstrap,
             Err(error) => {
-                stop.store(true, Ordering::Release);
-                close.close();
+                events.halt();
                 return Err(error.to_string());
             }
         };
@@ -602,8 +678,7 @@ impl HostConnectionManager {
             .expect("Host event reader status was poisoned")
             .clone()
         {
-            stop.store(true, Ordering::Release);
-            close.close();
+            events.halt();
             return Err(format!("Host event connection failed: {error}"));
         }
         Ok(PreparedHost {
@@ -613,8 +688,7 @@ impl HostConnectionManager {
                 instance_id: descriptor.instance_id,
                 pid: descriptor.pid,
                 generation,
-                stop,
-                close,
+                events,
             },
             bootstrap,
             reader_error: Some(reader_error),
@@ -641,13 +715,15 @@ impl HostConnectionManager {
         generation: u64,
     ) -> Result<PreparedHost, String> {
         match target {
-            HostTarget::Embedded => self.prepare_embedded(generation),
+            HostTarget::Embedded => self
+                .prepare_embedded(generation)
+                .map_err(|error| error.to_string()),
             HostTarget::DataRoot { data_root } => {
                 self.prepare_attached_data_root(Path::new(&data_root), generation)
             }
             HostTarget::Registration { instance_id } => {
-                let registry = LocalHostRegistry::current_user();
-                let discovery = registry
+                let discovery = self
+                    .registry
                     .discover()
                     .map_err(|error| format!("Local Host discovery failed: {error}"))?
                     .into_iter()
@@ -692,7 +768,8 @@ impl HostConnectionManager {
         let embedded_instance = (current.mode == HostConnectionMode::Embedded)
             .then_some(current.instance_id)
             .flatten();
-        let discovered = LocalHostRegistry::current_user()
+        let discovered = self
+            .registry
             .discover()
             .map_err(|error| format!("Local Host discovery failed: {error}"))?;
         discovered
@@ -704,12 +781,29 @@ impl HostConnectionManager {
             .collect()
     }
 
+    /// Reports whether the currently connected Host is capturing input.
+    fn current_recording_active(&self) -> Result<bool, String> {
+        let active = self
+            .active
+            .read()
+            .map_err(|_| "Host connection lock was poisoned".to_string())?;
+        Ok(match &*active {
+            ActiveHost::Embedded { host, .. } => host.recording_active(),
+            ActiveHost::Attached { client, .. } => attached_recording_active(client),
+            ActiveHost::Disconnected { .. } => false,
+        })
+    }
+
     /// Switches Hosts transactionally. The current Host remains active if prepare fails.
+    ///
+    /// Switching away would shut the current Host down mid-capture, so an
+    /// active recording rejects the switch until the user stops it.
     pub fn switch(self: &Arc<Self>, target: HostTarget) -> Result<HostConnectionBootstrap, String> {
         let _switch = self
             .switch_mutex
             .lock()
             .map_err(|_| "Host switch lock was poisoned".to_string())?;
+        ensure_no_active_recording(self.current_recording_active()?)?;
         let generation = self.allocate_generation();
         let prepared = match self.prepare_target(target, generation) {
             Ok(prepared) => prepared,
@@ -722,6 +816,14 @@ impl HostConnectionManager {
             .operation_barrier
             .write()
             .map_err(|_| "Host operation barrier was poisoned".to_string())?;
+        // Re-check after target preparation so a recording that started while
+        // the target was bootstrapping cannot be cut off by the swap.
+        if let Err(error) = ensure_no_active_recording(self.current_recording_active()?) {
+            self.router.discard(generation);
+            drop(_write);
+            shutdown_old(prepared.active);
+            return Err(error);
+        }
         let reader_status = prepared.reader_error.clone();
         let reader_status_guard = reader_status.as_ref().map(|status| {
             status
@@ -957,12 +1059,41 @@ fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, S
 fn shutdown_old(active: ActiveHost) {
     match active {
         ActiveHost::Embedded { host, .. } => host.shutdown(),
-        ActiveHost::Attached { stop, close, .. } => {
-            stop.store(true, Ordering::Release);
-            close.close();
-        }
+        ActiveHost::Attached { events, .. } => events.halt(),
         ActiveHost::Disconnected { .. } => {}
     }
+}
+
+/// Rejects a Host switch while the current Host is capturing input.
+fn ensure_no_active_recording(recording_active: bool) -> Result<(), String> {
+    if recording_active {
+        Err("Stop recording before switching Hosts.".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Queries one attached Host for its native recording state.
+fn attached_recording_active(client: &LocalHostClient) -> bool {
+    client
+        .request(&ControlRequest::new(
+            format!("desktop-recording-status-{}", new_instance_id()),
+            ControlCommand::new("record.status", json!({})),
+            None,
+        ))
+        .ok()
+        .and_then(|response| response_value::<AudioStatus>(response).ok())
+        .map(|status| status.recording.active)
+        .unwrap_or(false)
+}
+
+/// Lightweight Host identity payload returned by `host.info`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostInfoPayload {
+    project_name: Option<String>,
+    safe_mode: bool,
+    runtime_state: String,
 }
 
 fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
@@ -971,32 +1102,31 @@ fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
         .client
         .request(&ControlRequest::new(
             format!("desktop-info-{}", new_instance_id()),
-            ControlCommand::new("host.bootstrap", json!({})),
+            ControlCommand::new("host.info", json!({})),
             None,
         ))
         .map_err(|error| error.to_string())?;
-    let bootstrap: HostBootstrap = response_value(response)?;
-    let status = match bootstrap.audio_status.state {
-        riffra_runtime::AudioState::Faulted => "Faulted",
-        riffra_runtime::AudioState::Muted => "Muted",
-        riffra_runtime::AudioState::Starting => "Starting",
-        riffra_runtime::AudioState::Offline => "Offline",
-        riffra_runtime::AudioState::Ready => "Ready",
-    };
+    let info: HostInfoPayload = response_value(response)?;
     Ok(LocalHostInfo {
         instance_id: registration.instance_id,
         pid: registration.pid,
         data_root: registration.data_root.to_string_lossy().into_owned(),
         started_at_ms: registration.started_at_ms,
-        project_name: bootstrap.canonical.session.settings.project_name,
-        safe_mode: bootstrap.safe_mode,
-        status: status.into(),
+        project_name: info.project_name,
+        safe_mode: info.safe_mode,
+        status: display_runtime_state(&info.runtime_state).into(),
     })
 }
 
-fn is_data_root_conflict(error: &str) -> bool {
-    let error = error.to_ascii_lowercase();
-    error.starts_with("data root could not be opened:") && error.contains("already in use")
+/// Maps the Host runtime state onto the Host Selector's display vocabulary.
+fn display_runtime_state(state: &str) -> &'static str {
+    match state {
+        "faulted" => "Faulted",
+        "muted" => "Muted",
+        "starting" => "Starting",
+        "offline" => "Offline",
+        _ => "Ready",
+    }
 }
 
 fn is_telemetry_event(event: &str) -> bool {
@@ -1090,4 +1220,453 @@ pub(crate) async fn reconnect_host(app: AppHandle) -> Result<HostConnectionBoots
     tauri::async_runtime::spawn_blocking(move || manager.reconnect())
         .await
         .map_err(|error| format!("Host reconnect failed: {error}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riffra_control::{LocalHostRegistration, now_ms, read_endpoint};
+    use riffra_runtime::NoopHostEventSink;
+    use std::time::Instant;
+
+    #[derive(Clone, Debug)]
+    enum RecordedEvent {
+        Frame {
+            payload: Value,
+        },
+        ConnectionChanged {
+            generation: u64,
+            canonical_sequence: u64,
+        },
+        Invalidated {
+            generation: u64,
+        },
+    }
+
+    #[derive(Default)]
+    struct RecordedOutlet {
+        events: Mutex<Vec<RecordedEvent>>,
+    }
+
+    impl RecordedOutlet {
+        fn events(&self) -> Vec<RecordedEvent> {
+            self.events
+                .lock()
+                .expect("outlet lock was poisoned")
+                .clone()
+        }
+    }
+
+    impl ConnectionEventOutlet for RecordedOutlet {
+        fn emit_host_event(&self, _event: &str, payload: Value) {
+            self.events
+                .lock()
+                .expect("outlet lock was poisoned")
+                .push(RecordedEvent::Frame { payload });
+        }
+
+        fn emit_connection_changed(&self, connection: &HostConnectionBootstrap) {
+            self.events.lock().expect("outlet lock was poisoned").push(
+                RecordedEvent::ConnectionChanged {
+                    generation: connection.state.generation,
+                    canonical_sequence: connection.bootstrap.canonical.sequence,
+                },
+            );
+        }
+
+        fn emit_invalidated(
+            &self,
+            state: &HostConnectionState,
+            _bootstrap: Option<&BootstrapState>,
+        ) {
+            self.events.lock().expect("outlet lock was poisoned").push(
+                RecordedEvent::Invalidated {
+                    generation: state.generation,
+                },
+            );
+        }
+    }
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let instance = new_instance_id();
+        std::env::temp_dir().join(format!(
+            "riffra-hcm-{tag}-{}-{instance}",
+            std::process::id()
+        ))
+    }
+
+    fn offline_binaries(root: &Path) -> RuntimeBinaries {
+        RuntimeBinaries::new(
+            root.join("riffra-audio"),
+            root.join("riffra-plugin-scan"),
+            root.join("riffra-render"),
+        )
+    }
+
+    fn test_manager(tag: &str) -> (Arc<HostConnectionManager>, Arc<RecordedOutlet>) {
+        let outlet = Arc::new(RecordedOutlet::default());
+        let data_root = temp_root(&format!("{tag}-embedded"));
+        let binaries = offline_binaries(&data_root);
+        let manager = HostConnectionManager::start(
+            Arc::clone(&outlet) as Arc<dyn ConnectionEventOutlet>,
+            EmbeddedHostSettings {
+                data_root,
+                safe_mode: true,
+                binaries,
+            },
+            LocalHostRegistry::at(temp_root(&format!("{tag}-registry"))),
+        )
+        .expect("the embedded Host should start in Safe Mode");
+        (manager, outlet)
+    }
+
+    fn standalone_host(tag: &str) -> DawHost {
+        let root = temp_root(tag);
+        let binaries = offline_binaries(&root);
+        DawHost::open(
+            HostConfig {
+                data_root: root,
+                safe_mode: true,
+                binaries,
+            },
+            Arc::new(NoopHostEventSink),
+        )
+        .expect("a Safe Mode Host should start without native binaries")
+    }
+
+    fn register_host(manager: &HostConnectionManager, host: &DawHost) {
+        let data_root = host.data_root().to_path_buf();
+        let descriptor = read_endpoint(&data_root).expect("the Host publishes its endpoint");
+        manager
+            .registry
+            .register(&LocalHostRegistration::from_descriptor(
+                data_root,
+                &descriptor,
+                now_ms(),
+            ))
+            .expect("the test registry should accept the Host");
+    }
+
+    fn host_status_ok(root: &Path) -> bool {
+        LocalHostClient::connect_data_root(root)
+            .and_then(|client| {
+                client.request(&ControlRequest::new(
+                    format!("status-{}", new_instance_id()),
+                    ControlCommand::new("host.status", json!({})),
+                    None,
+                ))
+            })
+            .map(|response| response.ok)
+            .unwrap_or(false)
+    }
+
+    fn add_track(name: &str) -> (&'static str, Value) {
+        ("track.add", json!({ "name": name, "kind": "instrument" }))
+    }
+
+    fn cleanup(paths: &[PathBuf]) {
+        for path in paths {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn switches_between_embedded_and_attached_hosts_transactionally() {
+        let (manager, outlet) = test_manager("cycle");
+        let host_a = standalone_host("cycle-a");
+        let host_b = standalone_host("cycle-b");
+        register_host(&manager, &host_a);
+        register_host(&manager, &host_b);
+        let embedded_root = manager.settings.data_root.clone();
+
+        let initial = manager.state();
+        assert_eq!(initial.mode, HostConnectionMode::Embedded);
+
+        let to_a = manager
+            .switch(HostTarget::Registration {
+                instance_id: host_a.identity().instance_id.clone(),
+            })
+            .unwrap();
+        assert_eq!(to_a.state.mode, HostConnectionMode::Attached);
+        assert_eq!(to_a.state.generation, 2);
+        assert_eq!(
+            to_a.state.instance_id.as_deref(),
+            Some(host_a.identity().instance_id.as_str())
+        );
+        assert_eq!(
+            to_a.state.data_root.as_deref(),
+            Some(host_a.data_root().to_string_lossy().as_ref())
+        );
+        // The WebView learned about the new generation together with the
+        // attached Host's own canonical sequence.
+        assert!(outlet.events().iter().any(|event| matches!(
+            event,
+            RecordedEvent::ConnectionChanged {
+                generation: 2,
+                canonical_sequence: 0
+            }
+        )));
+        let (command, params) = add_track("Routed to A");
+        manager.dispatch::<Value>(command, params).unwrap();
+
+        let to_b = manager
+            .switch(HostTarget::Registration {
+                instance_id: host_b.identity().instance_id.clone(),
+            })
+            .unwrap();
+        assert_eq!(to_b.state.generation, 3);
+        assert_eq!(
+            to_b.state.instance_id.as_deref(),
+            Some(host_b.identity().instance_id.as_str())
+        );
+
+        // The Host switched away from keeps running its own process lifetime.
+        assert!(host_status_ok(host_a.data_root()));
+
+        let back = manager.switch(HostTarget::Embedded).unwrap();
+        assert_eq!(back.state.mode, HostConnectionMode::Embedded);
+        assert_eq!(back.state.generation, 4);
+        assert_eq!(
+            back.state.data_root.as_deref(),
+            Some(embedded_root.to_string_lossy().as_ref())
+        );
+
+        manager.shutdown();
+        host_a.shutdown();
+        host_b.shutdown();
+        cleanup(&[
+            embedded_root,
+            host_a.data_root().to_path_buf(),
+            host_b.data_root().to_path_buf(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn a_failed_target_preparation_keeps_the_current_host() {
+        let (manager, _outlet) = test_manager("failed");
+        let before = manager.state();
+        assert_eq!(before.mode, HostConnectionMode::Embedded);
+
+        let error = manager
+            .switch(HostTarget::Registration {
+                instance_id: "missing-instance".into(),
+            })
+            .unwrap_err();
+
+        assert!(error.contains("missing-instance"));
+        let after = manager.state();
+        assert_eq!(after.mode, before.mode);
+        assert_eq!(after.instance_id, before.instance_id);
+        assert_eq!(after.generation, before.generation);
+
+        manager.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn stale_generation_events_never_reach_the_frontend() {
+        let (manager, outlet) = test_manager("stale-events");
+        let host = standalone_host("stale-events-host");
+        register_host(&manager, &host);
+
+        let switched = manager
+            .switch(HostTarget::Registration {
+                instance_id: host.identity().instance_id.clone(),
+            })
+            .unwrap();
+        let active_generation = switched.state.generation;
+
+        manager.router.receive(
+            active_generation - 1,
+            HostEventFrame::new("transport-status", json!({ "position": "stale" })),
+        );
+        manager.router.receive(
+            active_generation + 1,
+            HostEventFrame::new("transport-status", json!({ "position": "future" })),
+        );
+        manager.router.receive(
+            active_generation,
+            HostEventFrame::new("transport-status", json!({ "position": "current" })),
+        );
+
+        let recorded = outlet.events();
+        let positions: Vec<&str> = recorded
+            .iter()
+            .filter_map(|event| match event {
+                RecordedEvent::Frame { payload } => payload["position"].as_str(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(positions, vec!["current"]);
+
+        manager.shutdown();
+        host.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            host.data_root().to_path_buf(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn a_lower_target_sequence_is_adopted_after_a_switch() {
+        let (manager, _outlet) = test_manager("sequence");
+        let (command, params) = add_track("Raises the embedded sequence");
+        manager.dispatch::<Value>(command, params.clone()).unwrap();
+        manager.dispatch::<Value>(command, params).unwrap();
+        let embedded_sequence = manager.desktop_bootstrap().unwrap().canonical.sequence;
+        assert_eq!(embedded_sequence, 2);
+        let host = standalone_host("sequence-host");
+        register_host(&manager, &host);
+
+        let switched = manager
+            .switch(HostTarget::Registration {
+                instance_id: host.identity().instance_id.clone(),
+            })
+            .unwrap();
+
+        assert_eq!(switched.state.mode, HostConnectionMode::Attached);
+        assert!(switched.bootstrap.canonical.sequence < embedded_sequence);
+        let (command, params) = add_track("Expected sequence 0");
+        let response = LocalHostClient::connect_data_root(host.data_root())
+            .unwrap()
+            .request(&ControlRequest::new(
+                "lower-sequence-mutation",
+                ControlCommand::new(command, params),
+                Some(switched.bootstrap.canonical.sequence),
+            ))
+            .unwrap();
+        assert!(response.ok);
+        assert_eq!(
+            response.sequence,
+            Some(switched.bootstrap.canonical.sequence + 1)
+        );
+
+        manager.shutdown();
+        host.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            host.data_root().to_path_buf(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn an_external_host_death_moves_the_desktop_to_disconnected() {
+        let (manager, outlet) = test_manager("disconnect");
+        let host = standalone_host("disconnect-host");
+        register_host(&manager, &host);
+        manager
+            .switch(HostTarget::Registration {
+                instance_id: host.identity().instance_id.clone(),
+            })
+            .unwrap();
+
+        host.shutdown();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = manager.state();
+            if state.mode == HostConnectionMode::Disconnected {
+                assert_eq!(
+                    state.instance_id.as_deref(),
+                    Some(host.identity().instance_id.as_str())
+                );
+                assert_eq!(
+                    state.data_root.as_deref(),
+                    Some(host.data_root().to_string_lossy().as_ref())
+                );
+                assert!(state.reason.is_some());
+                assert!(outlet.events().iter().any(|event| matches!(
+                    event,
+                    RecordedEvent::Invalidated { generation } if *generation == state.generation
+                )));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the Desktop did not observe the Host death in time"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        manager.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            host.data_root().to_path_buf(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn an_attached_desktop_shutdown_keeps_the_external_host_alive() {
+        let (manager, _outlet) = test_manager("attached-exit");
+        let host = standalone_host("attached-exit-host");
+        register_host(&manager, &host);
+        manager
+            .switch(HostTarget::Registration {
+                instance_id: host.identity().instance_id.clone(),
+            })
+            .unwrap();
+
+        manager.shutdown();
+
+        assert_eq!(manager.state().mode, HostConnectionMode::Disconnected);
+        assert!(host_status_ok(host.data_root()));
+        host.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            host.data_root().to_path_buf(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn an_embedded_desktop_shutdown_stops_the_embedded_host_orderly() {
+        let (manager, _outlet) = test_manager("embedded-exit");
+        let root = manager.settings.data_root.clone();
+
+        manager.shutdown();
+
+        assert_eq!(manager.state().mode, HostConnectionMode::Disconnected);
+        assert!(!riffra_control::endpoint_path(&root).exists());
+        // The Data Root lease is released, so another Host can open the root.
+        let reopened = DawHost::open(
+            HostConfig {
+                data_root: root.clone(),
+                safe_mode: true,
+                binaries: offline_binaries(&root),
+            },
+            Arc::new(NoopHostEventSink),
+        )
+        .expect("the embedded Data Root should be reusable after shutdown");
+        reopened.shutdown();
+        cleanup(&[root, manager.registry.root().to_path_buf()]);
+    }
+
+    #[test]
+    fn an_active_recording_rejects_the_switch() {
+        assert_eq!(
+            ensure_no_active_recording(true).unwrap_err(),
+            "Stop recording before switching Hosts."
+        );
+        assert!(ensure_no_active_recording(false).is_ok());
+    }
+
+    #[test]
+    fn an_idle_embedded_host_passes_the_recording_check() {
+        let (manager, _outlet) = test_manager("idle-recording");
+
+        assert!(!manager.current_recording_active().unwrap());
+
+        manager.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
 }
