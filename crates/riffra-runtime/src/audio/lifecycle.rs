@@ -286,10 +286,14 @@ impl AudioSupervisor {
                             Some("transportStatus") => {
                                 event_events.emit(HostEvent::TransportStatus(payload));
                             }
-                            Some("trackPluginStateChanged") => {
+                            Some("trackPluginStateChanged")
+                                if event_process.current_generation() == generation =>
+                            {
                                 event_events.emit(HostEvent::TrackPluginStateChanged(payload));
                             }
-                            Some("trackPluginParameterChanged") => {
+                            Some("trackPluginParameterChanged")
+                                if event_process.current_generation() == generation =>
+                            {
                                 event_events.emit(HostEvent::TrackPluginParameterChanged(payload));
                             }
                             _ => {}

@@ -17,12 +17,14 @@ use crate::{
 use crate::{HostEvent, HostEventHub, HostEventSubscription, SharedHostEventSink};
 use crate::{analysis, library, missing, plugin_catalog, plugin_validation, plugins};
 use riffra_control::{
-    CommandResult, ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError,
+    CommandResult, ControlCommand, ControlRequest, ControlResponse, ErrorCode, HostIdentity,
+    ProtocolError, new_instance_id,
 };
 use riffra_core::{AppCore, CanonicalState, CreativeSession};
 use riffra_host::{DataRootLease, SessionStore, now_ms};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -176,11 +178,31 @@ impl HostState {
     }
 
     pub(crate) fn dispatch_request(&self, request: ControlRequest) -> ControlResponse {
+        self.dispatch_request_with_shutdown(request, false)
+    }
+
+    fn dispatch_persistence_request(&self, request: ControlRequest) -> ControlResponse {
+        self.dispatch_request_inner(request, true)
+    }
+
+    fn dispatch_request_with_shutdown(
+        &self,
+        request: ControlRequest,
+        allow_shutdown: bool,
+    ) -> ControlResponse {
         let _lifecycle = self
             .lifecycle_gate
             .read()
             .expect("Host lifecycle gate was poisoned");
-        if self.shutting_down.load(Ordering::Acquire) {
+        self.dispatch_request_inner(request, allow_shutdown)
+    }
+
+    fn dispatch_request_inner(
+        &self,
+        request: ControlRequest,
+        allow_shutdown: bool,
+    ) -> ControlResponse {
+        if !allow_shutdown && self.shutting_down.load(Ordering::Acquire) {
             return Self::failure(
                 request.request_id,
                 ProtocolError::new(ErrorCode::HostUnavailable, "Riffra Host has shut down"),
@@ -225,6 +247,16 @@ impl HostState {
         params: Value,
         current: CanonicalState,
     ) -> Result<(&'static str, Value, u64), ProtocolError> {
+        if command == "audio.master-gain.set" {
+            let params: MasterGainParams = decode(params)?;
+            let pair = session_adapter::set_master_gain_db(&self.session_context(), params.gain_db)
+                .map_err(|error| error.protocol_error())?;
+            return Ok((
+                "sessionAudioPair",
+                serde_json::to_value(&pair).map_err(serialize_error)?,
+                pair.canonical.sequence,
+            ));
+        }
         if !is_host_runtime_command(command) {
             if let Some(result) =
                 self.dispatch_shared_session(command, params.clone(), current.sequence)?
@@ -273,6 +305,108 @@ impl HostState {
                 self.shutdown_requested.store(true, Ordering::Release);
                 self.shutting_down.store(true, Ordering::Release);
                 Ok(("ok", Value::Null, current.sequence))
+            }
+            "audio.master-gain.preview" => {
+                let params: MasterGainParams = decode(params)?;
+                if !params.gain_db.is_finite() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "master gain must be finite",
+                    ));
+                }
+                self.core
+                    .audio()
+                    .preview_master_gain_db(params.gain_db)
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "audio.emergency-mute" => {
+                let params: MuteParams = decode(params)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(
+                        self.core
+                            .audio()
+                            .set_emergency_mute_from_user(params.muted)
+                            .map_err(audio_error)?,
+                    )
+                    .map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "midi.listening.enable" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode blocks MIDI input; offline MIDI remains available",
+                    ));
+                }
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(
+                        self.core
+                            .audio()
+                            .enable_midi_listening()
+                            .map_err(audio_error)?,
+                    )
+                    .map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "midi.listening.disable" => Ok((
+                "audioStatus",
+                serde_json::to_value(
+                    self.core
+                        .audio()
+                        .disable_midi_listening()
+                        .map_err(audio_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "plugin.editor.open" => {
+                let params: PluginEditorParams = decode(params)?;
+                session_adapter::open_track_plugin_editor(
+                    &self.session_context(),
+                    &params.track_id,
+                    &params.device_id,
+                )
+                .map_err(|error| error.protocol_error())?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "take.comparison.start" => {
+                let params: TakeIdParams = decode(params)?;
+                let status = session_adapter::start_take_comparison(
+                    &self.session_context(),
+                    &params.take_id,
+                )
+                .map_err(|error| error.protocol_error())?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "take.comparison.switch" => {
+                let params: TakeComparisonParams = decode(params)?;
+                let status = session_adapter::switch_take_comparison_variant(
+                    &self.session_context(),
+                    params.variant,
+                )
+                .map_err(|error| error.protocol_error())?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "take.comparison.stop" => {
+                let status = session_adapter::stop_take_comparison(&self.session_context())
+                    .map_err(|error| error.protocol_error())?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
             }
             "runtime.projection.get" => Ok((
                 "runtimeProjection",
@@ -734,8 +868,11 @@ impl HostState {
                     self.jobs.cancel(&params.id)
                 } else {
                     self.jobs.status(&params.id)
-                }
-                .ok_or_else(|| command_error(format!("job is not registered: {}", params.id)))?;
+                };
+                let status = status
+                    .map(jobs::to_background_status)
+                    .transpose()
+                    .map_err(command_error)?;
                 Ok((
                     "job",
                     serde_json::to_value(status).map_err(serialize_error)?,
@@ -974,6 +1111,72 @@ impl HostState {
             }
             "redo" => {
                 Some(session_adapter::redo(&context).map_err(|error| error.protocol_error())?)
+            }
+            "project.restore-generation" => {
+                let params: ProjectRestoreParams = decode(params)?;
+                Some(
+                    session_adapter::restore_generation(&context, &params.file_name)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "project.import-scratch" => {
+                let params: ProjectImportParams = decode(params)?;
+                Some(
+                    session_adapter::import_session(&context, &params.path)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "plugin.state.persist" => {
+                let params: PluginStatePersistParams = decode(params)?;
+                Some(
+                    session_adapter::persist_track_plugin_state(
+                        &context,
+                        &params.track_id,
+                        &params.device_id,
+                        params.parameter_values,
+                        params.state_data,
+                        params.bypassed,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "plugin.parameter.persist" => {
+                let params: PluginParameterPersistParams = decode(params)?;
+                Some(
+                    session_adapter::persist_track_plugin_parameter(
+                        &context,
+                        &params.track_id,
+                        &params.device_id,
+                        params.parameter_index,
+                        params.value,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "audio-clip.take-variant.set" => {
+                let params: TakeVariantParams = decode(params)?;
+                Some(
+                    session_adapter::set_audio_clip_take_variant(
+                        &context,
+                        &params.clip_id,
+                        params.variant,
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "take.activate" => {
+                let params: TakeActivateParams = decode(params)?;
+                Some(
+                    session_adapter::activate_take(&context, &params.session_id, &params.take_id)
+                        .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "take.place-separate-clip" => {
+                let params: TakeIdParams = decode(params)?;
+                Some(
+                    session_adapter::place_take_as_separate_clip(&context, &params.take_id)
+                        .map_err(|error| error.protocol_error())?,
+                )
             }
             _ => None,
         };
@@ -1367,6 +1570,193 @@ pub struct DawHost {
     identity: HostIdentity,
     control: Mutex<Option<ControlServer>>,
     startup: Mutex<Option<std::thread::JoinHandle<()>>>,
+    plugin_persistence: Mutex<Option<PluginStatePersistenceCoordinator>>,
+}
+
+struct PluginStatePersistenceCoordinator {
+    stop: Arc<AtomicBool>,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginStateEvent {
+    track_id: String,
+    device_id: String,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginParameterEvent {
+    track_id: String,
+    device_id: String,
+    parameter_index: i32,
+    value: f32,
+}
+
+#[derive(Debug)]
+enum PendingPluginChange {
+    State(PluginStateEvent),
+    Parameter(PluginParameterEvent),
+}
+
+struct QueuedPluginChange {
+    order: u64,
+    change: PendingPluginChange,
+}
+
+#[derive(Hash, Eq, PartialEq)]
+enum PluginChangeKey {
+    State(String, String),
+    Parameter(String, String, i32),
+}
+
+impl PluginStatePersistenceCoordinator {
+    fn start(
+        state: std::sync::Weak<HostState>,
+        subscription: Option<HostEventSubscription>,
+    ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let worker = subscription.and_then(|subscription| {
+            std::thread::Builder::new()
+                .name("riffra-plugin-state-persistence".into())
+                .spawn(move || {
+                    let mut pending = HashMap::new();
+                    let mut next_order = 0;
+                    loop {
+                        if worker_stop.load(Ordering::Acquire) {
+                            while let Ok(frame) = subscription.try_recv() {
+                                collect_plugin_change(&mut pending, frame, &mut next_order);
+                            }
+                            flush_plugin_changes(&state, &mut pending);
+                            break;
+                        }
+                        match subscription.recv_timeout(std::time::Duration::from_millis(24)) {
+                            Ok(frame) => {
+                                collect_plugin_change(&mut pending, frame, &mut next_order)
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                flush_plugin_changes(&state, &mut pending);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                flush_plugin_changes(&state, &mut pending);
+                                break;
+                            }
+                        }
+                    }
+                })
+                .ok()
+        });
+        Self {
+            stop,
+            worker: Mutex::new(worker),
+        }
+    }
+
+    fn shutdown(self) {
+        self.stop.store(true, Ordering::Release);
+        if let Ok(mut worker) = self.worker.lock()
+            && let Some(worker) = worker.take()
+        {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn collect_plugin_change(
+    pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
+    frame: riffra_control::HostEventFrame,
+    next_order: &mut u64,
+) {
+    if frame.event == "runtime-restarted" {
+        pending.clear();
+        return;
+    }
+    let order = *next_order;
+    *next_order = (*next_order).saturating_add(1);
+    match frame.event.as_str() {
+        "track-plugin-state-changed" => {
+            if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
+                pending.insert(
+                    PluginChangeKey::State(change.track_id.clone(), change.device_id.clone()),
+                    QueuedPluginChange {
+                        order,
+                        change: PendingPluginChange::State(change),
+                    },
+                );
+            }
+        }
+        "track-plugin-parameter-changed" => {
+            if let Ok(change) = serde_json::from_value::<PluginParameterEvent>(frame.payload) {
+                pending.insert(
+                    PluginChangeKey::Parameter(
+                        change.track_id.clone(),
+                        change.device_id.clone(),
+                        change.parameter_index,
+                    ),
+                    QueuedPluginChange {
+                        order,
+                        change: PendingPluginChange::Parameter(change),
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn flush_plugin_changes(
+    state: &std::sync::Weak<HostState>,
+    pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
+) {
+    let Some(state) = state.upgrade() else {
+        pending.clear();
+        return;
+    };
+    let mut changes = pending
+        .drain()
+        .map(|(_, change)| change)
+        .collect::<Vec<_>>();
+    changes.sort_by_key(|change| change.order);
+    for queued in changes {
+        let (command, params) = match queued.change {
+            PendingPluginChange::State(change) => (
+                "plugin.state.persist",
+                serde_json::json!({
+                    "trackId": change.track_id,
+                    "deviceId": change.device_id,
+                    "parameterValues": change.parameter_values,
+                    "stateData": change.state_data,
+                    "bypassed": change.bypassed,
+                }),
+            ),
+            PendingPluginChange::Parameter(change) => (
+                "plugin.parameter.persist",
+                serde_json::json!({
+                    "trackId": change.track_id,
+                    "deviceId": change.device_id,
+                    "parameterIndex": change.parameter_index,
+                    "value": change.value,
+                }),
+            ),
+        };
+        let response = state.dispatch_persistence_request(ControlRequest::new(
+            format!("plugin-persistence-{}", new_instance_id()),
+            ControlCommand::new(command, params),
+            None,
+        ));
+        if !response.ok {
+            tracing::warn!(
+                command,
+                error = ?response.error,
+                "Host plugin state persistence failed"
+            );
+        }
+    }
 }
 
 impl DawHost {
@@ -1469,9 +1859,14 @@ impl DawHost {
         if let Ok(canonical) = state.canonical() {
             library::index::refresh(&state.data_root, &canonical.session);
         }
+        let plugin_persistence = PluginStatePersistenceCoordinator::start(
+            Arc::downgrade(&state),
+            state.event_hub.subscribe_plugin_persistence(),
+        );
         let control = match ControlServer::start(Arc::clone(&state), identity.clone()) {
             Ok(control) => control,
             Err(error) => {
+                plugin_persistence.shutdown();
                 audio.force_shutdown();
                 return Err(HostError::Control(error));
             }
@@ -1482,6 +1877,7 @@ impl DawHost {
             identity,
             control: Mutex::new(Some(control)),
             startup: Mutex::new(startup),
+            plugin_persistence: Mutex::new(Some(plugin_persistence)),
         })
     }
 
@@ -1698,12 +2094,20 @@ impl DawHost {
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
         self.state.shutting_down.store(true, Ordering::Release);
-        self.state.event_hub.close();
+        // Wait for ordinary Host commands before closing the event fan-out.
+        // Persistence flushes use their dedicated dispatch path and can finish
+        // while this write barrier is held.
         let _lifecycle_shutdown = self
             .state
             .lifecycle_gate
             .write()
             .expect("Host lifecycle gate was poisoned");
+        self.state.event_hub.close();
+        if let Ok(mut persistence) = self.plugin_persistence.lock()
+            && let Some(persistence) = persistence.take()
+        {
+            persistence.shutdown();
+        }
         if let Ok(mut control) = self.control.lock()
             && let Some(control) = control.take()
         {
@@ -1834,6 +2238,10 @@ fn is_host_runtime_command(command: &str) -> bool {
         "host.status"
             | "host.bootstrap"
             | "host.shutdown"
+            | "audio.master-gain.preview"
+            | "audio.emergency-mute"
+            | "midi.listening.enable"
+            | "midi.listening.disable"
             | "runtime.projection.get"
             | "runtime.projection.retry"
             | "transport.play"
@@ -1872,6 +2280,10 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "library.asset.update"
             | "library.related"
             | "analysis.start"
+            | "plugin.editor.open"
+            | "take.comparison.start"
+            | "take.comparison.switch"
+            | "take.comparison.stop"
     )
 }
 
@@ -1902,6 +2314,82 @@ struct SeekParams {
 #[serde(rename_all = "camelCase")]
 struct TransportParams {
     transport_sequence: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterGainParams {
+    gain_db: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MuteParams {
+    muted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginEditorParams {
+    track_id: String,
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginStatePersistParams {
+    track_id: String,
+    device_id: String,
+    parameter_values: Vec<f32>,
+    state_data: Option<String>,
+    bypassed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginParameterPersistParams {
+    track_id: String,
+    device_id: String,
+    parameter_index: i32,
+    value: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRestoreParams {
+    file_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectImportParams {
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TakeIdParams {
+    take_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TakeActivateParams {
+    session_id: String,
+    take_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TakeVariantParams {
+    clip_id: String,
+    variant: riffra_core::AudioTakeVariant,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TakeComparisonParams {
+    variant: riffra_core::AudioTakeVariant,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2101,6 +2589,104 @@ mod tests {
         ControlCommand, HelloRequest, HelloResponse, LocalHostClient, LocalHostRegistry,
         endpoint_path, new_instance_id, read_endpoint, transport,
     };
+
+    #[test]
+    fn plugin_parameter_changes_coalesce_per_parameter_index() {
+        let mut pending = HashMap::new();
+        let mut next_order = 0;
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "track-plugin-parameter-changed",
+                serde_json::json!({
+                    "trackId": "track:1",
+                    "deviceId": "device:1",
+                    "parameterIndex": 1,
+                    "value": 0.25,
+                }),
+            ),
+            &mut next_order,
+        );
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "track-plugin-parameter-changed",
+                serde_json::json!({
+                    "trackId": "track:1",
+                    "deviceId": "device:1",
+                    "parameterIndex": 2,
+                    "value": 0.75,
+                }),
+            ),
+            &mut next_order,
+        );
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "track-plugin-parameter-changed",
+                serde_json::json!({
+                    "trackId": "track:1",
+                    "deviceId": "device:1",
+                    "parameterIndex": 1,
+                    "value": 0.5,
+                }),
+            ),
+            &mut next_order,
+        );
+
+        assert_eq!(pending.len(), 2);
+        assert!(matches!(
+            pending.get(&PluginChangeKey::Parameter(
+                "track:1".into(),
+                "device:1".into(),
+                1,
+            )),
+            Some(QueuedPluginChange {
+                change: PendingPluginChange::Parameter(change),
+                ..
+            }) if change.value == 0.5
+        ));
+        assert!(matches!(
+            pending.get(&PluginChangeKey::Parameter(
+                "track:1".into(),
+                "device:1".into(),
+                2,
+            )),
+            Some(QueuedPluginChange {
+                change: PendingPluginChange::Parameter(change),
+                ..
+            }) if change.value == 0.75
+        ));
+    }
+
+    #[test]
+    fn runtime_restart_discards_pending_plugin_changes() {
+        let mut pending = HashMap::new();
+        let mut next_order = 0;
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "track-plugin-parameter-changed",
+                serde_json::json!({
+                    "trackId": "track:1",
+                    "deviceId": "device:1",
+                    "parameterIndex": 1,
+                    "value": 0.5,
+                }),
+            ),
+            &mut next_order,
+        );
+        collect_plugin_change(
+            &mut pending,
+            riffra_control::HostEventFrame::new(
+                "runtime-restarted",
+                serde_json::json!({"generation": 2}),
+            ),
+            &mut next_order,
+        );
+
+        assert!(pending.is_empty());
+    }
 
     #[test]
     fn safe_mode_host_publishes_endpoint_and_handles_attached_mutation() {

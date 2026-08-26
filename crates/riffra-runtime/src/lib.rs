@@ -29,7 +29,7 @@ mod startup;
 
 use riffra_control::HostEventFrame;
 use serde_json::Value;
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 
 pub use audio::{
@@ -111,10 +111,7 @@ impl HostEvent {
     }
 
     fn is_coalescible(&self) -> bool {
-        matches!(
-            self,
-            Self::AudioMeters(_) | Self::TransportStatus(_) | Self::TrackPluginParameterChanged(_)
-        )
+        matches!(self, Self::AudioMeters(_) | Self::TransportStatus(_))
     }
 }
 
@@ -138,11 +135,16 @@ pub type SharedHostEventSink = std::sync::Arc<dyn HostEventSink>;
 
 const HOST_EVENT_QUEUE_CAPACITY: usize = 256;
 
+enum HostEventSubscriber {
+    Bounded(SyncSender<HostEventFrame>),
+    PluginPersistence(Sender<HostEventFrame>),
+}
+
 /// Fans Host events out to the shell and to independent local event clients.
 pub struct HostEventHub {
     shell: SharedHostEventSink,
     emit_gate: Mutex<()>,
-    subscribers: Mutex<Vec<SyncSender<HostEventFrame>>>,
+    subscribers: Mutex<Vec<HostEventSubscriber>>,
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -170,7 +172,23 @@ impl HostEventHub {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return None;
         }
-        subscribers.push(sender);
+        subscribers.push(HostEventSubscriber::Bounded(sender));
+        Some(HostEventSubscription { receiver })
+    }
+
+    pub(crate) fn subscribe_plugin_persistence(&self) -> Option<HostEventSubscription> {
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .expect("Host event subscribers lock was poisoned");
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        subscribers.push(HostEventSubscriber::PluginPersistence(sender));
         Some(HostEventSubscription { receiver })
     }
 
@@ -211,19 +229,35 @@ impl HostEventSink for HostEventHub {
             .subscribers
             .lock()
             .expect("Host event subscribers lock was poisoned");
-        subscribers.retain(|subscriber| match subscriber.try_send(frame.clone()) {
-            Ok(()) => true,
-            Err(TrySendError::Disconnected(_)) => false,
-            Err(TrySendError::Full(_)) if coalescible => true,
-            Err(TrySendError::Full(_)) => {
-                tracing::warn!("local Host event subscriber fell behind; closing connection");
-                false
+        subscribers.retain(|subscriber| match subscriber {
+            HostEventSubscriber::Bounded(subscriber) => match subscriber.try_send(frame.clone()) {
+                Ok(()) => true,
+                Err(TrySendError::Disconnected(_)) => false,
+                Err(TrySendError::Full(_)) if coalescible => true,
+                Err(TrySendError::Full(_)) => {
+                    tracing::warn!("local Host event subscriber fell behind; closing connection");
+                    false
+                }
+            },
+            HostEventSubscriber::PluginPersistence(subscriber) => {
+                if is_plugin_persistence_event(&frame.event) {
+                    subscriber.send(frame.clone()).is_ok()
+                } else {
+                    true
+                }
             }
         });
     }
 }
 
-/// A bounded sequence of Host event frames.
+fn is_plugin_persistence_event(event: &str) -> bool {
+    matches!(
+        event,
+        "runtime-restarted" | "track-plugin-state-changed" | "track-plugin-parameter-changed"
+    )
+}
+
+/// A sequence of Host event frames delivered to one local consumer.
 pub struct HostEventSubscription {
     receiver: Receiver<HostEventFrame>,
 }
@@ -232,6 +266,19 @@ impl HostEventSubscription {
     /// Waits for the next event or for the Host to close the subscription.
     pub fn recv(&self) -> Result<HostEventFrame, mpsc::RecvError> {
         self.receiver.recv()
+    }
+
+    /// Waits for the next event for at most `timeout`.
+    pub fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<HostEventFrame, mpsc::RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout)
+    }
+
+    /// Drains one already queued event without waiting.
+    pub fn try_recv(&self) -> Result<HostEventFrame, mpsc::TryRecvError> {
+        self.receiver.try_recv()
     }
 }
 
