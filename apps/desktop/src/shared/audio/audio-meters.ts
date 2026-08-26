@@ -46,6 +46,11 @@ export function publishAudioMeters(next: AudioMeters): void {
   }
 }
 
+/** Clears host-owned meter state when the active Host connection changes. */
+export function resetAudioMeters(): void {
+  publishAudioMeters(initialMeters);
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

@@ -8,11 +8,11 @@ import type {
 } from '@/model/domain';
 import type { AssetPreviewOptions } from '../contracts';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
-import { invokeOrFallback, invoke } from '../invoke';
+import { invokeHostOrFallback, invokeHost } from '../invoke';
 import { audioCommandError } from './audio-error';
 
 export async function probeAudioDevices(): Promise<AudioDeviceProbe> {
-  return invokeOrFallback<AudioDeviceProbe>(
+  return invokeHostOrFallback<AudioDeviceProbe>(
     'probe_audio_devices',
     {},
     {
@@ -28,7 +28,7 @@ export async function probeDeviceChannels(
   inputDevice: string,
   outputDevice: string,
 ): Promise<DeviceChannels> {
-  return invokeOrFallback<DeviceChannels>(
+  return invokeHostOrFallback<DeviceChannels>(
     'probe_device_channels',
     { driver, inputDevice, outputDevice },
     {
@@ -46,7 +46,7 @@ export async function previewAsset(
   options: AssetPreviewOptions,
 ): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('preview_asset', {
+    return await invokeHost<AudioStatus>('preview_asset', {
       assetId,
       options: {
         startMs: options.startMs ?? 0,
@@ -62,49 +62,49 @@ export async function previewAsset(
 
 export async function stopPreview(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('stop_preview');
+    return await invokeHost<AudioStatus>('stop_preview');
   } catch (error) {
     return await audioCommandError('Stop preview', error);
   }
 }
 
 export async function getAudioStatus(): Promise<AudioStatus> {
-  return invokeOrFallback<AudioStatus>('get_audio_status', {}, offlineAudioStatus());
+  return invokeHostOrFallback<AudioStatus>('get_audio_status', {}, offlineAudioStatus());
 }
 
 export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('set_emergency_mute', { muted });
+  return await invokeHost<AudioStatus>('set_emergency_mute', { muted });
 }
 
 export async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
-  return invoke<SessionAudioPair>('set_master_gain_db', {
+  return invokeHost<SessionAudioPair>('set_master_gain_db', {
     gainDb,
   });
 }
 
 export async function previewMasterGainDb(gainDb: number): Promise<void> {
-  await invoke<void>('preview_master_gain_db', { gainDb });
+  await invokeHost<void>('preview_master_gain_db', { gainDb });
 }
 
 export async function recoverAudioDevice(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('recover_audio_device');
+    return await invokeHost<AudioStatus>('recover_audio_device');
   } catch (error) {
     return await audioCommandError('Recover audio device', error);
   }
 }
 
 export async function retryStartupRuntime(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('retry_startup_runtime');
+  return await invokeHost<AudioStatus>('retry_startup_runtime');
 }
 
 export async function setAudioDriver(config: AudioDriverConfig): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('set_audio_driver', { config });
+  return await invokeHost<AudioStatus>('set_audio_driver', { config });
 }
 
 export async function enableMidiListening(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('enable_midi_listening');
+    return await invokeHost<AudioStatus>('enable_midi_listening');
   } catch (error) {
     return await audioCommandError('Enable MIDI listening', error);
   }
@@ -112,7 +112,7 @@ export async function enableMidiListening(): Promise<AudioStatus> {
 
 export async function disableMidiListening(): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('disable_midi_listening');
+    return await invokeHost<AudioStatus>('disable_midi_listening');
   } catch (error) {
     return await audioCommandError('Disable MIDI listening', error);
   }
@@ -123,7 +123,7 @@ export async function sendMidiToTrack(
   bytes: number[],
 ): Promise<AudioStatus | null> {
   try {
-    await invoke<void>('send_midi_to_track', { trackId, bytes });
+    await invokeHost<void>('send_midi_to_track', { trackId, bytes });
     return null;
   } catch (error) {
     return await audioCommandError('Send MIDI to Track', error);
@@ -132,7 +132,7 @@ export async function sendMidiToTrack(
 
 export async function panicMidiTrack(trackId: string): Promise<AudioStatus | null> {
   try {
-    await invoke<void>('panic_midi_track', { trackId });
+    await invokeHost<void>('panic_midi_track', { trackId });
     return null;
   } catch (error) {
     return await audioCommandError('Panic MIDI Track', error);

@@ -7,3 +7,8 @@ export async function openMidiFile(): Promise<string | null> {
   });
   return typeof result === 'string' ? result : null;
 }
+
+export async function openHostDataRoot(): Promise<string | null> {
+  const result = await open({ directory: true, multiple: false });
+  return typeof result === 'string' ? result : null;
+}

@@ -1,9 +1,8 @@
 import type { ArrangementMutationResult } from '@/model/domain';
-import { invoke } from '../invoke';
-import type { TrackPluginParameterChange, TrackPluginStateChange } from '../native-api';
+import { invokeHost } from '../invoke';
 
 async function invokeRack(command: string, args: Record<string, unknown>) {
-  return invoke<ArrangementMutationResult>(command, args);
+  return invokeHost<ArrangementMutationResult>(command, args);
 }
 
 export async function setTrackInstrument(
@@ -61,28 +60,5 @@ export async function setTrackDeviceParameter(
 }
 
 export async function openTrackPluginEditor(trackId: string, deviceId: string): Promise<void> {
-  await invoke<void>('open_track_plugin_editor', { trackId, deviceId });
-}
-
-export async function persistTrackPluginState(
-  change: TrackPluginStateChange,
-): Promise<ArrangementMutationResult> {
-  return await invokeRack('persist_track_plugin_state', {
-    trackId: change.trackId,
-    deviceId: change.deviceId,
-    parameterValues: change.parameterValues,
-    stateData: change.stateData ?? null,
-    bypassed: change.bypassed,
-  });
-}
-
-export async function persistTrackPluginParameter(
-  change: TrackPluginParameterChange,
-): Promise<ArrangementMutationResult> {
-  return await invokeRack('persist_track_plugin_parameter', {
-    trackId: change.trackId,
-    deviceId: change.deviceId,
-    parameterIndex: change.parameterIndex,
-    value: change.value,
-  });
+  await invokeHost<void>('open_track_plugin_editor', { trackId, deviceId });
 }

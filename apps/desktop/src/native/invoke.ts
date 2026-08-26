@@ -1,12 +1,51 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
+let currentHostGeneration = 0;
+let hostConnected = true;
+
+/** Rejection used when a Host-bound response belongs to a previous connection. */
+export class HostConnectionChangedError extends Error {
+  constructor() {
+    super('Host connection changed while the operation was in flight');
+    this.name = 'HostConnectionChangedError';
+  }
+}
+
+export function setHostGeneration(generation: number): void {
+  currentHostGeneration = generation;
+}
+
+export function setHostConnectionAvailability(connected: boolean): void {
+  hostConnected = connected;
+}
+
+export function getHostGeneration(): number {
+  return currentHostGeneration;
+}
+
 /**
  * Thin bridge to Tauri. Ordering that affects Session or Runtime correctness
  * is owned by the Rust Core and Runtime Reconciler; this module only
- * coalesces high-frequency UI updates through invokeLatest below.
+ * coalesces high-frequency UI updates through invokeLatestHost below.
  */
 export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   return tauriInvoke<T>(command, args);
+}
+
+/** Invokes a command and rejects a response that crossed a Host switch. */
+export async function invokeHost<T>(
+  command: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  if (!hostConnected) {
+    throw new HostConnectionChangedError();
+  }
+  const generation = currentHostGeneration;
+  const value = await tauriInvoke<T>(command, args);
+  if (generation !== currentHostGeneration) {
+    throw new HostConnectionChangedError();
+  }
+  return value;
 }
 
 interface LatestWaiter<T> {
@@ -15,6 +54,7 @@ interface LatestWaiter<T> {
 }
 
 interface LatestQueue<T> {
+  generation: number;
   pendingArgs: Record<string, unknown> | null;
   waiters: LatestWaiter<T>[];
   running: boolean;
@@ -32,44 +72,49 @@ export function isNativeRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-/**
- * Coalesces a burst of same-key value updates before entering the native bridge.
- * The last payload is authoritative; all callers from the same burst receive
- * that canonical response. This is used for controls such as track mute/solo
- * where sending every intermediate click only creates persistence and runtime
- * work that the user can no longer observe.
- */
-export function invokeLatest<T>(
+/** Browser-compatible fallback wrapper for Host-owned commands. */
+export async function invokeHostOrFallback<T>(
+  command: string,
+  args: Record<string, unknown>,
+  fallback: T,
+): Promise<T> {
+  if (!isNativeRuntime()) return fallback;
+  return invokeHost<T>(command, args);
+}
+
+/** Coalesces Host-owned high-frequency updates with a generation guard. */
+export function invokeLatestHost<T>(
   command: string,
   args: Record<string, unknown>,
   key: string,
 ): Promise<T> {
-  let queue = latestQueues.get(key) as LatestQueue<T> | undefined;
+  const generation = currentHostGeneration;
+  const queueKey = `host:${generation}:${key}`;
+  let queue = latestQueues.get(queueKey) as LatestQueue<T> | undefined;
   if (!queue) {
     queue = {
+      generation,
       pendingArgs: null,
       waiters: [],
       running: false,
       timer: null,
     };
-    latestQueues.set(key, queue as LatestQueue<unknown>);
+    latestQueues.set(queueKey, queue as LatestQueue<unknown>);
   }
-
   const promise = new Promise<T>((resolve, reject) => {
     queue!.pendingArgs = args;
     queue!.waiters.push({ resolve, reject });
   });
-
   if (!queue.running && queue.timer === null) {
     queue.timer = setTimeout(() => {
       queue!.timer = null;
-      void drainLatestQueue(command, key, queue!);
+      void drainLatestHostQueue(command, queueKey, queue!);
     }, 16);
   }
   return promise;
 }
 
-async function drainLatestQueue<T>(
+async function drainLatestHostQueue<T>(
   command: string,
   key: string,
   queue: LatestQueue<T>,
@@ -80,8 +125,13 @@ async function drainLatestQueue<T>(
       const args = queue.pendingArgs;
       queue.pendingArgs = null;
       const waiters = queue.waiters.splice(0);
+      if (queue.generation !== currentHostGeneration) {
+        const error = new HostConnectionChangedError();
+        waiters.forEach(({ reject }) => reject(error));
+        continue;
+      }
       try {
-        const result = await invoke<T>(command, args);
+        const result = await invokeHost<T>(command, args);
         waiters.forEach(({ resolve }) => resolve(result));
       } catch (error) {
         waiters.forEach(({ reject }) => reject(error));
@@ -93,24 +143,6 @@ async function drainLatestQueue<T>(
       latestQueues.delete(key);
     }
   }
-}
-
-/**
- * Invokes a Tauri command when the native runtime is available, otherwise
- * returns `fallback`. Reserved for commands whose only silently-masked failure
- * mode is "the native runtime is absent" (browser preview, smoke tests).
- *
- * Production failures (the Rust command returned `Err`) are not swallowed:
- * they propagate as a rejected Promise so the caller can surface them instead
- * of collapsing a real error into an empty list or null.
- */
-export async function invokeOrFallback<T>(
-  command: string,
-  args: Record<string, unknown>,
-  fallback: T,
-): Promise<T> {
-  if (!isNativeRuntime()) return fallback;
-  return invoke<T>(command, args);
 }
 
 /**
