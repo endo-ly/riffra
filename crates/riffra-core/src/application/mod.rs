@@ -23,7 +23,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Partial update for session-wide production settings.
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
     pub project_name: Option<Option<String>>,
@@ -35,7 +35,7 @@ pub struct SessionSettingsPatch {
 }
 
 /// Partial update for one MIDI note.
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNotePatch {
     pub note: Option<u8>,
@@ -45,7 +45,7 @@ pub struct MidiNotePatch {
 }
 
 /// One note update within an atomic MIDI edit.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNoteUpdate {
     pub note_id: String,
@@ -53,7 +53,7 @@ pub struct MidiNoteUpdate {
 }
 
 /// Identity-free MIDI note data accepted by a Core insertion operation.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNoteInput {
     pub pitch: u8,

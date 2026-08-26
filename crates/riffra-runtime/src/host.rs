@@ -55,6 +55,8 @@ impl HostConfig {
 /// Errors raised while opening or shutting down a Host.
 #[derive(Debug, Error)]
 pub enum HostError {
+    #[error("data root is already owned by another Riffra Host")]
+    DataRootInUse,
     #[error("data root could not be opened: {0}")]
     DataRoot(String),
     #[error("session could not be loaded: {0}")]
@@ -289,6 +291,21 @@ impl HostState {
                     "safeMode": self.core.safe_mode(),
                     "dataRoot": self.data_root.to_string_lossy(),
                     "runtimeGeneration": self.core.audio().runtime_generation(),
+                }),
+                current.sequence,
+            )),
+            "host.info" => Ok((
+                "hostInfo",
+                serde_json::json!({
+                    "instanceId": self.identity().instance_id.clone(),
+                    "pid": self.identity().pid,
+                    "dataRoot": self.data_root.to_string_lossy(),
+                    "projectName": current.session.project_name,
+                    "safeMode": self.core.safe_mode(),
+                    "runtimeState": serde_json::to_value(
+                        self.core.audio().status().map_err(audio_error)?.state,
+                    )
+                    .map_err(serialize_error)?,
                 }),
                 current.sequence,
             )),
@@ -1766,8 +1783,13 @@ impl DawHost {
         let identity = HostIdentity::new();
         std::fs::create_dir_all(&config.data_root)
             .map_err(|error| HostError::DataRoot(error.to_string()))?;
-        let lease = DataRootLease::acquire(&config.data_root)
-            .map_err(|error| HostError::DataRoot(error.to_string()))?;
+        let lease = DataRootLease::acquire(&config.data_root).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                HostError::DataRootInUse
+            } else {
+                HostError::DataRoot(error.to_string())
+            }
+        })?;
         let storage = SessionStore::new(&config.data_root);
         let loaded = storage
             .load_or_create()
@@ -1959,6 +1981,16 @@ impl DawHost {
     /// Returns whether a connected client requested graceful process shutdown.
     pub fn shutdown_requested(&self) -> bool {
         self.state.shutdown_requested.load(Ordering::Acquire)
+    }
+
+    /// Reports whether the native audio engine is currently capturing input.
+    pub fn recording_active(&self) -> bool {
+        self.state
+            .core
+            .audio()
+            .status()
+            .map(|status| status.recording.active)
+            .unwrap_or(false)
     }
 
     /// Queries audio devices through the Host-owned native process adapter.
@@ -2236,6 +2268,7 @@ fn is_host_runtime_command(command: &str) -> bool {
     matches!(
         command,
         "host.status"
+            | "host.info"
             | "host.bootstrap"
             | "host.shutdown"
             | "audio.master-gain.preview"
@@ -2758,6 +2791,73 @@ mod tests {
     }
 
     #[test]
+    fn host_info_returns_the_lightweight_selector_payload() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-info-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let client = LocalHostClient::connect_data_root(&data_root).unwrap();
+
+        let response = client
+            .request(&ControlRequest::new(
+                "info",
+                ControlCommand::new("host.info", serde_json::json!({})),
+                None,
+            ))
+            .unwrap();
+
+        assert!(response.ok);
+        let info = response.result.unwrap().value;
+        assert_eq!(info["instanceId"], host.identity().instance_id);
+        assert_eq!(info["pid"], host.identity().pid);
+        assert_eq!(info["dataRoot"], data_root.to_string_lossy().into_owned());
+        assert!(info["projectName"].is_null());
+        assert_eq!(info["safeMode"], true);
+        assert_eq!(info["runtimeState"], "offline");
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn a_data_root_owned_by_another_host_is_reported_as_data_root_in_use() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-in-use-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let owner = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        let second = DawHost::open(config, Arc::new(crate::NoopHostEventSink));
+
+        assert!(matches!(second, Err(HostError::DataRootInUse)));
+        owner.shutdown();
+        drop(owner);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
     fn shared_client_receives_bootstrap_and_canonical_events() {
         let data_root = std::env::temp_dir().join(format!(
             "riffra-runtime-client-{}-{}",
@@ -2800,7 +2900,7 @@ mod tests {
             ))
             .unwrap();
         assert!(mutation.ok);
-        let event = events.next().unwrap();
+        let event = events.recv().unwrap();
         assert_eq!(event.event, "canonical-state-changed");
         assert_eq!(event.payload["sequence"], 1);
 

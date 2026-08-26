@@ -29,8 +29,10 @@ mod startup;
 
 use riffra_control::HostEventFrame;
 use serde_json::Value;
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 
 pub use audio::{
     AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
@@ -135,8 +137,153 @@ pub type SharedHostEventSink = std::sync::Arc<dyn HostEventSink>;
 
 const HOST_EVENT_QUEUE_CAPACITY: usize = 256;
 
+fn is_telemetry_frame(event: &str) -> bool {
+    matches!(event, "audio-meters" | "transport-status")
+}
+
+/// Shared pending-event queue of one local event subscriber.
+///
+/// Critical Host events are queued in order. Telemetry frames coalesce into a
+/// latest-wins slot inside the queue, so a meter flood can never evict or
+/// starve critical events.
+#[derive(Clone)]
+struct EventQueue {
+    state: Arc<EventQueueState>,
+}
+
+struct EventQueueState {
+    pending: Mutex<PendingEvents>,
+    available: Condvar,
+}
+
+#[derive(Default)]
+struct PendingEvents {
+    frames: VecDeque<HostEventFrame>,
+    /// Set when the hub closes or the subscription is dropped.
+    closed: bool,
+}
+
+impl EventQueue {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(EventQueueState {
+                pending: Mutex::new(PendingEvents::default()),
+                available: Condvar::new(),
+            }),
+        }
+    }
+
+    /// Enqueues one frame and reports whether the queue should be kept.
+    fn push(&self, frame: HostEventFrame, telemetry: bool) -> bool {
+        let mut pending = self
+            .state
+            .pending
+            .lock()
+            .expect("Host event queue was poisoned");
+        if pending.closed {
+            return false;
+        }
+        if telemetry
+            && let Some(queued) = pending
+                .frames
+                .iter_mut()
+                .find(|queued| queued.event == frame.event)
+        {
+            *queued = frame;
+            return true;
+        }
+        if pending.frames.len() >= HOST_EVENT_QUEUE_CAPACITY {
+            let victim = pending
+                .frames
+                .iter()
+                .position(|queued| is_telemetry_frame(&queued.event))
+                .unwrap_or(0);
+            let evicted = pending
+                .frames
+                .remove(victim)
+                .expect("evicted frame exists in the queue");
+            if !is_telemetry_frame(&evicted.event) {
+                tracing::warn!(
+                    event = %evicted.event,
+                    "local Host event subscriber fell behind; dropping its oldest event"
+                );
+            }
+        }
+        pending.frames.push_back(frame);
+        drop(pending);
+        self.state.available.notify_one();
+        true
+    }
+
+    /// Marks the queue closed so blocked readers finish and the hub drops it.
+    fn close(&self) {
+        let mut pending = self
+            .state
+            .pending
+            .lock()
+            .expect("Host event queue was poisoned");
+        pending.closed = true;
+        pending.frames.clear();
+        self.state.available.notify_all();
+    }
+}
+
+impl EventQueueState {
+    fn recv(&self) -> Result<HostEventFrame, mpsc::RecvError> {
+        let mut pending = self.pending.lock().expect("Host event queue was poisoned");
+        loop {
+            if let Some(frame) = pending.frames.pop_front() {
+                return Ok(frame);
+            }
+            if pending.closed {
+                return Err(mpsc::RecvError);
+            }
+            pending = self
+                .available
+                .wait(pending)
+                .expect("Host event queue was poisoned");
+        }
+    }
+
+    fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<HostEventFrame, mpsc::RecvTimeoutError> {
+        let deadline = Instant::now() + timeout;
+        let mut pending = self.pending.lock().expect("Host event queue was poisoned");
+        loop {
+            if let Some(frame) = pending.frames.pop_front() {
+                return Ok(frame);
+            }
+            if pending.closed {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(mpsc::RecvTimeoutError::Timeout);
+            }
+            let (next, _timeout_result) = self
+                .available
+                .wait_timeout(pending, remaining)
+                .expect("Host event queue was poisoned");
+            pending = next;
+        }
+    }
+
+    fn try_recv(&self) -> Result<HostEventFrame, mpsc::TryRecvError> {
+        let mut pending = self.pending.lock().expect("Host event queue was poisoned");
+        if let Some(frame) = pending.frames.pop_front() {
+            return Ok(frame);
+        }
+        if pending.closed {
+            return Err(mpsc::TryRecvError::Disconnected);
+        }
+        Err(mpsc::TryRecvError::Empty)
+    }
+}
+
 enum HostEventSubscriber {
-    Bounded(SyncSender<HostEventFrame>),
+    Events(EventQueue),
     PluginPersistence(Sender<HostEventFrame>),
 }
 
@@ -159,12 +306,12 @@ impl HostEventHub {
         })
     }
 
-    /// Subscribes one bounded local event consumer.
+    /// Subscribes one local event consumer.
     pub fn subscribe(&self) -> Option<HostEventSubscription> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return None;
         }
-        let (sender, receiver) = mpsc::sync_channel(HOST_EVENT_QUEUE_CAPACITY);
+        let queue = EventQueue::new();
         let mut subscribers = self
             .subscribers
             .lock()
@@ -172,8 +319,10 @@ impl HostEventHub {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return None;
         }
-        subscribers.push(HostEventSubscriber::Bounded(sender));
-        Some(HostEventSubscription { receiver })
+        subscribers.push(HostEventSubscriber::Events(queue.clone()));
+        Some(HostEventSubscription {
+            inner: SubscriptionInner::Events(queue),
+        })
     }
 
     pub(crate) fn subscribe_plugin_persistence(&self) -> Option<HostEventSubscription> {
@@ -189,7 +338,9 @@ impl HostEventHub {
             return None;
         }
         subscribers.push(HostEventSubscriber::PluginPersistence(sender));
-        Some(HostEventSubscription { receiver })
+        Some(HostEventSubscription {
+            inner: SubscriptionInner::PluginPersistence(receiver),
+        })
     }
 
     /// Closes all event subscriptions during orderly Host shutdown.
@@ -203,7 +354,18 @@ impl HostEventHub {
         self.subscribers
             .lock()
             .expect("Host event subscribers lock was poisoned")
-            .clear();
+            .drain(..)
+            .for_each(|subscriber| {
+                if let HostEventSubscriber::Events(queue) = subscriber {
+                    queue.close();
+                }
+            });
+    }
+}
+
+impl Drop for HostEventHub {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -224,21 +386,13 @@ impl HostEventSink for HostEventHub {
                 return;
             }
         };
-        let coalescible = event.is_coalescible();
+        let telemetry = event.is_coalescible();
         let mut subscribers = self
             .subscribers
             .lock()
             .expect("Host event subscribers lock was poisoned");
         subscribers.retain(|subscriber| match subscriber {
-            HostEventSubscriber::Bounded(subscriber) => match subscriber.try_send(frame.clone()) {
-                Ok(()) => true,
-                Err(TrySendError::Disconnected(_)) => false,
-                Err(TrySendError::Full(_)) if coalescible => true,
-                Err(TrySendError::Full(_)) => {
-                    tracing::warn!("local Host event subscriber fell behind; closing connection");
-                    false
-                }
-            },
+            HostEventSubscriber::Events(queue) => queue.push(frame.clone(), telemetry),
             HostEventSubscriber::PluginPersistence(subscriber) => {
                 if is_plugin_persistence_event(&frame.event) {
                     subscriber.send(frame.clone()).is_ok()
@@ -259,13 +413,21 @@ fn is_plugin_persistence_event(event: &str) -> bool {
 
 /// A sequence of Host event frames delivered to one local consumer.
 pub struct HostEventSubscription {
-    receiver: Receiver<HostEventFrame>,
+    inner: SubscriptionInner,
+}
+
+enum SubscriptionInner {
+    Events(EventQueue),
+    PluginPersistence(Receiver<HostEventFrame>),
 }
 
 impl HostEventSubscription {
     /// Waits for the next event or for the Host to close the subscription.
     pub fn recv(&self) -> Result<HostEventFrame, mpsc::RecvError> {
-        self.receiver.recv()
+        match &self.inner {
+            SubscriptionInner::Events(queue) => queue.state.recv(),
+            SubscriptionInner::PluginPersistence(receiver) => receiver.recv(),
+        }
     }
 
     /// Waits for the next event for at most `timeout`.
@@ -273,12 +435,26 @@ impl HostEventSubscription {
         &self,
         timeout: std::time::Duration,
     ) -> Result<HostEventFrame, mpsc::RecvTimeoutError> {
-        self.receiver.recv_timeout(timeout)
+        match &self.inner {
+            SubscriptionInner::Events(queue) => queue.state.recv_timeout(timeout),
+            SubscriptionInner::PluginPersistence(receiver) => receiver.recv_timeout(timeout),
+        }
     }
 
     /// Drains one already queued event without waiting.
     pub fn try_recv(&self) -> Result<HostEventFrame, mpsc::TryRecvError> {
-        self.receiver.try_recv()
+        match &self.inner {
+            SubscriptionInner::Events(queue) => queue.state.try_recv(),
+            SubscriptionInner::PluginPersistence(receiver) => receiver.try_recv(),
+        }
+    }
+}
+
+impl Drop for HostEventSubscription {
+    fn drop(&mut self) {
+        if let SubscriptionInner::Events(queue) = &self.inner {
+            queue.close();
+        }
     }
 }
 
@@ -295,6 +471,15 @@ impl RecordingHostEventSink {
             .lock()
             .expect("host event sink lock poisoned")
             .clone()
+    }
+}
+
+impl HostEventSink for RecordingHostEventSink {
+    fn emit(&self, event: HostEvent) {
+        self.events
+            .lock()
+            .expect("host event sink lock poisoned")
+            .push(event);
     }
 }
 
@@ -322,28 +507,69 @@ mod tests {
     }
 
     #[test]
-    fn event_hub_closes_a_slow_critical_subscriber() {
+    fn a_slow_subscriber_keeps_only_the_newest_critical_events() {
         let shell = Arc::new(NoopHostEventSink);
         let hub = HostEventHub::new(shell);
         let subscription = hub.subscribe().unwrap();
 
-        for generation in 0..=HOST_EVENT_QUEUE_CAPACITY as u64 {
+        for generation in 0..=(HOST_EVENT_QUEUE_CAPACITY as u64 + 16) {
             hub.emit(HostEvent::RuntimeRestarted { generation });
         }
 
-        let mut received = 0;
-        while subscription.recv().is_ok() {
-            received += 1;
+        let mut received = Vec::new();
+        while let Ok(frame) = subscription.try_recv() {
+            received.push(frame.payload["generation"].as_u64().unwrap());
         }
-        assert_eq!(received, HOST_EVENT_QUEUE_CAPACITY);
-    }
-}
+        assert_eq!(received.len(), HOST_EVENT_QUEUE_CAPACITY);
+        assert_eq!(received.first().copied(), Some(17));
+        assert_eq!(
+            received.last().copied(),
+            Some(HOST_EVENT_QUEUE_CAPACITY as u64 + 16)
+        );
 
-impl HostEventSink for RecordingHostEventSink {
-    fn emit(&self, event: HostEvent) {
-        self.events
-            .lock()
-            .expect("host event sink lock poisoned")
-            .push(event);
+        // The subscriber stays connected after the overflow.
+        hub.emit(HostEvent::RuntimeRestarted { generation: 999 });
+        assert_eq!(subscription.try_recv().unwrap().payload["generation"], 999);
+    }
+
+    #[test]
+    fn a_telemetry_flood_coalesces_and_preserves_critical_delivery() {
+        let shell = Arc::new(NoopHostEventSink);
+        let hub = HostEventHub::new(shell);
+        let subscription = hub.subscribe().unwrap();
+
+        for tick in 0..(HOST_EVENT_QUEUE_CAPACITY as u64 * 2) {
+            hub.emit(HostEvent::TransportStatus(
+                serde_json::json!({ "tick": tick }),
+            ));
+        }
+        hub.emit(HostEvent::RuntimeRestarted { generation: 7 });
+        hub.emit(HostEvent::TransportStatus(
+            serde_json::json!({ "tick": 10_000 }),
+        ));
+
+        let mut frames = Vec::new();
+        while let Ok(frame) = subscription.try_recv() {
+            frames.push(frame);
+        }
+        // Latest-wins telemetry keeps one slot, and the critical event is
+        // never dropped by the flood.
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].event, "transport-status");
+        assert_eq!(frames[0].payload["tick"], 10_000);
+        assert_eq!(frames[1].event, "runtime-restarted");
+    }
+
+    #[test]
+    fn closing_the_hub_finishes_blocked_readers() {
+        let shell = Arc::new(NoopHostEventSink);
+        let hub = HostEventHub::new(shell);
+        let subscription = hub.subscribe().unwrap();
+        let reader = std::thread::spawn(move || subscription.recv());
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        drop(hub);
+
+        assert!(reader.join().unwrap().is_err());
     }
 }

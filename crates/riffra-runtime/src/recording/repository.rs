@@ -17,7 +17,7 @@ use ts_rs::TS;
 /// This type is never used as the persistent recording domain. The path fields
 /// are resolved/display-oriented data for Recovery; completed captures use
 /// their Asset IDs as the authoritative identity.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAsset {
     pub id: String,

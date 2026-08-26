@@ -74,7 +74,7 @@ pub struct Track {
 }
 
 /// A partial update for a timeline Track.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackPatch {
     pub name: Option<String>,
