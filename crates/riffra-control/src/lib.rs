@@ -11,7 +11,9 @@ mod protocol;
 mod registry;
 pub mod transport;
 
-pub use client::{LocalHostClient, LocalHostClientError, LocalHostEventStream};
+pub use client::{
+    LocalHostClient, LocalHostClientError, LocalHostEventStream, LocalHostEventStreamHandle,
+};
 pub use command::ControlCommand;
 pub use endpoint::{
     EndpointDescriptor, HostIdentity, LocalControlEndpoint, endpoint_path, new_instance_id,

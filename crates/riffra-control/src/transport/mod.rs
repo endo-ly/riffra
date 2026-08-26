@@ -9,9 +9,40 @@ use crate::LocalControlEndpoint;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 
 /// A stream that can carry framed control messages.
-pub trait ReadWrite: Read + Write + Send {}
+pub trait ReadWrite: Read + Write + Send + Sync {
+    /// Clones the underlying OS stream so a separate owner can close it.
+    fn try_clone_stream(&self) -> io::Result<Box<dyn ReadWrite>>;
 
-impl<T> ReadWrite for T where T: Read + Write + Send {}
+    /// Interrupts a blocked read on the underlying local connection.
+    fn close_stream(&self);
+}
+
+#[cfg(unix)]
+impl ReadWrite for std::os::unix::net::UnixStream {
+    fn try_clone_stream(&self) -> io::Result<Box<dyn ReadWrite>> {
+        Ok(Box::new(std::os::unix::net::UnixStream::try_clone(self)?))
+    }
+
+    fn close_stream(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(windows)]
+impl ReadWrite for std::fs::File {
+    fn try_clone_stream(&self) -> io::Result<Box<dyn ReadWrite>> {
+        Ok(Box::new(std::fs::File::try_clone(self)?))
+    }
+
+    fn close_stream(&self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::IO::CancelIoEx;
+
+        unsafe {
+            let _ = CancelIoEx(self.as_raw_handle() as _, std::ptr::null());
+        }
+    }
+}
 
 /// Errors raised by framing or local transport.
 #[derive(Debug, thiserror::Error)]

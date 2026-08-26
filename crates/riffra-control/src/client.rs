@@ -102,6 +102,18 @@ pub struct LocalHostEventStream {
     stream: Box<dyn ReadWrite>,
 }
 
+/// A handle that can interrupt a blocked local event-stream reader.
+pub struct LocalHostEventStreamHandle {
+    stream: Box<dyn ReadWrite>,
+}
+
+impl LocalHostEventStreamHandle {
+    /// Closes the associated event connection.
+    pub fn close(&self) {
+        self.stream.close_stream();
+    }
+}
+
 impl std::fmt::Debug for LocalHostEventStream {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -122,6 +134,14 @@ impl LocalHostEventStream {
     /// Blocks until the next Host event frame or the event connection closes.
     pub fn next(&mut self) -> Result<HostEventFrame, LocalHostClientError> {
         Ok(transport::read_frame(&mut *self.stream)?)
+    }
+
+    /// Creates a separate close handle for the event connection.
+    pub fn close_handle(&self) -> Result<LocalHostEventStreamHandle, LocalHostClientError> {
+        self.stream
+            .try_clone_stream()
+            .map(|stream| LocalHostEventStreamHandle { stream })
+            .map_err(|error| LocalHostClientError::Transport(TransportError::Io(error)))
     }
 
     /// Returns the Host descriptor verified during the event handshake.
