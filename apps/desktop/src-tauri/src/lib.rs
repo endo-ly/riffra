@@ -3,7 +3,7 @@
 //! `lib.rs` deliberately hosts only:
 //!
 //! - `mod` declarations,
-//! - the `AppState` struct containing the shared Host,
+//! - the `AppState` struct containing the Host connection manager,
 //! - the Tauri `setup` hook that creates and registers the shared Host,
 //! - the `invoke_handler` registration that wires Tauri commands to their
 //!   feature-level implementations,
@@ -11,12 +11,13 @@
 //!
 //! The Runtime crate owns the live DAW services. This crate contains only
 //! Tauri command adapters, Desktop bootstrap DTOs, resource-path resolution,
-//! and the event sink that forwards Host events to the WebView.
+//! and the Host event bridge that forwards active Host events to the WebView.
 
 mod analysis;
 mod asset;
 mod audio_preferences;
 mod host_commands;
+mod host_connection;
 mod jobs;
 mod library;
 mod missing;
@@ -30,86 +31,15 @@ mod session;
 mod types;
 
 use host_commands::*;
-use model::{AudioDeviceProbe, AudioStatus, BootstrapState, RecoveryCandidate};
-use riffra_runtime::{DawHost, HostConfig, HostEvent, HostEventSink, RuntimeBinaries};
+use host_connection::{EmbeddedHostSettings, HostConnectionManager};
+use model::{AudioDeviceProbe, AudioStatus, BootstrapState};
+use riffra_runtime::RuntimeBinaries;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 struct AppState {
-    host: DawHost,
-}
-
-impl AppState {
-    pub(crate) fn with_host_lifecycle<T, F>(&self, operation: F) -> Result<T, String>
-    where
-        F: FnOnce(&Self) -> Result<T, String>,
-    {
-        self.host.with_lifecycle(|| operation(self))
-    }
-}
-
-fn default_vst3_root() -> String {
-    #[cfg(windows)]
-    {
-        r"C:\Program Files\Common Files\VST3".into()
-    }
-    #[cfg(not(windows))]
-    {
-        "/usr/lib/vst3".into()
-    }
-}
-
-struct TauriHostEventSink {
-    app: AppHandle,
-}
-
-impl HostEventSink for TauriHostEventSink {
-    fn emit(&self, event: HostEvent) {
-        let result = match event {
-            HostEvent::CanonicalStateChanged(value) => {
-                self.app.emit("canonical-state-changed", value)
-            }
-            HostEvent::RuntimeStartupFinished { succeeded } => self.app.emit(
-                "runtime-startup-finished",
-                serde_json::json!({"succeeded": succeeded}),
-            ),
-            HostEvent::RuntimeProjectionStatus(value) => {
-                self.app.emit("runtime-projection-status", value)
-            }
-            HostEvent::AudioStatus(value) => self.app.emit("audio-status", value),
-            HostEvent::AudioMeters(value) => self.app.emit("audio-meters", value),
-            HostEvent::TransportStatus(value) => self.app.emit("transport-status", value),
-            HostEvent::RuntimeRestarted { generation } => self.app.emit(
-                "runtime-restarted",
-                serde_json::json!({"generation": generation}),
-            ),
-            HostEvent::TrackPluginStateChanged(value) => {
-                self.app.emit("track-plugin-state-changed", value)
-            }
-            HostEvent::TrackPluginParameterChanged(value) => {
-                self.app.emit("track-plugin-parameter-changed", value)
-            }
-        };
-        if let Err(error) = result {
-            tracing::debug!(error = %error, "Tauri Host event could not be delivered");
-        }
-    }
-}
-
-fn map_recovery_candidates(
-    candidates: Vec<riffra_host::RecoveryCandidate>,
-) -> Vec<RecoveryCandidate> {
-    candidates
-        .into_iter()
-        .map(|candidate| RecoveryCandidate {
-            file_name: candidate.file_name,
-            updated_at_ms: candidate.updated_at_ms,
-            session_id: candidate.session_id,
-            project_name: candidate.project_name,
-            note: candidate.note,
-        })
-        .collect()
+    pub(crate) host_connection: Arc<HostConnectionManager>,
 }
 
 fn safe_mode_from_args<I, S>(args: I) -> bool
@@ -140,10 +70,10 @@ fn monitor_shutdown_request(app: AppHandle) {
             loop {
                 let requested = app
                     .try_state::<AppState>()
-                    .is_some_and(|state| state.host.shutdown_requested());
+                    .is_some_and(|state| state.host_connection.shutdown_requested());
                 if requested {
                     if let Some(state) = app.try_state::<AppState>() {
-                        state.host.shutdown();
+                        state.host_connection.shutdown();
                     }
                     app.exit(0);
                     break;
@@ -161,11 +91,11 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Destroyed)
                 && let Some(state) = window.try_state::<AppState>()
             {
-                // The window is actually gone; the frontend has already had
-                // its chance to flush plugin state before calling destroy().
-                // Shutting the shared Host down only now keeps the runtime
-                // alive while a close request is still cancellable.
-                state.host.shutdown();
+                // The window is actually gone. The Host-owned persistence
+                // coordinator has already received its shutdown opportunity;
+                // attached Hosts remain alive because the manager only closes
+                // the Desktop-side event connection.
+                state.host_connection.shutdown();
             }
         })
         .setup(|app| {
@@ -174,23 +104,24 @@ pub fn run() {
                 format!("Windows application data folder is unavailable: {error}")
             })?;
             let binaries = RuntimeBinaries::beside_current_executable()?;
-            let host = DawHost::open(
-                HostConfig {
-                    data_root: data_root.clone(),
+            let host_connection = HostConnectionManager::open(
+                app.handle().clone(),
+                EmbeddedHostSettings {
+                    data_root,
                     safe_mode,
-                    binaries: binaries.clone(),
+                    binaries,
                 },
-                Arc::new(TauriHostEventSink {
-                    app: app.handle().clone(),
-                }),
-            )
-            .map_err(|error| error.to_string())?;
-            app.manage(AppState { host });
+            )?;
+            app.manage(AppState { host_connection });
             monitor_shutdown_request(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
+            host_connection::get_host_connection_state,
+            host_connection::list_local_hosts,
+            host_connection::switch_host,
+            host_connection::reconnect_host,
             export_scratch_session,
             get_background_job,
             cancel_background_job,
@@ -251,8 +182,6 @@ pub fn run() {
             session::commands::set_track_device_bypassed,
             session::commands::set_track_device_parameter,
             session::commands::open_track_plugin_editor,
-            session::commands::persist_track_plugin_state,
-            session::commands::persist_track_plugin_parameter,
             session::commands::remove_track,
             session::commands::duplicate_track,
             session::commands::reorder_track,
@@ -312,7 +241,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_recovery_candidates, safe_mode_from_args};
+    use super::{host_connection::map_recovery_candidates, safe_mode_from_args};
     use riffra_core::CreativeSession;
     use riffra_host::SessionStore;
 
