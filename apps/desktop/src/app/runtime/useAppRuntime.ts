@@ -69,20 +69,24 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     // waiting for its one-shot startup event would leave the switched UI
     // without a bootstrap forever. The snapshot is authoritative; the event
     // listener only refines startup flags when a live startup attempt follows.
-    const bootstrapOperation =
-      bootstrapPromise.current ?? (bootstrapPromise.current = api.bootstrap());
-    void bootstrapOperation
-      .then((state) => {
-        if (disposed || getHostGeneration() !== effectGeneration) return;
-        const mergedState = mergeBootstrapState(state);
-        setBoot(mergedState);
-        applyCanonicalState(mergedState.canonical);
-        if (!runtimeStartupEventReceived.current) {
-          setRuntimeStarted(state.runtimeStarted);
-          setRuntimeStartupFinished(state.runtimeStartupFinished);
-        }
-      })
-      .catch(logNativeError('bootstrap'));
+    // Generation 0 is the transient "Host is starting" state, so bootstrap only
+    // runs for a settled generation; the browser preview reports generation 1.
+    if (effectGeneration > 0) {
+      const bootstrapOperation =
+        bootstrapPromise.current ?? (bootstrapPromise.current = api.bootstrap());
+      void bootstrapOperation
+        .then((state) => {
+          if (disposed || getHostGeneration() !== effectGeneration) return;
+          const mergedState = mergeBootstrapState(state);
+          setBoot(mergedState);
+          applyCanonicalState(mergedState.canonical);
+          if (!runtimeStartupEventReceived.current) {
+            setRuntimeStarted(state.runtimeStarted);
+            setRuntimeStartupFinished(state.runtimeStartupFinished);
+          }
+        })
+        .catch(logNativeError('bootstrap'));
+    }
 
     let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingAudioStatus: AudioStatus | null = null;

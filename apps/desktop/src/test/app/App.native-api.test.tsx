@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
+import { getHostGeneration } from '@/native/invoke';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { defaultSession } from '@/native/browser-defaults';
 import { ToastStack } from '@/shared/ui/ToastStack';
@@ -81,7 +82,7 @@ describe('App native boundary', () => {
   it('shows a runtime restart notification without replaying session commands', async () => {
     const api = new FakeNativeApi();
     function RuntimeNotification() {
-      useRuntimeRestartNotification({ api });
+      useRuntimeRestartNotification({ api, hostGeneration: getHostGeneration() });
       return <ToastStack />;
     }
     render(<RuntimeNotification />);

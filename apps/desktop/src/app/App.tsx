@@ -211,7 +211,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       setAudioSettingsOpen(false);
       setCommandOpen(false);
     }
-  }, [hostConnected]);
+  }, [hostConnected, setAudioSettingsOpen, setCommandOpen]);
 
   const hostSelector = (
     <HostSelector

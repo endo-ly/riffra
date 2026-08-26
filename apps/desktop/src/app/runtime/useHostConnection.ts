@@ -2,10 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HostConnectionBootstrap,
   HostConnectionChangedEvent,
-  HostConnectionState,
   NativeApi,
 } from '@/native/native-api';
-import type { HostTarget, LocalHostInfo } from '@/model/domain';
+import type { HostConnectionState, HostTarget, LocalHostInfo } from '@/model/domain';
 import {
   getHostGeneration,
   setHostConnectionAvailability,

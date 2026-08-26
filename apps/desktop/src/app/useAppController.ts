@@ -40,7 +40,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     session: canonicalSession,
     historyState,
     autosaveError,
-    setAutosaveError,
     exportMessage,
     undo,
     redo,

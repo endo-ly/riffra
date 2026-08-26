@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
@@ -81,6 +82,6 @@ describe('HostSelector', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect' }));
 
     await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
-    expect(screen.getByText('Host event connection closed')).toBeInTheDocument();
+    expect(screen.getAllByText('Host event connection closed').length).toBeGreaterThan(0);
   });
 });

@@ -3,7 +3,6 @@ import type { AudioStatus } from "./AudioStatus";
 import type { CanonicalState } from "./CanonicalState";
 
 /**
- * A canonical state and audio status returned by operations that update both
- * the Audio Runtime and the persisted `CreativeSession`.
+ * Canonical session and audio status returned by a coordinated operation.
  */
 export type SessionAudioPair = { canonical: CanonicalState, audio: AudioStatus, };

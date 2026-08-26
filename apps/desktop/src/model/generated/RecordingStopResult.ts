@@ -5,9 +5,6 @@ import type { CanonicalState } from "./CanonicalState";
 import type { RecordingFinalizationOutcome } from "./RecordingFinalizationOutcome";
 
 /**
- * Result of stopping a recording, including the canonical state visible after
- * stop, audio status, and separate finalization/projection outcomes. A
- * recovery result keeps stopped files visible even when no canonical commit
- * occurred.
+ * Result returned after a recording capture has been stopped.
  */
 export type RecordingStopResult = { canonical: CanonicalState, audio: AudioStatus, projection: ArrangementProjectionOutcome, finalization: RecordingFinalizationOutcome, };

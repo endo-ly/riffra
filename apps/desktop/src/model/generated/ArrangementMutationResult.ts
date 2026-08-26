@@ -3,8 +3,7 @@ import type { ArrangementProjectionOutcome } from "./ArrangementProjectionOutcom
 import type { CanonicalState } from "./CanonicalState";
 
 /**
- * Result of a canonical Arrangement mutation and its best-effort Audio
- * Runtime projection. The canonical state is committed before projection, so
- * a failed projection is reported alongside the committed canonical state.
+ * Result of a canonical Arrangement mutation and its best-effort runtime
+ * projection.
  */
 export type ArrangementMutationResult = { canonical: CanonicalState, projection: ArrangementProjectionOutcome, };

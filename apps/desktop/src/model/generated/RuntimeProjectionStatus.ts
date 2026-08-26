@@ -2,9 +2,6 @@
 import type { RuntimeProjectionState } from "./RuntimeProjectionState";
 
 /**
- * Describes how far the latest persisted arrangement has been reflected in
- * the isolated Audio Runtime. A target can remain queued while an older VST
- * operation is still returning; the active revision is the graph currently
- * visible to the audio callback.
+ * Observable projection state shared by GUI and headless Hosts.
  */
 export type RuntimeProjectionStatus = { state: RuntimeProjectionState, operationId: number, runningOperationId: number | null, targetProjectionSequence: number | null, targetSessionRevision: number | null, preparedSessionRevision: number | null, activeProjectionSequence: number | null, activeSessionRevision: number | null, runtimeGeneration: number, queuedAtMs: number | null, startedAtMs: number | null, completedAtMs: number | null, lastNativeResponseAtMs: number | null, discardedPreparationCount: number, lastError: string | null, };

@@ -15,7 +15,7 @@ import type {
 
 const browserHostState: HostConnectionState = {
   mode: 'disconnected',
-  generation: 0,
+  generation: 1,
   dataRoot: null,
   instanceId: null,
   pid: null,

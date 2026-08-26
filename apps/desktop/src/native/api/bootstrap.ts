@@ -33,7 +33,7 @@ export async function bootstrap(): Promise<BootstrapState> {
       vst3Root: defaultVst3Root,
       hostConnection: {
         mode: 'disconnected',
-        generation: 0,
+        generation: 1,
         dataRoot: null,
         instanceId: null,
         pid: null,

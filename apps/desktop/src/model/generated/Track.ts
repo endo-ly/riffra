@@ -11,6 +11,7 @@ import type { TrackKind } from "./TrackKind";
  */
 export type Track = { id: string, name: string, kind: TrackKind, gainDb: number, pan: number, muted: boolean, solo: boolean, armed: boolean, monitoring: MonitoringState, 
 /**
- * Presentation color as `#rrggbb`. `None` keeps the Track's kind default.
+ * Presentation color as `#rrggbb`. `None` delegates automatic coloring
+ * to the presentation layer.
  */
 color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: RackDevice, rack: RackInstance, };

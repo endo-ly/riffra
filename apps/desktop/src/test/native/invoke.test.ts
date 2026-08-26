@@ -68,11 +68,12 @@ describe('native invoke bridge', () => {
 
   it('does not send a coalesced update to a newer Host generation', async () => {
     const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
     setHostGeneration(1);
 
     await vi.advanceTimersByTimeAsync(20);
 
-    await expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
+    await rejection;
     expect(tauriInvoke).not.toHaveBeenCalled();
   });
 });
