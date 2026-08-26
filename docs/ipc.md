@@ -110,7 +110,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | セッション入出力   | `export_scratch_session`、`import_scratch_session`、`import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                             |
 | 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                                       |
 
-**プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`、`persist_track_plugin_state`、`persist_track_plugin_parameter`
+**プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタからのstate / parameter変更はHost内のpersistence coordinatorがイベントをcoalesceしてCanonical stateへ保存する。
 
 **録音（recording/commands.rs）**
 
@@ -145,25 +145,24 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
 
-`invokeOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）でフォールバック値を返す。ネイティブ実行時は実害のないフォールバックをせず、失敗はそのまま reject する。
+`invokeHostOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）でフォールバック値を返す。ネイティブ実行時は実害のないフォールバックをせず、失敗はそのまま reject する。
 
 ---
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                         | ペイロード                            | 意味                                                                                                                    |
-| -------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `runtime-startup-finished`       | `{ succeeded }`                       | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                        |
-| `audio-status`                   | `AudioStatus`                         | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知、Preview再生中かどうか） |
-| `audio-meters`                   | `AudioMeters`                         | 入力・出力ピーク、無効サンプル数（高頻度）                                                                              |
-| `transport-status`               | `TransportStatus`                     | トランスポート状態（再生位置・再生中フラグ）                                                                            |
-| `runtime-projection-status`      | `RuntimeProjectionStatus`             | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
-| `runtime-restarted`              | `{ generation }`                      | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
-| `canonical-state-changed`        | `CanonicalState`                      | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                           |
-| `track-plugin-state-changed`     | `{ trackId, deviceId, ... }`          | プラグイン状態（ロード・バイパス）の変化                                                                                |
-| `track-plugin-parameter-changed` | `{ trackId, deviceId, index, value }` | プラグインパラメータの変化                                                                                              |
+| イベント                    | ペイロード                | 意味                                                                                                                    |
+| --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`  | `{ succeeded }`           | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                        |
+| `audio-status`              | `AudioStatus`             | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知、Preview再生中かどうか） |
+| `audio-meters`              | `AudioMeters`             | 入力・出力ピーク、無効サンプル数（高頻度）                                                                              |
+| `transport-status`          | `TransportStatus`         | トランスポート状態（再生位置・再生中フラグ）                                                                            |
+| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
+| `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
+| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                           |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
+プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。
 
 ---
 
@@ -233,17 +232,18 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ---
 
-## 8. 境界 F: CLIとRiffra Host制御（`riffra`）
+## 8. 境界 F: Local ClientとRiffra Host制御
 
-`riffra`にはStandalone、serve、Attachedの三つの実行モードがある。どのモードも同じ`riffra-control::ControlCommand`へコマンドを変換するため、制作操作の入力形式は共通である。
+`riffra`にはStandalone、serve、Attachedの三つの実行モードがある。DesktopのHostConnectionManagerも同じ`riffra-control::ControlCommand`とLocalHostClientを利用するため、EmbeddedとAttachedの制作操作は同じHost command境界を通る。
 
-| モード     | 状態の所有者                                         | 要求の経路                |
-| ---------- | ---------------------------------------------------- | ------------------------- |
-| Standalone | CLIの`DataRootLease`、`SessionStore`、`AppCore<()>`  | CoreとHostを直接利用      |
-| serve      | `DawHost`のDataRootLease、`AppCore<AudioSupervisor>` | Host Control Serverを公開 |
-| Attached   | 接続先HostのCore、履歴、Runtime、Asset DB            | Host Control Serverへ接続 |
+| モード     | 状態の所有者                                         | 要求の経路                                         |
+| ---------- | ---------------------------------------------------- | -------------------------------------------------- |
+| Standalone | CLIの`DataRootLease`、`SessionStore`、`AppCore<()>`  | CoreとHostを直接利用                               |
+| serve      | `DawHost`のDataRootLease、`AppCore<AudioSupervisor>` | Host Control Serverを公開                          |
+| Attached   | 接続先HostのCore、履歴、Runtime、Asset DB            | Host Control Serverへ接続                          |
+| Desktop    | Embedded DawHost、または選択したAttached Host        | in-process dispatchまたはHost Control Serverへ接続 |
 
-同じDataRootを別のHostが所有している場合は起動に失敗する。Attached CLIはDataRootのストレージを開かず、接続先Hostが保持する正準シーケンスを共有する。
+Standalone CLIと`serve`は同じDataRootを別のHostが所有している場合に起動へ失敗する。Desktopは自身のDataRootを有効なHostが所有している場合、そのHostへAttached接続する。Attached CLIはDataRootのストレージを開かず、接続先Hostが保持する正準シーケンスを共有する。
 
 HostはNamed PipeまたはUnix Domain Socketの準備後に`<data_root>/control/host.json`へ接続情報を公開し、同一OSユーザーのruntime registryへ`<instance-id>.json`を登録する。registry entryは接続先を知らない状態からのDiscovery用indexであり、DataRootを既知とする場合は`host.json`を直接使う。Discoveryはentryごとにcommand handshakeと`host.status`を行い、接続不能・instanceId不一致・PID不一致のentryをstaleとして削除する。
 
@@ -257,6 +257,8 @@ Helloではconnection roleを明示する。
 Command connectionは要求と応答を、events connectionは`HostEventFrame { event, payload }`を順番に運ぶ。`HostEventFrame`は`riffra-control`が所有し、payloadにRuntimeのDomain型を定義しない。HostはRuntime eventをHostEventHubでshell sinkと複数のlocal subscriberへ配信する。subscriber queueはboundedで、最新値で足りるmeter・transport telemetryはcoalesce可能、canonical・lifecycleなどのcritical eventでqueueが溢れた場合は接続を終了してbootstrapから再同期する。
 
 外部Hostへの初期同期ではevents connectionを先に確立し、その後command connectionから`host.bootstrap`を取得する。bootstrap取得中に発生したeventはevent connectionのbuffer順で適用する。
+
+DesktopがHost Selectorから接続先を変更するときは、targetのcommand / events connectionとbootstrapを現在Hostの交換前に準備する。交換後はconnection generationを更新し、旧Hostから遅れて届いたeventと、切替前に開始したHost-owned invokeの応答を破棄する。外部Hostが終了した場合はDisconnectedとして最後のDataRootとinstanceIdを保持し、Host mutation、Transport、Recording、Audio操作を実行せず、DataRootの`host.json`を再解決してfull bootstrapからReconnectする。
 
 ### 8.1 起動とフレーミング
 
@@ -359,7 +361,7 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 | レンダー・ジョブ                                       | HostのRenderWorker    | `runtimeUnavailable` |
 | ライブラリ・解析・Asset preview                        | Hostのshared service  | `runtimeUnavailable` |
 
-プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。録音、プレビュー、VSTスキャン、ライブラリmetadata、解析はLive HostのControl Serverからも同じRuntime serviceを使う。
+プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。プラグインエディタのopen command、録音、プレビュー、VSTスキャン、ライブラリmetadata、解析は現在HostのRuntime / shared serviceを使う。エディタから発生したplugin state / parameterの永続化はHost内のcoordinatorがCanonical commitを行い、Desktop WebViewの往復には依存しない。
 
 `render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
 
@@ -380,6 +382,8 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 
 `src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
 
+- Host-owned methodは`invokeHost`を使い、開始時のconnection generationと応答時のgenerationが一致しなければ成功結果として扱わない。bootstrap、Host切替、Reconnectの結果は現在generationを更新する
+- Window、dialog、Host selectorのようなDesktop shell-owned methodは通常の`invoke`を使い、Host切替による再同期対象にしない
 - 制作状態を変更するメソッドは `CanonicalState` を含む結果を返す
 - 起動時は `CanonicalState` を受け取り、履歴操作の可否はCoreのHistoryStateを参照する
 - 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
