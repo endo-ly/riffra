@@ -2,16 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/native/contracts';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
+import { getHostGeneration } from '@/native/invoke';
 
 export function useArrangeTransport(
   api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
   timebase: ProjectTimebase,
+  hostGeneration = 0,
 ) {
   const [transport, setTransport] = useState<TransportStatus | null>(null);
   const [displayTick, setDisplayTick] = useState(0);
   const displayTickRef = useRef(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
   const receivedTransportStatus = useRef(false);
+  const currentHostGeneration = useRef(hostGeneration);
+  currentHostGeneration.current = hostGeneration;
 
   const publishTick = (tick: number) => {
     displayTickRef.current = tick;
@@ -39,7 +43,14 @@ export function useArrangeTransport(
 
   useEffect(() => {
     receivedTransportStatus.current = false;
+    setTransport(null);
+    anchor.current = { tick: 0, at: performance.now(), playing: false };
+    publishTick(0);
+  }, [hostGeneration]);
+
+  useEffect(() => {
     const unlisten = api.onTransportStatus((status) => {
+      if (getHostGeneration() !== currentHostGeneration.current) return;
       receivedTransportStatus.current = true;
       setTransport((previous) =>
         transportMeaningfullyChanged(previous, status) ? status : previous,
@@ -54,17 +65,27 @@ export function useArrangeTransport(
       // to the clock and to the playhead effect.
       publishTick(status.timelineTick);
     });
+    return unlisten;
+  }, [api]);
+
+  useEffect(() => {
+    const effectGeneration = hostGeneration;
     api
       .getAudioStatus()
       .then((status) => {
-        if (receivedTransportStatus.current || status.timelineTick == null) return;
+        if (
+          currentHostGeneration.current !== effectGeneration ||
+          getHostGeneration() !== effectGeneration ||
+          receivedTransportStatus.current ||
+          status.timelineTick == null
+        )
+          return;
         anchor.current.tick = status.timelineTick;
         anchor.current.at = performance.now();
         publishTick(status.timelineTick);
       })
       .catch(() => undefined);
-    return unlisten;
-  }, [api]);
+  }, [api, hostGeneration]);
 
   useEffect(() => {
     let frame = 0;

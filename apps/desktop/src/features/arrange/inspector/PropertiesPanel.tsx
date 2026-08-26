@@ -16,6 +16,7 @@ import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
 
 interface PropertiesPanelProps {
+  hostGeneration?: number;
   audio: AudioStatus;
   recordingCommandPending: boolean;
   session: CreativeSession;
@@ -69,6 +70,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               api={props.api}
             />
             <TakeInspector
+              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}
@@ -97,6 +99,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               api={props.api}
             />
             <TakeInspector
+              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}
@@ -132,6 +135,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               }}
             />
             <TakeInspector
+              hostGeneration={props.hostGeneration}
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}

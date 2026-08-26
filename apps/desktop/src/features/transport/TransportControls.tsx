@@ -126,7 +126,8 @@ export function TransportControls(props: TransportControlsProps) {
                   applyArrangementMutation(result, applyCanonicalState, (message) =>
                     toast(message, { kind: 'error' }),
                   ),
-                );
+                )
+                .catch(() => undefined);
             }}
           >
             <TransportIcon name="loop" />
@@ -179,6 +180,7 @@ export function TransportControls(props: TransportControlsProps) {
                     toast(message, { kind: 'error' }),
                   ),
                 )
+                .catch(() => undefined)
             }
           >
             <TransportIcon name="metronome" />
@@ -200,6 +202,7 @@ export function TransportControls(props: TransportControlsProps) {
                     toast(message, { kind: 'error' }),
                   ),
                 )
+                .catch(() => undefined)
             }
           >
             Count-in: {describeCountIn(session)}

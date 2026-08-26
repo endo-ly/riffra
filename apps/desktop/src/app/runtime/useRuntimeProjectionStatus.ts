@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeProjectionStatus } from '@/model/domain';
 import type { NativeEventApi, TransportApi } from '@/native/native-api';
+import { getHostGeneration } from '@/native/invoke';
 
 type RuntimeProjectionApi = Pick<
   NativeEventApi & TransportApi,
@@ -51,16 +52,25 @@ function reduceRuntimeProjectionStatus(
   };
 }
 
-export function useRuntimeProjectionStatus(api: RuntimeProjectionApi) {
+export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGeneration = 0) {
   const [viewState, setViewState] = useState<RuntimeProjectionViewState>(
     initialRuntimeProjectionViewState,
   );
+  const currentHostGeneration = useRef(hostGeneration);
+  currentHostGeneration.current = hostGeneration;
 
   useEffect(() => {
     let disposed = false;
     let receivedEvent = false;
+    const effectGeneration = hostGeneration;
+    setViewState(initialRuntimeProjectionViewState);
     const publish = (next: RuntimeProjectionStatus) => {
-      if (disposed) return;
+      if (
+        disposed ||
+        currentHostGeneration.current !== effectGeneration ||
+        getHostGeneration() !== effectGeneration
+      )
+        return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     };
     const unlisten = api.onRuntimeProjectionStatus((next) => {
@@ -77,17 +87,20 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi) {
       disposed = true;
       unlisten();
     };
-  }, [api]);
+  }, [api, hostGeneration]);
 
   const retry = useCallback(async () => {
+    const requestGeneration = hostGeneration;
     try {
       const next = await api.retryRuntimeProjection();
+      if (requestGeneration !== currentHostGeneration.current) return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     } catch (error) {
+      if (requestGeneration !== currentHostGeneration.current) return;
       const message = error instanceof Error ? error.message : String(error);
       setViewState((current) => ({ ...current, failure: message }));
     }
-  }, [api]);
+  }, [api, hostGeneration]);
 
   return { status: viewState.status, failure: viewState.failure, retry };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
+import { getHostGeneration } from '@/native/invoke';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import type { AudioMonitorApi } from './audio-api';
@@ -34,28 +35,37 @@ export function AudioMonitor(props: AudioMonitorProps) {
   );
 
   const previewMaster = (gainDb: number) => {
+    const generationAtSchedule = getHostGeneration();
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
     previewTimer.current = window.setTimeout(() => {
       previewTimer.current = null;
+      if (getHostGeneration() !== generationAtSchedule) return;
       previewChain.current = previewChain.current
         .catch(() => undefined)
-        .then(() => api.previewMasterGainDb(gainDb));
+        .then(() => {
+          if (getHostGeneration() !== generationAtSchedule) return;
+          return api.previewMasterGainDb(gainDb);
+        })
+        .catch(() => undefined);
     }, 40);
   };
 
   const commitMaster = async (gainDb: number) => {
+    const generationAtRequest = getHostGeneration();
     if (previewTimer.current !== null) {
       window.clearTimeout(previewTimer.current);
       previewTimer.current = null;
     }
     await previewChain.current.catch(() => undefined);
+    if (getHostGeneration() !== generationAtRequest) return;
     if (gainDb === lastCommittedMasterDb.current) return;
     lastCommittedMasterDb.current = gainDb;
     try {
       const result = await api.setMasterGainDb(gainDb);
-      applyCanonicalState(result.canonical);
-      setAudio(result.audio);
+      if (getHostGeneration() !== generationAtRequest) return;
+      if (applyCanonicalState(result.canonical)) setAudio(result.audio);
     } catch {
+      if (getHostGeneration() !== generationAtRequest) return;
       lastCommittedMasterDb.current = session.settings.masterDb;
       setMasterDraftDb(session.settings.masterDb);
     }

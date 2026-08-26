@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   BootstrapState,
   CanonicalState,
@@ -22,6 +22,7 @@ type MissingDependenciesApi = Pick<
 interface UseMissingDependenciesOptions {
   api: MissingDependenciesApi;
   boot: BootstrapState | null;
+  hostGeneration?: number;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   rescanPlugins: () => Promise<boolean>;
 }
@@ -30,6 +31,7 @@ interface UseMissingDependenciesOptions {
 export function useMissingDependencies({
   api,
   boot,
+  hostGeneration = 0,
   applyCanonicalState,
   rescanPlugins,
 }: UseMissingDependenciesOptions) {
@@ -41,17 +43,29 @@ export function useMissingDependencies({
     retryRuntimeProjection,
   } = api;
   const [missingDependencies, setMissingDependencies] = useState<MissingDependency[]>([]);
+  const currentHostGeneration = useRef(hostGeneration);
+  currentHostGeneration.current = hostGeneration;
+
+  useEffect(() => {
+    currentHostGeneration.current = hostGeneration;
+    setMissingDependencies([]);
+  }, [hostGeneration]);
 
   useEffect(() => {
     if (!boot) return;
+    const requestGeneration = hostGeneration;
     void getMissingDependencies()
-      .then(setMissingDependencies)
+      .then((next) => {
+        if (currentHostGeneration.current === requestGeneration) setMissingDependencies(next);
+      })
       .catch(logNativeError('getMissingDependencies'));
-  }, [boot, getMissingDependencies]);
+  }, [boot, getMissingDependencies, hostGeneration]);
 
   const reloadMissingDependencies = useCallback(async () => {
-    setMissingDependencies(await getMissingDependencies());
-  }, [getMissingDependencies]);
+    const requestGeneration = hostGeneration;
+    const next = await getMissingDependencies();
+    if (currentHostGeneration.current === requestGeneration) setMissingDependencies(next);
+  }, [getMissingDependencies, hostGeneration]);
 
   const clearRelocatedMissingDependencies = useCallback((recording: RecordingAsset) => {
     const previousDirectory = recording.path.replace(/[\\/]+$/, '').toLocaleLowerCase();
@@ -70,42 +84,75 @@ export function useMissingDependencies({
   const relinkMissing = useCallback(
     async (item: MissingDependency, newPath: string) => {
       if (!item.assetId) return;
-      const next = await relinkMissingDependency(item.assetId, newPath);
-      applyArrangementMutation(next, applyCanonicalState, (message) =>
-        toast(message, { kind: 'error' }),
-      );
-      await reloadMissingDependencies();
+      const requestGeneration = hostGeneration;
+      try {
+        const next = await relinkMissingDependency(item.assetId, newPath);
+        if (currentHostGeneration.current !== requestGeneration) return;
+        applyArrangementMutation(next, applyCanonicalState, (message) =>
+          toast(message, { kind: 'error' }),
+        );
+        await reloadMissingDependencies();
+      } catch (error) {
+        if (currentHostGeneration.current === requestGeneration) {
+          logNativeError('relinkMissingDependency')(error);
+        }
+      }
     },
-    [applyCanonicalState, relinkMissingDependency, reloadMissingDependencies],
+    [applyCanonicalState, hostGeneration, relinkMissingDependency, reloadMissingDependencies],
   );
 
   const disableMissingPluginDevice = useCallback(
     async (deviceId: string) => {
-      const next = await disableMissingPlugin(deviceId);
-      applyArrangementMutation(next, applyCanonicalState, (message) =>
-        toast(message, { kind: 'error' }),
-      );
-      await reloadMissingDependencies();
+      const requestGeneration = hostGeneration;
+      try {
+        const next = await disableMissingPlugin(deviceId);
+        if (currentHostGeneration.current !== requestGeneration) return;
+        applyArrangementMutation(next, applyCanonicalState, (message) =>
+          toast(message, { kind: 'error' }),
+        );
+        await reloadMissingDependencies();
+      } catch (error) {
+        if (currentHostGeneration.current === requestGeneration) {
+          logNativeError('disableMissingPlugin')(error);
+        }
+      }
     },
-    [applyCanonicalState, disableMissingPlugin, reloadMissingDependencies],
+    [applyCanonicalState, disableMissingPlugin, hostGeneration, reloadMissingDependencies],
   );
 
   const replaceMissingPluginDevice = useCallback(
     async (deviceId: string, newPath: string) => {
-      const next = await replaceMissingTrackPlugin(deviceId, newPath);
-      applyArrangementMutation(next, applyCanonicalState, (message) =>
-        toast(message, { kind: 'error' }),
-      );
-      await reloadMissingDependencies();
+      const requestGeneration = hostGeneration;
+      try {
+        const next = await replaceMissingTrackPlugin(deviceId, newPath);
+        if (currentHostGeneration.current !== requestGeneration) return;
+        applyArrangementMutation(next, applyCanonicalState, (message) =>
+          toast(message, { kind: 'error' }),
+        );
+        await reloadMissingDependencies();
+      } catch (error) {
+        if (currentHostGeneration.current === requestGeneration) {
+          logNativeError('replaceMissingTrackPlugin')(error);
+        }
+      }
     },
-    [applyCanonicalState, reloadMissingDependencies, replaceMissingTrackPlugin],
+    [applyCanonicalState, hostGeneration, reloadMissingDependencies, replaceMissingTrackPlugin],
   );
 
   const rescanMissingPlugins = useCallback(async () => {
-    if (!(await rescanPlugins())) return;
-    await retryRuntimeProjection();
-    await reloadMissingDependencies();
-  }, [reloadMissingDependencies, rescanPlugins, retryRuntimeProjection]);
+    const requestGeneration = hostGeneration;
+    try {
+      if (!(await rescanPlugins())) return;
+      if (currentHostGeneration.current !== requestGeneration) return;
+      await retryRuntimeProjection();
+      if (currentHostGeneration.current !== requestGeneration) return;
+      await reloadMissingDependencies();
+    } catch (error) {
+      if (currentHostGeneration.current === requestGeneration) {
+        logNativeError('rescanMissingPlugins')(error);
+      }
+    }
+  }, [hostGeneration, reloadMissingDependencies, rescanPlugins, retryRuntimeProjection]);
 
   const ignoreMissing = useCallback((item: MissingDependency) => {
     setMissingDependencies((current) =>

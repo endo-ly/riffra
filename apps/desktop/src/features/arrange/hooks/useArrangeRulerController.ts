@@ -8,6 +8,7 @@ import {
 } from 'react';
 import type { ArrangementMutationResult, CreativeSession, Marker } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
+import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTarget } from '../model/interaction';
 
 type RangeKind = 'loop' | 'punch';
@@ -180,7 +181,10 @@ export function useArrangeRulerController({
       const originX = event.clientX;
       let seeking = true;
       seekLocally(originTick);
-      void api.seekTimeline(originTick).catch((error) => setMessage(String(error)));
+      void api.seekTimeline(originTick).catch((error) => {
+        if (error instanceof HostConnectionChangedError) return;
+        setMessage(String(error));
+      });
       setFollow(true);
       const handle = (move: globalThis.PointerEvent) => {
         const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
@@ -194,7 +198,10 @@ export function useArrangeRulerController({
         }
         if (seeking) {
           seekLocally(tick);
-          void api.seekTimeline(tick).catch((error) => setMessage(String(error)));
+          void api.seekTimeline(tick).catch((error) => {
+            if (error instanceof HostConnectionChangedError) return;
+            setMessage(String(error));
+          });
         } else {
           setTimeSelection((current) =>
             current
