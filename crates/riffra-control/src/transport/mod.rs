@@ -2,6 +2,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::LocalControlEndpoint;
 
@@ -35,12 +37,9 @@ impl ReadWrite for std::fs::File {
     }
 
     fn close_stream(&self) {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::System::IO::CancelIoEx;
-
-        unsafe {
-            let _ = CancelIoEx(self.as_raw_handle() as _, std::ptr::null());
-        }
+        // Windows named pipe reads here are synchronous, so the stream handle
+        // cannot interrupt them. A blocked reader is interrupted through
+        // [`cancel_synchronous_io`] on its own thread instead.
     }
 }
 
@@ -62,7 +61,7 @@ pub enum TransportError {
 /// Writes one length-prefixed JSON frame.
 pub fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<(), TransportError>
 where
-    W: Write,
+    W: Write + ?Sized,
     T: Serialize,
 {
     let payload = serde_json::to_vec(value)?;
@@ -85,7 +84,7 @@ where
 /// Reads one length-prefixed JSON frame.
 pub fn read_frame<R, T>(reader: &mut R) -> Result<T, TransportError>
 where
-    R: Read,
+    R: Read + ?Sized,
     T: DeserializeOwned,
 {
     let mut length_bytes = [0; 4];
@@ -101,6 +100,63 @@ where
     reader.read_exact(&mut payload)?;
     let payload = String::from_utf8(payload).map_err(|_| TransportError::InvalidUtf8)?;
     Ok(serde_json::from_str(&payload)?)
+}
+
+/// How long an interrupted frame reader still has to observe the interrupt
+/// before its caller reports the timeout anyway.
+const INTERRUPT_GRACE: Duration = Duration::from_secs(5);
+
+/// Reads one length-prefixed JSON frame, giving up after `timeout`.
+///
+/// The blocking read runs on a dedicated worker so a silent peer can be
+/// interrupted through [`cancel_synchronous_io`] (Windows) or a stream
+/// shutdown (Unix) instead of blocking the caller forever. A timed-out
+/// connection is closed and must not be reused.
+///
+/// # Errors
+/// Returns the framing error of the worker, or a timed-out I/O error when the
+/// frame did not arrive within `timeout`.
+pub fn read_frame_within<R, T>(stream: &R, timeout: Duration) -> Result<T, TransportError>
+where
+    R: ReadWrite + ?Sized,
+    T: DeserializeOwned + Send + 'static,
+{
+    let mut worker_stream = stream.try_clone_stream()?;
+    let (sender, receiver) = mpsc::channel();
+    let worker = std::thread::Builder::new()
+        .name("riffra-frame-reader".into())
+        .spawn(move || {
+            let _ = sender.send(read_frame::<_, T>(&mut worker_stream));
+        })
+        .map_err(|error| TransportError::Io(io::Error::other(error)))?;
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            stream.close_stream();
+            cancel_synchronous_io(&worker);
+            let _ = receiver.recv_timeout(INTERRUPT_GRACE);
+            Err(TransportError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "control frame did not arrive within the command timeout",
+            )))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(TransportError::Io(io::Error::other(
+            "control frame reader exited unexpectedly",
+        ))),
+    }
+}
+
+/// Cancels the pending synchronous I/O of one reader thread.
+#[cfg(windows)]
+pub fn cancel_synchronous_io(thread: &std::thread::JoinHandle<()>) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::IO::CancelSynchronousIo;
+
+    // SAFETY: the joinable thread keeps its handle valid, and cancelling that
+    // thread's synchronous I/O has no preconditions beyond the handle.
+    unsafe {
+        let _ = CancelSynchronousIo(thread.as_raw_handle() as _);
+    }
 }
 
 /// Connects to a host-local endpoint.
@@ -236,6 +292,8 @@ impl Drop for UnixDomainListener {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Instant;
 
     #[test]
     fn partial_reads_round_trip_one_frame() {
@@ -301,6 +359,71 @@ mod tests {
         let error = read_frame::<_, serde_json::Value>(&mut reader).unwrap_err();
 
         assert!(matches!(error, TransportError::InvalidJson(_)));
+    }
+
+    /// A stream whose reads block until [`Self::close_stream`] is called.
+    struct GateStream {
+        closed: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl GateStream {
+        fn new() -> Self {
+            Self {
+                closed: Arc::new((Mutex::new(false), Condvar::new())),
+            }
+        }
+    }
+
+    impl Read for GateStream {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            let (lock, signal) = &*self.closed;
+            let mut closed = lock.lock().expect("gate lock was poisoned");
+            while !*closed {
+                closed = signal.wait(closed).expect("gate lock was poisoned");
+            }
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "stream was closed",
+            ))
+        }
+    }
+
+    impl Write for GateStream {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ReadWrite for GateStream {
+        fn try_clone_stream(&self) -> io::Result<Box<dyn ReadWrite>> {
+            Ok(Box::new(Self {
+                closed: Arc::clone(&self.closed),
+            }))
+        }
+
+        fn close_stream(&self) {
+            let (lock, signal) = &*self.closed;
+            *lock.lock().expect("gate lock was poisoned") = true;
+            signal.notify_all();
+        }
+    }
+
+    #[test]
+    fn a_silent_peer_times_out_within_a_finite_deadline() {
+        let stream = GateStream::new();
+        let started = Instant::now();
+
+        let error = read_frame_within::<_, serde_json::Value>(&stream, Duration::from_millis(200))
+            .expect_err("must time out");
+
+        assert!(
+            matches!(&error, TransportError::Io(error) if error.kind() == io::ErrorKind::TimedOut)
+        );
+        assert!(started.elapsed() < INTERRUPT_GRACE);
     }
 
     #[cfg(unix)]

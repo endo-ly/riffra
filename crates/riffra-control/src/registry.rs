@@ -188,34 +188,51 @@ impl LocalHostRegistry {
         Ok(registrations)
     }
 
-    /// Verifies each entry through the command handshake and removes stale
-    /// entries, including instance-id mismatches.
+    /// Verifies each entry through a live command round trip.
+    ///
+    /// Entries are removed only when they are provably invalid: a dead owner
+    /// process, or a handshake that identifies a different Host instance than
+    /// the entry claims. A Host that is merely unreachable right now stays
+    /// registered and is left out of this discovery result instead, so a
+    /// busy or starting Host does not disappear from the Host Selector.
     pub fn discover(&self) -> Result<Vec<LocalHostDiscovery>, String> {
         let mut discovered = Vec::new();
         for registration in self.entries()? {
-            match LocalHostClient::connect_registration(&registration).and_then(|client| {
-                let request = ControlRequest::new(
-                    format!("discovery-{}", registration.instance_id),
-                    ControlCommand::new("host.status", serde_json::json!({})),
-                    None,
-                );
-                let response = client
-                    .request(&request)
-                    .map_err(|error| LocalHostClientError::Handshake(error.to_string()))?;
-                verify_host_status(&registration, &response)
-                    .map_err(LocalHostClientError::Handshake)?;
-                Ok(client)
-            }) {
+            if !process_exists(registration.pid) {
+                let _ = self.unregister(&registration.instance_id);
+                continue;
+            }
+            match self.verify_registration(&registration) {
                 Ok(client) => discovered.push(LocalHostDiscovery {
                     registration,
                     client,
                 }),
-                Err(_error) => {
+                Err(LocalHostClientError::Handshake(_)) => {
+                    // The endpoint answers, but it is not the Host this entry
+                    // describes. The entry can never become valid again.
                     let _ = self.unregister(&registration.instance_id);
+                }
+                Err(_unavailable) => {
+                    // Unavailable now is not stale; keep the entry registered.
                 }
             }
         }
         Ok(discovered)
+    }
+
+    fn verify_registration(
+        &self,
+        registration: &LocalHostRegistration,
+    ) -> Result<LocalHostClient, LocalHostClientError> {
+        let client = LocalHostClient::connect_registration(registration);
+        let request = ControlRequest::new(
+            format!("discovery-{}", registration.instance_id),
+            ControlCommand::new("host.status", serde_json::json!({})),
+            None,
+        );
+        let response = client.request(&request)?;
+        verify_host_status(registration, &response).map_err(LocalHostClientError::Handshake)?;
+        Ok(client)
     }
 
     fn ensure_root(&self) -> Result<(), String> {
@@ -286,6 +303,42 @@ fn verify_host_status(
     Ok(())
 }
 
+/// Returns whether the operating system still has a live process for `pid`.
+fn process_exists(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: OpenProcess only reads the pid and the access mask, and the
+        // returned handle is released before returning.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            false
+        } else {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            true
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: kill with signal 0 only probes for process existence.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 /// Returns the current Unix timestamp in milliseconds for registry ordering.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -300,11 +353,6 @@ pub fn now_ms() -> u64 {
 fn current_user_id() -> u32 {
     // SAFETY: geteuid has no preconditions and does not borrow memory.
     unsafe { libc::geteuid() }
-}
-
-#[cfg(not(unix))]
-fn current_user_id() -> u32 {
-    0
 }
 
 #[cfg(unix)]
@@ -371,6 +419,7 @@ fn replace_entry(temporary: &Path, destination: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::new_instance_id;
 
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-registry-{name}-{}", now_ms()))
@@ -415,6 +464,42 @@ mod tests {
 
         assert!(registry.discover().unwrap().is_empty());
         assert!(!root.join("stale.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn entries_without_a_live_process_are_removed() {
+        let root = root("dead-pid");
+        let registry = LocalHostRegistry::at(&root);
+        let descriptor = EndpointDescriptor::new(new_instance_id(), 42);
+        let registration = LocalHostRegistration::from_descriptor(&root, &descriptor, 1);
+        registry.register(&registration).unwrap();
+        assert!(!process_exists(42));
+
+        assert!(registry.discover().unwrap().is_empty());
+        assert_eq!(
+            registry.entries().unwrap(),
+            Vec::<LocalHostRegistration>::new()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_temporarily_unreachable_host_stays_registered_but_is_not_discovered() {
+        let root = root("unreachable");
+        let registry = LocalHostRegistry::at(&root);
+        // A live pid whose endpoint was never bound: the Host is not reachable
+        // right now, but the entry itself carries no provable defect.
+        let registration = LocalHostRegistration::from_descriptor(
+            &root,
+            &EndpointDescriptor::new(new_instance_id(), std::process::id()),
+            1,
+        );
+        registry.register(&registration).unwrap();
+
+        assert!(registry.discover().unwrap().is_empty());
+        assert_eq!(registry.entries().unwrap(), vec![registration.clone()]);
+        registry.unregister(&registration.instance_id).unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 }
