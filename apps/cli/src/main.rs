@@ -58,7 +58,6 @@ fn run() -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let mut attached = attached;
         let response = attached.request(&request)?;
         if response.ok {
             return write_response(&response);

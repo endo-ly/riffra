@@ -6,30 +6,17 @@ pub async fn send_midi_to_track(
     bytes: Vec<u8>,
     app: AppHandle,
 ) -> Result<(), String> {
-    run_runtime_control(app, move |state| {
-        validate_target_instrument_track(state, &track_id)?;
-        state
-            .host
-            .core()
-            .audio()
-            .send_track_midi(&track_id, &bytes)
-            .map_err(|error| error.to_string())
-    })
+    dispatch(
+        app,
+        "midi.send",
+        json!({ "trackId": track_id, "bytes": bytes }),
+    )
     .await
 }
 
 #[tauri::command]
 pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), String> {
-    run_runtime_control(app, move |state| {
-        validate_target_instrument_track(state, &track_id)?;
-        state
-            .host
-            .core()
-            .audio()
-            .panic_track_midi(&track_id)
-            .map_err(|error| error.to_string())
-    })
-    .await
+    dispatch(app, "midi.panic", json!({ "trackId": track_id })).await
 }
 
 #[tauri::command]
@@ -40,11 +27,16 @@ pub async fn add_audio_clip_to_arrangement(
     track_id: Option<String>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    run_blocking(app, move |state| {
-        adapter::add_audio_clip(&app_context(state), asset_id, name, start_tick, track_id)
-    })
+    dispatch(
+        app,
+        "audio-clip.add-asset",
+        json!({
+            "assetId": asset_id,
+            "name": name,
+            "startTick": start_tick.map(|tick| tick.0),
+            "trackId": track_id,
+        }),
+    )
     .await
 }
 
@@ -56,15 +48,16 @@ pub async fn create_midi_clip(
     name: Option<String>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::create_midi_clip(
-            &app_context(state),
-            &track_id,
-            start_tick,
-            duration_ticks,
-            name,
-        )
-    })
+    dispatch(
+        app,
+        "midi-clip.create",
+        json!({
+            "trackId": track_id,
+            "startTick": start_tick.0,
+            "durationTicks": duration_ticks,
+            "name": name,
+        }),
+    )
     .await
 }
 
@@ -76,11 +69,16 @@ pub async fn add_midi_clip_to_arrangement(
     track_id: Option<String>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
-    run_blocking(app, move |state| {
-        adapter::add_midi_clip(&app_context(state), asset_id, name, start_tick, track_id)
-    })
+    dispatch(
+        app,
+        "midi-clip.add-asset",
+        json!({
+            "assetId": asset_id,
+            "name": name,
+            "startTick": start_tick.map(|tick| tick.0),
+            "trackId": track_id,
+        }),
+    )
     .await
 }
 
@@ -90,9 +88,11 @@ pub async fn update_audio_clip(
     patch: AudioClipPatch,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_audio_clip(&app_context(state), &clip_id, patch)
-    })
+    dispatch(
+        app,
+        "audio-clip.update",
+        json!({ "clipId": clip_id, "patch": patch }),
+    )
     .await
 }
 
@@ -102,9 +102,11 @@ pub async fn remove_timeline_clips(
     midi_clip_ids: Vec<String>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_timeline_clips(&app_context(state), &audio_clip_ids, &midi_clip_ids)
-    })
+    dispatch(
+        app,
+        "clip.remove",
+        json!({ "audioClipIds": audio_clip_ids, "midiClipIds": midi_clip_ids }),
+    )
     .await
 }
 
@@ -115,9 +117,11 @@ pub async fn trim_audio_clip(
     source_range: FrameRange,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::trim_audio_clip(&app_context(state), &clip_id, start_tick, source_range)
-    })
+    dispatch(
+        app,
+        "audio-clip.trim",
+        json!({ "clipId": clip_id, "startTick": start_tick.0, "sourceRange": source_range }),
+    )
     .await
 }
 
@@ -127,9 +131,11 @@ pub async fn split_audio_clip(
     split_tick: TimelineTick,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::split_audio_clip(&app_context(state), &clip_id, split_tick)
-    })
+    dispatch(
+        app,
+        "audio-clip.split",
+        json!({ "clipId": clip_id, "splitTick": split_tick.0 }),
+    )
     .await
 }
 
@@ -138,10 +144,7 @@ pub async fn duplicate_audio_clip(
     clip_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::duplicate_audio_clip(&app_context(state), &clip_id)
-    })
-    .await
+    dispatch(app, "audio-clip.duplicate", json!({ "clipId": clip_id })).await
 }
 
 #[tauri::command]
@@ -149,10 +152,7 @@ pub async fn move_audio_clips(
     moves: Vec<AudioClipMove>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::move_audio_clips(&app_context(state), moves)
-    })
-    .await
+    dispatch(app, "audio-clip.move", json!({ "moves": moves })).await
 }
 
 #[tauri::command]
@@ -161,9 +161,11 @@ pub async fn update_midi_clip(
     patch: MidiClipPatch,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_midi_clip(&app_context(state), &clip_id, patch)
-    })
+    dispatch(
+        app,
+        "midi-clip.update",
+        json!({ "clipId": clip_id, "patch": patch }),
+    )
     .await
 }
 
@@ -172,10 +174,7 @@ pub async fn move_midi_clips(
     moves: Vec<MidiClipMove>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::move_midi_clips(&app_context(state), moves)
-    })
-    .await
+    dispatch(app, "midi-clip.move", json!({ "moves": moves })).await
 }
 
 #[tauri::command]
@@ -185,9 +184,11 @@ pub async fn trim_midi_clip(
     duration_ticks: u64,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::trim_midi_clip(&app_context(state), &clip_id, start_tick, duration_ticks)
-    })
+    dispatch(
+        app,
+        "midi-clip.trim",
+        json!({ "clipId": clip_id, "startTick": start_tick.0, "durationTicks": duration_ticks }),
+    )
     .await
 }
 
@@ -197,9 +198,11 @@ pub async fn split_midi_clip(
     split_tick: TimelineTick,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::split_midi_clip(&app_context(state), &clip_id, split_tick)
-    })
+    dispatch(
+        app,
+        "midi-clip.split",
+        json!({ "clipId": clip_id, "splitTick": split_tick.0 }),
+    )
     .await
 }
 
@@ -208,10 +211,7 @@ pub async fn duplicate_midi_clip(
     clip_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::duplicate_midi_clip(&app_context(state), &clip_id)
-    })
-    .await
+    dispatch(app, "midi-clip.duplicate", json!({ "clipId": clip_id })).await
 }
 
 #[tauri::command]
@@ -221,14 +221,15 @@ pub async fn paste_timeline_clips(
     start_tick: TimelineTick,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::paste_timeline_clips(
-            &app_context(state),
-            &audio_clip_ids,
-            &midi_clip_ids,
-            start_tick,
-        )
-    })
+    dispatch(
+        app,
+        "clip.paste",
+        json!({
+            "audioClipIds": audio_clip_ids,
+            "midiClipIds": midi_clip_ids,
+            "startTick": start_tick.0,
+        }),
+    )
     .await
 }
 
@@ -238,9 +239,11 @@ pub async fn crossfade_audio_clips(
     second_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::crossfade_audio_clips(&app_context(state), &first_id, &second_id)
-    })
+    dispatch(
+        app,
+        "audio-clip.crossfade",
+        json!({ "firstClipId": first_id, "secondClipId": second_id }),
+    )
     .await
 }
 
@@ -249,10 +252,7 @@ pub async fn update_arrangement_timebase(
     timebase: ProjectTimebase,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_timebase(&app_context(state), timebase)
-    })
-    .await
+    dispatch(app, "timebase.update", timebase).await
 }
 
 #[tauri::command]
@@ -262,9 +262,11 @@ pub async fn update_timeline_loop_range(
     end_tick: TimelineTick,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_loop_range(&app_context(state), enabled, start_tick, end_tick)
-    })
+    dispatch(
+        app,
+        "loop-range.set",
+        json!({ "enabled": enabled, "startTick": start_tick.0, "endTick": end_tick.0 }),
+    )
     .await
 }
 
@@ -275,9 +277,11 @@ pub async fn update_timeline_punch_range(
     end_tick: TimelineTick,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_punch_range(&app_context(state), enabled, start_tick, end_tick)
-    })
+    dispatch(
+        app,
+        "punch-range.set",
+        json!({ "enabled": enabled, "startTick": start_tick.0, "endTick": end_tick.0 }),
+    )
     .await
 }
 
@@ -287,10 +291,7 @@ pub async fn add_track(
     kind: TrackKind,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::add_track(&app_context(state), name, kind)
-    })
-    .await
+    dispatch(app, "track.add", json!({ "name": name, "kind": kind })).await
 }
 
 #[tauri::command]
@@ -299,10 +300,9 @@ pub async fn update_track(
     patch: riffra_core::TrackPatch,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_track(&app_context(state), &track_id, patch)
-    })
-    .await
+    let mut params = serde_json::to_value(patch).map_err(|error| error.to_string())?;
+    params["trackId"] = Value::String(track_id);
+    dispatch_json(app, "track.update", params).await
 }
 
 #[tauri::command]
@@ -312,9 +312,11 @@ pub async fn set_track_automation(
     points: Vec<AutomationPoint>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::set_track_automation(&app_context(state), &track_id, parameter, points)
-    })
+    dispatch(
+        app,
+        "automation.set",
+        json!({ "trackId": track_id, "parameter": parameter, "points": points }),
+    )
     .await
 }
 
@@ -324,9 +326,16 @@ pub async fn set_track_audio_input(
     channel_index: Option<u32>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::set_track_audio_input(&app_context(state), &track_id, channel_index)
-    })
+    let command = if channel_index.is_some() {
+        "track.audio-input.set"
+    } else {
+        "track.audio-input.clear"
+    };
+    dispatch(
+        app,
+        command,
+        json!({ "trackId": track_id, "channelIndex": channel_index }),
+    )
     .await
 }
 
@@ -336,9 +345,16 @@ pub async fn set_track_midi_input(
     route: MidiInputRoute,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::set_track_midi_input(&app_context(state), &track_id, route)
-    })
+    let command = if route.device_id.is_some() || route.channel.is_some() {
+        "track.midi-input.set"
+    } else {
+        "track.midi-input.clear"
+    };
+    dispatch(
+        app,
+        command,
+        json!({ "trackId": track_id, "deviceId": route.device_id, "channel": route.channel }),
+    )
     .await
 }
 
@@ -347,10 +363,7 @@ pub async fn remove_track(
     track_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_track(&app_context(state), &track_id)
-    })
-    .await
+    dispatch(app, "track.remove", json!({ "trackId": track_id })).await
 }
 
 #[tauri::command]
@@ -358,10 +371,7 @@ pub async fn duplicate_track(
     track_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::duplicate_track(&app_context(state), &track_id)
-    })
-    .await
+    dispatch(app, "track.duplicate", json!({ "trackId": track_id })).await
 }
 
 #[tauri::command]
@@ -370,9 +380,11 @@ pub async fn reorder_track(
     target_index: usize,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::reorder_track(&app_context(state), &track_id, target_index)
-    })
+    dispatch(
+        app,
+        "track.reorder",
+        json!({ "trackId": track_id, "targetIndex": target_index }),
+    )
     .await
 }
 
@@ -382,10 +394,7 @@ pub async fn add_marker(
     name: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::add_marker(&app_context(state), tick, name)
-    })
-    .await
+    dispatch(app, "marker.add", json!({ "tick": tick.0, "name": name })).await
 }
 
 #[tauri::command]
@@ -395,9 +404,11 @@ pub async fn update_marker(
     tick: Option<TimelineTick>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_marker(&app_context(state), &marker_id, name, tick)
-    })
+    dispatch(
+        app,
+        "marker.update",
+        json!({ "markerId": marker_id, "name": name, "tick": tick.map(|value| value.0) }),
+    )
     .await
 }
 
@@ -406,10 +417,7 @@ pub async fn remove_marker(
     marker_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_marker(&app_context(state), &marker_id)
-    })
-    .await
+    dispatch(app, "marker.remove", json!({ "markerId": marker_id })).await
 }
 
 #[tauri::command]
@@ -422,17 +430,18 @@ pub async fn add_midi_note(
     channel: u8,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::add_midi_note(
-            &app_context(state),
-            &clip_id,
-            start_tick,
-            pitch,
-            duration_ticks,
-            velocity,
-            channel,
-        )
-    })
+    dispatch(
+        app,
+        "midi-note.add",
+        json!({
+            "clipId": clip_id,
+            "startTick": start_tick.0,
+            "pitch": pitch,
+            "durationTicks": duration_ticks,
+            "velocity": velocity,
+            "channel": channel,
+        }),
+    )
     .await
 }
 
@@ -442,9 +451,11 @@ pub async fn insert_midi_notes(
     notes: Vec<MidiNoteInput>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::insert_midi_notes(&app_context(state), &clip_id, notes)
-    })
+    dispatch(
+        app,
+        "midi-note.insert",
+        json!({ "clipId": clip_id, "notes": notes }),
+    )
     .await
 }
 
@@ -455,9 +466,11 @@ pub async fn update_midi_note(
     patch: MidiNotePatch,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_midi_note(&app_context(state), &clip_id, &note_id, patch)
-    })
+    dispatch(
+        app,
+        "midi-note.update",
+        json!({ "clipId": clip_id, "noteId": note_id, "patch": patch }),
+    )
     .await
 }
 
@@ -467,9 +480,11 @@ pub async fn update_midi_notes(
     updates: Vec<MidiNoteUpdate>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::update_midi_notes(&app_context(state), &clip_id, updates)
-    })
+    dispatch(
+        app,
+        "midi-note.update-many",
+        json!({ "clipId": clip_id, "updates": updates }),
+    )
     .await
 }
 
@@ -479,9 +494,11 @@ pub async fn remove_midi_note(
     note_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_midi_note(&app_context(state), &clip_id, &note_id)
-    })
+    dispatch(
+        app,
+        "midi-note.remove",
+        json!({ "clipId": clip_id, "noteId": note_id }),
+    )
     .await
 }
 
@@ -491,9 +508,11 @@ pub async fn remove_midi_notes(
     note_ids: Vec<String>,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::remove_midi_notes(&app_context(state), &clip_id, &note_ids)
-    })
+    dispatch(
+        app,
+        "midi-note.remove-many",
+        json!({ "clipId": clip_id, "noteIds": note_ids }),
+    )
     .await
 }
 
@@ -504,9 +523,11 @@ pub async fn quantize_midi_notes(
     grid_ticks: u64,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::quantize_midi_notes(&app_context(state), &clip_id, &note_ids, grid_ticks)
-    })
+    dispatch(
+        app,
+        "midi-note.quantize",
+        json!({ "clipId": clip_id, "noteIds": note_ids, "gridTicks": grid_ticks }),
+    )
     .await
 }
 
@@ -518,15 +539,16 @@ pub async fn transform_midi_notes(
     velocity_offset: i16,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::transform_midi_notes(
-            &app_context(state),
-            &clip_id,
-            note_ids,
-            transpose_semitones,
-            velocity_offset,
-        )
-    })
+    dispatch(
+        app,
+        "midi-note.transform",
+        json!({
+            "clipId": clip_id,
+            "noteIds": note_ids,
+            "transposeSemitones": transpose_semitones,
+            "velocityOffset": velocity_offset,
+        }),
+    )
     .await
 }
 
@@ -537,9 +559,11 @@ pub async fn duplicate_midi_notes(
     offset_ticks: u64,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::duplicate_midi_notes(&app_context(state), &clip_id, &note_ids, offset_ticks)
-    })
+    dispatch(
+        app,
+        "midi-note.duplicate",
+        json!({ "clipId": clip_id, "noteIds": note_ids, "offsetTicks": offset_ticks }),
+    )
     .await
 }
 
@@ -549,40 +573,30 @@ pub async fn set_audio_clip_take_variant(
     variant: AudioTakeVariant,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::set_audio_clip_take_variant(&app_context(state), &clip_id, variant)
-    })
+    dispatch(
+        app,
+        "audio-clip.take-variant.set",
+        json!({ "clipId": clip_id, "variant": variant }),
+    )
     .await
 }
 
 #[tauri::command]
-pub async fn start_take_comparison(
-    take_id: String,
-    app: AppHandle,
-) -> Result<crate::model::AudioStatus, String> {
-    run_blocking(app, move |state| {
-        adapter::start_take_comparison(&app_context(state), &take_id)
-    })
-    .await
+pub async fn start_take_comparison(take_id: String, app: AppHandle) -> Result<AudioStatus, String> {
+    dispatch(app, "take.comparison.start", json!({ "takeId": take_id })).await
 }
 
 #[tauri::command]
 pub async fn switch_take_comparison_variant(
     variant: AudioTakeVariant,
     app: AppHandle,
-) -> Result<crate::model::AudioStatus, String> {
-    run_blocking(app, move |state| {
-        adapter::switch_take_comparison_variant(&app_context(state), variant)
-    })
-    .await
+) -> Result<AudioStatus, String> {
+    dispatch(app, "take.comparison.switch", json!({ "variant": variant })).await
 }
 
 #[tauri::command]
-pub async fn stop_take_comparison(app: AppHandle) -> Result<crate::model::AudioStatus, String> {
-    run_blocking(app, |state| {
-        adapter::stop_take_comparison(&app_context(state))
-    })
-    .await
+pub async fn stop_take_comparison(app: AppHandle) -> Result<AudioStatus, String> {
+    dispatch(app, "take.comparison.stop", json!({})).await
 }
 
 #[tauri::command]
@@ -591,9 +605,11 @@ pub async fn activate_take(
     take_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::activate_take(&app_context(state), &session_id, &take_id)
-    })
+    dispatch(
+        app,
+        "take.activate",
+        json!({ "sessionId": session_id, "takeId": take_id }),
+    )
     .await
 }
 
@@ -602,8 +618,10 @@ pub async fn place_take_as_separate_clip(
     take_id: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
-    run_blocking(app, move |state| {
-        adapter::place_take_as_separate_clip(&app_context(state), &take_id)
-    })
+    dispatch(
+        app,
+        "take.place-separate-clip",
+        json!({ "takeId": take_id }),
+    )
     .await
 }

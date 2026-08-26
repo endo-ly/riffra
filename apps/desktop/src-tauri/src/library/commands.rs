@@ -1,23 +1,28 @@
-//! Thin Tauri command boundary for Library Read Model queries and updates.
-//!
-//! Each command is a single delegation to [`super::search`] /
-//! [`super::update_metadata`] / [`super::related`] over the Library Read Model.
-//! They do not span Domain / Persistence / Runtime, so they live here as thin
-//! wrappers rather than in an `application.rs`.
+//! Tauri adapters for Host-owned Library read model operations.
 
+use serde_json::json;
 use tauri::{AppHandle, Manager};
 
 use crate::AppState;
-use crate::library::{self, LibraryAsset};
+use crate::library::LibraryAsset;
+
+async fn dispatch<T: serde::de::DeserializeOwned + Send + 'static>(
+    app: AppHandle,
+    command: &'static str,
+    params: serde_json::Value,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .host_connection
+            .dispatch(command, params)
+    })
+    .await
+    .map_err(|error| format!("Library operation failed: {error}"))?
+}
 
 #[tauri::command]
 pub async fn search_library(query: String, app: AppHandle) -> Result<Vec<LibraryAsset>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        state.with_host_lifecycle(|state| library::search(state.host.data_root(), &query))
-    })
-    .await
-    .map_err(|error| format!("Library search task failed: {error}"))?
+    dispatch(app, "library.search", json!({ "query": query })).await
 }
 
 #[tauri::command]
@@ -27,14 +32,12 @@ pub async fn update_library_asset(
     note: Option<String>,
     app: AppHandle,
 ) -> Result<LibraryAsset, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        state.with_host_lifecycle(|state| {
-            library::update_metadata(state.host.data_root(), &id, tag, note)
-        })
-    })
+    dispatch(
+        app,
+        "library.asset.update",
+        json!({ "id": id, "tag": tag, "note": note }),
+    )
     .await
-    .map_err(|error| format!("Library metadata task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -42,10 +45,5 @@ pub async fn related_library_assets(
     id: String,
     app: AppHandle,
 ) -> Result<Vec<LibraryAsset>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        state.with_host_lifecycle(|state| library::related(state.host.data_root(), &id))
-    })
-    .await
-    .map_err(|error| format!("Related asset task failed: {error}"))?
+    dispatch(app, "library.related", json!({ "id": id })).await
 }
