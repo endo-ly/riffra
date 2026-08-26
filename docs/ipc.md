@@ -243,22 +243,33 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | Attached   | 接続先HostのCore、履歴、Runtime、Asset DB            | Host Control Serverへ接続                          |
 | Desktop    | Embedded DawHost、または選択したAttached Host        | in-process dispatchまたはHost Control Serverへ接続 |
 
-Standalone CLIと`serve`は同じDataRootを別のHostが所有している場合に起動へ失敗する。Desktopは自身のDataRootを有効なHostが所有している場合、そのHostへAttached接続する。Attached CLIはDataRootのストレージを開かず、接続先Hostが保持する正準シーケンスを共有する。
+同じDataRootを別のHostが所有している場合、Standalone CLIと`serve`は起動に失敗し、DesktopはそのHostへ接続する。
 
-HostはNamed PipeまたはUnix Domain Socketの準備後に`<data_root>/control/host.json`へ接続情報を公開し、同一OSユーザーのruntime registryへ`<instance-id>.json`を登録する。registry entryは接続先を知らない状態からのDiscovery用indexであり、DataRootを既知とする場合は`host.json`を直接使う。Discoveryはentryごとにcommand handshakeと`host.status`を行い、接続不能・instanceId不一致・PID不一致のentryをstaleとして削除する。
+起動中のHostは、接続情報を`<data_root>/control/host.json`へ公開し、同じユーザーのregistryへも登録する。接続先が分からない場合はregistryから候補を探し、各候補へ接続して`host.status`を確認する。
 
-Helloではconnection roleを明示する。
+候補を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
+
+Helloでは接続の役割を明示する。
 
 ```json
 {"type":"hello","role":"command"}
 {"type":"hello","role":"events"}
 ```
 
-Command connectionは要求と応答を、events connectionは`HostEventFrame { event, payload }`を順番に運ぶ。`HostEventFrame`は`riffra-control`が所有し、payloadにRuntimeのDomain型を定義しない。HostはRuntime eventをHostEventHubでshell sinkと複数のlocal subscriberへ配信する。subscriber queueはboundedで、最新値で足りるmeter・transport telemetryはcoalesce可能、canonical・lifecycleなどのcritical eventでqueueが溢れた場合は接続を終了してbootstrapから再同期する。
+接続には二種類ある。
 
-外部Hostへの初期同期ではevents connectionを先に確立し、その後command connectionから`host.bootstrap`を取得する。bootstrap取得中に発生したeventはevent connectionのbuffer順で適用する。
+| 種類    | 用途                                                |
+| ------- | --------------------------------------------------- |
+| command | 要求と応答を運ぶ。Desktopは要求ごとに開く           |
+| events  | `HostEventFrame { event, payload }`を運ぶ。長く保つ |
 
-DesktopがHost Selectorから接続先を変更するときは、targetのcommand / events connectionとbootstrapを現在Hostの交換前に準備する。交換後はconnection generationを更新し、旧Hostから遅れて届いたeventと、切替前に開始したHost-owned invokeの応答を破棄する。外部Hostが終了した場合はDisconnectedとして最後のDataRootとinstanceIdを保持し、Host mutation、Transport、Recording、Audio操作を実行せず、DataRootの`host.json`を再解決してfull bootstrapからReconnectする。
+Desktopは要求ごとにcommand接続を開くため、時間のかかる要求の実行中でもTransport操作や緊急ミュートを並行に処理できる。応答にはタイムアウトを設け、応答しないHostで処理が止まり続けないようにする。
+
+Hostのイベント配信では、meterやtransport statusなど最新値があれば足りる通知を最新値で上書きする。重要な通知は押し出されず、待ち行列が溢れても接続を切らない。
+
+外部Hostとの初期同期では、イベント接続を確立してから`host.bootstrap`を取得する。一覧表示は軽量な`host.info`を使い、`host.bootstrap`は接続対象に選ぶときだけ使う。
+
+接続先の変更は、新しい接続とbootstrapを準備してから現在のHostを交換し、交換後は世代を更新して旧Host由来の遅延イベントや応答を破棄する。録音中の切替は拒否する。外部Hostが終了した場合はDisconnectedとし、最後のDataRootとinstanceIdを保持して`host.json`から再接続する。
 
 ### 8.1 起動とフレーミング
 

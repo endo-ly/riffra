@@ -125,11 +125,7 @@ Attached CLI（apps/cli --attach）
 
 ### Hostの外部制御
 
-起動中のRiffra Hostは、外部クライアントから操作する制御経路を持つ。WindowsではNamed Pipe、LinuxではUnix Domain Socketを使い、接続情報を`<data_root>/control/host.json`へ公開する。同時にcurrent-user Local Host Registryへinstanceごとのentryを登録し、Discoveryはentryのendpointへhandshakeと`host.status`を行ってから利用可能と判断する。Attached CLIはcommand connectionでHostのCoreとRuntimeを操作し、eventを購読するLocal Host clientは別のevents connectionでHostEventHubの通知を受け取る。
-
-Hostの初期同期はevents connectionを先に確立し、command connectionの`host.bootstrap`でcanonical state、plugin catalog、Runtime projection、Audio status、recovery情報を一括取得する。`riffra-control`はevent payloadをJSONとして扱い、RuntimeやCoreのDomain型には依存しない。
-
-DesktopのHostConnectionManagerも同じLocal Host接続基盤を利用する。Local DesktopはEmbeddedのDawHostへin-process dispatchし、外部HostはAttachedのcommand / events connectionへdispatchする。Host Selectorによる切替はtargetの接続、event reader、bootstrapを先に準備してからactive Hostを交換し、切替中の操作をbarrierで直列化する。Hostごとのconnection generationをeventと非同期応答に付与し、旧Hostから遅れて届いた通知や応答は現行UIへ適用しない。
+起動中のHostは接続情報を公開し、外部クライアントから操作できる。DesktopはHostConnectionManagerで、自分のEmbedded Hostか別プロセスのHostへ接続し、Host Selectorから切り替える。接続・イベント・切替の詳細は `ipc.md` の境界Fに譲る。
 
 Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立した永続編集モードである。`riffra serve`は自分のDataRootLease、`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio Runtimeを保持する。Attached CLIはこれらを開かず、接続先Hostの状態を利用する。
 
