@@ -10,7 +10,7 @@ use std::time::Duration;
 /// Upper bound for one command round trip against an attached Host. Heavy
 /// operations such as plugin scans finish well inside this bound, while a
 /// silent Host must not block Desktop switching forever.
-pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Upper bound for the initial hello exchange of one connection.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
