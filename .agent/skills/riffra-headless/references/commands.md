@@ -26,10 +26,10 @@ riffra --data-root ./riffra-data track add --name Drums --kind audio
 
 # MIDI Clip 作成 → clip ID を得て Note を積む
 riffra --data-root ./riffra-data midi-clip create --track-id track:01j... --start-tick 0 --duration-ticks 3840 --name Verse
-riffra --data-root ./riffra-data midi-note add --clip-id clip:01j... --pitch 36 --start-tick 0 --duration-ticks 240 --velocity 100 --channel 0
+riffra --data-root ./riffra-data midi-note add --clip-id clip:01j... --pitch 36 --start-tick 0 --duration-ticks 240 --velocity 100 --channel 1
 ```
 
-位置指定はすべて tick 単位である。Timebase の既定は PPQ 960 なので、4 分音符 = 960 tick、16 分音符 = 240 tick となる。変更は `timebase update` で行う。
+位置指定はすべて tick 単位である。Timebase の既定は PPQ 960 なので、4 分音符 = 960 tick、16 分音符 = 240 tick となる。変更は `timebase update` で行う。MIDI channel は 1〜16 の範囲で指定する。
 
 ### Undo / Redo
 
@@ -56,7 +56,7 @@ riffra --data-root ./riffra-data --interactive
 | `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                        |
 | `history get`             | -                                                                                                 | 履歴状態                                                                                    |
 | `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                        |
-| `timebase update`         | `--ppq`(既定 960) `--bpm` `--time-signature-numerator` `--time-signature-denominator`             |                                                                                             |
+| `timebase update`         | [`--ppq`] [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]               | 指定した項目だけ更新。`--ppq` の変更は既存 MIDI note の tick 解釈に影響する                 |
 
 ### Track と入力 Routing
 
@@ -68,41 +68,49 @@ riffra --data-root ./riffra-data --interactive
 | `track remove` / `duplicate` | `--track-id`                                                                                      |
 | `track reorder`              | `--track-id` `--target-index`                                                                     |
 | `track audio-input set`      | `--track-id` `--channel-index`                                                                    |
-| `track midi-input set`       | `--track-id` [`--device-id`] [`--channel`]                                                        |
+| `track midi-input set`       | `--track-id` [`--device-id`] [`--channel`] (1〜16)                                                |
 
 `audio-input clear` / `midi-input clear --track-id` で解除する。
 
 ### Clip
 
-| コマンド                             | 主要引数                                                                     |
-| ------------------------------------ | ---------------------------------------------------------------------------- |
-| `audio-clip list` / `midi-clip list` | -                                                                            |
-| `audio-clip add-asset`               | `--asset-id` `--name` [`--start-tick`] [`--track-id`]                        |
-| `midi-clip create`                   | `--track-id` `--start-tick` `--duration-ticks` [`--name`]                    |
-| `midi-clip add-asset`                | `--asset-id` `--name` [`--start-tick`] [`--track-id`]                        |
-| `... update`                         | `--clip-id` + 個別フラグ、または `--patch '<JSON>'`                          |
-| `... move`                           | `--clip-id` `--start-tick` `--track-id`                                      |
-| `audio-clip trim`                    | `--clip-id` `--start-tick` `--source-start` `--source-end`                   |
-| `midi-clip trim`                     | `--clip-id` `--start-tick` `--duration-ticks`                                |
-| `... split`                          | `--clip-id` `--split-tick`                                                   |
-| `... duplicate`                      | `--clip-id`                                                                  |
-| `audio-clip crossfade`               | `--first-clip-id` `--second-clip-id`                                         |
-| `clip paste` / `clip remove`         | `--audio-clip-ids a,b` `--midi-clip-ids c,d`(`paste` は `--start-tick` 追加) |
+| コマンド                             | 主要引数                                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audio-clip list` / `midi-clip list` | -                                                                                                                                                |
+| `audio-clip add-asset`               | `--asset-id` `--name` [`--start-tick`] [`--track-id`]                                                                                            |
+| `midi-clip create`                   | `--track-id` `--start-tick` `--duration-ticks` [`--name`]                                                                                        |
+| `midi-clip add-asset`                | `--asset-id` `--name` [`--start-tick`] [`--track-id`]                                                                                            |
+| `... update`                         | `--clip-id` + 個別フラグ、または `--patch '<JSON>'`                                                                                              |
+| `... move`                           | `--clip-id` `--start-tick` `--track-id`                                                                                                          |
+| `audio-clip trim`                    | `--clip-id` `--start-tick` `--source-start` `--source-end`                                                                                       |
+| `midi-clip trim`                     | `--clip-id` `--start-tick` `--duration-ticks`                                                                                                    |
+| `... split`                          | `--clip-id` `--split-tick`                                                                                                                       |
+| `... duplicate`                      | `--clip-id`                                                                                                                                      |
+| `audio-clip crossfade`               | `--first-clip-id` `--second-clip-id`                                                                                                             |
+| `clip paste` / `clip remove`         | `--audio-clip-ids a,b` / `--audio-clip-ids-json '[...]'` `--midi-clip-ids c,d` / `--midi-clip-ids-json '[...]'` (`paste` は `--start-tick` 追加) |
 
 Audio Clip の trim における `--source-start` / `--source-end` は Asset 内のフレーム位置である。
 
+複数 ID はコンマ区切り形式と JSON 形式を選べる。recording-slot 由来など Windows パスを含む ID は、ファイルから JSON を渡すと安全である。
+
+```powershell
+$ids = Get-Content -Raw .\midi-clip-ids.json
+riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
+```
+
 ### MIDI Note
 
-| コマンド                           | 主要引数                                                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `midi-note add`                    | `--clip-id` `--pitch` `--start-tick` `--duration-ticks` `--velocity` `--channel`                         |
-| `midi-note insert`                 | `--clip-id` `--notes-json '[{"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":0}]'` |
-| `midi-note update`                 | `--clip-id` `--note-id` `--patch '{"note":64,"velocity":90}'`                                            |
-| `midi-note update-many`            | `--clip-id` `--updates-json '[{"noteId":"...","patch":{...}}]'`                                          |
-| `midi-note remove` / `remove-many` | `--clip-id` + `--note-id` / `--note-ids a,b,c`                                                           |
-| `midi-note quantize`               | `--clip-id` `--note-ids a,b,c` `--grid-ticks 240`                                                        |
-| `midi-note transform`              | `--clip-id` `--note-ids a,b,c` [`--transpose-semitones`] [`--velocity-offset`]                           |
-| `midi-note duplicate`              | `--clip-id` `--note-ids a,b,c` `--offset-ticks 3840`                                                     |
+| コマンド                           | 主要引数                                                                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `midi-note add`                    | `--clip-id` `--pitch` `--start-tick` `--duration-ticks` `--velocity` `--channel` (1〜16)                   |
+| `midi-note insert`                 | `--clip-id` `--notes-json '[{"pitch":60,"startTick":0,"durationTicks":480,"velocity":100,"channel":1}]'`   |
+| `midi-note update`                 | `--clip-id` `--note-id` `--patch '{"note":64,"velocity":90}'`                                              |
+| `midi-note update-many`            | `--clip-id` `--updates-json '[{"noteId":"...","patch":{...}}]'`                                            |
+| `midi-note remove` / `remove-many` | `--clip-id` + `--note-id` / `--note-ids a,b,c` / `--note-ids-json '[...]'`                                 |
+| `midi-note clear`                  | `--clip-id`                                                                                                |
+| `midi-note quantize`               | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` `--grid-ticks 240`                              |
+| `midi-note transform`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` [`--transpose-semitones`] [`--velocity-offset`] |
+| `midi-note duplicate`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` `--offset-ticks 3840`                           |
 
 ### Marker・Range・Automation
 
@@ -111,8 +119,8 @@ Audio Clip の trim における `--source-start` / `--source-end` は Asset 内
 | `marker add`       | `--name` `--tick`                                                                           |
 | `marker update`    | `--marker-id` [`--name`] [`--tick`]                                                         |
 | `marker remove`    | `--marker-id`                                                                               |
-| `loop-range set`   | `--enabled` `--start-tick` `--end-tick`                                                     |
-| `punch-range set`  | `--enabled` `--start-tick` `--end-tick`                                                     |
+| `loop-range set`   | [`--enabled true\|false`] `--start-tick` `--end-tick`                                       |
+| `punch-range set`  | [`--enabled true\|false`] `--start-tick` `--end-tick`                                       |
 | `automation set`   | `--track-id` `--parameter volume\|pan` `--points-json '[{"id":"p1","tick":0,"value":0.8}]'` |
 | `automation clear` | `--track-id` `--parameter volume\|pan`                                                      |
 
@@ -130,15 +138,15 @@ Automation の points 配列は既存ポイントを置き換える。各要素�
 
 ### Rack 状態(Instrument / Effect / Device)
 
-| コマンド               | 主要引数                                                    |
-| ---------------------- | ----------------------------------------------------------- |
-| `plugin instrument`    | `--track-id` `--plugin-path`(VST3 パス)                     |
-| `plugin effect`        | `--track-id` `--plugin-path`                                |
-| `instrument clear`     | `--track-id`                                                |
-| `effect remove`        | `--track-id` `--device-id`                                  |
-| `effect reorder`       | `--track-id` `--device-ids a,b,c`(チェーン順に全 ID を列挙) |
-| `device bypass`        | `--track-id` `--device-id` `--bypassed true\|false`         |
-| `device parameter-set` | `--track-id` `--device-id` `--parameter-index` `--value`    |
+| コマンド               | 主要引数                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `plugin instrument`    | `--track-id` `--plugin-path`(VST3 パス)                                                        |
+| `plugin effect`        | `--track-id` `--plugin-path`                                                                   |
+| `instrument clear`     | `--track-id`                                                                                   |
+| `effect remove`        | `--track-id` `--device-id`                                                                     |
+| `effect reorder`       | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
+| `device bypass`        | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
+| `device parameter-set` | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
 
 パスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。
 
@@ -242,12 +250,12 @@ riffra --data-root ./riffra-data --attach record promote --id rec:01j...
 ### レンダリング(非同期ジョブ)
 
 ```powershell
-riffra --data-root ./riffra-data --attach render start --range loop-range --normalize
+riffra --data-root ./riffra-data --attach render start --range loop-range --normalize true
 riffra --data-root ./riffra-data --attach job get --id job:01j...
 riffra --data-root ./riffra-data --attach job cancel --id job:01j...
 ```
 
-- `render start --range entire-arrangement|loop-range|time-selection`。`time-selection` は `--start-tick` と `--end-tick` が必須。`--normalize` と `--track-id`(ソロ書き出し)を指定できる
+- `render start --range entire-arrangement|loop-range|time-selection`。`time-selection` は `--start-tick` と `--end-tick` が必須。[`--normalize true|false`] と [`--track-id`](ソロ書き出し)を指定できる
 - 応答は `type: "job"` のジョブ ID。完了は `job get` で確認し、進行中の停止は `job cancel`
 - 出力は `exports/render-{ms}/timeline.wav` と manifest として書き出される
 
@@ -255,16 +263,16 @@ riffra --data-root ./riffra-data --attach job cancel --id job:01j...
 
 ### Library・解析・Preview
 
-| コマンド                   | 主要引数                                                             |
-| -------------------------- | -------------------------------------------------------------------- |
-| `library search`           | `--query`(短い語は全 Asset がヒットして応答が膨らむので具体語で絞る) |
-| `library asset-update`     | `--id` [`--tag`] [`--note`]                                          |
-| `library related`          | `--id`                                                               |
-| `analysis start`           | `--asset-id` または `--path`(どちらか必須)                           |
-| `asset preview`            | `--asset-id` [`--start-ms`] [`--end-ms`] `--looped` [`--gain`]       |
-| `asset stop-preview`       | -                                                                    |
-| `runtime projection get`   | -                                                                    |
-| `runtime projection retry` | -                                                                    |
+| コマンド                   | 主要引数                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `library search`           | `--query`(短い語は全 Asset がヒットして応答が膨らむので具体語で絞る)         |
+| `library asset-update`     | `--id` [`--tag`] [`--note`]                                                  |
+| `library related`          | `--id`                                                                       |
+| `analysis start`           | `--asset-id` または `--path`(どちらか必須)                                   |
+| `asset preview`            | `--asset-id` [`--start-ms`] [`--end-ms`] [`--looped true\|false`] [`--gain`] |
+| `asset stop-preview`       | -                                                                            |
+| `runtime projection get`   | -                                                                            |
+| `runtime projection retry` | -                                                                            |
 
 ### Plugin カタログと欠落一覧
 

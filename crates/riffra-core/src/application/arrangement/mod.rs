@@ -780,6 +780,18 @@ where
         })
     }
 
+    /// Clears all notes from a MIDI Clip without changing its placement,
+    /// duration, or other MIDI events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Clip is unknown or persistence fails.
+    pub fn clear_midi_notes(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+        self.commit_arrangement(|arrangement| {
+            arrangement.clear_midi_notes(clip_id).map_err(Into::into)
+        })
+    }
+
     /// Transposes and velocity-offsets MIDI notes in a clip.
     ///
     /// When `note_ids` is non-empty only those notes are touched. When empty

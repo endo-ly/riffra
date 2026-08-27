@@ -32,7 +32,10 @@ use riffra_core::{
     RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange, Track,
     TrackKind,
 };
-use riffra_runtime::{ArrangementProjectionOutcome, RuntimeProjectionState};
+use riffra_runtime::{
+    ArrangementProjectionOutcome, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
+    TrackSummary,
+};
 use ts_rs::{Config, TS};
 
 #[test]
@@ -96,6 +99,9 @@ fn export_types() {
     RecordingFinalizationOutcome::export_all(&cfg).expect("RecordingFinalizationOutcome bindings");
     ArrangementMutationResult::export_all(&cfg).expect("ArrangementMutationResult bindings");
     ArrangementProjectionOutcome::export_all(&cfg).expect("ArrangementProjectionOutcome bindings");
+    TrackDeviceSummary::export_all(&cfg).expect("TrackDeviceSummary bindings");
+    TrackRackSummary::export_all(&cfg).expect("TrackRackSummary bindings");
+    TrackSummary::export_all(&cfg).expect("TrackSummary bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");
     AudioDriverConfig::export_all(&cfg).expect("AudioDriverConfig bindings");

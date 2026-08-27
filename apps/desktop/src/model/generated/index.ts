@@ -81,4 +81,7 @@ export type { TakeAudioSource } from './TakeAudioSource';
 export type { TimelineLoopRange } from './TimelineLoopRange';
 export type { TimelinePunchRange } from './TimelinePunchRange';
 export type { Track } from './Track';
+export type { TrackDeviceSummary } from './TrackDeviceSummary';
 export type { TrackKind } from './TrackKind';
+export type { TrackRackSummary } from './TrackRackSummary';
+export type { TrackSummary } from './TrackSummary';

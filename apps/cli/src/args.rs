@@ -298,6 +298,7 @@ pub struct MidiInputSetArgs {
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
+    /// MIDI channel number in the inclusive range 1..=16.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<u8>,
@@ -487,6 +488,7 @@ pub enum MidiNoteCommand {
     UpdateMany(MidiNoteUpdatesArgs),
     Remove(MidiNoteIdArgs),
     RemoveMany(MidiNoteIdsArgs),
+    Clear(ClipIdArg),
     Quantize(MidiNoteQuantizeArgs),
     Transform(MidiNoteTransformArgs),
     Duplicate(MidiNoteDuplicateArgs),
@@ -505,6 +507,7 @@ pub struct MidiNoteAddArgs {
     pub duration_ticks: u64,
     #[arg(long)]
     pub velocity: u8,
+    /// MIDI channel number in the inclusive range 1..=16.
     #[arg(long)]
     pub channel: u8,
 }
@@ -554,6 +557,9 @@ pub struct MidiNoteIdsArgs {
     pub clip_id: String,
     #[arg(long, value_delimiter = ',')]
     pub note_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ids_json: Option<String>,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -563,6 +569,9 @@ pub struct MidiNoteQuantizeArgs {
     pub clip_id: String,
     #[arg(long, value_delimiter = ',')]
     pub note_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ids_json: Option<String>,
     #[arg(long)]
     pub grid_ticks: u64,
 }
@@ -574,6 +583,9 @@ pub struct MidiNoteTransformArgs {
     pub clip_id: String,
     #[arg(long, value_delimiter = ',')]
     pub note_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ids_json: Option<String>,
     #[arg(long, default_value_t = 0)]
     pub transpose_semitones: i16,
     #[arg(long, default_value_t = 0)]
@@ -587,6 +599,9 @@ pub struct MidiNoteDuplicateArgs {
     pub clip_id: String,
     #[arg(long, value_delimiter = ',')]
     pub note_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ids_json: Option<String>,
     #[arg(long)]
     pub offset_ticks: u64,
 }
@@ -604,6 +619,12 @@ pub struct ClipRemoveArgs {
     pub audio_clip_ids: Vec<String>,
     #[arg(long, value_delimiter = ',')]
     pub midi_clip_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_clip_ids_json: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub midi_clip_ids_json: Option<String>,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -613,6 +634,12 @@ pub struct ClipPasteArgs {
     pub audio_clip_ids: Vec<String>,
     #[arg(long, value_delimiter = ',')]
     pub midi_clip_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_clip_ids_json: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub midi_clip_ids_json: Option<String>,
     #[arg(long)]
     pub start_tick: u64,
 }
@@ -659,14 +686,19 @@ pub enum TimebaseCommand {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimebaseArgs {
-    #[arg(long, default_value_t = 960)]
-    pub ppq: u32,
+    /// PPQ; changing it changes the interpretation of existing MIDI note ticks.
     #[arg(long)]
-    pub bpm: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ppq: Option<u32>,
     #[arg(long)]
-    pub time_signature_numerator: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<f64>,
     #[arg(long)]
-    pub time_signature_denominator: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_signature_numerator: Option<u8>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_signature_denominator: Option<u8>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -678,7 +710,8 @@ pub enum RangeCommand {
 #[serde(rename_all = "camelCase")]
 pub struct RangeArgs {
     #[arg(long)]
-    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     #[arg(long)]
     pub start_tick: u64,
     #[arg(long)]
@@ -736,7 +769,8 @@ pub struct AssetPreviewArgs {
     #[arg(long)]
     pub end_ms: Option<u64>,
     #[arg(long)]
-    pub looped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub looped: Option<bool>,
     #[arg(long, default_value_t = 1.0)]
     pub gain: f32,
 }
@@ -779,6 +813,9 @@ pub struct EffectReorderArgs {
     pub track_id: String,
     #[arg(long, value_delimiter = ',')]
     pub device_ids: Vec<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_ids_json: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -795,7 +832,8 @@ pub struct DeviceBypassArgs {
     #[arg(long)]
     pub device_id: String,
     #[arg(long)]
-    pub bypassed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bypassed: Option<bool>,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -1091,7 +1129,7 @@ pub struct RenderStartArgs {
     #[arg(long)]
     pub end_tick: Option<u64>,
     #[arg(long)]
-    pub normalize: bool,
+    pub normalize: Option<bool>,
     #[arg(long)]
     pub track_id: Option<String>,
 }
@@ -1214,14 +1252,27 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 args.updates_json,
             )?,
             MidiNoteCommand::Remove(args) => value("midi-note.remove", args),
-            MidiNoteCommand::RemoveMany(args) => value("midi-note.remove-many", args),
-            MidiNoteCommand::Quantize(args) => value("midi-note.quantize", args),
-            MidiNoteCommand::Transform(args) => value("midi-note.transform", args),
-            MidiNoteCommand::Duplicate(args) => value("midi-note.duplicate", args),
+            MidiNoteCommand::RemoveMany(args) => {
+                id_list_value("midi-note.remove-many", args, &["noteIds"])?
+            }
+            MidiNoteCommand::Clear(args) => value("midi-note.clear", args),
+            MidiNoteCommand::Quantize(args) => {
+                id_list_value("midi-note.quantize", args, &["noteIds"])?
+            }
+            MidiNoteCommand::Transform(args) => {
+                id_list_value("midi-note.transform", args, &["noteIds"])?
+            }
+            MidiNoteCommand::Duplicate(args) => {
+                id_list_value("midi-note.duplicate", args, &["noteIds"])?
+            }
         },
         CliCommand::Clip { command } => match command {
-            ClipCommand::Remove(args) => value("clip.remove", args),
-            ClipCommand::Paste(args) => value("clip.paste", args),
+            ClipCommand::Remove(args) => {
+                id_list_value("clip.remove", args, &["audioClipIds", "midiClipIds"])?
+            }
+            ClipCommand::Paste(args) => {
+                id_list_value("clip.paste", args, &["audioClipIds", "midiClipIds"])?
+            }
         },
         CliCommand::Marker { command } => match command {
             MarkerCommand::Add(args) => value("marker.add", args),
@@ -1232,10 +1283,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             TimebaseCommand::Update(args) => value("timebase.update", args),
         },
         CliCommand::LoopRange { command } => match command {
-            RangeCommand::Set(args) => value("loop-range.set", args),
+            RangeCommand::Set(args) => range_value("loop-range.set", args),
         },
         CliCommand::PunchRange { command } => match command {
-            RangeCommand::Set(args) => value("punch-range.set", args),
+            RangeCommand::Set(args) => range_value("punch-range.set", args),
         },
         CliCommand::Automation { command } => match command {
             AutomationCommand::Set(args) => {
@@ -1249,7 +1300,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 "asset.import-midi",
                 json!({"path":args.path,"name":args.name}),
             ),
-            AssetCommand::Preview(args) => value("asset.preview", args),
+            AssetCommand::Preview(args) => asset_preview_value(args),
             AssetCommand::StopPreview => simple("asset.preview.stop"),
         },
         CliCommand::Project { command } => match command {
@@ -1263,10 +1314,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         },
         CliCommand::Effect { command } => match command {
             EffectCommand::Remove(args) => value("effect.remove", args),
-            EffectCommand::Reorder(args) => value("effect.reorder", args),
+            EffectCommand::Reorder(args) => id_list_value("effect.reorder", args, &["deviceIds"])?,
         },
         CliCommand::Device { command } => match command {
-            DeviceCommand::Bypass(args) => value("device.bypass", args),
+            DeviceCommand::Bypass(args) => device_bypass_value(args),
             DeviceCommand::ParameterSet(args) => value("device.parameter.set", args),
         },
         CliCommand::Runtime { command } => match command {
@@ -1387,7 +1438,7 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, String> {
         json!({
             "options": {
                 "range": range,
-                "normalize": args.normalize,
+                "normalize": args.normalize.unwrap_or(false),
                 "trackId": args.track_id,
             }
         }),
@@ -1422,6 +1473,82 @@ fn json_string_with_fields<T: Serialize>(
                 .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?,
         );
     Ok(value(command, object))
+}
+
+fn id_list_value<T: Serialize>(
+    command: &str,
+    params: T,
+    fields: &[&str],
+) -> Result<ControlCommand, String> {
+    let mut params = serde_json::to_value(params)
+        .map_err(|error| format!("CLI arguments could not be encoded: {error}"))?;
+    for field in fields {
+        replace_id_list_from_json(&mut params, field)?;
+    }
+    Ok(value(command, params))
+}
+
+fn replace_id_list_from_json(params: &mut Value, field: &str) -> Result<(), String> {
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| "CLI arguments did not form an object".to_string())?;
+    let json_field = format!("{field}Json");
+    let encoded = object.remove(&json_field);
+    let Some(encoded) = encoded else {
+        return Ok(());
+    };
+    let encoded = encoded
+        .as_str()
+        .ok_or_else(|| format!("--{json_field} must contain a JSON array of strings"))?;
+    if object
+        .get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|ids| !ids.is_empty())
+    {
+        return Err(format!("--{field} and --{json_field} cannot be combined"));
+    }
+    let ids = serde_json::from_str::<Vec<String>>(encoded)
+        .map_err(|error| format!("--{json_field} is invalid JSON: {error}"))?;
+    object.insert(
+        field.to_owned(),
+        serde_json::to_value(ids).expect("String IDs serialize"),
+    );
+    Ok(())
+}
+
+fn range_value(command: &str, args: RangeArgs) -> ControlCommand {
+    value(
+        command,
+        json!({
+            "enabled": args.enabled.unwrap_or(false),
+            "startTick": args.start_tick,
+            "endTick": args.end_tick,
+        }),
+    )
+}
+
+fn asset_preview_value(args: AssetPreviewArgs) -> ControlCommand {
+    value(
+        "asset.preview",
+        json!({
+            "assetId": args.asset_id,
+            "startMs": args.start_ms,
+            "endMs": args.end_ms,
+            "looped": args.looped.unwrap_or(false),
+            "gain": args.gain,
+        }),
+    )
+}
+
+fn device_bypass_value(args: DeviceBypassArgs) -> ControlCommand {
+    value(
+        "device.bypass",
+        json!({
+            "trackId": args.track_id,
+            "deviceId": args.device_id,
+            "bypassed": args.bypassed.unwrap_or(false),
+        }),
+    )
 }
 
 fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<ControlCommand, String> {
@@ -1469,4 +1596,136 @@ fn midi_clip_update(args: MidiClipUpdateArgs) -> Result<ControlCommand, String> 
         "midi-clip.update",
         json!({"clipId": args.clip_id, "patch": patch}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn timebase_update_accepts_a_partial_patch() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "timebase",
+            "update",
+            "--bpm",
+            "140",
+        ])
+        .unwrap();
+
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "timebase.update");
+        assert_eq!(request.params, json!({"bpm": 140.0}));
+    }
+
+    #[test]
+    fn id_json_arguments_preserve_paths_and_comma_arguments() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "clip",
+            "remove",
+            "--midi-clip-ids-json",
+            r#"["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(
+            request.params,
+            json!({
+                "audioClipIds": [],
+                "midiClipIds": ["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]
+            })
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "midi-note",
+            "remove-many",
+            "--clip-id",
+            "clip:1",
+            "--note-ids",
+            "note:a,note:b",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(
+            request.params,
+            json!({"clipId":"clip:1","noteIds":["note:a","note:b"]})
+        );
+    }
+
+    #[test]
+    fn boolean_command_arguments_require_explicit_values() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "loop-range",
+            "set",
+            "--enabled",
+            "true",
+            "--start-tick",
+            "0",
+            "--end-tick",
+            "960",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(
+            request.params,
+            json!({"enabled":true,"startTick":0,"endTick":960})
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "--data-root",
+                "data",
+                "loop-range",
+                "set",
+                "--enabled",
+                "--start-tick",
+                "0",
+                "--end-tick",
+                "960",
+            ])
+            .is_err()
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--normalize",
+            "true",
+        ])
+        .unwrap();
+        assert_eq!(cli.request().unwrap().params["options"]["normalize"], true);
+    }
+
+    #[test]
+    fn midi_note_clear_maps_to_the_clip_command() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "midi-note",
+            "clear",
+            "--clip-id",
+            "midi-clip:1",
+        ])
+        .unwrap();
+
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "midi-note.clear");
+        assert_eq!(request.params, json!({"clipId":"midi-clip:1"}));
+    }
 }

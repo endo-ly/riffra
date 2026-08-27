@@ -120,9 +120,13 @@ fn render_timeline_with_renderer(
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
     let plan = build_render_plan(data_root, session, created_at_ms, &options)?;
-    if let Some(parent) = plan.output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Render output folder could not be created: {error}"))?;
+    if let Some(parent) = plan.output_path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        remove_empty_render_directory(&plan.output_path);
+        return Err(format!(
+            "Render output folder could not be created: {error}"
+        ));
     }
 
     if let Err(error) = render(OfflineRenderRequest {
@@ -136,13 +140,16 @@ fn render_timeline_with_renderer(
         normalize: options.normalize,
     }) {
         let _ = fs::remove_file(&plan.output_path);
+        remove_empty_render_directory(&plan.output_path);
         return Err(error);
     }
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
         let _ = fs::remove_file(&plan.output_path);
+        remove_empty_render_directory(&plan.output_path);
         return Err("Timeline render was cancelled.".into());
     }
     if !plan.output_path.is_file() {
+        remove_empty_render_directory(&plan.output_path);
         return Err("Native Offline Render completed without producing its WAV output.".into());
     }
 
@@ -230,6 +237,12 @@ fn render_timeline_with_renderer(
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
     Ok(result)
+}
+
+fn remove_empty_render_directory(output_path: &Path) {
+    if let Some(directory) = output_path.parent() {
+        let _ = fs::remove_dir(directory);
+    }
 }
 
 fn build_render_plan(
@@ -542,5 +555,23 @@ mod tests {
         assert_eq!(tracks[0]["muted"], false);
         assert_eq!(tracks[1]["id"], "latency-reference");
         assert_eq!(tracks[1]["muted"], true);
+    }
+
+    #[test]
+    fn failed_render_removes_empty_output_directory() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-failed-render-{}", std::process::id()));
+        let result = render_timeline_with_renderer(
+            &root,
+            &session_with_clips(),
+            1,
+            RenderOptions::default(),
+            |_request| Err("render failed".into()),
+            None,
+        );
+
+        assert_eq!(result.unwrap_err(), "render failed");
+        assert!(!root.join("exports").join("render-1").exists());
+        let _ = fs::remove_dir_all(root);
     }
 }

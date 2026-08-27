@@ -1,4 +1,4 @@
-use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome};
+use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, TrackSummary};
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
@@ -246,7 +246,16 @@ impl<'a, A> HostDispatcher<'a, A> {
                     .update_session_settings(decode(request.params)?)?,
             ),
             "history.get" => self.value("history", canonical.history),
-            "track.list" => self.value("tracks", canonical.session.arrangement.tracks.clone()),
+            "track.list" => self.value(
+                "tracks",
+                canonical
+                    .session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .map(TrackSummary::from_track)
+                    .collect::<Vec<_>>(),
+            ),
             "track.add" => {
                 let params: TrackAddParams = decode(request.params)?;
                 self.session(
@@ -483,6 +492,14 @@ impl<'a, A> HostDispatcher<'a, A> {
                         .remove_midi_notes(&params.clip_id, params.note_ids)?,
                 )
             }
+            "midi-note.clear" => {
+                let params: ClipIdParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .clear_midi_notes(&params.clip_id)?,
+                )
+            }
             "midi-note.quantize" => {
                 let params: MidiNoteQuantizeParams = decode(request.params)?;
                 self.session(self.core.application(&self.storage).quantize_midi_notes(
@@ -551,11 +568,26 @@ impl<'a, A> HostDispatcher<'a, A> {
                 )
             }
             "timebase.update" => {
-                let params: TimebaseParams = decode(request.params)?;
+                let params: TimebasePatchParams = decode(request.params)?;
+                if params.is_empty() {
+                    return Err(DispatchError::invalid_request(
+                        "timebase update requires at least one field",
+                    ));
+                }
+                let current = canonical.session.arrangement.timebase;
                 self.session(
                     self.core
                         .application(&self.storage)
-                        .update_timebase(params.timebase)?,
+                        .update_timebase(ProjectTimebase {
+                            ppq: params.ppq.unwrap_or(current.ppq),
+                            bpm: params.bpm.unwrap_or(current.bpm),
+                            time_signature_numerator: params
+                                .time_signature_numerator
+                                .unwrap_or(current.time_signature_numerator),
+                            time_signature_denominator: params
+                                .time_signature_denominator
+                                .unwrap_or(current.time_signature_denominator),
+                        })?,
                 )
             }
             "loop-range.set" => {
@@ -1247,9 +1279,20 @@ struct MarkerIdParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimebaseParams {
-    #[serde(flatten)]
-    timebase: ProjectTimebase,
+struct TimebasePatchParams {
+    ppq: Option<u32>,
+    bpm: Option<f64>,
+    time_signature_numerator: Option<u8>,
+    time_signature_denominator: Option<u8>,
+}
+
+impl TimebasePatchParams {
+    fn is_empty(&self) -> bool {
+        self.ppq.is_none()
+            && self.bpm.is_none()
+            && self.time_signature_numerator.is_none()
+            && self.time_signature_denominator.is_none()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1433,6 +1476,165 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn timebase_update_patches_only_the_requested_fields() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-timebase-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let updated = dispatcher
+            .dispatch(request("timebase.update", json!({"bpm": 140.0})))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
+        assert_eq!(session.arrangement.timebase.ppq, 960);
+        assert_eq!(session.arrangement.timebase.bpm, 140.0);
+        assert_eq!(session.arrangement.timebase.time_signature_numerator, 4);
+        assert_eq!(session.arrangement.timebase.time_signature_denominator, 4);
+
+        let updated = dispatcher
+            .dispatch(request(
+                "timebase.update",
+                json!({
+                    "ppq": 960,
+                    "bpm": 100.0,
+                    "timeSignatureNumerator": 7,
+                    "timeSignatureDenominator": 8
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
+        assert_eq!(
+            session.arrangement.timebase,
+            riffra_core::ProjectTimebase {
+                ppq: 960,
+                bpm: 100.0,
+                time_signature_numerator: 7,
+                time_signature_denominator: 8,
+            }
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clearing_midi_notes_preserves_clip_and_is_undoable() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-clear-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(request(
+                "midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "startTick": 480,
+                    "durationTicks": 1920,
+                    "name": "Lead"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let original_clip = session.arrangement.midi_clips[0].clone();
+        let clip_id = original_clip.id.clone();
+        dispatcher
+            .dispatch(request(
+                "midi-note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [{
+                        "pitch": 60,
+                        "startTick": 0,
+                        "durationTicks": 480,
+                        "velocity": 100,
+                        "channel": 1
+                    }]
+                }),
+            ))
+            .unwrap();
+
+        let cleared = dispatcher
+            .dispatch(request("midi-note.clear", json!({"clipId": clip_id})))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(cleared.value).unwrap();
+        let cleared_clip = &session.arrangement.midi_clips[0];
+        assert!(cleared_clip.notes.is_empty());
+        assert_eq!(cleared_clip.id, original_clip.id);
+        assert_eq!(cleared_clip.name, original_clip.name);
+        assert_eq!(cleared_clip.start_tick, original_clip.start_tick);
+        assert_eq!(cleared_clip.duration_ticks, original_clip.duration_ticks);
+
+        let undone = dispatcher.dispatch(request("undo", json!({}))).unwrap();
+        assert_eq!(
+            undone.value["canonical"]["session"]["arrangement"]["midiClips"][0]["notes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn track_list_omits_device_parameter_values() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-track-list-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let added = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(added.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let instrument = dispatcher
+            .dispatch(request(
+                "instrument.set",
+                json!({
+                    "trackId": track_id,
+                    "pluginPath": "C:\\Plugins\\Synth.vst3"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(instrument.value["canonical"]["session"].clone()).unwrap();
+        let device_id = session.arrangement.tracks[0]
+            .instrument
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        dispatcher
+            .dispatch(request(
+                "device.parameter.set",
+                json!({
+                    "trackId": track_id,
+                    "deviceId": device_id,
+                    "parameterIndex": 0,
+                    "value": 0.5
+                }),
+            ))
+            .unwrap();
+
+        let listed = dispatcher
+            .dispatch(request("track.list", json!({})))
+            .unwrap();
+        let track = &listed.value[0];
+        assert_eq!(track["name"], "Keys");
+        assert!(track["instrument"].get("parameterValues").is_none());
+        assert!(
+            track["rack"]["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|device| device.get("parameterValues").is_none())
         );
         let _ = fs::remove_dir_all(root);
     }

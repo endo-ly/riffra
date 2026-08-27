@@ -1049,6 +1049,23 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Removes every note from a MIDI Clip while preserving its arrangement
+    /// properties and non-note MIDI events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidClip`] when the Clip is unknown.
+    pub fn clear_midi_notes(&mut self, clip_id: &str) -> Result<(), DomainError> {
+        let clip = self
+            .midi_clips
+            .iter_mut()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| DomainError::InvalidClip(format!("midi clip '{clip_id}' not found.")))?;
+        clip.notes.clear();
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
     /// Applies a partial update to an existing audio clip and normalizes the
     /// resulting values through the canonical domain rules (track existence,
     /// source range, gain/pan/fade clamps).

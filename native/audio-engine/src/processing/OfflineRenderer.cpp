@@ -35,7 +35,13 @@ std::unique_ptr<juce::AudioFormatWriter> createWriter(const juce::File& file,
 
 bool normalizeFile(const juce::File& source, const juce::File& destination,
                    juce::AudioFormatManager& formats, const float gain, juce::String& error) {
-    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(source));
+    auto sourceStream = source.createInputStream();
+    if (sourceStream == nullptr || !sourceStream->openedOk()) {
+        error = "Offline Render normalization source could not be reopened.";
+        return false;
+    }
+    auto reader =
+        std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(std::move(sourceStream)));
     if (reader == nullptr) {
         error = "Offline Render normalization source could not be reopened.";
         return false;

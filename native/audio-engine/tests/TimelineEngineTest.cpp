@@ -357,6 +357,7 @@ public:
         bool automationRamped = false;
         bool offlineRangeRendered = false;
         bool offlineAudioRendered = false;
+        bool offlineNormalized = false;
         bool graphUpdateReusedDevices = false;
         bool mutablePluginStateKeepsTopology = false;
         bool recordingTapIsolated = false;
@@ -548,6 +549,23 @@ public:
                                            reader->read(&rendered, 0, 24000, 0, true, true) &&
                                            std::max(rendered.getMagnitude(0, 0, 24000),
                                                     rendered.getMagnitude(1, 0, 24000)) > 0.01f;
+                }
+                OfflineRenderer::Result normalizedResult;
+                const auto normalizedOutput = directory.getChildFile("offline-normalized.wav");
+                if (offlineRenderer.render(snapshot, formats, normalizedOutput, 0, 1440, 48000.0,
+                                           512, 0.0f, true, normalizedResult, error)) {
+                    auto reader = std::unique_ptr<juce::AudioFormatReader>(
+                        formats.createReaderFor(normalizedOutput));
+                    if (reader != nullptr && reader->numChannels == 2 &&
+                        reader->lengthInSamples > 0) {
+                        const auto sampleCount = static_cast<int>(reader->lengthInSamples);
+                        juce::AudioBuffer<float> rendered(2, sampleCount);
+                        if (reader->read(&rendered, 0, sampleCount, 0, true, true)) {
+                            const auto peak = std::max(rendered.getMagnitude(0, 0, sampleCount),
+                                                       rendered.getMagnitude(1, 0, sampleCount));
+                            offlineNormalized = std::abs(peak - 0.98f) <= 0.02f;
+                        }
+                    }
                 }
                 engine.seekToTick(0);
                 engine.play();
@@ -1368,6 +1386,7 @@ public:
         addCheck("Volume and Pan Automation ramp within an audio block", automationRamped);
         addCheck("Offline Render writes the exact tick selection", offlineRangeRendered);
         addCheck("Offline Render receives audio from the Arrangement Graph", offlineAudioRendered);
+        addCheck("Offline Render normalization reaches the target peak", offlineNormalized);
         addCheck("mix edits swap the Graph without reloading Track Devices",
                  graphUpdateReusedDevices);
         addCheck("Parameter and Bypass changes do not alter Plugin Topology",
@@ -1422,7 +1441,7 @@ public:
             "passed", sourcesWritten && loaded && mixed && seeked && looped && punchWindowed &&
                           immediateRecordStarted && countInAligned && countInAudible &&
                           countInCancelled && metronomeMixed && automationRamped &&
-                          offlineRangeRendered && offlineAudioRendered &&
+                          offlineRangeRendered && offlineAudioRendered && offlineNormalized &&
                           graphUpdateReusedDevices && mutablePluginStateKeepsTopology &&
                           recordingTapIsolated && loopCaptureSegments && syntheticLoopPassed &&
                           partialPassPassed && blockSizePassed && longRecordingPassed &&
@@ -1431,6 +1450,7 @@ public:
         mono.deleteFile();
         stereo.deleteFile();
         directory.getChildFile("offline-selection.wav").deleteFile();
+        directory.getChildFile("offline-normalized.wav").deleteFile();
         return juce::var(result);
     }
 };

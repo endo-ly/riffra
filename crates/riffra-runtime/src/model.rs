@@ -1,6 +1,111 @@
-use riffra_core::CanonicalState;
+use riffra_core::{
+    AudioInputRoute, CanonicalState, DeviceKind, MidiInputRoute, MonitoringState, RackDevice,
+    RackMacro, Track, TrackKind,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+/// Lightweight Track projection used by `track.list`.
+///
+/// Device parameter arrays are intentionally omitted. The complete device
+/// state remains available through the canonical `session.get` response.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackSummary {
+    pub id: String,
+    pub name: String,
+    pub kind: TrackKind,
+    pub gain_db: f64,
+    pub pan: f64,
+    pub muted: bool,
+    pub solo: bool,
+    pub armed: bool,
+    pub monitoring: MonitoringState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub audio_input: Option<AudioInputRoute>,
+    pub midi_input: MidiInputRoute,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instrument: Option<TrackDeviceSummary>,
+    pub rack: TrackRackSummary,
+}
+
+/// Device metadata included in a lightweight Track projection.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackDeviceSummary {
+    pub id: String,
+    pub name: String,
+    pub kind: DeviceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+    pub bypassed: bool,
+    pub gain_db: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub state_data: Option<String>,
+    pub disabled_placeholder: bool,
+}
+
+/// Rack metadata included in a lightweight Track projection.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackRackSummary {
+    pub devices: Vec<TrackDeviceSummary>,
+    pub macros: Vec<RackMacro>,
+}
+
+impl TrackSummary {
+    pub(crate) fn from_track(track: &Track) -> Self {
+        Self {
+            id: track.id.clone(),
+            name: track.name.clone(),
+            kind: track.kind,
+            gain_db: track.gain_db,
+            pan: track.pan,
+            muted: track.muted,
+            solo: track.solo,
+            armed: track.armed,
+            monitoring: track.monitoring,
+            color: track.color.clone(),
+            audio_input: track.audio_input,
+            midi_input: track.midi_input.clone(),
+            instrument: track
+                .instrument
+                .as_ref()
+                .map(TrackDeviceSummary::from_device),
+            rack: TrackRackSummary {
+                devices: track
+                    .rack
+                    .devices
+                    .iter()
+                    .map(TrackDeviceSummary::from_device)
+                    .collect(),
+                macros: track.rack.macros.clone(),
+            },
+        }
+    }
+}
+
+impl TrackDeviceSummary {
+    fn from_device(device: &RackDevice) -> Self {
+        Self {
+            id: device.id.clone(),
+            name: device.name.clone(),
+            kind: device.kind,
+            path: device.path.clone(),
+            bypassed: device.bypassed,
+            gain_db: device.gain_db,
+            state_data: device.state_data.clone(),
+            disabled_placeholder: device.disabled_placeholder,
+        }
+    }
+}
 
 /// Canonical session and audio status returned by a coordinated operation.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]

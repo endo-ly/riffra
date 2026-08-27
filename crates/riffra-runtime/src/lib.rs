@@ -46,6 +46,7 @@ pub use model::{
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
     AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
     RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
+    TrackDeviceSummary, TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
