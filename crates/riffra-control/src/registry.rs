@@ -307,21 +307,25 @@ fn verify_host_status(
 fn process_exists(pid: u32) -> bool {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
 
-        // SAFETY: OpenProcess only reads the pid and the access mask, and the
-        // returned handle is released before returning.
+        // SAFETY: OpenProcess only reads the pid and the access mask. The
+        // process handle is released before returning, and GetExitCodeProcess
+        // writes only to the local exit-code variable.
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if handle.is_null() {
             false
         } else {
+            let mut exit_code = 0;
+            let running = unsafe { GetExitCodeProcess(handle, &mut exit_code) != 0 }
+                && exit_code == STILL_ACTIVE as u32;
             unsafe {
                 let _ = CloseHandle(handle);
             }
-            true
+            running
         }
     }
 
