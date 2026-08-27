@@ -145,7 +145,9 @@ fn is_telemetry_frame(event: &str) -> bool {
 ///
 /// Critical Host events are queued in order. Telemetry frames coalesce into a
 /// latest-wins slot inside the queue, so a meter flood can never evict or
-/// starve critical events.
+/// starve critical events. If a subscriber falls behind on critical events,
+/// the queue closes so the client can reconnect and bootstrap a complete
+/// snapshot instead of silently continuing after a lost event.
 #[derive(Clone)]
 struct EventQueue {
     state: Arc<EventQueueState>,
@@ -196,17 +198,21 @@ impl EventQueue {
             let victim = pending
                 .frames
                 .iter()
-                .position(|queued| is_telemetry_frame(&queued.event))
-                .unwrap_or(0);
-            let evicted = pending
-                .frames
-                .remove(victim)
-                .expect("evicted frame exists in the queue");
-            if !is_telemetry_frame(&evicted.event) {
-                tracing::warn!(
-                    event = %evicted.event,
-                    "local Host event subscriber fell behind; dropping its oldest event"
-                );
+                .position(|queued| is_telemetry_frame(&queued.event));
+            match victim {
+                Some(victim) => {
+                    pending.frames.remove(victim);
+                }
+                None if telemetry => return true,
+                None => {
+                    tracing::warn!(
+                        event = %frame.event,
+                        "local Host event subscriber fell behind; closing its connection"
+                    );
+                    drop(pending);
+                    self.close();
+                    return false;
+                }
             }
         }
         pending.frames.push_back(frame);
@@ -507,29 +513,50 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_subscriber_keeps_only_the_newest_critical_events() {
+    fn a_full_critical_queue_drops_incoming_telemetry_without_disconnect() {
         let shell = Arc::new(NoopHostEventSink);
         let hub = HostEventHub::new(shell);
         let subscription = hub.subscribe().unwrap();
 
-        for generation in 0..=(HOST_EVENT_QUEUE_CAPACITY as u64 + 16) {
+        for generation in 0..HOST_EVENT_QUEUE_CAPACITY as u64 {
             hub.emit(HostEvent::RuntimeRestarted { generation });
         }
+        hub.emit(HostEvent::AudioMeters(serde_json::json!({ "tick": 999 })));
 
         let mut received = Vec::new();
         while let Ok(frame) = subscription.try_recv() {
             received.push(frame.payload["generation"].as_u64().unwrap());
         }
         assert_eq!(received.len(), HOST_EVENT_QUEUE_CAPACITY);
-        assert_eq!(received.first().copied(), Some(17));
+        assert_eq!(received.first().copied(), Some(0));
         assert_eq!(
             received.last().copied(),
-            Some(HOST_EVENT_QUEUE_CAPACITY as u64 + 16)
+            Some(HOST_EVENT_QUEUE_CAPACITY as u64 - 1)
         );
 
-        // The subscriber stays connected after the overflow.
+        // Dropping telemetry from a full critical queue does not disconnect
+        // the subscriber.
         hub.emit(HostEvent::RuntimeRestarted { generation: 999 });
         assert_eq!(subscription.try_recv().unwrap().payload["generation"], 999);
+    }
+
+    #[test]
+    fn a_full_critical_queue_closes_on_incoming_critical_event() {
+        let shell = Arc::new(NoopHostEventSink);
+        let hub = HostEventHub::new(shell);
+        let subscription = hub.subscribe().unwrap();
+
+        for generation in 0..HOST_EVENT_QUEUE_CAPACITY as u64 {
+            hub.emit(HostEvent::RuntimeRestarted { generation });
+        }
+        hub.emit(HostEvent::RuntimeRestarted {
+            generation: HOST_EVENT_QUEUE_CAPACITY as u64,
+        });
+
+        assert!(matches!(
+            subscription.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
     }
 
     #[test]
