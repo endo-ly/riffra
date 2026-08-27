@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
 import {
   SNAP_GRID_OPTIONS,
@@ -39,6 +39,7 @@ interface MidiNoteInput {
 }
 
 const ZOOM_STEP = 1.25;
+const LANE_LABEL_WIDTH = 48;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
@@ -60,7 +61,9 @@ interface MidiEditorPanelProps {
   onInsertNotes?: (clipId: string, notes: MidiNoteInput[]) => MidiEditResult;
   onQuantize?: (clipId: string, noteIds: string[], gridTicks: number) => MidiEditResult;
   onDuplicateNotes?: (clipId: string, noteIds: string[], offsetTicks: number) => MidiEditResult;
-  playheadTick?: number;
+  playheadTick: number;
+  playheadTickRef: MutableRefObject<number>;
+  playing: boolean;
   onSeek?: (tick: number) => void;
   previewAvailable?: boolean;
   onSendMidi?: (trackId: string, bytes: number[]) => Promise<unknown>;
@@ -104,7 +107,6 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const [lastUsedVelocity, setLastUsedVelocity] = useState(96);
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
   const [rowHeight, setRowHeight] = useState(12);
-  const [horizontalScrollLeft, setHorizontalScrollLeft] = useState(0);
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [marquee, setMarquee] = useState<{
     left: number;
@@ -126,6 +128,13 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const dragGestureRef = useRef(0);
   const editorRef = useRef<HTMLDivElement>(null);
   const laneViewportRef = useRef<HTMLDivElement>(null);
+  const rulerContentRef = useRef<HTMLDivElement>(null);
+  const velocityContentRef = useRef<HTMLDivElement>(null);
+  const rulerPlayheadRef = useRef<HTMLElement>(null);
+  const lanePlayheadRef = useRef<HTMLElement>(null);
+  const velocityPlayheadRef = useRef<HTMLElement>(null);
+  const programmaticScrollRef = useRef(false);
+  const followPausedRef = useRef(false);
   const centeredClipIdRef = useRef<string | undefined>(undefined);
   const previewHeldNotesRef = useRef<Set<number>>(new Set());
   const clipboardRef = useRef<{
@@ -140,7 +149,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const laneHeight = (PITCH_HIGH - PITCH_LOW) * rowHeight;
   const velocityLaneHeight = 88;
   const laneWidth = visibleTicks * pixelsPerTick;
-  const canvasWidth = 48 + laneWidth;
+  const canvasWidth = LANE_LABEL_WIDTH + laneWidth;
   const beatTicks = ticksPerBeat(props.timebase);
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
@@ -208,10 +217,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         clientX === undefined
           ? viewport.clientWidth / 2
           : Math.max(0, Math.min(viewport.clientWidth, clientX - bounds.left));
-      const tick = Math.max(0, (viewport.scrollLeft + cursor - 48) / pixelsPerTick);
+      const tick = Math.max(0, (viewport.scrollLeft + cursor - LANE_LABEL_WIDTH) / pixelsPerTick);
       setPixelsPerTick(bounded);
       requestAnimationFrame(() => {
-        viewport.scrollLeft = Math.max(0, 48 + tick * bounded - cursor);
+        programmaticScrollRef.current = true;
+        viewport.scrollLeft = Math.max(0, LANE_LABEL_WIDTH + tick * bounded - cursor);
       });
     },
     [pixelsPerTick],
@@ -229,6 +239,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         PITCH_HIGH - 1 - (viewport.scrollTop + viewport.clientHeight / 2) / rowHeight;
       setRowHeight(bounded);
       requestAnimationFrame(() => {
+        programmaticScrollRef.current = true;
         viewport.scrollTop = Math.max(
           0,
           (PITCH_HIGH - 1 - centerPitch) * bounded - viewport.clientHeight / 2,
@@ -237,6 +248,126 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     },
     [rowHeight],
   );
+
+  const { playheadTick, playheadTickRef, playing } = props;
+  const clipStartTick = clip?.startTick ?? 0;
+  const playheadTickInClip = playheadTick - clipStartTick;
+
+  // The ruler and velocity lane sit outside the scrolling viewport, so their
+  // content follows the lane scroll through transform updates.
+  const syncScrollContent = useCallback(() => {
+    const scrollLeft = laneViewportRef.current?.scrollLeft ?? 0;
+    if (rulerContentRef.current) {
+      rulerContentRef.current.style.transform = `translate3d(${-scrollLeft}px, 0, 0)`;
+    }
+    if (velocityContentRef.current) {
+      velocityContentRef.current.style.transform = `translate3d(${-scrollLeft}px, 0, 0)`;
+    }
+  }, []);
+
+  const updatePlayhead = useCallback(() => {
+    const tick = playheadTickRef.current - clipStartTick;
+    const visible = tick >= 0 && tick <= visibleTicks;
+    const transform = `translate3d(${tick * pixelsPerTick}px, 0, 0)`;
+    for (const element of [
+      rulerPlayheadRef.current,
+      lanePlayheadRef.current,
+      velocityPlayheadRef.current,
+    ]) {
+      if (!element) continue;
+      element.style.display = visible ? '' : 'none';
+      element.style.transform = transform;
+    }
+  }, [clipStartTick, pixelsPerTick, playheadTickRef, visibleTicks]);
+
+  useEffect(() => {
+    const viewport = laneViewportRef.current;
+    if (!viewport) return;
+    let frame = 0;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) {
+        programmaticScrollRef.current = false;
+      } else {
+        followPausedRef.current = true;
+      }
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        syncScrollContent();
+      });
+    };
+    viewport.addEventListener('scroll', onScroll, { passive: true });
+    syncScrollContent();
+    return () => {
+      viewport.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [hasClip, syncScrollContent]);
+
+  // Follow the playhead during playback: once the playhead crosses the follow
+  // line the view scrolls continuously to keep it there. A manual scroll pauses
+  // the follow while the playhead stays in view; when it leaves the viewport the
+  // follow resumes automatically.
+  useEffect(() => {
+    if (!playing || !hasClip) return;
+    const viewport = laneViewportRef.current;
+    if (!viewport) return;
+    let frame = requestAnimationFrame(function follow() {
+      updatePlayhead();
+      const tick = playheadTickRef.current - clipStartTick;
+      const headX = LANE_LABEL_WIDTH + tick * pixelsPerTick;
+      const left = viewport.scrollLeft;
+      const followOffset = viewport.clientWidth * 0.32;
+      if (followPausedRef.current) {
+        if (headX < left || headX > left + viewport.clientWidth) {
+          followPausedRef.current = false;
+        }
+      }
+      const inClip = tick >= 0 && tick <= visibleTicks;
+      if (inClip && !followPausedRef.current && (headX < left || headX >= left + followOffset)) {
+        programmaticScrollRef.current = true;
+        viewport.scrollLeft = Math.max(0, headX - followOffset);
+      }
+      syncScrollContent();
+      frame = requestAnimationFrame(follow);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    clipStartTick,
+    hasClip,
+    pixelsPerTick,
+    playheadTickRef,
+    playing,
+    syncScrollContent,
+    updatePlayhead,
+    visibleTicks,
+  ]);
+
+  // Outside playback the position advances only through seeks, so re-sync the
+  // playhead elements whenever a React render publishes a new position.
+  useEffect(() => {
+    updatePlayhead();
+  }, [playheadTickInClip, updatePlayhead]);
+
+  // On a seek, bring the playhead back into view the same way the arrange
+  // timeline does. The ref keeps tracking during playback so the residual
+  // position update right after a stop is not mistaken for a seek.
+  const previousPlayheadTickRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = previousPlayheadTickRef.current;
+    previousPlayheadTickRef.current = playheadTickInClip;
+    const viewport = laneViewportRef.current;
+    if (playing || !viewport) return;
+    if (previous === null || previous === playheadTickInClip) return;
+    if (playheadTickInClip < 0 || playheadTickInClip > visibleTicks) return;
+    const headX = LANE_LABEL_WIDTH + playheadTickInClip * pixelsPerTick;
+    const left = viewport.scrollLeft;
+    if (headX < left || headX > left + viewport.clientWidth) {
+      programmaticScrollRef.current = true;
+      followPausedRef.current = false;
+      viewport.scrollLeft = Math.max(0, headX - viewport.clientWidth * 0.32);
+    }
+  }, [clipStartTick, pixelsPerTick, playheadTickInClip, playing, visibleTicks]);
 
   const removeSelectedNotes = (noteIds = selectedNoteIds): MidiEditResult => {
     if (!clip || noteIds.length === 0) return;
@@ -262,7 +393,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
 
   const pasteNotes = (): MidiEditResult => {
     if (!clip || !clipboardRef.current || !props.onInsertNotes) return;
-    const anchor = Math.max(0, Math.round(props.playheadTick ?? 0));
+    const anchor = Math.max(0, Math.round(props.playheadTickRef.current - clip.startTick));
     const beforeIds = new Set(clip.notes.map((note) => note.id));
     const inputs = clipboardRef.current.notes.map(({ relativeStartTick, ...note }) => ({
       ...note,
@@ -419,6 +550,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     centeredClipIdRef.current = clipId;
     const viewport = laneViewportRef.current;
     if (!viewport) return;
+    programmaticScrollRef.current = true;
     viewport.scrollTop = Math.max(
       0,
       (PITCH_HIGH - 1 - clipNoteCenter) * rowHeight - viewport.clientHeight / 2,
@@ -792,29 +924,18 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       <div className={styles.editorSurface}>
         <div className={styles.rulerViewport}>
           <div className={styles.laneLabel}>Ruler</div>
-          <div
-            className={styles.rulerContent}
-            style={{
-              width: laneWidth,
-              transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
-            }}
-          >
+          <div ref={rulerContentRef} className={styles.rulerContent} style={{ width: laneWidth }}>
             <MidiEditorRuler
               timebase={props.timebase}
               clipStartTick={clip!.startTick}
               visibleTicks={visibleTicks}
               pixelsPerTick={pixelsPerTick}
-              playheadTick={props.playheadTick}
+              playheadRef={rulerPlayheadRef}
               onSeek={props.onSeek}
             />
           </div>
         </div>
-        <div
-          ref={laneViewportRef}
-          className={styles.laneViewport}
-          data-midi-pitch-viewport
-          onScroll={(event) => setHorizontalScrollLeft(event.currentTarget.scrollLeft)}
-        >
+        <div ref={laneViewportRef} className={styles.laneViewport} data-midi-pitch-viewport>
           <div className={styles.roll} style={{ width: canvasWidth }}>
             <div
               className={styles.pitchKeyboard}
@@ -972,14 +1093,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             >
               {marquee && <div className={styles.marquee} style={marquee} />}
               {drawPreview && <div className={styles.drawPreview} style={drawPreview} />}
-              {props.playheadTick !== undefined &&
-                props.playheadTick >= 0 &&
-                props.playheadTick <= visibleTicks && (
-                  <i
-                    className={styles.editorPlayhead}
-                    style={{ left: props.playheadTick * pixelsPerTick }}
-                  />
-                )}
+              <i
+                ref={lanePlayheadRef}
+                className={styles.editorPlayhead}
+                style={{ display: 'none' }}
+              />
               {Array.from({ length: Math.ceil(visibleTicks / barTicks) }, (_, bar) => (
                 <i
                   key={bar}
@@ -1067,11 +1185,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           <div className={styles.velocityRow} style={{ width: canvasWidth }}>
             <div className={styles.laneLabel}>Velocity</div>
             <div
+              ref={velocityContentRef}
               className={styles.velocityContent}
-              style={{
-                width: laneWidth,
-                transform: `translate3d(${-horizontalScrollLeft}px, 0, 0)`,
-              }}
+              style={{ width: laneWidth }}
             >
               <MidiVelocityLane
                 notes={notes}
@@ -1081,7 +1197,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 barTicks={barTicks}
                 beatTicks={beatTicks}
                 height={velocityLaneHeight}
-                playheadTick={props.playheadTick}
+                playheadRef={velocityPlayheadRef}
                 clipId={clip!.id}
                 onSelectNoteIds={setSelectedNoteIds}
                 onUpdateNotes={props.onUpdateNotes}

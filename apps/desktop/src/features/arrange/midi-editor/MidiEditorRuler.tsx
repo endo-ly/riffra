@@ -1,3 +1,4 @@
+import type { Ref } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import {
   formatMusicalPosition,
@@ -11,7 +12,7 @@ interface MidiEditorRulerProps {
   clipStartTick: number;
   visibleTicks: number;
   pixelsPerTick: number;
-  playheadTick?: number;
+  playheadRef: Ref<HTMLElement>;
   onSeek?: (tick: number) => void;
 }
 
@@ -50,14 +51,7 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
           </i>
         );
       })}
-      {props.playheadTick !== undefined &&
-        props.playheadTick >= 0 &&
-        props.playheadTick <= props.visibleTicks && (
-          <i
-            className={styles.editorPlayhead}
-            style={{ left: props.playheadTick * props.pixelsPerTick }}
-          />
-        )}
+      <i ref={props.playheadRef} className={styles.editorPlayhead} style={{ display: 'none' }} />
     </div>
   );
 }

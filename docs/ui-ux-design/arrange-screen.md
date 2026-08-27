@@ -114,7 +114,7 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [Select|Split]  Snap [1/16 ▾]  [Follow] [Automation]                │
+│ [Select|Split]  Snap [1/16 ▾]  [Automation]                         │
 │                                       Bars/Time   Zoom [−][＋] 100% │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -126,7 +126,6 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 | Select        | Clip の選択、移動、Trim、Marquee など通常編集 |
 | Split         | 指定位置で Clip を分割                        |
 | Snap          | Timeline の時間編集に使う Grid                |
-| Follow        | 再生中の Playhead を表示範囲へ追従            |
 | Automation    | 選択 Track の Automation Lane を開閉          |
 | Bars / Time   | Ruler の表示形式を切替                        |
 | Timeline Zoom | 時間方向の拡大・縮小                          |
@@ -156,6 +155,8 @@ Ruler は時間位置の確認と範囲操作を担う。
 | Context Menu                | Marker 追加、選択範囲から Loop / Punch を設定 |
 
 Playhead、Time Selection、Loop / Punch、Marker は同じ時間軸上で同時に認識できる表示を使う。
+
+再生中はビューが Playhead へ連続的に追従し、Playhead を表示範囲の一定位置に保つ。手動 Scroll は追従に優先し、Playhead が表示範囲内にある間はビューを動かさない。Playhead が表示範囲外に出ると追従を再開する。Timeline と MIDI Editor で同じ挙動を共有する。
 
 ### 3.3 Track Row
 
@@ -464,7 +465,7 @@ Detail Area は、Resize、Collapse / Restore、Expand / Restore、Close を提�
 └─────────────┴────────────────────────────────────────────────────────────┘
 ```
 
-Piano Roll、Musical Ruler、Velocity Lane は一つの時間軸を共有する。横 Scroll / Zoom も同じ基準で動き、Active MIDI Clip が Arrangement のどこに位置しているかを Ruler 上で把握できる。
+Piano Roll、Musical Ruler、Velocity Lane は一つの時間軸を共有する。横 Scroll / Zoom も同じ基準で動き、Active MIDI Clip が Arrangement のどこに位置しているかを Ruler 上で把握できる。再生中の Playhead 追従は Timeline と同じ挙動に従う。
 
 Toolbar は左側へ編集操作、右側へ表示操作をまとめる。Pointer / Draw、Snap、Preview、Quantize、Duplicate、Velocity、Time Zoom、Pitch Zoom が主な操作となる。
 

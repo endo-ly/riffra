@@ -96,7 +96,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     Partial<Record<string, AutomationParameter>>
   >({});
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
-  const [follow, setFollow] = useState(true);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -254,7 +253,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     selectedClipCount: selectedClipIds.length,
     seekLocally,
     setMessage: editor.setMessage,
-    setFollow,
   });
   const detail = useArrangeDetailController({
     midiClips: arrangement.midiClips,
@@ -433,46 +431,48 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     };
   }, []);
 
-  // Follow Playhead: during playback, keep the playhead in view. Manual scroll
-  // pauses follow until the user seeks via the ruler or re-enables the toggle.
+  // Follow the playhead during playback: once the playhead crosses the follow
+  // line the view scrolls continuously to keep it there. A manual scroll pauses
+  // the follow while the playhead stays in view; when it leaves the viewport the
+  // follow resumes automatically.
+  const followPausedRef = useRef(false);
   useEffect(() => {
-    if (!follow || transport?.state !== 'playing') return;
+    if (transport?.state !== 'playing') return;
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const playheadX = TRACK_HEADER_WIDTH + displayTick * pixelsPerTick;
-    const left = scroller.scrollLeft;
-    const right = left + scroller.clientWidth;
-    const margin = Math.min(160, scroller.clientWidth * 0.18);
-    if (playheadX < left + margin || playheadX > right - margin) {
-      const target = Math.max(0, playheadX - scroller.clientWidth * 0.32);
-      programmaticScrollRef.current = true;
-      scroller.scrollLeft = target;
-    }
-  }, [displayTick, follow, pixelsPerTick, transport?.state]);
+    let frame = 0;
+    const update = () => {
+      const playheadX = TRACK_HEADER_WIDTH + displayTickRef.current * pixelsPerTick;
+      const left = scroller.scrollLeft;
+      const followOffset = scroller.clientWidth * 0.32;
+      if (followPausedRef.current) {
+        if (playheadX < left || playheadX > left + scroller.clientWidth) {
+          followPausedRef.current = false;
+        }
+      }
+      if (!followPausedRef.current && (playheadX < left || playheadX >= left + followOffset)) {
+        programmaticScrollRef.current = true;
+        scroller.scrollLeft = Math.max(0, playheadX - followOffset);
+      }
+      frame = requestAnimationFrame(update);
+    };
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, [displayTickRef, pixelsPerTick, transport?.state]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    let frame = 0;
     const onScroll = () => {
       if (programmaticScrollRef.current) {
         programmaticScrollRef.current = false;
         return;
       }
-      if (frame) {
-        cancelAnimationFrame(frame);
-        frame = 0;
-      }
-      frame = requestAnimationFrame(() => {
-        if (transport?.state === 'playing') setFollow(false);
-      });
+      followPausedRef.current = true;
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      scroller.removeEventListener('scroll', onScroll);
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, [transport?.state]);
+    return () => scroller.removeEventListener('scroll', onScroll);
+  }, []);
 
   const previousDiscontinuityRef = useRef<number | null>(null);
   useEffect(() => {
@@ -486,7 +486,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const playheadX = TRACK_HEADER_WIDTH + transport.timelineTick * pixelsPerTick;
     programmaticScrollRef.current = true;
     scroller.scrollLeft = Math.max(0, playheadX - scroller.clientWidth * 0.32);
-    setFollow(true);
+    followPausedRef.current = false;
   }, [pixelsPerTick, transport]);
 
   const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
@@ -830,7 +830,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       if (error instanceof HostConnectionChangedError) return;
       setMessage(String(error));
     });
-    setFollow(true);
   };
 
   const openTrackLaneContextMenu = (event: React.MouseEvent, trackId: string, tick: number) => {
@@ -898,12 +897,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         snap={snap}
         zoom={zoom}
         rulerMode={rulerMode}
-        follow={follow}
         onTool={setTool}
         onSnap={setSnap}
         onZoom={applyZoom}
         onRulerMode={setRulerMode}
-        onFollow={setFollow}
         automationAvailable={selectedTrackId !== null}
         automationOpen={selectedTrackId !== null && Boolean(automationParameters[selectedTrackId])}
         onToggleAutomation={() => {
@@ -1237,7 +1234,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <MidiEditorPanel
             clip={activeMidiClip}
             timebase={timebase}
-            playheadTick={displayTick - (activeMidiClip?.startTick ?? 0)}
+            playheadTick={displayTick}
+            playheadTickRef={displayTickRef}
+            playing={transport?.state === 'playing'}
             onSeek={seekMidiEditor}
             previewAvailable={midiPreviewAvailable}
             onSendMidi={sendMidiPreview}

@@ -15,12 +15,10 @@ describe('ArrangeToolbar', () => {
         snap="bar"
         zoom={1}
         rulerMode="bars"
-        follow={false}
         onTool={vi.fn()}
         onSnap={vi.fn()}
         onZoom={vi.fn()}
         onRulerMode={vi.fn()}
-        onFollow={vi.fn()}
         automationAvailable
         automationOpen={false}
         onToggleAutomation={vi.fn()}

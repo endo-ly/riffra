@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
 import {
   type ArrangementMutationResult,
@@ -113,6 +113,99 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerDown(ruler, { clientX: 92 });
 
     expect(api.calls).toContain('seekTimeline');
+  });
+
+  it('keeps the timeline view following the playhead during playback', async () => {
+    // At 120 bpm / ppq 960 the playhead advances 1,920 ticks (192 px at 0.1
+    // px/tick) per second; with an 800 px viewport the follow line sits at 256 px.
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'performance'] });
+    try {
+      const api = new FakeNativeApi();
+      const { container } = render(<Harness api={api} />);
+      const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
+      Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
+
+      await act(async () => {
+        api.emitTransportStatus({ state: 'playing', timelineTick: 2_000, discontinuity: 1 });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      // The seek jump alone leaves the view at 139 px; playback has moved it further.
+      expect(scroller.scrollLeft).toBeGreaterThan(150);
+
+      // A manual scroll pauses the follow while the playhead stays in view.
+      // jsdom does not fire scroll events for programmatic scrollLeft
+      // assignments, so the event the browser would have raised for the follow
+      // scroll is dispatched first, then the manual one.
+      scroller.dispatchEvent(new Event('scroll'));
+      scroller.scrollLeft = 0;
+      scroller.dispatchEvent(new Event('scroll'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(scroller.scrollLeft).toBe(0);
+
+      // Once the playhead leaves the viewport the follow resumes automatically.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      expect(scroller.scrollLeft).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the MIDI editor view following the playhead during playback', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:follow',
+      name: 'Follow',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:follow"]')!);
+    await screen.findByLabelText('MIDI Editor');
+    const viewport = document.querySelector('[data-midi-pitch-viewport]') as HTMLDivElement;
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 800 });
+
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'performance'] });
+    try {
+      // At 0.18 px/tick the follow line (800 px * 0.32) is crossed after 427 px,
+      // i.e. while the playhead is still inside the 1,920-tick clip.
+      await act(async () => {
+        api.emitTransportStatus({ state: 'playing', timelineTick: 600, discontinuity: 1 });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(viewport.scrollLeft).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(viewport.scrollLeft).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the full MIDI pitch range and uses a context menu for note deletion', async () => {

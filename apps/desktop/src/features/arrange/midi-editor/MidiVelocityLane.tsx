@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import type { Ref } from 'react';
 import type { MidiNote } from '@/model/domain';
 import { midiNoteName } from '@/features/arrange/play-surface/musical-typing';
 import styles from './MidiEditorPanel.module.css';
@@ -13,7 +14,7 @@ interface MidiVelocityLaneProps {
   barTicks: number;
   beatTicks: number;
   height: number;
-  playheadTick?: number;
+  playheadRef: Ref<HTMLElement>;
   onSelectNoteIds: (noteIds: string[]) => void;
   onUpdateNotes?: (
     clipId: string,
@@ -130,14 +131,7 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
           style={{ left: beat * props.beatTicks * props.pixelsPerTick }}
         />
       ))}
-      {props.playheadTick !== undefined &&
-        props.playheadTick >= 0 &&
-        props.playheadTick <= props.visibleTicks && (
-          <i
-            className={styles.editorPlayhead}
-            style={{ left: props.playheadTick * props.pixelsPerTick }}
-          />
-        )}
+      <i ref={props.playheadRef} className={styles.editorPlayhead} style={{ display: 'none' }} />
       {props.notes.map((note) => {
         const velocity = preview[note.id] ?? note.velocity;
         return (

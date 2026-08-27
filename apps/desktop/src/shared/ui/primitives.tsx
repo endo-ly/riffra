@@ -24,7 +24,6 @@ export function Icon({ name }: { name: string }) {
     expand: 'm5 15 1.4 1.4L12 11.8l5.6 4.6L19 15l-7-7-7 7Z',
     maximize: 'M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z',
     restore: 'M7 7h10v10H7V7Zm2 2v6h6V9H9Z',
-    follow: 'M4 5l7 7-7 7V5Zm9 0l7 7-7 7V5Z',
     curve:
       'M2.7 15.6C5.7 7.2 9.4 6.3 12.4 10.2C15 13.6 17.5 13.7 21.3 6.4L22.9 7.2C18.7 15.7 15 16.5 11.9 12.5C9.3 9.2 7 9.6 4.3 17.1Z',
     magnet: 'M5 3h5v8a2 2 0 0 0 4 0V3h5v8a7 7 0 0 1-14 0V3Z',

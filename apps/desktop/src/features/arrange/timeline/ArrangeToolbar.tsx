@@ -20,12 +20,10 @@ interface ArrangeToolbarProps {
   snap: SnapGrid;
   zoom: number;
   rulerMode: 'bars' | 'time';
-  follow: boolean;
   onTool: (tool: ArrangeTool) => void;
   onSnap: (snap: SnapGrid) => void;
   onZoom: (zoom: number) => void;
   onRulerMode: (mode: 'bars' | 'time') => void;
-  onFollow: (follow: boolean) => void;
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
@@ -71,13 +69,6 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         value={props.snap}
         onChange={props.onSnap}
         options={SNAP_GRID_OPTIONS.map((value) => ({ value, label: snapGridLabel(value) }))}
-      />
-      <ToolbarToggle
-        active={props.follow}
-        icon="follow"
-        ariaLabel="Follow"
-        title="Keep the playhead in view during playback"
-        onClick={() => props.onFollow(!props.follow)}
       />
       <ToolbarToggle
         active={props.automationOpen}

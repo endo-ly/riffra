@@ -167,6 +167,7 @@
 
 .editorPlayhead {
   position: absolute;
+  left: 0;
   z-index: 7;
   top: 0;
   bottom: 0;

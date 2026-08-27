@@ -48,7 +48,6 @@ interface ArrangeRulerControllerOptions {
   selectedClipCount: number;
   seekLocally: (tick: number) => void;
   setMessage: (message: string) => void;
-  setFollow: (follow: boolean) => void;
 }
 
 export function useArrangeRulerController({
@@ -61,7 +60,6 @@ export function useArrangeRulerController({
   selectedClipCount,
   seekLocally,
   setMessage,
-  setFollow,
 }: ArrangeRulerControllerOptions) {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<RangeKind | null>(null);
@@ -185,7 +183,6 @@ export function useArrangeRulerController({
         if (error instanceof HostConnectionChangedError) return;
         setMessage(String(error));
       });
-      setFollow(true);
       const handle = (move: globalThis.PointerEvent) => {
         const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
         if (seeking && Math.abs(move.clientX - originX) > 4) {
@@ -230,7 +227,7 @@ export function useArrangeRulerController({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', cancel);
     },
-    [api, pixelsPerTick, seekLocally, setFollow, setMessage, snapTick],
+    [api, pixelsPerTick, seekLocally, setMessage, snapTick],
   );
 
   const dragLoopHandle = useCallback(
