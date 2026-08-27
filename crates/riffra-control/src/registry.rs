@@ -468,13 +468,26 @@ mod tests {
     }
 
     #[test]
-    fn entries_without_a_live_process_are_removed() {
+    fn entries_for_a_reaped_process_are_removed() {
         let root = root("dead-pid");
         let registry = LocalHostRegistry::at(&root);
-        let descriptor = EndpointDescriptor::new(new_instance_id(), 42);
+
+        let mut command = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        if cfg!(windows) {
+            command.args(["/C", "exit 0"]);
+        } else {
+            command.args(["-c", "exit 0"]);
+        }
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        assert!(child.wait().unwrap().success());
+        drop(child);
+
+        assert!(!process_exists(pid));
+
+        let descriptor = EndpointDescriptor::new(new_instance_id(), pid);
         let registration = LocalHostRegistration::from_descriptor(&root, &descriptor, 1);
         registry.register(&registration).unwrap();
-        assert!(!process_exists(42));
 
         assert!(registry.discover().unwrap().is_empty());
         assert_eq!(
