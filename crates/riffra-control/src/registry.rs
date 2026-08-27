@@ -328,8 +328,8 @@ fn process_exists(pid: u32) -> bool {
     #[cfg(unix)]
     {
         // SAFETY: kill with signal 0 only probes for process existence.
-        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        let exists = unsafe { libc::kill(pid as libc::pid_t, 0) == 0 };
+        exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
     #[cfg(not(any(windows, unix)))]

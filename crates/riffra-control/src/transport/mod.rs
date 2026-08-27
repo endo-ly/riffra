@@ -133,6 +133,7 @@ where
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             stream.close_stream();
+            #[cfg(windows)]
             cancel_synchronous_io(&worker);
             let _ = receiver.recv_timeout(INTERRUPT_GRACE);
             Err(TransportError::Io(io::Error::new(
