@@ -17,23 +17,23 @@ import type {
 } from '@/model/domain';
 import type { MidiNoteInput } from '../native-api';
 import {
-  invokeLatest,
-  invokeOrFallback as invokeOrFallbackRaw,
-  invoke as invokeRaw,
+  invokeLatestHost,
+  invokeHostOrFallback as invokeHostOrFallbackRaw,
+  invokeHost as invokeHostRaw,
 } from '../invoke';
 
 async function invokeArrangement(
   command: string,
   args: Record<string, unknown>,
 ): Promise<ArrangementMutationResult> {
-  return invokeRaw<ArrangementMutationResult>(command, args);
+  return invokeHostRaw<ArrangementMutationResult>(command, args);
 }
 
 async function invokeArrangementOrFallback(
   command: string,
   args: Record<string, unknown>,
 ): Promise<ArrangementMutationResult | null> {
-  return invokeOrFallbackRaw<ArrangementMutationResult | null>(command, args, null);
+  return invokeHostOrFallbackRaw<ArrangementMutationResult | null>(command, args, null);
 }
 
 export async function addAudioClipToArrangement(
@@ -193,7 +193,7 @@ export async function updateTrack(
       ? fields[0]
       : null;
   if (latestField) {
-    const result = await invokeLatest<ArrangementMutationResult>(
+    const result = await invokeLatestHost<ArrangementMutationResult>(
       'update_track',
       { trackId, patch },
       `update_track:${trackId}:${latestField}`,
@@ -245,18 +245,18 @@ export async function reorderTrack(
 }
 
 export async function addMarker(tick: number, name: string): Promise<ArrangementMutationResult> {
-  return invokeRaw<ArrangementMutationResult>('add_marker', { tick, name });
+  return invokeHostRaw<ArrangementMutationResult>('add_marker', { tick, name });
 }
 
 export async function updateMarker(
   markerId: string,
   patch: { name?: string; tick?: number },
 ): Promise<ArrangementMutationResult> {
-  return invokeRaw<ArrangementMutationResult>('update_marker', { markerId, ...patch });
+  return invokeHostRaw<ArrangementMutationResult>('update_marker', { markerId, ...patch });
 }
 
 export async function removeMarker(markerId: string): Promise<ArrangementMutationResult> {
-  return invokeRaw<ArrangementMutationResult>('remove_marker', { markerId });
+  return invokeHostRaw<ArrangementMutationResult>('remove_marker', { markerId });
 }
 
 export async function addMidiNote(
@@ -362,15 +362,15 @@ export async function setAudioClipTakeVariant(
 }
 
 export async function startTakeComparison(takeId: string): Promise<AudioStatus> {
-  return await invokeRaw<AudioStatus>('start_take_comparison', { takeId });
+  return await invokeHostRaw<AudioStatus>('start_take_comparison', { takeId });
 }
 
 export async function switchTakeComparisonVariant(variant: AudioTakeVariant): Promise<AudioStatus> {
-  return await invokeRaw<AudioStatus>('switch_take_comparison_variant', { variant });
+  return await invokeHostRaw<AudioStatus>('switch_take_comparison_variant', { variant });
 }
 
 export async function stopTakeComparison(): Promise<AudioStatus> {
-  return await invokeRaw<AudioStatus>('stop_take_comparison');
+  return await invokeHostRaw<AudioStatus>('stop_take_comparison');
 }
 
 export async function activateTake(

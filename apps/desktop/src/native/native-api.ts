@@ -31,6 +31,9 @@ import type {
   AutomationParameter,
   AutomationPoint,
   TrackKind,
+  HostConnectionState,
+  HostTarget,
+  LocalHostInfo,
 } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type { AssetPreviewOptions, ScanJobStatus, TransportStatus } from './contracts';
@@ -43,24 +46,29 @@ export interface MidiNoteInput {
   channel: number;
 }
 
-export interface TrackPluginStateChange {
-  trackId: string;
-  deviceId: string;
-  parameterValues: number[];
-  stateData?: string | null;
-  bypassed: boolean;
-}
-
-export interface TrackPluginParameterChange {
-  trackId: string;
-  deviceId: string;
-  parameterIndex: number;
-  value: number;
-}
-
 /** Result delivered when the native Session runtime restoration attempt ends. */
 export interface RuntimeStartupFinishedEvent {
   succeeded: boolean;
+}
+
+export interface HostConnectionBootstrap {
+  state: HostConnectionState;
+  bootstrap: BootstrapState;
+}
+
+export interface HostConnectionChangedEvent {
+  state: HostConnectionState;
+  bootstrap: BootstrapState | null;
+}
+
+export interface HostConnectionApi {
+  getHostConnectionState(): Promise<HostConnectionState>;
+  listLocalHosts(): Promise<LocalHostInfo[]>;
+  switchHost(target: HostTarget): Promise<HostConnectionBootstrap>;
+  reconnectHost(): Promise<HostConnectionBootstrap>;
+  onHostConnectionChanged(
+    callback: (event: HostConnectionChangedEvent) => void,
+  ): Promise<() => void>;
 }
 
 /**
@@ -283,10 +291,6 @@ export interface ArrangeApi {
     value: number,
   ): Promise<ArrangementMutationResult>;
   openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
-  persistTrackPluginState(change: TrackPluginStateChange): Promise<ArrangementMutationResult>;
-  persistTrackPluginParameter(
-    change: TrackPluginParameterChange,
-  ): Promise<ArrangementMutationResult>;
   removeTrack(trackId: string): Promise<ArrangementMutationResult>;
   duplicateTrack(trackId: string): Promise<ArrangementMutationResult>;
   reorderTrack(trackId: string, targetIndex: number): Promise<ArrangementMutationResult>;
@@ -410,8 +414,6 @@ export interface NativeEventApi {
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
-  onTrackPluginStateChanged(callback: (change: TrackPluginStateChange) => void): () => void;
-  onTrackPluginParameterChanged(callback: (change: TrackPluginParameterChange) => void): () => void;
 }
 
 export interface NativeApi
@@ -428,4 +430,5 @@ export interface NativeApi
     ArrangeApi,
     TransportApi,
     MissingDependencyApi,
+    HostConnectionApi,
     NativeEventApi {}

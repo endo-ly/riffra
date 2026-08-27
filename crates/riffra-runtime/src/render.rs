@@ -32,7 +32,7 @@ pub enum RenderRange {
     },
 }
 
-#[derive(Clone, Debug, Default, Deserialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderOptions {
     #[serde(default)]

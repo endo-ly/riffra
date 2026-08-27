@@ -38,4 +38,5 @@ pub struct BootstrapState {
     pub recovery_candidates: Vec<RecoveryCandidate>,
     pub data_root: String,
     pub vst3_root: String,
+    pub host_connection: crate::host_connection::HostConnectionState,
 }

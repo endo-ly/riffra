@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, BootstrapState, CanonicalState, CreativeSession } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
-import { publishAudioMeters } from '@/shared/audio/audio-meters';
-import { logNativeError } from '@/native/invoke';
+import { publishAudioMeters, resetAudioMeters } from '@/shared/audio/audio-meters';
+import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type {
   AudioApi,
   BootstrapApi,
@@ -20,7 +20,7 @@ type AppRuntimeApi = BootstrapApi &
   Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters' | 'onCanonicalStateChanged'>;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
-export function useAppRuntime(api: AppRuntimeApi) {
+export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [audio, setAudio] = useState<AudioStatus>(startingAudioStatus());
   const [runtimeStarted, setRuntimeStarted] = useState(false);
@@ -28,21 +28,31 @@ export function useAppRuntime(api: AppRuntimeApi) {
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
-  const sessionHook = useProject(api, { setBoot });
+  const sessionHook = useProject(api, { setBoot, hostGeneration });
   const { applyCanonicalState, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
 
   useEffect(() => {
     let disposed = false;
+    const effectGeneration = hostGeneration;
+    bootstrapPromise.current = null;
+    runtimeStartupEventReceived.current = false;
+    setBoot(null);
+    setAudio(startingAudioStatus());
+    resetAudioMeters();
+    setRuntimeStarted(false);
+    setRuntimeStartupFinished(false);
     let unlistenRuntimeStartupFinished: (() => void) | null = null;
     const unlistenCanonicalStateChanged = api.onCanonicalStateChanged(
       (canonical: CanonicalState) => {
-        if (!disposed) applyCanonicalState(canonical);
+        if (!disposed && getHostGeneration() === effectGeneration) {
+          applyCanonicalState(canonical);
+        }
       },
     );
     const runtimeStartupListener = api
       .onRuntimeStartupFinished((event) => {
-        if (disposed) return;
+        if (disposed || getHostGeneration() !== effectGeneration) return;
         runtimeStartupEventReceived.current = true;
         setRuntimeStartupFinished(true);
         setRuntimeStarted(event.succeeded);
@@ -55,26 +65,34 @@ export function useAppRuntime(api: AppRuntimeApi) {
       if (disposed) unlisten();
       else unlistenRuntimeStartupFinished = unlisten;
     });
-    const bootstrapOperation =
-      bootstrapPromise.current ??
-      (bootstrapPromise.current = runtimeStartupListener.then(() => api.bootstrap()));
-    void bootstrapOperation
-      .then((state) => {
-        if (disposed) return;
-        const mergedState = mergeBootstrapState(state);
-        setBoot(mergedState);
-        applyCanonicalState(mergedState.canonical);
-        if (!runtimeStartupEventReceived.current) {
-          setRuntimeStarted(state.runtimeStarted);
-          setRuntimeStartupFinished(state.runtimeStartupFinished);
-        }
-      })
-      .catch(logNativeError('bootstrap'));
+    // An attached Host may have completed startup before Desktop connected, so
+    // waiting for its one-shot startup event would leave the switched UI
+    // without a bootstrap forever. The snapshot is authoritative; the event
+    // listener only refines startup flags when a live startup attempt follows.
+    // Generation 0 is the transient "Host is starting" state, so bootstrap only
+    // runs for a settled generation; the browser preview reports generation 1.
+    if (effectGeneration > 0) {
+      const bootstrapOperation =
+        bootstrapPromise.current ?? (bootstrapPromise.current = api.bootstrap());
+      void bootstrapOperation
+        .then((state) => {
+          if (disposed || getHostGeneration() !== effectGeneration) return;
+          const mergedState = mergeBootstrapState(state);
+          setBoot(mergedState);
+          applyCanonicalState(mergedState.canonical);
+          if (!runtimeStartupEventReceived.current) {
+            setRuntimeStarted(state.runtimeStarted);
+            setRuntimeStartupFinished(state.runtimeStartupFinished);
+          }
+        })
+        .catch(logNativeError('bootstrap'));
+    }
 
     let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingAudioStatus: AudioStatus | null = null;
     let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = api.onAudioStatus((status) => {
+      if (disposed || getHostGeneration() !== effectGeneration) return;
       publishAudioMeters({
         inputPeak: status.inputPeak,
         outputPeak: status.outputPeak,
@@ -87,7 +105,7 @@ export function useAppRuntime(api: AppRuntimeApi) {
         audioStatusTimer = null;
         const next = pendingAudioStatus;
         pendingAudioStatus = null;
-        if (disposed || next == null) return;
+        if (disposed || getHostGeneration() !== effectGeneration || next == null) return;
         if (
           lastAppliedAudioStatus != null &&
           audioStatusSignature(lastAppliedAudioStatus) === audioStatusSignature(next)
@@ -99,6 +117,7 @@ export function useAppRuntime(api: AppRuntimeApi) {
       }, 100);
     });
     const unlistenMeters = api.onAudioMeters((meters: AudioMeters) => {
+      if (disposed || getHostGeneration() !== effectGeneration) return;
       publishAudioMeters(meters);
     });
     return () => {
@@ -109,7 +128,7 @@ export function useAppRuntime(api: AppRuntimeApi) {
       unlistenCanonicalStateChanged();
       unlistenMeters();
     };
-  }, [api, applyCanonicalState, mergeBootstrapState]);
+  }, [api, applyCanonicalState, hostGeneration, mergeBootstrapState]);
 
   return {
     ...sessionHook,

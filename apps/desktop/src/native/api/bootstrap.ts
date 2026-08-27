@@ -1,13 +1,19 @@
 import { listen } from '@tauri-apps/api/event';
 import type { BootstrapState, RecoveryCandidate } from '@/model/domain';
 import { defaultSession } from '../browser-defaults';
-import { invokeOrFallback, isNativeRuntime } from '../invoke';
+import {
+  getHostGeneration,
+  invokeHostOrFallback,
+  isNativeRuntime,
+  setHostConnectionAvailability,
+  setHostGeneration,
+} from '../invoke';
 import type { RuntimeStartupFinishedEvent } from '../native-api';
 import { defaultVst3Root } from './constants';
 
 export async function bootstrap(): Promise<BootstrapState> {
   const session = defaultSession();
-  return invokeOrFallback<BootstrapState>(
+  const state = await invokeHostOrFallback<BootstrapState>(
     'get_bootstrap_state',
     {},
     {
@@ -25,8 +31,21 @@ export async function bootstrap(): Promise<BootstrapState> {
       recoveryCandidates: [] as RecoveryCandidate[],
       dataRoot: 'Browser preview \u2014 native persistence is unavailable',
       vst3Root: defaultVst3Root,
+      hostConnection: {
+        mode: 'disconnected',
+        generation: 1,
+        dataRoot: null,
+        instanceId: null,
+        pid: null,
+        reason: 'Native Host is unavailable in browser preview',
+      },
     },
   );
+  if (state.hostConnection.generation >= getHostGeneration()) {
+    setHostGeneration(state.hostConnection.generation);
+    setHostConnectionAvailability(state.hostConnection.mode !== 'disconnected');
+  }
+  return state;
 }
 
 export async function onRuntimeStartupFinished(

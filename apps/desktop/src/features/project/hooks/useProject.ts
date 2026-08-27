@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BootstrapState, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
+import { getHostGeneration } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface UseSessionOptions {
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
+  hostGeneration: number;
 }
 
 export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSessionOptions) {
@@ -18,7 +20,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     importSession: importSessionApi,
     restoreRecoveryGeneration,
   } = api;
-  const { setBoot } = options;
+  const { setBoot, hostGeneration } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
   const [historyState, setHistoryState] = useState<HistoryState>({
     canUndo: false,
@@ -29,10 +31,24 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   const sessionRef = useRef<CreativeSession | null>(null);
   const sequenceRef = useRef(0);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
+  const currentHostGeneration = useRef(hostGeneration);
+  currentHostGeneration.current = hostGeneration;
   sessionRef.current = session;
+
+  useEffect(() => {
+    sequenceRef.current = 0;
+    canonicalStateRef.current = null;
+    sessionRef.current = null;
+    setSession(null);
+    setHistoryState({ canUndo: false, canRedo: false });
+    setAutosaveError(null);
+    setExportMessage(null);
+    setBoot(null);
+  }, [hostGeneration, setBoot]);
 
   const applyCanonicalState = useCallback(
     (canonical: CanonicalState): boolean => {
+      if (getHostGeneration() !== hostGeneration) return false;
       if (canonical.sequence < sequenceRef.current) return false;
       sequenceRef.current = canonical.sequence;
       canonicalStateRef.current = canonical;
@@ -42,7 +58,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
       setBoot((current) => (current ? { ...current, canonical } : current));
       return true;
     },
-    [setBoot],
+    [hostGeneration, setBoot],
   );
 
   const mergeBootstrapState = useCallback((next: BootstrapState): BootstrapState => {
@@ -53,46 +69,60 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
 
   const refreshHistory = useCallback(async () => {
     const sequenceAtRequest = sequenceRef.current;
+    const generationAtRequest = hostGeneration;
     try {
       const nextHistory = await getHistoryState();
-      if (sequenceRef.current !== sequenceAtRequest) return;
+      if (
+        currentHostGeneration.current !== generationAtRequest ||
+        sequenceRef.current !== sequenceAtRequest
+      )
+        return;
       setHistoryState(nextHistory);
     } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
       setAutosaveError(
         `History state could not be read: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [getHistoryState]);
+  }, [getHistoryState, hostGeneration]);
 
   const undo = useCallback(async () => {
     if (!historyState.canUndo) return;
+    const generationAtRequest = hostGeneration;
     try {
+      const result = await undoSession();
+      if (currentHostGeneration.current !== generationAtRequest) return;
       const projectionFailed = applyArrangementMutation(
-        await undoSession(),
+        result,
         applyCanonicalState,
         setAutosaveError,
       );
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, historyState.canUndo, refreshHistory, undoSession]);
+  }, [applyCanonicalState, historyState.canUndo, hostGeneration, refreshHistory, undoSession]);
 
   const redo = useCallback(async () => {
     if (!historyState.canRedo) return;
+    const generationAtRequest = hostGeneration;
     try {
+      const result = await redoSession();
+      if (currentHostGeneration.current !== generationAtRequest) return;
       const projectionFailed = applyArrangementMutation(
-        await redoSession(),
+        result,
         applyCanonicalState,
         setAutosaveError,
       );
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, historyState.canRedo, redoSession, refreshHistory]);
+  }, [applyCanonicalState, historyState.canRedo, hostGeneration, redoSession, refreshHistory]);
 
   useEffect(() => {
     if (session) void refreshHistory();
@@ -103,42 +133,72 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
     if (next == null) return;
     const name = next.trim().slice(0, 160);
-    const projectionFailed = applyArrangementMutation(
-      await updateSessionSettings({ projectName: name || null }),
-      applyCanonicalState,
-      setAutosaveError,
-    );
-    if (!projectionFailed) setAutosaveError(null);
-  }, [applyCanonicalState, session, updateSessionSettings]);
+    const generationAtRequest = hostGeneration;
+    try {
+      const result = await updateSessionSettings({ projectName: name || null });
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      const projectionFailed = applyArrangementMutation(
+        result,
+        applyCanonicalState,
+        setAutosaveError,
+      );
+      if (!projectionFailed) setAutosaveError(null);
+    } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      setAutosaveError(`Rename failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [applyCanonicalState, hostGeneration, session, updateSessionSettings]);
 
   const exportSession = useCallback(async () => {
-    const result = await exportSessionApi();
-    setExportMessage(
-      result
-        ? `Exported manifest with ${result.assetCount} collected assets: ${result.path}`
-        : 'Export failed; the current session remains safe.',
-    );
-  }, [exportSessionApi]);
+    const generationAtRequest = hostGeneration;
+    try {
+      const result = await exportSessionApi();
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      setExportMessage(
+        result
+          ? `Exported manifest with ${result.assetCount} collected assets: ${result.path}`
+          : 'Export failed; the current session remains safe.',
+      );
+    } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      setExportMessage(
+        `Export failed; the current session remains safe: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [exportSessionApi, hostGeneration]);
 
   const importSession = useCallback(async () => {
     const path = window.prompt('Path to a Riffra project.json manifest');
     if (!path) return;
-    const imported = await importSessionApi(path.trim());
-    if (!imported) {
-      setExportMessage('Import failed; the current session remains safe.');
-      return;
+    const generationAtRequest = hostGeneration;
+    try {
+      const imported = await importSessionApi(path.trim());
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      if (!imported) {
+        setExportMessage('Import failed; the current session remains safe.');
+        return;
+      }
+      const projectionFailed = applyArrangementMutation(
+        imported,
+        applyCanonicalState,
+        setAutosaveError,
+      );
+      setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
+      if (!projectionFailed) setAutosaveError(null);
+      setExportMessage(
+        `Imported session: ${imported.canonical.session.projectName ?? imported.canonical.session.sessionId}`,
+      );
+    } catch (error) {
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      setExportMessage(
+        `Import failed; the current session remains safe: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
-    const projectionFailed = applyArrangementMutation(
-      imported,
-      applyCanonicalState,
-      setAutosaveError,
-    );
-    setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
-    if (!projectionFailed) setAutosaveError(null);
-    setExportMessage(
-      `Imported session: ${imported.canonical.session.projectName ?? imported.canonical.session.sessionId}`,
-    );
-  }, [applyCanonicalState, importSessionApi, setBoot]);
+  }, [applyCanonicalState, hostGeneration, importSessionApi, setBoot]);
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
@@ -148,25 +208,36 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
         )
       )
         return;
-      const restored = await restoreRecoveryGeneration(fileName);
-      if (!restored) {
-        setExportMessage(
-          'Recovery generation could not be restored; the current session remains safe.',
+      const generationAtRequest = hostGeneration;
+      try {
+        const restored = await restoreRecoveryGeneration(fileName);
+        if (currentHostGeneration.current !== generationAtRequest) return;
+        if (!restored) {
+          setExportMessage(
+            'Recovery generation could not be restored; the current session remains safe.',
+          );
+          return;
+        }
+        const projectionFailed = applyArrangementMutation(
+          restored,
+          applyCanonicalState,
+          setAutosaveError,
         );
-        return;
+        setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
+        if (!projectionFailed) setAutosaveError(null);
+        setExportMessage(
+          `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
+        );
+      } catch (error) {
+        if (currentHostGeneration.current !== generationAtRequest) return;
+        setExportMessage(
+          `Recovery generation could not be restored; the current session remains safe: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
-      const projectionFailed = applyArrangementMutation(
-        restored,
-        applyCanonicalState,
-        setAutosaveError,
-      );
-      setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
-      if (!projectionFailed) setAutosaveError(null);
-      setExportMessage(
-        `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
-      );
     },
-    [applyCanonicalState, restoreRecoveryGeneration, setBoot],
+    [applyCanonicalState, hostGeneration, restoreRecoveryGeneration, setBoot],
   );
 
   const dismissRecovery = useCallback(() => {

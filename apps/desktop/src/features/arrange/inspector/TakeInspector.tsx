@@ -9,6 +9,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { getHostGeneration } from '@/native/invoke';
 import { Icon } from '@/shared/ui/primitives';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './Inspector.module.css';
@@ -22,6 +23,7 @@ interface AuditionState {
 }
 
 interface TakeInspectorProps {
+  hostGeneration?: number;
   session: CreativeSession;
   selection: ArrangeSelection;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
@@ -152,6 +154,8 @@ export function TakeInspector(props: TakeInspectorProps) {
   const [sourceVariants, setSourceVariants] = useState<Record<string, AudioTakeVariant>>({});
   const auditionRef = useRef<AuditionState | null>(null);
   const auditionRequest = useRef(0);
+  const currentHostGeneration = useRef(props.hostGeneration ?? 0);
+  currentHostGeneration.current = props.hostGeneration ?? 0;
   const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
 
   const stopNativeAudition = useCallback(
@@ -171,7 +175,13 @@ export function TakeInspector(props: TakeInspectorProps) {
   }, [audition]);
 
   useEffect(() => {
+    resetAudition();
+    setSourceVariants({});
+  }, [props.hostGeneration, resetAudition]);
+
+  useEffect(() => {
     return props.api.onAudioStatus((status) => {
+      if (getHostGeneration() !== currentHostGeneration.current) return;
       if (status.previewing || auditionRef.current === null) return;
       resetAudition();
     });

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
-import { logNativeError } from '@/native/invoke';
+import { getHostGeneration, logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
+import { useHostConnection } from '@/app/runtime/useHostConnection';
 import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
@@ -15,15 +16,19 @@ import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
 import { useRecording } from '@/features/recording/hooks/useRecording';
 import { usePluginCatalog } from '@/features/plugins/hooks/usePluginCatalog';
-import { usePluginStatePersistence } from '@/features/plugins/hooks/usePluginStatePersistence';
 import { toast } from '@/shared/toasts';
 
 export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
   const [commandOpen, setCommandOpen] = useState(false);
-  const runtime = useAppRuntime(api);
-  const runtimeProjection = useRuntimeProjectionStatus(api);
-  const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(api);
+  const hostConnection = useHostConnection(api);
+  const hostReady = hostConnection.connected && !hostConnection.switching;
+  const runtime = useAppRuntime(api, hostConnection.state.generation);
+  const runtimeProjection = useRuntimeProjectionStatus(api, hostConnection.state.generation);
+  const { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob } = useBackgroundJobs(
+    api,
+    hostConnection.state.generation,
+  );
   const {
     boot,
     audio,
@@ -35,7 +40,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     session: canonicalSession,
     historyState,
     autosaveError,
-    setAutosaveError,
     exportMessage,
     undo,
     redo,
@@ -46,7 +50,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     dismissRecovery,
   } = runtime;
   const session = canonicalSession;
-  usePluginStatePersistence({ api, applyCanonicalState, setAutosaveError });
   const pluginCatalog = usePluginCatalog({
     api,
     boot,
@@ -54,6 +57,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   });
   const { plugins, scanPlugins } = pluginCatalog;
   useStartupRuntimeRecovery({
+    hostGeneration: hostConnection.state.generation,
+    hostReady,
     boot,
     runtimeStarted,
     runtimeStartupFinished,
@@ -66,6 +71,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const missingDependencyState = useMissingDependencies({
     api,
     boot,
+    hostGeneration: hostConnection.state.generation,
     applyCanonicalState,
     rescanPlugins: scanPlugins,
   });
@@ -78,15 +84,20 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     rescanMissingPlugins,
     ignoreMissing,
   } = missingDependencyState;
-  useRuntimeRestartNotification({ api });
+  useRuntimeRestartNotification({
+    api,
+    hostGeneration: hostConnection.state.generation,
+  });
 
   const { transportPlaying, playTransport, stopTransport, goToStart } = useTransportController({
     api,
     sessionRef,
+    hostGeneration: hostConnection.state.generation,
   });
 
   const audioHook = useAudioSettings(api, {
     audio,
+    hostGeneration: hostConnection.state.generation,
     setAudio,
   });
   const {
@@ -100,6 +111,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleMute,
   } = audioHook;
   const recording = useRecording(api, {
+    hostGeneration: hostConnection.state.generation,
     audio,
     setAudio,
     applyCanonicalState,
@@ -116,7 +128,10 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleRecording,
   } = recording;
 
-  const library = useLibrary(api, { setAudio });
+  const library = useLibrary(api, {
+    setAudio,
+    hostGeneration: hostConnection.state.generation,
+  });
   const {
     librarySection,
     setLibrarySection,
@@ -133,6 +148,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   } = library;
 
   const inbox = useInbox(api, recordings, {
+    hostGeneration: hostConnection.state.generation,
     reload: async () => {
       await reloadRecordings();
     },
@@ -141,26 +157,45 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
 
   const initialDataLoadStarted = useRef(false);
   useEffect(() => {
-    if (!boot || initialDataLoadStarted.current) return;
+    initialDataLoadStarted.current = false;
+  }, [hostConnection.state.generation]);
+  useEffect(() => {
+    if (!boot || !hostReady || initialDataLoadStarted.current) return;
     initialDataLoadStarted.current = true;
+    const requestGeneration = hostConnection.state.generation;
     const timer = setTimeout(() => {
       void reloadRecordings().catch(logNativeError('listRecordings'));
       void refreshAudioDevices().catch(logNativeError('probeAudioDevices'));
       void enableMidi().catch(logNativeError('enableMidi'));
-      void getAudioStatus().then(setAudio).catch(logNativeError('getAudioStatus'));
+      void getAudioStatus()
+        .then((nextAudio) => {
+          if (getHostGeneration() === requestGeneration) setAudio(nextAudio);
+        })
+        .catch(logNativeError('getAudioStatus'));
     }, 150);
     return () => clearTimeout(timer);
-  }, [enableMidi, getAudioStatus, refreshAudioDevices, reloadRecordings, boot, setAudio]);
+  }, [
+    enableMidi,
+    getAudioStatus,
+    hostReady,
+    refreshAudioDevices,
+    reloadRecordings,
+    boot,
+    hostConnection.state.generation,
+    setAudio,
+  ]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const typing = isEditableTypingTarget(event.target);
       if (event.ctrlKey && event.key.toLowerCase() === 'k') {
+        if (!hostReady) return;
         event.preventDefault();
         setCommandOpen((open) => !open);
         return;
       }
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'z') {
+        if (!hostReady) return;
         event.preventDefault();
         if (event.shiftKey) {
           void redo();
@@ -170,11 +205,13 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         return;
       }
       if (event.ctrlKey && !typing && event.key.toLowerCase() === 'y') {
+        if (!hostReady) return;
         event.preventDefault();
         void redo();
         return;
       }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'm') {
+        if (!hostReady) return;
         event.preventDefault();
         void toggleMute();
         return;
@@ -183,7 +220,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [redo, toggleMute, undo]);
+  }, [hostReady, redo, toggleMute, undo]);
 
   const visiblePlugins = query
     ? plugins.filter((plugin) =>
@@ -196,6 +233,14 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       )
     : recordings;
   return {
+    hostConnectionState: hostConnection.state,
+    localHosts: hostConnection.hosts,
+    hostSwitching: hostConnection.switching,
+    hostConnectionError: hostConnection.error,
+    refreshLocalHosts: hostConnection.refresh,
+    switchHost: hostConnection.switchHost,
+    reconnectHost: hostConnection.reconnect,
+    hostConnected: hostReady,
     boot,
     session,
     applyCanonicalState,

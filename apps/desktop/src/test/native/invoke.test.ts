@@ -8,12 +8,20 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: tauriInvoke,
 }));
 
-import { invoke, invokeLatest } from '@/native/invoke';
+import {
+  HostConnectionChangedError,
+  invoke,
+  invokeLatestHost,
+  setHostConnectionAvailability,
+  setHostGeneration,
+} from '@/native/invoke';
 
 describe('native invoke bridge', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     tauriInvoke.mockReset();
+    setHostGeneration(0);
+    setHostConnectionAvailability(true);
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -28,8 +36,8 @@ describe('native invoke bridge', () => {
   it('sends only the latest payload in one click burst', async () => {
     tauriInvoke.mockResolvedValue({ revision: 7 });
 
-    const first = invokeLatest('update_track', { value: 1 }, 'track:mute');
-    const second = invokeLatest('update_track', { value: 2 }, 'track:mute');
+    const first = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const second = invokeLatestHost('update_track', { value: 2 }, 'track:mute');
 
     await vi.advanceTimersByTimeAsync(20);
     await expect(Promise.all([first, second])).resolves.toEqual([{ revision: 7 }, { revision: 7 }]);
@@ -56,5 +64,16 @@ describe('native invoke bridge', () => {
 
     releaseParameter(undefined);
     await expect(parameter).resolves.toEqual(undefined);
+  });
+
+  it('does not send a coalesced update to a newer Host generation', async () => {
+    const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
+    setHostGeneration(1);
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    await rejection;
+    expect(tauriInvoke).not.toHaveBeenCalled();
   });
 });

@@ -5,11 +5,11 @@ import type {
   ProjectExport,
 } from '@/model/domain';
 import { defaultSession } from '../browser-defaults';
-import { invokeOrFallback, invoke } from '../invoke';
+import { invokeHostOrFallback, invokeHost } from '../invoke';
 
 export async function undoSession(): Promise<ArrangementMutationResult> {
   const session = defaultSession();
-  return invokeOrFallback<ArrangementMutationResult>(
+  return invokeHostOrFallback<ArrangementMutationResult>(
     'undo_session',
     {},
     {
@@ -25,7 +25,7 @@ export async function undoSession(): Promise<ArrangementMutationResult> {
 
 export async function redoSession(): Promise<ArrangementMutationResult> {
   const session = defaultSession();
-  return invokeOrFallback<ArrangementMutationResult>(
+  return invokeHostOrFallback<ArrangementMutationResult>(
     'redo_session',
     {},
     {
@@ -40,7 +40,7 @@ export async function redoSession(): Promise<ArrangementMutationResult> {
 }
 
 export async function getHistoryState(): Promise<HistoryState> {
-  return invokeOrFallback<HistoryState>(
+  return invokeHostOrFallback<HistoryState>(
     'get_history_state',
     {},
     {
@@ -53,7 +53,7 @@ export async function getHistoryState(): Promise<HistoryState> {
 export async function restoreRecoveryGeneration(
   fileName: string,
 ): Promise<ArrangementMutationResult | null> {
-  return invokeOrFallback<ArrangementMutationResult | null>(
+  return invokeHostOrFallback<ArrangementMutationResult | null>(
     'restore_recovery_generation',
     { fileName },
     null,
@@ -61,11 +61,11 @@ export async function restoreRecoveryGeneration(
 }
 
 export async function exportSession(): Promise<ProjectExport | null> {
-  return invokeOrFallback<ProjectExport | null>('export_scratch_session', {}, null);
+  return invokeHostOrFallback<ProjectExport | null>('export_scratch_session', {}, null);
 }
 
 export async function importSession(path: string): Promise<ArrangementMutationResult | null> {
-  return invokeOrFallback<ArrangementMutationResult | null>(
+  return invokeHostOrFallback<ArrangementMutationResult | null>(
     'import_scratch_session',
     { path },
     null,
@@ -73,11 +73,15 @@ export async function importSession(path: string): Promise<ArrangementMutationRe
 }
 
 export async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {
-  return invokeOrFallback<AssetId | null>('import_midi_file', { path, name: name ?? null }, null);
+  return invokeHostOrFallback<AssetId | null>(
+    'import_midi_file',
+    { path, name: name ?? null },
+    null,
+  );
 }
 
 export async function importMidiBytes(name: string, bytes: number[]): Promise<AssetId | null> {
-  return invokeOrFallback<AssetId | null>('import_midi_bytes', { name, bytes }, null);
+  return invokeHostOrFallback<AssetId | null>('import_midi_bytes', { name, bytes }, null);
 }
 
 export async function updateSessionSettings(patch: {
@@ -87,6 +91,6 @@ export async function updateSessionSettings(patch: {
   metronomeEnabled?: boolean;
   note?: string;
 }): Promise<ArrangementMutationResult> {
-  const result = await invoke<ArrangementMutationResult>('update_session_settings', { patch });
+  const result = await invokeHost<ArrangementMutationResult>('update_session_settings', { patch });
   return result;
 }

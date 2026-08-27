@@ -1,10 +1,19 @@
 import clsx from 'clsx';
-import type { AudioStatus, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
+import type {
+  AudioStatus,
+  CanonicalState,
+  CreativeSession,
+  HistoryState,
+  HostConnectionState,
+  HostTarget,
+  LocalHostInfo,
+} from '@/model/domain';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
 import type { TransportControlsApi } from '@/features/transport/transport-api';
 import { Icon } from '@/shared/ui/primitives';
+import { HostSelector } from './HostSelector';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
@@ -29,6 +38,14 @@ interface GlobalControlBarProps {
   onToggleRecording: () => void;
   transportControlsApi: TransportControlsApi;
   audioMonitorApi: AudioMonitorApi;
+  hostConnectionState: HostConnectionState;
+  localHosts: LocalHostInfo[];
+  hostSwitching: boolean;
+  hostConnectionError: string | null;
+  onRefreshHosts: () => Promise<unknown>;
+  onSwitchHost: (target: HostTarget) => Promise<unknown>;
+  onReconnectHost: () => Promise<unknown>;
+  hostConnected: boolean;
 }
 
 export function GlobalControlBar(props: GlobalControlBarProps) {
@@ -43,46 +60,64 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         .join(' · ');
 
   return (
-    <header className={styles.controlBar} aria-label="Global controls" data-global-control-bar>
+    <header
+      className={clsx(styles.controlBar, !props.hostConnected && styles.disconnected)}
+      aria-label="Global controls"
+      data-global-control-bar
+    >
       <div className={styles.projectControls}>
-        <button
-          type="button"
-          className={styles.sessionTitle}
-          onClick={props.onRenameSession}
-          title="Rename Scratch Session"
-        >
-          <span className={styles.sessionName}>
-            {props.session.projectName ?? 'Untitled Scratch'}
-          </span>
-          <span className={styles.sessionStatus}>
-            <span className={styles.saveLight} />
-            Auto-saved
-          </span>
-          <Icon name="chevron" />
-        </button>
-        <div className={styles.historyControls} role="group" aria-label="History">
+        <HostSelector
+          state={props.hostConnectionState}
+          hosts={props.localHosts}
+          switching={props.hostSwitching}
+          error={props.hostConnectionError}
+          onRefresh={props.onRefreshHosts}
+          onSwitch={props.onSwitchHost}
+          onReconnect={props.onReconnectHost}
+        />
+        <fieldset className={styles.projectHostBoundControls} disabled={!props.hostConnected}>
           <button
             type="button"
-            aria-label="Undo"
-            title="Undo (Ctrl+Z)"
-            disabled={!props.historyState.canUndo}
-            onClick={props.onUndo}
+            className={styles.sessionTitle}
+            onClick={props.onRenameSession}
+            title="Rename Scratch Session"
           >
-            <Icon name="undo" />
+            <span className={styles.sessionName}>
+              {props.session.projectName ?? 'Untitled Scratch'}
+            </span>
+            <span className={styles.sessionStatus}>
+              <span className={styles.saveLight} />
+              Auto-saved
+            </span>
+            <Icon name="chevron" />
           </button>
-          <button
-            type="button"
-            aria-label="Redo"
-            title="Redo (Ctrl+Y)"
-            disabled={!props.historyState.canRedo}
-            onClick={props.onRedo}
-          >
-            <Icon name="redo" />
-          </button>
-        </div>
+          <div className={styles.historyControls} role="group" aria-label="History">
+            <button
+              type="button"
+              aria-label="Undo"
+              title="Undo (Ctrl+Z)"
+              disabled={!props.historyState.canUndo}
+              onClick={props.onUndo}
+            >
+              <Icon name="undo" />
+            </button>
+            <button
+              type="button"
+              aria-label="Redo"
+              title="Redo (Ctrl+Y)"
+              disabled={!props.historyState.canRedo}
+              onClick={props.onRedo}
+            >
+              <Icon name="redo" />
+            </button>
+          </div>
+        </fieldset>
       </div>
 
-      <div className={styles.transportControls}>
+      <fieldset
+        className={clsx(styles.transportControls, styles.hostBoundControls)}
+        disabled={!props.hostConnected}
+      >
         <TransportControls
           session={props.session}
           applyCanonicalState={props.applyCanonicalState}
@@ -95,9 +130,12 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onToggleRecording={props.onToggleRecording}
           api={props.transportControlsApi}
         />
-      </div>
+      </fieldset>
 
-      <div className={styles.audioControls}>
+      <fieldset
+        className={clsx(styles.audioControls, styles.hostBoundControls)}
+        disabled={!props.hostConnected}
+      >
         <AudioMonitor
           session={props.session}
           applyCanonicalState={props.applyCanonicalState}
@@ -144,7 +182,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         >
           <Icon name="stop" />
         </button>
-      </div>
+      </fieldset>
     </header>
   );
 }

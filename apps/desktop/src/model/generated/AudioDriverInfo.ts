@@ -3,4 +3,7 @@ import type { AudioAccessMode } from "./AudioAccessMode";
 import type { AudioDeviceInfo } from "./AudioDeviceInfo";
 import type { AudioDevicePairing } from "./AudioDevicePairing";
 
+/**
+ * A native audio driver and its available devices.
+ */
 export type AudioDriverInfo = { name: string, accessMode: AudioAccessMode, devicePairing: AudioDevicePairing, inputs: Array<AudioDeviceInfo>, outputs: Array<AudioDeviceInfo>, };

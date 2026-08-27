@@ -1,11 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import type { AudioStatus, CanonicalState, RuntimeProjectionStatus } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
-import type {
-  NativeEventApi,
-  TrackPluginParameterChange,
-  TrackPluginStateChange,
-} from '../native-api';
+import type { NativeEventApi } from '../native-api';
 import { isNativeRuntime } from '../invoke';
 import type { TransportStatus } from '../contracts';
 
@@ -37,8 +33,4 @@ export const eventApi: NativeEventApi = {
     subscribe<{ generation: number }>('runtime-restarted', ({ generation }) =>
       callback(generation),
     ),
-  onTrackPluginStateChanged: (callback) =>
-    subscribe<TrackPluginStateChange>('track-plugin-state-changed', callback),
-  onTrackPluginParameterChanged: (callback) =>
-    subscribe<TrackPluginParameterChange>('track-plugin-parameter-changed', callback),
 };

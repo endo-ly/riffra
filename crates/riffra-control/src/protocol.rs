@@ -165,19 +165,44 @@ impl ControlResponse {
     }
 }
 
+/// The logical stream requested by a local control client.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionRole {
+    /// A request/response stream.
+    Command,
+    /// A server-to-client Host event stream.
+    Events,
+}
+
 /// First message sent by a control client after opening a pipe.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HelloRequest {
     #[serde(rename = "type")]
     pub message_type: String,
+    pub role: ConnectionRole,
 }
 
 impl HelloRequest {
     /// Creates the protocol handshake request.
     pub fn new() -> Self {
+        Self::command()
+    }
+
+    /// Creates a command connection handshake.
+    pub fn command() -> Self {
         Self {
             message_type: "hello".into(),
+            role: ConnectionRole::Command,
+        }
+    }
+
+    /// Creates an event connection handshake.
+    pub fn events() -> Self {
+        Self {
+            message_type: "hello".into(),
+            role: ConnectionRole::Events,
         }
     }
 }
@@ -209,6 +234,26 @@ impl HelloResponse {
     }
 }
 
+/// One Host event sent on an event connection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostEventFrame {
+    /// Stable event name shared by embedded and attached Desktop shells.
+    pub event: String,
+    /// Event-specific payload owned by the Runtime boundary.
+    pub payload: Value,
+}
+
+impl HostEventFrame {
+    /// Creates one event frame without introducing Runtime types here.
+    pub fn new(event: impl Into<String>, payload: Value) -> Self {
+        Self {
+            event: event.into(),
+            payload,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +270,21 @@ mod tests {
         let decoded: ControlRequest = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn hello_roles_round_trip_without_runtime_types() {
+        let command = serde_json::to_string(&HelloRequest::command()).unwrap();
+        let events = serde_json::to_string(&HelloRequest::events()).unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<HelloRequest>(&command).unwrap().role,
+            ConnectionRole::Command
+        );
+        assert_eq!(
+            serde_json::from_str::<HelloRequest>(&events).unwrap().role,
+            ConnectionRole::Events
+        );
     }
 
     #[test]

@@ -2,12 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import type { AudioAnalysis, AudioClip } from '@/model/domain';
 import type { AnalysisApi } from '@/native/native-api';
 
-export function useWaveformAnalyses(api: Pick<AnalysisApi, 'analyzeAsset'>, clips: AudioClip[]) {
+export function useWaveformAnalyses(
+  api: Pick<AnalysisApi, 'analyzeAsset'>,
+  clips: AudioClip[],
+  hostGeneration = 0,
+) {
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
   const requestedRef = useRef<Set<string>>(new Set());
+  const currentHostGeneration = useRef(hostGeneration);
+  currentHostGeneration.current = hostGeneration;
+
+  useEffect(() => {
+    currentHostGeneration.current = hostGeneration;
+    requestedRef.current.clear();
+    setAnalyses({});
+  }, [hostGeneration]);
 
   useEffect(() => {
     let active = true;
+    const effectGeneration = hostGeneration;
     const present = new Set<string>(clips.map((clip) => clip.assetId));
 
     // Drop cache entries for assetIds that no longer have any clip referencing
@@ -33,16 +46,20 @@ export function useWaveformAnalyses(api: Pick<AnalysisApi, 'analyzeAsset'>, clip
       void api
         .analyzeAsset(assetId as AudioClip['assetId'])
         .then((analysis) => {
-          if (active) setAnalyses((current) => ({ ...current, [assetId]: analysis }));
+          if (active && currentHostGeneration.current === effectGeneration) {
+            setAnalyses((current) => ({ ...current, [assetId]: analysis }));
+          }
         })
         .catch(() => {
-          if (active) setAnalyses((current) => ({ ...current, [assetId]: null }));
+          if (active && currentHostGeneration.current === effectGeneration) {
+            setAnalyses((current) => ({ ...current, [assetId]: null }));
+          }
         });
     }
     return () => {
       active = false;
     };
-  }, [api, clips]);
+  }, [api, clips, hostGeneration]);
 
   return analyses;
 }

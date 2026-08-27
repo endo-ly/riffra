@@ -2,6 +2,6 @@
 import type { AudioChannelInfo } from "./AudioChannelInfo";
 
 /**
- * An audio device and the channels exposed by the device probe.
+ * An audio device and the channels exposed by its probe.
  */
 export type AudioDeviceInfo = { name: string, channels: Array<AudioChannelInfo>, };

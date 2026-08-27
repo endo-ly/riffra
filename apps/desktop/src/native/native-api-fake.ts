@@ -11,14 +11,17 @@ import type {
   RenderResult,
   RuntimeProjectionStatus,
   ScanReport,
+  HostConnectionState,
+  HostTarget,
+  LocalHostInfo,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
 import { toAssetId, type TransportStatus } from './contracts';
 import type {
   NativeApi,
+  HostConnectionBootstrap,
+  HostConnectionChangedEvent,
   RuntimeStartupFinishedEvent,
-  TrackPluginParameterChange,
-  TrackPluginStateChange,
 } from './native-api';
 
 type ResponseValue = unknown | ((...arguments_: unknown[]) => unknown);
@@ -31,6 +34,7 @@ export interface FakeNativeApiOptions {
   missingDependencies?: MissingDependency[];
   responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
   failures?: Partial<Record<keyof NativeApi, Error>>;
+  hostConnection?: Partial<HostConnectionState>;
 }
 
 export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
@@ -101,6 +105,7 @@ export class FakeNativeApi implements NativeApi {
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
   bootstrapState: BootstrapState;
+  hostConnectionState: HostConnectionState;
   missing: MissingDependency[];
 
   private readonly responses = new Map<keyof NativeApi, ResponseValue>();
@@ -116,10 +121,7 @@ export class FakeNativeApi implements NativeApi {
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
   private readonly canonicalStateListeners = new Set<(state: CanonicalState) => void>();
   private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
-  private readonly pluginStateListeners = new Set<(change: TrackPluginStateChange) => void>();
-  private readonly pluginParameterListeners = new Set<
-    (change: TrackPluginParameterChange) => void
-  >();
+  private readonly hostConnectionListeners = new Set<(event: HostConnectionChangedEvent) => void>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
   private jobSequence = 0;
 
@@ -129,6 +131,14 @@ export class FakeNativeApi implements NativeApi {
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
     this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    this.hostConnectionState = {
+      ...this.bootstrapState.hostConnection,
+      ...options.hostConnection,
+    };
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      hostConnection: this.hostConnectionState,
+    };
     this.runtimeProjection = {
       state: 'idle',
       operationId: 0,
@@ -164,6 +174,29 @@ export class FakeNativeApi implements NativeApi {
 
   bootstrap() {
     return this.command('bootstrap', []);
+  }
+
+  getHostConnectionState() {
+    return this.command('getHostConnectionState', []);
+  }
+
+  listLocalHosts() {
+    return this.command('listLocalHosts', []);
+  }
+
+  switchHost(target: HostTarget) {
+    return this.command('switchHost', [target]);
+  }
+
+  reconnectHost() {
+    return this.command('reconnectHost', []);
+  }
+
+  onHostConnectionChanged(
+    callback: Parameters<NativeApi['onHostConnectionChanged']>[0],
+  ): Promise<() => void> {
+    this.recordCall('onHostConnectionChanged');
+    return Promise.resolve(this.subscribe(this.hostConnectionListeners, callback));
   }
 
   onRuntimeStartupFinished(
@@ -386,12 +419,6 @@ export class FakeNativeApi implements NativeApi {
   openTrackPluginEditor(...args: Parameters<NativeApi['openTrackPluginEditor']>) {
     return this.command('openTrackPluginEditor', args);
   }
-  persistTrackPluginState(...args: Parameters<NativeApi['persistTrackPluginState']>) {
-    return this.command('persistTrackPluginState', args);
-  }
-  persistTrackPluginParameter(...args: Parameters<NativeApi['persistTrackPluginParameter']>) {
-    return this.command('persistTrackPluginParameter', args);
-  }
   removeTrack(...args: Parameters<NativeApi['removeTrack']>) {
     return this.command('removeTrack', args);
   }
@@ -522,17 +549,6 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onRuntimeRestarted');
     return this.subscribe(this.runtimeRestartListeners, callback);
   }
-  onTrackPluginStateChanged(callback: Parameters<NativeApi['onTrackPluginStateChanged']>[0]) {
-    this.recordCall('onTrackPluginStateChanged');
-    return this.subscribe(this.pluginStateListeners, callback);
-  }
-  onTrackPluginParameterChanged(
-    callback: Parameters<NativeApi['onTrackPluginParameterChanged']>[0],
-  ) {
-    this.recordCall('onTrackPluginParameterChanged');
-    return this.subscribe(this.pluginParameterListeners, callback);
-  }
-
   private command<K extends keyof NativeApi>(
     name: K,
     arguments_: Parameters<NativeMethod<K>>,
@@ -608,12 +624,17 @@ export class FakeNativeApi implements NativeApi {
     this.canonicalStateListeners.forEach((listener) => listener(state));
   }
 
-  emitTrackPluginState(change: TrackPluginStateChange): void {
-    this.pluginStateListeners.forEach((listener) => listener(change));
-  }
-
-  emitTrackPluginParameter(change: TrackPluginParameterChange): void {
-    this.pluginParameterListeners.forEach((listener) => listener(change));
+  emitHostConnectionChanged(
+    state: Partial<HostConnectionState> & Pick<HostConnectionState, 'generation'>,
+    bootstrap: BootstrapState | null = this.bootstrapState,
+  ): void {
+    this.hostConnectionState = { ...this.hostConnectionState, ...state };
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      hostConnection: this.hostConnectionState,
+    };
+    const event = { state: this.hostConnectionState, bootstrap };
+    this.hostConnectionListeners.forEach((listener) => listener(event));
   }
 
   private invoke(name: keyof NativeApi, arguments_: unknown[]): Promise<unknown> {
@@ -632,6 +653,50 @@ export class FakeNativeApi implements NativeApi {
     switch (name) {
       case 'bootstrap':
         return Promise.resolve(this.bootstrapState);
+      case 'getHostConnectionState':
+        return Promise.resolve(this.hostConnectionState);
+      case 'listLocalHosts':
+        return Promise.resolve([] as LocalHostInfo[]);
+      case 'switchHost':
+      case 'reconnectHost': {
+        const target =
+          name === 'switchHost' ? (arguments_[0] as HostTarget | undefined) : undefined;
+        const mode: HostConnectionState['mode'] =
+          target?.type === 'embedded'
+            ? 'embedded'
+            : target
+              ? 'attached'
+              : this.hostConnectionState.mode;
+        const dataRoot =
+          target?.type === 'dataRoot' ? target.dataRoot : this.hostConnectionState.dataRoot;
+        const instanceId =
+          target?.type === 'registration'
+            ? target.instanceId
+            : target?.type === 'embedded'
+              ? 'fake-desktop-host'
+              : this.hostConnectionState.instanceId;
+        this.hostConnectionState = {
+          ...this.hostConnectionState,
+          mode,
+          dataRoot,
+          instanceId,
+          generation: this.hostConnectionState.generation + 1,
+          reason: null,
+        };
+        this.bootstrapState = {
+          ...this.bootstrapState,
+          hostConnection: this.hostConnectionState,
+        };
+        const event: HostConnectionChangedEvent = {
+          state: this.hostConnectionState,
+          bootstrap: this.bootstrapState,
+        };
+        this.hostConnectionListeners.forEach((listener) => listener(event));
+        return Promise.resolve({
+          state: this.hostConnectionState,
+          bootstrap: this.bootstrapState,
+        } as HostConnectionBootstrap);
+      }
       case 'getHistoryState':
         return Promise.resolve({ canUndo: false, canRedo: false });
       case 'listRecordings':
@@ -783,8 +848,6 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'reorderTrackEffects',
   'setTrackDeviceBypassed',
   'setTrackDeviceParameter',
-  'persistTrackPluginState',
-  'persistTrackPluginParameter',
   'removeTrack',
   'duplicateTrack',
   'reorderTrack',
@@ -849,6 +912,14 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     recoveryCandidates: [],
     dataRoot: 'C:\\Riffra',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
+    hostConnection: {
+      mode: 'embedded',
+      generation: 1,
+      dataRoot: 'C:\\Riffra',
+      instanceId: 'fake-desktop-host',
+      pid: 1,
+      reason: null,
+    },
     ...overrides,
     canonical,
   };

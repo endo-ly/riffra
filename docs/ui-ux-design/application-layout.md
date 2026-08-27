@@ -5,7 +5,7 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GLOBAL CONTROL BAR                                                           │
-│ Project / History                    Transport             Audio / Safety     │
+│ Host / Project / History             Transport             Audio / Safety     │
 ├────────────────────┬─────────────────────────────────────────────────────────┤
 │ BROWSER            │                                                         │
 │                    │                        MAIN CANVAS                      │
@@ -25,7 +25,19 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 
 ## Global Control Bar
 
-Global Control Bar は、セッション名、履歴、Transport、音声状態、安全操作、検索、設定をまとめる。Transport はこの領域の一部として扱い、独立した下部バーには置かない。
+Global Control Bar は、現在のHost、セッション名、履歴、Transport、音声状態、安全操作、検索、設定をまとめる。Transport はこの領域の一部として扱い、独立した下部バーには置かない。
+
+### Host Selector
+
+Host Selector はGlobal Control Barの左端に置き、現在のHostと接続状態を常時表示する。Host名はHost bootstrapのproject name、DataRootのbasename、PIDまたはinstance IDの補助情報から構成し、Registryに表示名を別管理しない。
+
+- Embeddedは `Local Desktop` と表示する
+- Attachedは接続先Hostのproject nameまたはDataRoot basenameと、PID・Runtime状態・DataRootを表示する
+- Switching中は現在の画面を保持し、`Connecting...`を表示してHost-bound操作を無効にする
+- Disconnectedは最後の接続先を再接続候補として表示し、`Reconnect`、`Local Desktop`、`Refresh`を提供する
+- `Connect to Local Host...`はDesktopのfolder dialogでDataRootを選択し、そのHostの`host.json`へ接続する
+
+Hostの切替後はCanonical state、履歴、Runtime、Audio、Transport、Plugin、Recording、Library、Missing、Jobの表示を新Hostのbootstrap基準へ置き換える。最後に表示していたSessionを参照表示として残す場合も、Hostへ接続していない間は編集・再生・録音・Audio設定を実行できる状態にしない。
 
 ## Left Column
 

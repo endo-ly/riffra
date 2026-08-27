@@ -1,19 +1,19 @@
 import type { AudioStatus, RecordingStopResult } from '@/model/domain';
-import { invoke } from '../invoke';
+import { invokeHost } from '../invoke';
 import { audioCommandError } from './audio-error';
 
 export async function startArrangeRecording(): Promise<AudioStatus> {
-  return await invoke<AudioStatus>('start_arrange_recording');
+  return await invokeHost<AudioStatus>('start_arrange_recording');
 }
 
 export async function recordAnotherTake(recordingSessionId: string): Promise<AudioStatus> {
   try {
-    return await invoke<AudioStatus>('record_another_take', { recordingSessionId });
+    return await invokeHost<AudioStatus>('record_another_take', { recordingSessionId });
   } catch (error) {
     return await audioCommandError('Start another take', error);
   }
 }
 
 export async function stopArrangeRecording(): Promise<RecordingStopResult> {
-  return await invoke<RecordingStopResult>('stop_arrange_recording');
+  return await invokeHost<RecordingStopResult>('stop_arrange_recording');
 }

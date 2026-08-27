@@ -1,5 +1,5 @@
 use riffra_core::{CreativeSession, PortError, SessionStorage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -396,7 +396,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// Metadata displayed for one recoverable session generation.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryCandidate {
     /// Generation filename relative to the generations directory.

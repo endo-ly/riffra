@@ -1,9 +1,9 @@
 use riffra_core::CreativeSession;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectExport {
     pub path: String,

@@ -1,10 +1,10 @@
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MissingDependency {
     /// `file` for a missing audio asset, `plugin` for a missing VST3 binary.

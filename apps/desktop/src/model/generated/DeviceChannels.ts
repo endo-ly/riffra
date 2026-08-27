@@ -2,8 +2,6 @@
 import type { AudioChannelInfo } from "./AudioChannelInfo";
 
 /**
- * Channel names resolved lazily for a single selected device from Audio
- * Settings. Startup discovery stays passive (no device open); this detail is
- * fetched only when the user configures a specific device, opening it once.
+ * Channel names resolved for a selected device.
  */
 export type DeviceChannels = { driver: string, inputDevice: string, inputChannels: Array<AudioChannelInfo>, outputDevice: string, outputChannels: Array<AudioChannelInfo>, };

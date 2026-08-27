@@ -5,6 +5,7 @@ import * as audioApi from './audio';
 import * as bootstrapApi from './bootstrap';
 import { eventApi } from './events';
 import * as jobsApi from './jobs';
+import { hostConnectionApi } from './host-connection';
 import * as libraryApi from './library';
 import * as missingApi from './missing';
 import * as projectApi from './project';
@@ -18,6 +19,7 @@ export function createNativeApi(): NativeApi {
     ...bootstrapApi,
     ...projectApi,
     ...jobsApi,
+    ...hostConnectionApi,
     ...libraryApi,
     ...analysisApi,
     ...renderApi,

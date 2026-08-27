@@ -53,6 +53,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
+import { HostConnectionChangedError, getHostGeneration } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeDetailController';
@@ -63,6 +64,7 @@ import styles from './WorkspaceArrange.module.css';
 import overlayStyles from './WorkspaceArrangeOverlay.module.css';
 
 interface WorkspaceArrangeProps {
+  hostGeneration?: number;
   session: CreativeSession;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
@@ -120,8 +122,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
     props.api,
     timebase,
+    props.hostGeneration ?? 0,
   );
-  const analyses = useWaveformAnalyses(props.api, arrangement.audioClips);
+  const analyses = useWaveformAnalyses(
+    props.api,
+    arrangement.audioClips,
+    props.hostGeneration ?? 0,
+  );
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
   const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
   const barTicks = ticksPerBar(timebase);
@@ -192,11 +199,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
+      const requestGeneration = props.hostGeneration ?? 0;
       if (trackKind === 'audio') {
         setMessage('MIDI Assets can only be placed on an Instrument Track.');
         return;
       }
       for (const file of Array.from(files)) {
+        if (getHostGeneration() !== requestGeneration) return;
         if (!/\.midi?$/i.test(file.name)) continue;
         const stem = file.name.replace(/\.(mid|midi)$/i, '');
         try {
@@ -204,6 +213,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             stem,
             Array.from(new Uint8Array(await file.arrayBuffer())),
           );
+          if (getHostGeneration() !== requestGeneration) return;
           if (!assetId) continue;
           await commit(api.addMidiClipToArrangement(assetId, stem, undefined, trackId));
         } catch {
@@ -211,7 +221,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
       }
     },
-    [api, commit, setMessage],
+    [api, commit, props.hostGeneration, setMessage],
   );
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
@@ -547,6 +557,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   const performDeleteTrack = async (trackId: string) => {
+    const requestGeneration = getHostGeneration();
     const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
     if (
       props.focusedTrackId === trackId &&
@@ -555,11 +566,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     ) {
       try {
         const status = await props.api.panicMidiTrack(trackId);
+        if (getHostGeneration() !== requestGeneration) return;
         if (status) editor.setMessage(status.message);
       } catch (error) {
+        if (error instanceof HostConnectionChangedError) return;
         editor.setMessage(String(error));
       }
     }
+    if (getHostGeneration() !== requestGeneration) return;
     const next = await editor.commit(props.api.removeTrack(trackId));
     if (next) {
       if (props.focusedTrackId === trackId) {
@@ -812,7 +826,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const seekMidiEditor = (tick: number) => {
     const nextTick = Math.max(0, Math.round(tick));
     seekLocally(nextTick);
-    void props.api.seekTimeline(nextTick).catch((error) => setMessage(String(error)));
+    void props.api.seekTimeline(nextTick).catch((error) => {
+      if (error instanceof HostConnectionChangedError) return;
+      setMessage(String(error));
+    });
     setFollow(true);
   };
 

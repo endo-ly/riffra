@@ -28,8 +28,8 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 │ Tauri シェル                                                     │
 │ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
 │ │ WebView (React)      │   │ Rust バックエンド                │ │
-│ │ 表示・操作・表示状態  │◀──▶│ DawHost / Tauri adapter        │ │
-│ │ NativeApi 経由で指令 │   │ UI接続 / composition             │ │
+│ │ 表示・操作・表示状態  │◀──▶│ HostConnectionManager / adapter │ │
+│ │ NativeApi 経由で指令 │   │ Embedded / Attached Host       │ │
 │ └──────────────────────┘   └──────────────────────────────────┘ │
 └──────┬──────────────────────────┬───────────────────────────────┘
        │ JSON Lines (stdin/stdout)
@@ -45,7 +45,7 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 
 | プロセス             | 役割                                                        | 所有状態                                   |
 | -------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| Tauri シェル         | DesktopのUI、DawHostのcomposition、Tauri event bridge       | UI接続、window、dialog                     |
+| Tauri シェル         | DesktopのUI、Host接続、Tauri event bridge                   | UI接続、window、dialog、Host選択           |
 | `riffra serve` Host  | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
 | riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
 | riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
@@ -75,12 +75,20 @@ Tauri 命令層 (src-tauri/src/**/commands.rs)
 
 Desktop adapter (apps/desktop/src-tauri/src)
   ├─ Tauri command / event / windowの境界を担当
-  └─ riffra-runtime::DawHostへUI入力とbundle pathを接続
+  ├─ HostConnectionManagerでEmbedded / Attached / Disconnectedを管理
+  ├─ Embeddedではriffra-runtime::DawHostを所有し、AttachedではLocalHostClientを利用
+  └─ 現在Hostのoperation、bootstrap、eventをWebViewへ接続
 
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
   ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
   ├─ AudioSupervisor / RuntimeReconciler / Transport ordering
-  └─ HostEventSink と Local Control Server
+  ├─ HostEventSink / HostEventHub / Host bootstrap
+  └─ Local Control Server（command connection / events connection）
+
+riffra-control（crates/riffra-control）: current-user Local Host接続基盤
+  ├─ Host identity / endpoint descriptor / Local Host Registry
+  ├─ LocalHostClient / command request-response / event stream
+  └─ Named Pipe / Unix Domain Socketのframingと権限境界
 
 riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
   ├─ SessionStore / Asset Repository / Project package
@@ -117,7 +125,7 @@ Attached CLI（apps/cli --attach）
 
 ### Hostの外部制御
 
-起動中のRiffra Hostは、外部クライアントから操作する制御経路を持つ。WindowsではNamed Pipe、LinuxではUnix Domain Socketを使い、接続情報を`<data_root>/control/host.json`へ公開する。Attached CLIはこの経路を介して接続先のCoreとRuntimeを共有する。
+起動中のHostは接続情報を公開し、外部クライアントから操作できる。DesktopはHostConnectionManagerで、自分のEmbedded Hostか別プロセスのHostへ接続し、Host Selectorから切り替える。接続・イベント・切替の詳細は `ipc.md` の境界Fに譲る。
 
 Standalone CLIは自分のDataRootLease、SessionStore、`AppCore<()>`で動く独立した永続編集モードである。`riffra serve`は自分のDataRootLease、`AppCore<AudioSupervisor>`、Undo/Redo履歴、正準シーケンス、Audio Runtimeを保持する。Attached CLIはこれらを開かず、接続先Hostの状態を利用する。
 
@@ -220,7 +228,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopとStandalone CLI、`riffra serve`は起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。Attached CLIはDataRootを開かず、接続先Hostへ制御要求だけを送る。
+DesktopのEmbedded Host、Standalone CLI、`riffra serve`は起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。DesktopのAttached modeとAttached CLIはDataRootを開かず、接続先Hostへ制御要求だけを送る。
 
 排他にはロックファイルではなくOSのファイルロックを使うため、異常終了後に残ったファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 

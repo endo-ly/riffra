@@ -2,7 +2,7 @@ use crate::application::history::History;
 use crate::domain::CreativeSession;
 use crate::errors::ApplicationError;
 use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -21,7 +21,7 @@ pub struct CanonicalSnapshot {
 }
 
 /// Canonical production state and the history capabilities at one revision.
-#[derive(Clone, Debug, PartialEq, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalState {
     /// Canonical production state at the revision boundary.
@@ -75,7 +75,7 @@ impl CanonicalSessionHandle {
 }
 
 /// Read-only history capabilities exposed to a host UI.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, TS)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryState {
     /// Whether an undo operation can be performed.

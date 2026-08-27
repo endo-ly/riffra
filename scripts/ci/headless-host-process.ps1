@@ -41,6 +41,15 @@ try {
     if (-not $session.ok -or $session.result.type -ne 'session' -or $session.sequence -ne 0) {
         throw 'Attached session.get returned an invalid contract'
     }
+    '{"requestId":"bootstrap","command":"host.bootstrap","params":{}}' |
+        & $binary --data-root $dataRoot --attach --interactive |
+        Out-File (Join-Path $dataRoot 'bootstrap.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Attached host.bootstrap failed' }
+    $bootstrap = Get-Content (Join-Path $dataRoot 'bootstrap.json') | ConvertFrom-Json
+    if (-not $bootstrap.ok -or $bootstrap.result.type -ne 'hostBootstrap' -or
+        $bootstrap.result.value.canonical.sequence -ne 0) {
+        throw 'Attached host.bootstrap returned an invalid contract'
+    }
     & $binary --data-root $dataRoot --attach track add --name 'Process Test' --kind instrument |
         Out-File (Join-Path $dataRoot 'track.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached track.add failed' }

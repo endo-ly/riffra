@@ -19,6 +19,7 @@ import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalControlBar } from './layout/GlobalControlBar';
+import { HostSelector } from './layout/HostSelector';
 import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
@@ -78,6 +79,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   } | null>(null);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const {
+    hostConnectionState,
+    localHosts,
+    hostSwitching,
+    hostConnectionError,
+    refreshLocalHosts,
+    switchHost,
+    reconnectHost,
+    hostConnected,
     boot,
     session,
     audio,
@@ -139,7 +148,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     toggleRecording,
     api: nativeApi,
   } = useAppController(api);
-  const arrange = useArrangeShell(nativeApi, session, applyCanonicalState);
+  const arrange = useArrangeShell(
+    nativeApi,
+    session,
+    applyCanonicalState,
+    hostConnectionState.generation,
+  );
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
 
   useEffect(() => {
@@ -192,12 +206,36 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     if (exportMessage) toast(exportMessage, { kind: 'info' });
   }, [exportMessage]);
 
+  useEffect(() => {
+    if (!hostConnected) {
+      setAudioSettingsOpen(false);
+      setCommandOpen(false);
+    }
+  }, [hostConnected, setAudioSettingsOpen, setCommandOpen]);
+
+  const hostSelector = (
+    <HostSelector
+      state={hostConnectionState}
+      hosts={localHosts}
+      switching={hostSwitching}
+      error={hostConnectionError}
+      onRefresh={refreshLocalHosts}
+      onSwitch={switchHost}
+      onReconnect={reconnectHost}
+    />
+  );
+
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
+        <div className={styles.bootHostSelector}>{hostSelector}</div>
         <span className={shellStyles.logoMark}>R</span>
         <strong>Riffra</strong>
-        <small>Recovering your creative memory…</small>
+        <small>
+          {hostConnected
+            ? 'Loading the connected Host…'
+            : 'Host disconnected — reconnect to continue'}
+        </small>
       </div>
     );
 
@@ -212,6 +250,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       style={shellStyle}
     >
       <GlobalControlBar
+        hostConnectionState={hostConnectionState}
+        localHosts={localHosts}
+        hostSwitching={hostSwitching}
+        hostConnectionError={hostConnectionError}
+        onRefreshHosts={refreshLocalHosts}
+        onSwitchHost={switchHost}
+        onReconnectHost={reconnectHost}
+        hostConnected={hostConnected}
         session={session}
         audio={audio}
         isMuted={isMuted}
@@ -236,7 +282,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       />
 
       <AudioSettingsDialog
-        open={audioSettingsOpen}
+        open={audioSettingsOpen && hostConnected}
         audio={audio}
         probe={deviceProbe}
         safeMode={boot.safeMode}
@@ -271,6 +317,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               <button
                 className={surface.textButton}
                 key={candidate.fileName}
+                disabled={!hostConnected}
                 onClick={() => void restoreRecovery(candidate.fileName)}
               >
                 {candidate.projectName ?? 'Untitled'} ·{' '}
@@ -302,7 +349,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           </strong>
           <span>{backgroundJob.message}</span>
           {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
-            <button className={surface.textButton} onClick={() => void cancelActiveJob()}>
+            <button
+              className={surface.textButton}
+              disabled={!hostConnected}
+              onClick={() => void cancelActiveJob()}
+            >
               Cancel
             </button>
           )}
@@ -310,18 +361,24 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       )}
 
       {missingDependencies.length > 0 && (
-        <MissingDependencies
-          missing={missingDependencies}
-          onRelink={(item, newPath) => void relinkMissing(item, newPath)}
-          onReplacePlugin={(deviceId, newPath) =>
-            void replaceMissingPluginDevice(deviceId, newPath)
-          }
-          onDisablePlugin={(deviceId) => void disableMissingPluginDevice(deviceId)}
-          onIgnore={ignoreMissing}
-        />
+        <div className={!hostConnected ? styles.hostDisconnected : undefined}>
+          <MissingDependencies
+            missing={missingDependencies}
+            onRelink={(item, newPath) => void relinkMissing(item, newPath)}
+            onReplacePlugin={(deviceId, newPath) =>
+              void replaceMissingPluginDevice(deviceId, newPath)
+            }
+            onDisablePlugin={(deviceId) => void disableMissingPluginDevice(deviceId)}
+            onIgnore={ignoreMissing}
+          />
+        </div>
       )}
 
-      <div className={shellStyles.appBody} data-app-body>
+      <div
+        className={clsx(shellStyles.appBody, !hostConnected && styles.hostDisconnected)}
+        data-app-body
+        aria-disabled={!hostConnected}
+      >
         <LeftColumn
           collapsed={leftColumnWidth === 0}
           propertiesHeight={propertiesHeight}
@@ -357,6 +414,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           }
           properties={
             <PropertiesPanel
+              hostGeneration={hostConnectionState.generation}
               audio={audio}
               recordingCommandPending={recordingCommandPending}
               session={session}
@@ -384,6 +442,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
 
         <section className={shellStyles.workspace}>
           <WorkspaceArrange
+            hostGeneration={hostConnectionState.generation}
             session={session}
             applyCanonicalState={applyCanonicalState}
             selection={arrange.selection}
@@ -420,7 +479,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         className={shellStyles.playSurfaceHost}
         data-play-surface-host
       />
-      {commandOpen && (
+      {commandOpen && hostConnected && (
         <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
           <section
             className={styles.commandPalette}

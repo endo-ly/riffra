@@ -49,9 +49,14 @@ CLI には既定の場所はなく `--data-root` が必須である。位置は�
 ├─ recordings/              # 録音キャプチャ
 ├─ exports/                 # レンダリング出力と Project package
 └─ control/host.json        # 接続情報(稼働中の Host のみ出力)
+
+<user-runtime-root>/riffra/hosts/
+└─ <instance-id>.json       # 同一OSユーザーの稼働Host一覧
 ```
 
-`--attach` の相手は DataRoot ではなく稼働中の Host プロセスであり、`control/host.json`(instanceId・pid・エンドポイント)を読んで接続する。エンドポイントの Named Pipe / Unix Domain Socket の差異は吸収される。ファイルの有無で「稼働中か」「誰も所有していないか」を判断できる。
+`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。`control/host.json`（instanceId・pid・エンドポイント）を読んで接続する。ファイルの有無だけでは「稼働中か」「誰も所有していないか」を判断できない。
+
+Host一覧は、registryに登録された各Hostへ接続して`host.status`を確認する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
 
 ### Desktop アプリの DataRoot
 
@@ -84,6 +89,22 @@ cargo run -p riffra-cli -- --data-root "$env:APPDATA\com.riffra.workbench" --att
 - `command`: 操作名
 - `expectedSequence`: 任意。指定すると正準シーケンスが一致するときだけ実行する(楽観制御)。ワンショットでは `--expected-sequence <n>` フラグ
 - `params`: コマンドごとの引数。キー名は camelCase
+
+Named Pipe / Unix Domain Socket のフレームは、最初に次のHelloを送る。
+
+```json
+{ "type": "hello", "role": "command" }
+```
+
+Event connectionでは`role`を`events`にする。応答の`instanceId`と`pid`がdescriptorと一致した後に、command requestまたはHost event frameを送る。
+
+Event frameはRuntime型を直接持たない。
+
+```json
+{ "event": "canonical-state-changed", "payload": { "sequence": 19 } }
+```
+
+初期同期はcommand connectionで`host.bootstrap`を要求し、event connectionの確立後に取得する。bootstrap取得中に受け取ったeventは順番どおりに適用する。
 
 成功応答:
 

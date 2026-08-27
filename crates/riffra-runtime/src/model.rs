@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Canonical session and audio status returned by a coordinated operation.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAudioPair {
     pub canonical: CanonicalState,
@@ -196,7 +196,7 @@ pub struct RuntimeProjectionStatus {
 
 /// Result of a canonical Arrangement mutation and its best-effort runtime
 /// projection.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrangementMutationResult {
     pub canonical: riffra_core::CanonicalState,
@@ -205,7 +205,7 @@ pub struct ArrangementMutationResult {
 
 /// Outcome of projecting a committed Arrangement mutation into the native
 /// runtime.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum ArrangementProjectionOutcome {
     NotRequired,
@@ -214,7 +214,7 @@ pub enum ArrangementProjectionOutcome {
 }
 
 /// Result returned after a recording capture has been stopped.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStopResult {
     pub canonical: riffra_core::CanonicalState,
@@ -225,7 +225,7 @@ pub struct RecordingStopResult {
 
 /// Describes whether stopped recording outputs were committed to the
 /// Arrangement or remain available for Inbox recovery.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum RecordingFinalizationOutcome {
     NotRequired,

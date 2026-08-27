@@ -1,6 +1,30 @@
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// Identity allocated once for one live Host process.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostIdentity {
+    pub instance_id: String,
+    pub pid: u32,
+}
+
+impl HostIdentity {
+    /// Allocates a process identity for a new Host composition.
+    pub fn new() -> Self {
+        Self {
+            instance_id: crate::new_instance_id(),
+            pid: std::process::id(),
+        }
+    }
+}
+
+impl Default for HostIdentity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 use uuid::Uuid;
 
 /// Local transport used by one live Riffra Host.
