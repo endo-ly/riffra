@@ -15,11 +15,12 @@ import { LibraryPanel } from '@/features/library/LibraryPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
+import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalControlBar } from './layout/GlobalControlBar';
-import { HostSelector } from './layout/HostSelector';
+import { SessionSelector } from './layout/SessionSelector';
 import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
@@ -78,6 +79,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     startWidth: number;
   } | null>(null);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
+  const [restoreCandidate, setRestoreCandidate] = useState<string | null>(null);
   const {
     hostConnectionState,
     localHosts,
@@ -92,7 +94,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     audio,
     setAudio,
     libraryQuery,
-    librarySection,
     importMidi,
     libraryResults,
     plugins,
@@ -125,7 +126,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     historyState,
     applyCanonicalState,
     setLibraryQuery,
-    setLibrarySection,
     setCommandOpen,
     refreshAudioDevices,
     probeAudioChannels,
@@ -135,7 +135,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     toggleMute,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
-    editSelectedLibraryAsset,
+    updateSelectedLibraryAsset,
     recoverAudio,
     exportSession,
     importSession,
@@ -213,8 +213,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     }
   }, [hostConnected, setAudioSettingsOpen, setCommandOpen]);
 
-  const hostSelector = (
-    <HostSelector
+  const sessionSelector = (
+    <SessionSelector
+      session={null}
       state={hostConnectionState}
       hosts={localHosts}
       switching={hostSwitching}
@@ -228,7 +229,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   if (!boot || !session)
     return (
       <div className={styles.bootScreen}>
-        <div className={styles.bootHostSelector}>{hostSelector}</div>
+        <div className={styles.bootHostSelector}>{sessionSelector}</div>
         <span className={shellStyles.logoMark}>R</span>
         <strong>Riffra</strong>
         <small>
@@ -264,7 +265,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         historyState={historyState}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
-        onRenameSession={() => void renameSession()}
+        onRenameSession={(name) => void renameSession(name)}
+        onExportSession={() => void exportSession()}
+        onImportSession={() => void importSession()}
         onToggleMute={() => void toggleMute()}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
@@ -318,7 +321,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 className={surface.textButton}
                 key={candidate.fileName}
                 disabled={!hostConnected}
-                onClick={() => void restoreRecovery(candidate.fileName)}
+                onClick={() => setRestoreCandidate(candidate.fileName)}
               >
                 {candidate.projectName ?? 'Untitled'} ·{' '}
                 {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
@@ -329,6 +332,19 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             </button>
           </div>
         </div>
+      )}
+
+      {restoreCandidate && (
+        <ConfirmDialog
+          title="Restore stable generation"
+          message={`Restore autosave generation ${restoreCandidate}? The current session will become the selected stable copy.`}
+          confirmLabel="Restore"
+          onConfirm={() => {
+            void restoreRecovery(restoreCandidate);
+            setRestoreCandidate(null);
+          }}
+          onCancel={() => setRestoreCandidate(null)}
+        />
       )}
 
       {!boot.nativeAvailable && (
@@ -386,8 +402,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           browser={
             <LibraryPanel
               library={{
-                section: librarySection,
-                setSection: setLibrarySection,
                 query: libraryQuery,
                 setQuery: setLibraryQuery,
                 results: libraryResults,
@@ -396,7 +410,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 relatedAssets,
                 onSelectAsset: (asset) => void selectLibraryAsset(asset),
                 onPreviewAsset: () => void previewSelectedLibraryAsset(),
-                onEditAsset: () => void editSelectedLibraryAsset(),
+                onUpdateAsset: (tag, note) => void updateSelectedLibraryAsset(tag, note),
                 onImportMidi: () => void importMidi(),
               }}
               plugins={{

@@ -13,7 +13,7 @@ import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
 import type { TransportControlsApi } from '@/features/transport/transport-api';
 import { Icon } from '@/shared/ui/primitives';
-import { HostSelector } from './HostSelector';
+import { SessionSelector } from './SessionSelector';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
@@ -23,7 +23,9 @@ interface GlobalControlBarProps {
   historyState: HistoryState;
   onUndo: () => void;
   onRedo: () => void;
-  onRenameSession: () => void;
+  onRenameSession: (name: string) => void;
+  onExportSession: () => void;
+  onImportSession: () => void;
   onToggleMute: () => void;
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
@@ -66,7 +68,8 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       data-global-control-bar
     >
       <div className={styles.projectControls}>
-        <HostSelector
+        <SessionSelector
+          session={props.session}
           state={props.hostConnectionState}
           hosts={props.localHosts}
           switching={props.hostSwitching}
@@ -74,23 +77,11 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onRefresh={props.onRefreshHosts}
           onSwitch={props.onSwitchHost}
           onReconnect={props.onReconnectHost}
+          onRenameSession={props.onRenameSession}
+          onExportSession={props.onExportSession}
+          onImportSession={props.onImportSession}
         />
         <fieldset className={styles.projectHostBoundControls} disabled={!props.hostConnected}>
-          <button
-            type="button"
-            className={styles.sessionTitle}
-            onClick={props.onRenameSession}
-            title="Rename Scratch Session"
-          >
-            <span className={styles.sessionName}>
-              {props.session.projectName ?? 'Untitled Scratch'}
-            </span>
-            <span className={styles.sessionStatus}>
-              <span className={styles.saveLight} />
-              Auto-saved
-            </span>
-            <Icon name="chevron" />
-          </button>
           <div className={styles.historyControls} role="group" aria-label="History">
             <button
               type="button"

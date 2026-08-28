@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LibraryPanel } from './LibraryPanel';
@@ -77,8 +77,6 @@ function makeInbox(): InboxController {
 }
 
 const libraryStub = {
-  section: 'Recordings',
-  setSection: vi.fn(),
   query: '',
   setQuery: vi.fn(),
   results: [] as LibraryAsset[],
@@ -87,7 +85,7 @@ const libraryStub = {
   relatedAssets: [] as LibraryAsset[],
   onSelectAsset: vi.fn(),
   onPreviewAsset: vi.fn(),
-  onEditAsset: vi.fn(),
+  onUpdateAsset: vi.fn(),
   onImportMidi: vi.fn(),
 };
 
@@ -125,7 +123,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const onAddPlugin = vi.fn();
     render(
       <LibraryPanel
-        library={{ ...libraryStub, section: 'Plugins' }}
+        library={libraryStub}
         plugins={{
           ...rackStub,
           plugins: [plugin],
@@ -173,7 +171,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const onAddPlugin = vi.fn();
     render(
       <LibraryPanel
-        library={{ ...libraryStub, section: 'Plugins' }}
+        library={libraryStub}
         plugins={{
           ...rackStub,
           plugins: [plugin],
@@ -237,15 +235,15 @@ describe('Inbox preservation zone (LIB-003)', () => {
     await user.click(screen.getByLabelText('Archive'));
     expect(inbox.archive).toHaveBeenCalledWith(recordingA.id);
 
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await user.click(screen.getByLabelText('Delete'));
+    expect(inbox.remove).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     expect(inbox.remove).toHaveBeenCalledWith(recordingA.id);
   });
 
-  it('renames and tags the selected take through prompts', async () => {
+  it('renames the selected take through its inline field', async () => {
     const inbox = makeInbox();
-    const prompt = vi.fn().mockReturnValueOnce('Renamed Take').mockReturnValueOnce('mytag');
-    vi.stubGlobal('prompt', prompt);
     const user = userEvent.setup();
     render(
       <LibraryPanel
@@ -256,10 +254,29 @@ describe('Inbox preservation zone (LIB-003)', () => {
       />,
     );
 
-    await user.click(screen.getByLabelText('Rename'));
-    expect(inbox.rename).toHaveBeenCalledWith(recordingA.id, 'Renamed Take');
+    const nameInput = screen.getByLabelText(`Rename ${recordingA.name}`);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Renamed Take');
+    await user.keyboard('{Enter}');
 
-    await user.click(screen.getByLabelText('Tag'));
+    expect(inbox.rename).toHaveBeenCalledWith(recordingA.id, 'Renamed Take');
+  });
+
+  it('tags the selected take through its inline fields', async () => {
+    const inbox = makeInbox();
+    const user = userEvent.setup();
+    render(
+      <LibraryPanel
+        library={libraryStub}
+        plugins={rackStub}
+        recordings={recordingsStub}
+        inbox={inbox}
+      />,
+    );
+
+    await user.type(screen.getByLabelText(`Tag ${recordingA.name}`), 'mytag');
+    await user.keyboard('{Enter}');
+
     expect(inbox.tag).toHaveBeenCalledWith(recordingA.id, 'mytag', null);
   });
 

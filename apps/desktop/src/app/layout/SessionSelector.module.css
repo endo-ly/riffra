@@ -1,0 +1,223 @@
+.selector {
+  position: relative;
+  flex: 0 1 200px;
+  min-width: 148px;
+  max-width: 240px;
+}
+
+.trigger {
+  width: 100%;
+  height: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 4px 7px;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--color-bg-surface-raised);
+  border-color: var(--color-border-default);
+}
+
+.trigger > svg {
+  width: 10px;
+  color: var(--color-text-muted);
+  transform: rotate(90deg);
+}
+
+.triggerText {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.sessionName,
+.hostLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionName {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-emphasis);
+  font-weight: 600;
+}
+
+.hostLine {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.saveDot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
+.hostDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
+.hostDot[data-mode='disconnected'] {
+  background: var(--color-status-danger);
+}
+
+.hostDot[data-mode='attached'] {
+  background: var(--color-accent-primary);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .saveDot {
+    animation: softPulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes softPulse {
+    50% {
+      opacity: 0.45;
+    }
+  }
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--z-popover);
+  width: 272px;
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.panel[data-placement='above'] {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.heading {
+  padding: 3px 8px 5px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.heading:not(:first-child) {
+  margin-top: 5px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.renameInput {
+  height: 26px;
+  min-width: 0;
+  padding: 0 8px;
+  margin-bottom: 4px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-control);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  outline: 0;
+}
+
+.renameInput:focus {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+}
+
+.renameInput::placeholder {
+  color: var(--color-text-disabled);
+}
+
+.hostItem {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.hostItem > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.hostItem strong,
+.hostItem small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostItem strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.hostItem small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
+.hostItem:hover:not(:disabled) {
+  background: var(--color-bg-control-hover);
+}
+
+.hostItem:disabled {
+  opacity: 0.6;
+}
+
+.action {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  font-size: var(--font-size-control);
+}
+
+.action:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-control-hover);
+}
+
+.error {
+  margin: 6px 8px 2px;
+  color: var(--color-status-danger);
+  font-size: var(--font-size-micro);
+  line-height: 1.35;
+}

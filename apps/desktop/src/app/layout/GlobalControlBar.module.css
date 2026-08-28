@@ -15,7 +15,6 @@
   z-index: var(--z-chrome);
 }
 
-.disconnected .sessionTitle,
 .disconnected .historyControls,
 .disconnected .transportControls,
 .disconnected .audioControls {
@@ -51,69 +50,6 @@
 .projectControls {
   gap: 6px;
   overflow: visible;
-}
-
-.sessionTitle {
-  min-width: 0;
-  max-width: 220px;
-  height: 34px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: 17px 11px;
-  align-items: center;
-  column-gap: 8px;
-  flex: 1 1 160px;
-  padding: 3px 6px;
-  overflow: hidden;
-  text-align: left;
-  color: var(--color-text-primary);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-}
-
-.sessionTitle:hover {
-  background: var(--color-bg-surface-raised);
-  border-color: var(--color-border-default);
-}
-
-.sessionName,
-.sessionStatus {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sessionName {
-  color: var(--color-text-strong);
-  font-size: var(--font-size-emphasis);
-  font-weight: 600;
-}
-
-.sessionStatus {
-  grid-column: 1;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-}
-
-.saveLight {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-status-success);
-}
-
-.sessionTitle svg {
-  grid-column: 2;
-  grid-row: 1 / 3;
-  width: 11px;
-  color: var(--color-text-muted);
-  transform: rotate(90deg);
 }
 
 .historyControls {
@@ -290,7 +226,6 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .saveLight,
   .audioStatus.starting .audioStatusDot {
     animation: softPulse 1.8s ease-in-out infinite;
   }
@@ -308,10 +243,6 @@
     padding: 0 8px;
   }
 
-  .sessionTitle {
-    max-width: 170px;
-  }
-
   .audioControls {
     gap: 4px;
   }
@@ -326,10 +257,6 @@
 }
 
 @media (max-width: 980px) {
-  .sessionStatus {
-    display: none;
-  }
-
   .audioStatus {
     min-width: 28px;
     width: 28px;

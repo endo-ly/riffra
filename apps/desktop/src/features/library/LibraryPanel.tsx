@@ -1,10 +1,10 @@
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import type { AssetId, LibraryAsset, PluginEntry, RecordingAsset } from '@/model/domain';
 import type { Track } from '@/model/domain';
-import { librarySections } from './library-sections';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import { writeAssetDrag } from '@/shared/asset-drag';
+import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import styles from './LibraryPanel.module.css';
@@ -12,8 +12,6 @@ import { InboxOperations } from './InboxOperations';
 
 interface LibraryPanelProps {
   library: {
-    section: string;
-    setSection: (section: string) => void;
     query: string;
     setQuery: (query: string) => void;
     results: LibraryAsset[];
@@ -22,7 +20,7 @@ interface LibraryPanelProps {
     relatedAssets: LibraryAsset[];
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
-    onEditAsset: () => void;
+    onUpdateAsset: (tag: string | null, note: string | null) => void;
     onImportMidi: () => void;
   };
   plugins: {
@@ -44,32 +42,53 @@ function assetIconName(asset: Pick<LibraryAsset, 'kind'>) {
   return 'module';
 }
 
+function BrowserSection(props: {
+  label: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.section}>
+      <button
+        type="button"
+        className={styles.sectionHeader}
+        aria-expanded={props.open}
+        onClick={props.onToggle}
+      >
+        <Icon name="chevron" />
+        <span>{props.label}</span>
+        <small>{props.count}</small>
+      </button>
+      {props.open && props.children}
+    </section>
+  );
+}
+
 export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState({ Recordings: true, Plugins: true });
+  const [pendingDelete, setPendingDelete] = useState<RecordingAsset | null>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  const noteInputRef = useRef<HTMLInputElement>(null);
 
   const showHandledError = (operation: Promise<unknown>) => {
     void operation.catch(() => undefined);
   };
 
-  const sectionCount = (section: string) =>
-    section === 'Plugins' ? plugins.plugins.length : recordings.count;
+  const commitAssetMemory = () => {
+    library.onUpdateAsset(
+      tagInputRef.current?.value.trim() || null,
+      noteInputRef.current?.value.trim() || null,
+    );
+  };
+
+  const toggleSection = (section: 'Recordings' | 'Plugins') =>
+    setExpanded((current) => ({ ...current, [section]: !current[section] }));
 
   return (
     <aside className={styles.libraryPanel} aria-label="Browser" data-library-panel>
-      <div className={styles.tabs} role="tablist" aria-label="Browser sections">
-        {librarySections.map((section) => (
-          <button
-            key={section}
-            role="tab"
-            aria-selected={library.section === section}
-            className={clsx(styles.tab, library.section === section && styles.active)}
-            onClick={() => library.setSection(section)}
-          >
-            {section}
-            <small>{sectionCount(section)}</small>
-          </button>
-        ))}
-      </div>
       <div className={styles.toolbar}>
         <label className={styles.search}>
           <Icon name="search" />
@@ -80,27 +99,24 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
             placeholder="Search"
           />
         </label>
-        {library.section === 'Plugins' ? (
-          <button
-            type="button"
-            className={styles.toolButton}
-            aria-label="Import MIDI"
-            title="Import MIDI"
-            onClick={() => void library.onImportMidi()}
-          >
-            <Icon name="import" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={styles.toolButton}
-            aria-label="Find duplicates"
-            title="Find duplicates"
-            onClick={() => showHandledError(inbox.detectDuplicates())}
-          >
-            <Icon name="copy" />
-          </button>
-        )}
+        <button
+          type="button"
+          className={styles.toolButton}
+          aria-label="Import MIDI"
+          title="Import MIDI"
+          onClick={() => void library.onImportMidi()}
+        >
+          <Icon name="import" />
+        </button>
+        <button
+          type="button"
+          className={styles.toolButton}
+          aria-label="Find duplicates"
+          title="Find duplicates"
+          onClick={() => showHandledError(inbox.detectDuplicates())}
+        >
+          <Icon name="copy" />
+        </button>
       </div>
       <div className={styles.libraryContent}>
         {library.searchQuery && (
@@ -145,24 +161,38 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                     <span className={surface.eyebrow}>ASSET MEMORY</span>
                     <strong>{library.selectedAsset.name}</strong>
                   </div>
-                  <div>
-                    <button
-                      className={surface.textButton}
-                      disabled={library.selectedAsset.kind !== 'audio'}
-                      onClick={() => void library.onPreviewAsset()}
-                    >
-                      Preview
-                    </button>
-                    <button
-                      className={surface.textButton}
-                      onClick={() => void library.onEditAsset()}
-                    >
-                      Edit
-                    </button>
-                  </div>
+                  <button
+                    className={surface.textButton}
+                    disabled={library.selectedAsset.kind !== 'audio'}
+                    onClick={() => void library.onPreviewAsset()}
+                  >
+                    Preview
+                  </button>
                 </header>
-                <small>Tag: {library.selectedAsset.tag ?? '—'}</small>
-                <p>{library.selectedAsset.note ?? 'No note yet.'}</p>
+                <label className={styles.assetField}>
+                  <span>Tag</span>
+                  <input
+                    key={`tag:${library.selectedAsset.id}`}
+                    ref={tagInputRef}
+                    defaultValue={library.selectedAsset.tag ?? ''}
+                    placeholder="Add tag"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitAssetMemory();
+                    }}
+                  />
+                </label>
+                <label className={styles.assetField}>
+                  <span>Note</span>
+                  <input
+                    key={`note:${library.selectedAsset.id}`}
+                    ref={noteInputRef}
+                    defaultValue={library.selectedAsset.note ?? ''}
+                    placeholder="Add note"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitAssetMemory();
+                    }}
+                  />
+                </label>
                 {library.relatedAssets.length > 0 && (
                   <div>
                     <span className={surface.eyebrow}>RELATED</span>
@@ -177,7 +207,12 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
             )}
           </section>
         )}
-        {library.section === 'Plugins' ? (
+        <BrowserSection
+          label="Plugins"
+          count={plugins.plugins.length}
+          open={expanded.Plugins}
+          onToggle={() => toggleSection('Plugins')}
+        >
           <div className={styles.pluginArea}>
             {plugins.visiblePlugins.length < plugins.plugins.length && (
               <small className={styles.scanMessage}>
@@ -246,129 +281,122 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
               </div>
             )}
           </div>
-        ) : library.section === 'Recordings' ? (
-          <>
-            {inbox.error ? (
-              <small className={clsx(styles.inboxMessage, styles.error)} role="alert">
-                {inbox.error}
-              </small>
-            ) : inbox.message ? (
-              <small className={styles.inboxMessage} role="status">
-                {inbox.message}
-              </small>
-            ) : null}
-            {recordings.visibleRecordings.slice(0, 12).map((recording) => (
+        </BrowserSection>
+        <BrowserSection
+          label="Recordings"
+          count={recordings.count}
+          open={expanded.Recordings}
+          onToggle={() => toggleSection('Recordings')}
+        >
+          {inbox.error ? (
+            <small className={clsx(styles.inboxMessage, styles.error)} role="alert">
+              {inbox.error}
+            </small>
+          ) : inbox.message ? (
+            <small className={styles.inboxMessage} role="status">
+              {inbox.message}
+            </small>
+          ) : null}
+          {recordings.visibleRecordings.slice(0, 12).map((recording) => (
+            <div
+              className={clsx(
+                'recording-row',
+                styles.recordingRow,
+                inbox.selectedId === recording.id && styles.selected,
+                inbox.duplicateIds.has(recording.id) && ['duplicate', styles.duplicate],
+              )}
+              key={recording.id}
+              title={recording.error ?? undefined}
+            >
               <div
-                className={clsx(
-                  'recording-row',
-                  styles.recordingRow,
-                  inbox.selectedId === recording.id && styles.selected,
-                  inbox.duplicateIds.has(recording.id) && ['duplicate', styles.duplicate],
-                )}
-                key={recording.id}
-                title={recording.error ?? undefined}
+                className={`${styles.recordingSelect} ${recording.error ? styles.recordingSelectDisabled : ''}`}
+                aria-label={`Select ${recording.name}`}
+                aria-disabled={Boolean(recording.error)}
+                draggable={Boolean(recording.processedAssetId ?? recording.rawAssetId)}
+                onDragStart={(event) => {
+                  const assetId = recording.processedAssetId ?? recording.rawAssetId;
+                  if (!assetId || recording.error) {
+                    event.preventDefault();
+                    return;
+                  }
+                  writeAssetDrag(event.dataTransfer, {
+                    version: 1,
+                    assetId,
+                    name: recording.name,
+                    kind: 'audio',
+                  });
+                }}
+                onClick={() => {
+                  if (!recording.error) inbox.setSelectedId(recording.id);
+                }}
+                title={recording.error ?? recording.path}
               >
-                <div
-                  className={`${styles.recordingSelect} ${recording.error ? styles.recordingSelectDisabled : ''}`}
-                  aria-label={`Select ${recording.name}`}
-                  aria-disabled={Boolean(recording.error)}
-                  draggable={Boolean(recording.processedAssetId ?? recording.rawAssetId)}
-                  onDragStart={(event) => {
-                    const assetId = recording.processedAssetId ?? recording.rawAssetId;
-                    if (!assetId || recording.error) {
-                      event.preventDefault();
-                      return;
-                    }
-                    writeAssetDrag(event.dataTransfer, {
-                      version: 1,
-                      assetId,
-                      name: recording.name,
-                      kind: 'audio',
-                    });
-                  }}
-                  onClick={() => {
-                    if (!recording.error) inbox.setSelectedId(recording.id);
-                  }}
-                  title={recording.error ?? recording.path}
-                >
-                  <span className={styles.rowIcon}>
-                    <Icon name="wave" />
-                  </span>
-                  <div>
-                    <strong>{recording.name}</strong>
-                    <small>
-                      {recording.error ??
-                        `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${
-                          recording.missingSamples
-                            ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
-                            : ''
-                        }${recording.midiAssetId ? ' · MIDI' : ''}`}
-                    </small>
-                  </div>
-                  {(recording.processedAssetId ?? recording.rawAssetId) && (
-                    <span className={styles.assetGrip} aria-hidden="true">
-                      <Icon name="grip" />
-                    </span>
-                  )}
-                  <i
-                    className={clsx(
-                      styles.stability,
-                      styles[
-                        recording.state === 'completed' && !recording.error
-                          ? 'validated'
-                          : 'quarantined'
-                      ],
-                    )}
-                  />
+                <span className={styles.rowIcon}>
+                  <Icon name="wave" />
+                </span>
+                <div>
+                  <strong>{recording.name}</strong>
+                  <small>
+                    {recording.error ??
+                      `${recording.state} · ${recording.samplesWritten.toLocaleString()} samples${
+                        recording.missingSamples
+                          ? ` · dropout ${recording.dropoutStartSample?.toLocaleString() ?? '?'}–${recording.dropoutEndSample?.toLocaleString() ?? '?'} (${recording.missingSamples.toLocaleString()} missing)`
+                          : ''
+                      }${recording.midiAssetId ? ' · MIDI' : ''}`}
+                  </small>
                 </div>
+                {(recording.processedAssetId ?? recording.rawAssetId) && (
+                  <span className={styles.assetGrip} aria-hidden="true">
+                    <Icon name="grip" />
+                  </span>
+                )}
+                <i
+                  className={clsx(
+                    styles.stability,
+                    styles[
+                      recording.state === 'completed' && !recording.error
+                        ? 'validated'
+                        : 'quarantined'
+                    ],
+                  )}
+                />
               </div>
-            ))}
-            {recordings.visibleRecordings.length === 0 && (
-              <div className={styles.libraryEmpty}>
-                <span>No recordings yet</span>
-                <small>
-                  Capture takes with Quick Record or the transport to keep them in the Inbox.
-                </small>
-              </div>
-            )}
-            {inbox.selected && (
-              <InboxOperations
-                recording={inbox.selected}
-                onPreview={() => showHandledError(inbox.preview(inbox.selected!))}
-                onRename={() => {
-                  const name = window.prompt('Rename take', inbox.selected!.name);
-                  if (name && name.trim()) {
-                    showHandledError(inbox.rename(inbox.selected!.id, name.trim()));
-                  }
-                }}
-                onTag={() => {
-                  const tag = window.prompt('Tag', '');
-                  const note = window.prompt('Note', '');
-                  if (tag != null) {
-                    showHandledError(inbox.tag(inbox.selected!.id, tag || null, note || null));
-                  }
-                }}
-                onPromote={() => showHandledError(inbox.promote(inbox.selected!.id))}
-                onArchive={() => showHandledError(inbox.archive(inbox.selected!.id))}
-                onDelete={() => {
-                  if (
-                    window.confirm(
-                      `Delete ${inbox.selected!.name}? Its Raw, Processed, and MIDI files will be removed.`,
-                    )
-                  ) {
-                    showHandledError(inbox.remove(inbox.selected!.id));
-                  }
-                }}
-              />
-            )}
-          </>
-        ) : (
-          <div className={styles.libraryEmpty}>
-            <span>No assets yet</span>
-            <small>Saved sounds become reusable here.</small>
-          </div>
-        )}
+            </div>
+          ))}
+          {recordings.visibleRecordings.length === 0 && (
+            <div className={styles.libraryEmpty}>
+              <span>No recordings yet</span>
+              <small>
+                Capture takes with Quick Record or the transport to keep them in the Inbox.
+              </small>
+            </div>
+          )}
+          {inbox.selected && (
+            <InboxOperations
+              recording={inbox.selected}
+              onPreview={() => showHandledError(inbox.preview(inbox.selected!))}
+              onRename={(name) => showHandledError(inbox.rename(inbox.selected!.id, name))}
+              onTag={(tag, note) => showHandledError(inbox.tag(inbox.selected!.id, tag, note))}
+              onPromote={() => showHandledError(inbox.promote(inbox.selected!.id))}
+              onArchive={() => showHandledError(inbox.archive(inbox.selected!.id))}
+              onDelete={() => setPendingDelete(inbox.selected)}
+            />
+          )}
+        </BrowserSection>
       </div>
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete recording"
+          message={`Delete ${pendingDelete.name}? Its Raw, Processed, and MIDI files will be removed.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            showHandledError(inbox.remove(pendingDelete.id));
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </aside>
   );
 }

@@ -133,8 +133,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
   });
   const {
-    librarySection,
-    setLibrarySection,
     libraryQuery,
     setLibraryQuery,
     libraryResults,
@@ -143,7 +141,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     query,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
-    editSelectedLibraryAsset,
+    updateSelectedLibraryAsset,
     importMidi,
   } = library;
 
@@ -262,8 +260,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     deviceProbe,
     refreshAudioDevices,
     probeAudioChannels,
-    librarySection,
-    setLibrarySection,
     libraryQuery,
     setLibraryQuery,
     libraryResults,
@@ -288,7 +284,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     restoreRecovery,
     dismissRecovery,
     selectLibraryAsset,
-    editSelectedLibraryAsset,
+    updateSelectedLibraryAsset,
     previewSelectedLibraryAsset,
     toggleMute,
     toggleRecording,

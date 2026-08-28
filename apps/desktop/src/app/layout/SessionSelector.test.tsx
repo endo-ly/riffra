@@ -2,9 +2,11 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
-import { HostSelector } from './HostSelector';
+import { defaultSession } from '@/native/browser-defaults';
+import { SessionSelector } from './SessionSelector';
 
 vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),
@@ -33,9 +35,10 @@ const hosts: LocalHostInfo[] = [
   },
 ];
 
-function renderSelector(state: HostConnectionState = embedded) {
+function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
   return render(
-    <HostSelector
+    <SessionSelector
+      session={defaultSession()}
       state={state}
       hosts={hosts}
       switching={false}
@@ -43,19 +46,34 @@ function renderSelector(state: HostConnectionState = embedded) {
       onRefresh={vi.fn().mockResolvedValue(undefined)}
       onSwitch={vi.fn().mockResolvedValue(null)}
       onReconnect={vi.fn().mockResolvedValue(null)}
+      {...overrides}
     />,
   );
 }
 
-describe('HostSelector', () => {
-  it('shows the current Host and verified local candidates', () => {
+describe('SessionSelector', () => {
+  it('shows the session, its actions, and verified local Host candidates', () => {
     renderSelector();
 
-    expect(screen.getByLabelText('Current Host: Local Desktop')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Current Host: Local Desktop'));
+    fireEvent.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
 
+    expect(screen.getByRole('textbox', { name: 'Session name' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Export Project' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
+  });
+
+  it('commits an inline session rename on Enter', async () => {
+    const onRenameSession = vi.fn();
+    const user = userEvent.setup();
+    renderSelector(embedded, { onRenameSession });
+
+    await user.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'My Project');
+    await user.keyboard('{Enter}');
+
+    expect(onRenameSession).toHaveBeenCalledOnce();
+    expect(onRenameSession).toHaveBeenCalledWith('My Project');
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {
@@ -67,7 +85,8 @@ describe('HostSelector', () => {
       reason: 'Host event connection closed',
     };
     render(
-      <HostSelector
+      <SessionSelector
+        session={defaultSession()}
         state={state}
         hosts={hosts}
         switching={false}
@@ -78,7 +97,7 @@ describe('HostSelector', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Disconnected'));
+    fireEvent.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect' }));
 
     await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());

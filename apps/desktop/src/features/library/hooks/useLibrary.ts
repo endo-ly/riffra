@@ -15,7 +15,6 @@ export function useLibrary(
   { setAudio, hostGeneration = 0 }: UseLibraryOptions,
 ) {
   const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
-  const [librarySection, setLibrarySection] = useState('Plugins');
   const [libraryQuery, setLibraryQuery] = useState('');
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
   const [selectedLibraryAsset, setSelectedLibraryAsset] = useState<LibraryAsset | null>(null);
@@ -48,26 +47,25 @@ export function useLibrary(
     [hostGeneration, relatedLibraryAssets],
   );
 
-  const editSelectedLibraryAsset = useCallback(async () => {
-    if (!selectedLibraryAsset) return;
-    const tag = window.prompt('Asset tags (comma-separated)', selectedLibraryAsset.tag ?? '');
-    if (tag == null) return;
-    const note = window.prompt('Asset note', selectedLibraryAsset.note ?? '');
-    if (note == null) return;
-    const requestGeneration = hostGeneration;
-    try {
-      const updated = await updateLibraryAsset(selectedLibraryAsset.id, tag, note);
-      if (!updated || currentHostGeneration.current !== requestGeneration) return;
-      setSelectedLibraryAsset(updated);
-      setLibraryResults((current) =>
-        current.map((asset) => (asset.id === updated.id ? updated : asset)),
-      );
-    } catch (error) {
-      if (currentHostGeneration.current === requestGeneration) {
-        logNativeError('updateLibraryAsset')(error);
+  const updateSelectedLibraryAsset = useCallback(
+    async (tag: string | null, note: string | null) => {
+      if (!selectedLibraryAsset) return;
+      const requestGeneration = hostGeneration;
+      try {
+        const updated = await updateLibraryAsset(selectedLibraryAsset.id, tag, note);
+        if (!updated || currentHostGeneration.current !== requestGeneration) return;
+        setSelectedLibraryAsset(updated);
+        setLibraryResults((current) =>
+          current.map((asset) => (asset.id === updated.id ? updated : asset)),
+        );
+      } catch (error) {
+        if (currentHostGeneration.current === requestGeneration) {
+          logNativeError('updateLibraryAsset')(error);
+        }
       }
-    }
-  }, [hostGeneration, selectedLibraryAsset, updateLibraryAsset]);
+    },
+    [hostGeneration, selectedLibraryAsset, updateLibraryAsset],
+  );
 
   const previewSelectedLibraryAsset = useCallback(async () => {
     const asset = selectedLibraryAsset;
@@ -135,8 +133,6 @@ export function useLibrary(
   }, [hostGeneration, query, searchLibrary]);
 
   return {
-    librarySection,
-    setLibrarySection,
     libraryQuery,
     setLibraryQuery,
     libraryResults,
@@ -145,7 +141,7 @@ export function useLibrary(
     query,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
-    editSelectedLibraryAsset,
+    updateSelectedLibraryAsset,
     importMidi,
   };
 }

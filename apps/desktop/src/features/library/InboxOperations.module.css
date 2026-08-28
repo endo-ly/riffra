@@ -17,6 +17,51 @@
 .inboxOperations header small {
   color: var(--color-text-secondary);
 }
+
+.field {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field input {
+  height: 22px;
+  min-width: 0;
+  padding: 0 6px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  outline: 0;
+}
+
+.field input:focus {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+}
+
+.field input::placeholder {
+  color: var(--color-text-disabled);
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.fieldRow .field {
+  grid-template-columns: 26px minmax(0, 1fr);
+}
+
 .inboxActions {
   display: flex;
   flex-wrap: wrap;

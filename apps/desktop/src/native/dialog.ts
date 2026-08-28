@@ -12,3 +12,11 @@ export async function openHostDataRoot(): Promise<string | null> {
   const result = await open({ directory: true, multiple: false });
   return typeof result === 'string' ? result : null;
 }
+
+export async function openProjectManifest(): Promise<string | null> {
+  const result = await open({
+    multiple: false,
+    filters: [{ name: 'Riffra Project', extensions: ['json'] }],
+  });
+  return typeof result === 'string' ? result : null;
+}

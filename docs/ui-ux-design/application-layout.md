@@ -5,14 +5,12 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GLOBAL CONTROL BAR                                                           │
-│ Host / Project / History             Transport             Audio / Safety     │
+│ Session / Host / History             Transport             Audio / Safety    │
 ├────────────────────┬─────────────────────────────────────────────────────────┤
 │ BROWSER            │                                                         │
-│                    │                        MAIN CANVAS                      │
-│ Search             │                        Timeline                         │
-│ Assets             │                                                         │
+│ Search             │                        MAIN CANVAS                      │
+│ Plugins            │                        Timeline                         │
 │ Recordings         │                                                         │
-│ Plugins            │                                                         │
 ├────────────────────┤                                                         │
 │ PROPERTIES         ├─────────────────────────────────────────────────────────┤
 │ Track / Clip /     │ DETAIL AREA                                             │
@@ -25,11 +23,13 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 
 ## Global Control Bar
 
-Global Control Bar は、現在のHost、セッション名、履歴、Transport、音声状態、安全操作、検索、設定をまとめる。Transport はこの領域の一部として扱い、独立した下部バーには置かない。
+Global Control Bar は、現在のセッション、Host、履歴、Transport、音声状態、安全操作、検索、設定をまとめる。Transport はこの領域の一部として扱い、独立した下部バーには置かない。
 
-### Host Selector
+### Session Selector
 
-Host Selector はGlobal Control Barの左端に置き、現在のHostと接続状態を常時表示する。Host名はHost bootstrapのproject name、DataRootのbasename、PIDまたはinstance IDの補助情報から構成し、Registryに表示名を別管理しない。
+Session Selector はGlobal Control Barの左端に置き、現在のセッションとHost接続を常時表示する。1行目にセッション名と自動保存状態、2行目にHost名と接続状態を示す。Host名はHost bootstrapのproject name、DataRootのbasename、PIDまたはinstance IDの補助情報から構成し、Registryに表示名を別管理しない。
+
+選択するとpopoverが開き、SESSIONとHOSTのセクションを提供する。SESSIONではセッション名をインライン編集し、Export ProjectとImport Projectを実行する。Import Projectはファイルダイアログでproject.jsonマニフェストを選択する。
 
 - Embeddedは `Local Desktop` と表示する
 - Attachedは接続先Hostのproject nameまたはDataRoot basenameと、PID・Runtime状態・DataRootを表示する
@@ -41,7 +41,7 @@ Hostの切替後はCanonical state、履歴、Runtime、Audio、Transport、Plug
 
 ## Left Column
 
-Left Column は Browser と Properties を上下に並べる。Browser は素材の検索・試聴・投入を担当し、Properties は Arrange の選択状態に応じて Track、Clip、Take の内容を表示する。両方を同時に表示するため、選択対象が変わっても Browser の検索や表示文脈は維持される。
+Left Column は Browser と Properties を上下に並べる。Browser は素材の検索・試聴・投入を担当し、共通の検索と Plugins / Recordings の折りたたみ可能なセクションで構成する。セクションは互いに独立して開閉でき、同時に表示される。検索はセクションを横断する絞り込みとして共有する。Properties は Arrange の選択状態に応じて Track、Clip、Take の内容を表示する。両方を同時に表示するため、選択対象が変わっても Browser の検索や表示文脈は維持される。
 
 Left Column の幅は Main Canvas との境界で変更できる。Browser と Properties の境界は上下に変更でき、Browser の最低表示領域を保つ。
 

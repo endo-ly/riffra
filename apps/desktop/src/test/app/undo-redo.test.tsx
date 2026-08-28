@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import App from '@/app/App';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -28,7 +28,6 @@ async function waitForAppShell() {
 
 describe('Undo/Redo (PRJ-003)', () => {
   it('undoes and redoes a session rename through the global bar', async () => {
-    window.prompt = vi.fn(() => 'My Project');
     const original = defaultSession();
     const renamed = { ...original, projectName: 'My Project' };
     const fake = new FakeNativeApi({
@@ -51,10 +50,14 @@ describe('Undo/Redo (PRJ-003)', () => {
     await waitForAppShell();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /Untitled Scratch/ }));
+    await user.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
+    const nameInput = await screen.findByRole('textbox', { name: 'Session name' });
+    await user.clear(nameInput);
+    await user.type(nameInput, 'My Project');
+    await user.keyboard('{Enter}');
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /My Project/ })).toBeInTheDocument(),
+      expect(screen.getByRole('button', { name: /Session: My Project/ })).toBeInTheDocument(),
     );
 
     const undoButton = screen.getByRole('button', { name: 'Undo' });
@@ -62,7 +65,7 @@ describe('Undo/Redo (PRJ-003)', () => {
     await user.click(undoButton);
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Untitled Scratch/ })).toBeInTheDocument(),
+      expect(screen.getByRole('button', { name: /Session: Untitled Scratch/ })).toBeInTheDocument(),
     );
 
     const redoButton = screen.getByRole('button', { name: 'Redo' });
@@ -70,7 +73,7 @@ describe('Undo/Redo (PRJ-003)', () => {
     await user.click(redoButton);
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /My Project/ })).toBeInTheDocument(),
+      expect(screen.getByRole('button', { name: /Session: My Project/ })).toBeInTheDocument(),
     );
   });
 });

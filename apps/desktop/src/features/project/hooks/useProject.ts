@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BootstrapState, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
-import { getHostGeneration } from '@/native/invoke';
+import { openProjectManifest } from '@/native/dialog';
+import { getHostGeneration, isNativeRuntime, logNativeError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface UseSessionOptions {
@@ -128,26 +129,29 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     if (session) void refreshHistory();
   }, [refreshHistory, session]);
 
-  const renameSession = useCallback(async () => {
-    if (!session) return;
-    const next = window.prompt('Scratch Session name', session.projectName ?? 'Untitled Scratch');
-    if (next == null) return;
-    const name = next.trim().slice(0, 160);
-    const generationAtRequest = hostGeneration;
-    try {
-      const result = await updateSessionSettings({ projectName: name || null });
-      if (currentHostGeneration.current !== generationAtRequest) return;
-      const projectionFailed = applyArrangementMutation(
-        result,
-        applyCanonicalState,
-        setAutosaveError,
-      );
-      if (!projectionFailed) setAutosaveError(null);
-    } catch (error) {
-      if (currentHostGeneration.current !== generationAtRequest) return;
-      setAutosaveError(`Rename failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [applyCanonicalState, hostGeneration, session, updateSessionSettings]);
+  const renameSession = useCallback(
+    async (next: string) => {
+      if (!session) return;
+      const name = next.trim().slice(0, 160);
+      const generationAtRequest = hostGeneration;
+      try {
+        const result = await updateSessionSettings({ projectName: name || null });
+        if (currentHostGeneration.current !== generationAtRequest) return;
+        const projectionFailed = applyArrangementMutation(
+          result,
+          applyCanonicalState,
+          setAutosaveError,
+        );
+        if (!projectionFailed) setAutosaveError(null);
+      } catch (error) {
+        if (currentHostGeneration.current !== generationAtRequest) return;
+        setAutosaveError(
+          `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    [applyCanonicalState, hostGeneration, session, updateSessionSettings],
+  );
 
   const exportSession = useCallback(async () => {
     const generationAtRequest = hostGeneration;
@@ -170,7 +174,14 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   }, [exportSessionApi, hostGeneration]);
 
   const importSession = useCallback(async () => {
-    const path = window.prompt('Path to a Riffra project.json manifest');
+    if (!isNativeRuntime()) return;
+    let path: string | null;
+    try {
+      path = await openProjectManifest();
+    } catch (error) {
+      logNativeError('openProjectManifest')(error);
+      return;
+    }
     if (!path) return;
     const generationAtRequest = hostGeneration;
     try {
@@ -202,12 +213,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
-      if (
-        !window.confirm(
-          `Restore autosave generation ${fileName}? The current session will become the selected stable copy.`,
-        )
-      )
-        return;
       const generationAtRequest = hostGeneration;
       try {
         const restored = await restoreRecoveryGeneration(fileName);
