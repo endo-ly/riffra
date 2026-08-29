@@ -29,7 +29,7 @@ riffra --data-root ./riffra-data music midi-clip create --track-id track:01j... 
 riffra --data-root ./riffra-data music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
 ```
 
-通常の作曲では `music.*` の音楽表現を使う。低レベルの `midi-*` 操作だけがtickとMIDI pitch番号を受け取る。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
+通常の作曲では、対応する `music.*` の音楽表現を使う。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
 
 ### Music Operations
 
@@ -140,7 +140,7 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 | `midi-note transform`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` [`--transpose-semitones`] [`--velocity-offset`] |
 | `midi-note duplicate`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` `--offset-ticks 3840`                           |
 
-低レベルMIDI操作は、CC・Pitch Bendなどを含むイベントを直接編集する場合に使う。通常の音符の作成・配置には `music midi-clip` と `music note` を使う。
+低レベルMIDI操作は、既存NoteのIDを指定した直接編集や、CC・Pitch Bendなどを含むイベントを直接編集する場合に使う。通常の音符の作成・配置には `music midi-clip` と `music note` を使う。
 
 ### Marker・Range・Automation
 

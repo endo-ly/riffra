@@ -55,7 +55,9 @@ description: >-
 - クリップ開始位置を使った相対tickの計算
 - Node.js / Python / PowerShellでのMIDI note JSON生成
 
-`music.*` はStandalone、serve、Attachedで同じControl契約を使える。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときだけ使う。
+通常の作曲では、対応する `music.*` 操作がある場合はそれを優先する。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作で使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。
+
+`music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
 ## DataRoot
 
