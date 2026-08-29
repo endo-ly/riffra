@@ -271,6 +271,7 @@ impl ProjectTimebase {
         self,
         position: MusicalPosition,
     ) -> Result<TimelineTick, DomainError> {
+        let position = MusicalPosition::new(position.bar, position.beat, position.offset)?;
         let ticks_per_beat = self.ticks_per_notated_beat()?;
         if position.beat > u32::from(self.time_signature_numerator) {
             return Err(invalid_value("position beat is outside the time signature"));
@@ -316,6 +317,7 @@ impl ProjectTimebase {
 
     /// Converts a whole-note fraction to the nearest positive timeline duration.
     pub fn musical_duration_to_ticks(self, duration: MusicalDuration) -> Result<u64, DomainError> {
+        let duration = MusicalDuration::new(duration.numerator, duration.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
             .checked_mul(4)
             .ok_or_else(|| invalid_value("duration is too large"))?;
@@ -454,6 +456,23 @@ mod tests {
         assert!("0/4".parse::<MusicalDuration>().is_err());
         assert!("H4".parse::<MusicalPitch>().is_err());
         assert!("C10".parse::<MusicalPitch>().is_err());
+        assert!(
+            ProjectTimebase::default()
+                .musical_position_to_tick(MusicalPosition {
+                    bar: 0,
+                    beat: 1,
+                    offset: MusicalFraction::default(),
+                })
+                .is_err()
+        );
+        assert!(
+            ProjectTimebase::default()
+                .musical_duration_to_ticks(MusicalDuration {
+                    numerator: 1,
+                    denominator: 0,
+                })
+                .is_err()
+        );
     }
 
     #[test]
