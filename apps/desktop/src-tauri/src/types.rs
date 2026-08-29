@@ -29,8 +29,8 @@ use riffra_core::{
     CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
     MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase,
     RackDevice, RackInstance, RackMacro, RecordingPassRecord, RecordingSessionRecord,
-    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange, Track,
-    TrackKind,
+    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange,
+    TimelineRegion, Track, TrackKind,
 };
 use riffra_runtime::{
     ArrangementProjectionOutcome, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
@@ -56,6 +56,7 @@ fn export_types() {
     RackInstance::export_all(&cfg).expect("RackInstance bindings");
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
+    TimelineRegion::export_all(&cfg).expect("TimelineRegion bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");

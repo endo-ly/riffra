@@ -197,27 +197,7 @@ fn recover_interrupted_manifest(directory: &Path, manifest: &mut RecordingManife
     true
 }
 
-fn persist_recovered_manifest(path: &Path, manifest: &RecordingManifest) -> std::io::Result<()> {
-    let temporary = path.with_file_name(format!(".manifest-recovery-{}.tmp", std::process::id()));
-    let payload = serde_json::to_vec_pretty(manifest)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    {
-        let mut file = File::create(&temporary)?;
-        file.write_all(&payload)?;
-        file.sync_all()?;
-    }
-    if let Err(error) = fs::rename(&temporary, path) {
-        if path.exists() {
-            fs::remove_file(path)?;
-            fs::rename(&temporary, path)?;
-        } else {
-            return Err(error);
-        }
-    }
-    Ok(())
-}
-
-fn persist_manifest_value(path: &Path, manifest: &serde_json::Value) -> std::io::Result<()> {
+fn persist_manifest<T: Serialize>(path: &Path, manifest: &T) -> std::io::Result<()> {
     let temporary = path.with_file_name(format!(".manifest-recovery-{}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(manifest)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
@@ -414,7 +394,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             Err(error) => (RecordingManifest::default(), Some(error)),
         };
         if manifest_error.is_none() && recover_interrupted_manifest(&path, &mut manifest) {
-            let _ = persist_recovered_manifest(&manifest_path, &manifest);
+            let _ = persist_manifest(&manifest_path, &manifest);
         }
         let name = path
             .file_name()
@@ -618,7 +598,7 @@ pub fn save_asset_ids(
         serde_json::to_value(manifest.capture)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
     );
-    persist_manifest_value(&manifest_path, &value)
+    persist_manifest(&manifest_path, &value)
 }
 
 /// Persists the capture identity and session snapshot at recording start. The
@@ -640,7 +620,7 @@ pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::i
         serde_json::to_value(capture)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
     );
-    persist_manifest_value(&manifest_path, &manifest)
+    persist_manifest(&manifest_path, &manifest)
 }
 
 fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {

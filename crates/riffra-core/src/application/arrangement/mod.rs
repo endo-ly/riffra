@@ -292,23 +292,8 @@ where
         duration_ticks: u64,
         name: Option<String>,
     ) -> Result<CreativeSession, ApplicationError> {
-        let name = normalize_midi_clip_name(name);
         self.commit_arrangement(|arrangement| {
-            arrangement
-                .add_midi_clip(MidiClip {
-                    id: next_id("midi-clip"),
-                    name,
-                    track_id: track_id.to_owned(),
-                    asset_id: None,
-                    start_tick,
-                    duration_ticks: duration_ticks.max(1),
-                    notes: Vec::new(),
-                    events: Vec::new(),
-                    muted: false,
-                    loop_enabled: false,
-                    recording_take_id: None,
-                })
-                .map_err(Into::into)
+            create_midi_clip_in_arrangement(arrangement, track_id, start_tick, duration_ticks, name)
         })
     }
 
@@ -960,4 +945,28 @@ where
                 .map_err(Into::into)
         })
     }
+}
+
+pub(super) fn create_midi_clip_in_arrangement(
+    arrangement: &mut Arrangement,
+    track_id: &str,
+    start_tick: TimelineTick,
+    duration_ticks: u64,
+    name: Option<String>,
+) -> Result<(), ApplicationError> {
+    arrangement
+        .add_midi_clip(MidiClip {
+            id: next_id("midi-clip"),
+            name: normalize_midi_clip_name(name),
+            track_id: track_id.to_owned(),
+            asset_id: None,
+            start_tick,
+            duration_ticks: duration_ticks.max(1),
+            notes: Vec::new(),
+            events: Vec::new(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        })
+        .map_err(Into::into)
 }

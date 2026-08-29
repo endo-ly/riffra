@@ -1,8 +1,7 @@
 pub mod application;
 pub mod materialize;
 pub mod model;
-pub mod repository;
-pub mod service;
+mod repository;
 
 pub use application::{
     RecordingContext, archive_recording, delete_recording, detect_duplicate_recordings,
@@ -11,8 +10,8 @@ pub use application::{
 };
 pub use materialize::midi_clip_for_take;
 pub use model::{DropoutInformation, RecordingCapture, RecordingCaptureStatus};
-pub use repository::{
-    RecordingAsset, archive, audio_paths, delete, detect_duplicates, list, media_paths,
-    preflight_audio_paths, promote, rename, save_asset_ids, save_capture_start,
+pub use repository::RecordingAsset;
+pub(crate) use repository::{
+    archive, delete, detect_duplicates, list, media_paths, preflight_audio_paths, promote, rename,
+    save_asset_ids, save_capture_start,
 };
-pub use service::RecordingService;

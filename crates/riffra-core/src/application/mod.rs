@@ -2,6 +2,7 @@
 
 mod arrangement;
 pub(crate) mod history;
+mod music;
 mod rack;
 mod recording;
 mod session;
@@ -21,6 +22,8 @@ use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
 use std::collections::HashSet;
 use uuid::Uuid;
+
+pub use music::MusicalMidiNoteInput;
 
 /// Partial update for session-wide production settings.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]

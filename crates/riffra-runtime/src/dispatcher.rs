@@ -1,8 +1,9 @@
 use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, TrackSummary};
+use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate,
+    MidiNoteUpdate, MusicalMidiNoteInput, SessionSettingsPatch,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
@@ -155,6 +156,13 @@ pub struct DispatchResult {
     pub result_type: &'static str,
     pub value: Value,
     pub sequence: u64,
+    projection_effect: CanonicalMutationEffect,
+}
+
+impl DispatchResult {
+    pub(crate) fn projection_effect(&self) -> CanonicalMutationEffect {
+        self.projection_effect
+    }
 }
 
 impl HostDispatcher<'static, ()> {
@@ -240,11 +248,20 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
         let result = match request.name.as_str() {
             "session.get" => self.session(canonical.session.clone()),
-            "session.settings.update" => self.session(
-                self.core
-                    .application(&self.storage)
-                    .update_session_settings(decode(request.params)?)?,
-            ),
+            "session.settings.update" => {
+                let params: SessionSettingsPatch = decode(request.params)?;
+                let effect = if params.metronome_enabled.is_some() {
+                    CanonicalMutationEffect::ProjectArrangement
+                } else {
+                    CanonicalMutationEffect::CanonicalOnly
+                };
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .update_session_settings(params)?,
+                    effect,
+                )
+            }
             "history.get" => self.value("history", canonical.history),
             "track.list" => self.value(
                 "tracks",
@@ -458,6 +475,27 @@ impl<'a, A> HostDispatcher<'a, A> {
                         .insert_midi_notes(&params.clip_id, params.notes)?,
                 )
             }
+            "music.midi-clip.create" => {
+                let params: MusicalMidiClipCreateParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .create_musical_midi_clip(
+                            &params.track_id,
+                            params.start,
+                            params.end,
+                            params.name,
+                        )?,
+                )
+            }
+            "music.note.insert" => {
+                let params: MusicalNoteInsertParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .insert_musical_notes(&params.clip_id, params.notes)?,
+                )
+            }
             "midi-note.update" => {
                 let params: MidiNoteUpdateParams = decode(request.params)?;
                 self.session(self.core.application(&self.storage).update_midi_notes(
@@ -543,28 +581,68 @@ impl<'a, A> HostDispatcher<'a, A> {
             }
             "marker.add" => {
                 let params: MarkerAddParams = decode(request.params)?;
-                self.session(
+                self.session_with_effect(
                     self.core
                         .application(&self.storage)
                         .add_marker(TimelineTick(params.tick), params.name)?,
+                    CanonicalMutationEffect::CanonicalOnly,
                 )
             }
             "marker.update" => {
                 let params: MarkerUpdateParams = decode(request.params)?;
-                self.session(self.core.application(&self.storage).update_marker(
-                    &params.marker_id,
-                    MarkerPatch {
-                        name: params.name,
-                        tick: params.tick.map(TimelineTick),
-                    },
-                )?)
+                self.session_with_effect(
+                    self.core.application(&self.storage).update_marker(
+                        &params.marker_id,
+                        MarkerPatch {
+                            name: params.name,
+                            tick: params.tick.map(TimelineTick),
+                        },
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
             }
             "marker.remove" => {
                 let params: MarkerIdParams = decode(request.params)?;
-                self.session(
+                self.session_with_effect(
                     self.core
                         .application(&self.storage)
                         .remove_marker(&params.marker_id)?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.region.list" => {
+                self.value("regions", canonical.session.arrangement.regions.clone())
+            }
+            "music.region.add" => {
+                let params: MusicalRegionAddParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core.application(&self.storage).add_region(
+                        params.name,
+                        params.start,
+                        params.end,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.region.update" => {
+                let params: MusicalRegionUpdateParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core.application(&self.storage).update_region(
+                        &params.region_id,
+                        params.name,
+                        params.start,
+                        params.end,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.region.remove" => {
+                let params: MusicalRegionIdParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .remove_region(&params.region_id)?,
+                    CanonicalMutationEffect::CanonicalOnly,
                 )
             }
             "timebase.update" => {
@@ -579,7 +657,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                     self.core
                         .application(&self.storage)
                         .update_timebase(ProjectTimebase {
-                            ppq: params.ppq.unwrap_or(current.ppq),
+                            ppq: current.ppq,
                             bpm: params.bpm.unwrap_or(current.bpm),
                             time_signature_numerator: params
                                 .time_signature_numerator
@@ -822,24 +900,44 @@ impl<'a, A> HostDispatcher<'a, A> {
                 })
                 .expect("arrangement mutation results serialize"),
                 sequence: canonical.sequence,
+                projection_effect: CanonicalMutationEffect::CanonicalOnly,
             });
         }
         Ok(DispatchResult {
             result_type: result.result_type,
             value: result.value,
             sequence,
+            projection_effect: result.projection_effect,
         })
     }
 
     fn session(&self, session: CreativeSession) -> DispatchResult {
-        self.value("session", session)
+        self.session_with_effect(session, CanonicalMutationEffect::ProjectArrangement)
+    }
+
+    fn session_with_effect(
+        &self,
+        session: CreativeSession,
+        projection_effect: CanonicalMutationEffect,
+    ) -> DispatchResult {
+        self.value_with_effect("session", session, projection_effect)
     }
 
     fn value<T: serde::Serialize>(&self, result_type: &'static str, value: T) -> DispatchResult {
+        self.value_with_effect(result_type, value, CanonicalMutationEffect::CanonicalOnly)
+    }
+
+    fn value_with_effect<T: serde::Serialize>(
+        &self,
+        result_type: &'static str,
+        value: T,
+        projection_effect: CanonicalMutationEffect,
+    ) -> DispatchResult {
         DispatchResult {
             result_type,
             value: serde_json::to_value(value).expect("canonical values must serialize"),
             sequence: 0,
+            projection_effect,
         }
     }
 
@@ -924,6 +1022,7 @@ fn is_read_command(command: &str) -> bool {
             | "track.list"
             | "audio-clip.list"
             | "midi-clip.list"
+            | "music.region.list"
             | "project.export"
     )
 }
@@ -1081,17 +1180,17 @@ struct ReorderParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AudioInputParams {
-    track_id: String,
-    channel_index: u32,
+pub(crate) struct AudioInputParams {
+    pub(crate) track_id: String,
+    pub(crate) channel_index: u32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MidiInputParams {
-    track_id: String,
-    device_id: Option<String>,
-    channel: Option<u8>,
+pub(crate) struct MidiInputParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: Option<String>,
+    pub(crate) channel: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1189,6 +1288,45 @@ struct MidiNoteInsertParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MusicalMidiClipCreateParams {
+    track_id: String,
+    start: riffra_core::MusicalPosition,
+    end: riffra_core::MusicalPosition,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteInsertParams {
+    clip_id: String,
+    notes: Vec<MusicalMidiNoteInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionAddParams {
+    name: String,
+    start: riffra_core::MusicalPosition,
+    end: riffra_core::MusicalPosition,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionUpdateParams {
+    region_id: String,
+    name: Option<String>,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionIdParams {
+    region_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MidiNoteUpdateParams {
     clip_id: String,
     note_id: String,
@@ -1278,9 +1416,9 @@ struct MarkerIdParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 struct TimebasePatchParams {
-    ppq: Option<u32>,
     bpm: Option<f64>,
     time_signature_numerator: Option<u8>,
     time_signature_denominator: Option<u8>,
@@ -1288,8 +1426,7 @@ struct TimebasePatchParams {
 
 impl TimebasePatchParams {
     fn is_empty(&self) -> bool {
-        self.ppq.is_none()
-            && self.bpm.is_none()
+        self.bpm.is_none()
             && self.time_signature_numerator.is_none()
             && self.time_signature_denominator.is_none()
     }
@@ -1332,60 +1469,60 @@ struct ProjectImportParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectRemoveParams {
-    track_id: String,
-    device_id: String,
+pub(crate) struct EffectRemoveParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectReorderParams {
-    track_id: String,
-    device_ids: Vec<String>,
+pub(crate) struct EffectReorderParams {
+    pub(crate) track_id: String,
+    pub(crate) device_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceBypassParams {
-    track_id: String,
-    device_id: String,
-    bypassed: bool,
+pub(crate) struct DeviceBypassParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) bypassed: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginPathParams {
-    track_id: String,
-    plugin_path: String,
+pub(crate) struct PluginPathParams {
+    pub(crate) track_id: String,
+    pub(crate) plugin_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceParameterParams {
-    track_id: String,
-    device_id: String,
-    parameter_index: u32,
-    value: f32,
+pub(crate) struct DeviceParameterParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) parameter_index: u32,
+    pub(crate) value: f32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingRelinkParams {
-    asset_id: String,
-    new_path: String,
+pub(crate) struct MissingRelinkParams {
+    pub(crate) asset_id: String,
+    pub(crate) new_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceIdParams {
-    device_id: String,
+pub(crate) struct DeviceIdParams {
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingPluginReplaceParams {
-    device_id: String,
-    new_path: String,
+pub(crate) struct MissingPluginReplaceParams {
+    pub(crate) device_id: String,
+    pub(crate) new_path: String,
 }
 
 #[cfg(test)]
@@ -1498,7 +1635,6 @@ mod tests {
             .dispatch(request(
                 "timebase.update",
                 json!({
-                    "ppq": 960,
                     "bpm": 100.0,
                     "timeSignatureNumerator": 7,
                     "timeSignatureDenominator": 8
@@ -1515,6 +1651,123 @@ mod tests {
                 time_signature_denominator: 8,
             }
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn timebase_update_rejects_ppq_as_an_external_field() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-ppq-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let error = dispatcher
+            .dispatch(request("timebase.update", json!({"ppq": 960})))
+            .unwrap_err();
+        assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn metadata_mutations_report_when_runtime_projection_is_unnecessary() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-effect-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let settings = dispatcher
+            .dispatch(request(
+                "session.settings.update",
+                json!({"note":"authoring note"}),
+            ))
+            .unwrap();
+        assert_eq!(
+            settings.projection_effect,
+            super::CanonicalMutationEffect::CanonicalOnly
+        );
+
+        let marker = dispatcher
+            .dispatch(request("marker.add", json!({"name":"Verse","tick":0})))
+            .unwrap();
+        assert_eq!(
+            marker.projection_effect,
+            super::CanonicalMutationEffect::CanonicalOnly
+        );
+
+        let metronome = dispatcher
+            .dispatch(request(
+                "session.settings.update",
+                json!({"metronomeEnabled":true}),
+            ))
+            .unwrap();
+        assert_eq!(
+            metronome.projection_effect,
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn musical_commands_create_canonical_notes_and_regions() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-music-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "start": "5:1",
+                    "end": "13:1",
+                    "name": "Piano"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let clip_id = session.arrangement.midi_clips[0].id.clone();
+        let region = dispatcher
+            .dispatch(request(
+                "music.region.add",
+                json!({"name":"A'","start":"5:1","end":"13:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(region.value).unwrap();
+        assert_eq!(session.arrangement.regions[0].name, "A'");
+        let inserted = dispatcher
+            .dispatch(request(
+                "music.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [
+                        {"pitch":"C4","position":"5:1","duration":"1/8"},
+                        {"pitch":"E4","position":"5:1+1/2","duration":"1/8"},
+                        {"pitch":"G4","position":"5:2","duration":"1/2","velocity":92},
+                        {"pitch":"Bb4","position":"6:3+1/3","duration":"1/12"}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(inserted.value).unwrap();
+        let clip = &session.arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, riffra_core::TimelineTick(15_360));
+        assert_eq!(clip.duration_ticks, 30_720);
+        assert_eq!(clip.notes.len(), 4);
+        assert_eq!(clip.notes[0].note, 60);
+        assert_eq!(clip.notes[0].start_tick, riffra_core::TimelineTick(0));
+        assert_eq!(clip.notes[1].start_tick, riffra_core::TimelineTick(480));
+        assert_eq!(clip.notes[2].note, 67);
+        assert_eq!(clip.notes[3].note, 70);
+        assert_eq!(clip.notes[3].start_tick, riffra_core::TimelineTick(6_080));
+        assert_eq!(clip.notes[3].duration_ticks, 320);
+
+        let listed = dispatcher
+            .dispatch(request("music.region.list", json!({})))
+            .unwrap();
+        assert_eq!(listed.result_type, "regions");
+        assert_eq!(listed.value.as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 

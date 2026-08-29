@@ -2,13 +2,21 @@ use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::control::ControlServer;
-use crate::dispatcher::HostDispatcher;
+use crate::dispatcher::{
+    AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceParameterParams,
+    EffectRemoveParams, EffectReorderParams, HostDispatcher, MidiInputParams,
+    MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+};
 use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
 use crate::model::{AudioStatus, RuntimeProjectionStatus};
-use crate::recording::service::RecordingService;
+use crate::recording::{self, RecordingContext};
 use crate::render::{self, RenderOptions, RenderResult};
 use crate::runtime::{RuntimeError, RuntimeReconciler};
-use crate::session::{adapter as session_adapter, context::SessionContext};
+use crate::session::{
+    adapter as session_adapter,
+    commit::{self, CanonicalMutationEffect},
+    context::SessionContext,
+};
 use crate::startup;
 use crate::{
     AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
@@ -20,7 +28,7 @@ use riffra_control::{
     CommandResult, ControlCommand, ControlRequest, ControlResponse, ErrorCode, HostIdentity,
     ProtocolError, new_instance_id,
 };
-use riffra_core::{AppCore, CanonicalState, CreativeSession};
+use riffra_core::{AppCore, CanonicalState};
 use riffra_host::{DataRootLease, SessionStore, now_ms};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -273,11 +281,13 @@ impl HostState {
                 )
                 .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
-                let latest = self
-                    .canonical()
-                    .map_err(|error| command_error(error.to_string()))?;
-                self.after_canonical_commit(&latest.session)?;
-                return Ok((result.result_type, result.value, latest.sequence));
+                let mutation = self.after_canonical_commit(result.projection_effect())?;
+                let sequence = mutation.canonical.sequence;
+                return Ok((
+                    "arrangementMutation",
+                    serde_json::to_value(mutation).map_err(serialize_error)?,
+                    sequence,
+                ));
             }
             return Ok((result.result_type, result.value, result.sequence));
         }
@@ -740,7 +750,7 @@ impl HostState {
                     .recording_gate
                     .lock()
                     .map_err(|_| command_error("recording operation lock was poisoned"))?;
-                let service = RecordingService {
+                let context = RecordingContext {
                     core: &self.core,
                     audio: self.core.audio(),
                     runtime: &self.runtime,
@@ -756,15 +766,15 @@ impl HostState {
                             ));
                         }
                         let params: RecordStartParams = decode(params)?;
-                        service
-                            .start(params.recording_session_id.as_deref())
-                            .map_err(command_error)
-                            .and_then(|status| {
-                                serde_json::to_value(status).map_err(serialize_error)
-                            })?
+                        let status = match params.recording_session_id.as_deref() {
+                            Some(id) => recording::record_another_take(&context, id),
+                            None => recording::start_recording(&context),
+                        }
+                        .map_err(command_error)?;
+                        serde_json::to_value(status).map_err(serialize_error)?
                     }
                     "record.stop" => {
-                        let result = service.stop().map_err(command_error)?;
+                        let result = recording::stop_recording(&context).map_err(command_error)?;
                         sequence = result.canonical.sequence;
                         if sequence > current.sequence {
                             self.events
@@ -772,15 +782,18 @@ impl HostState {
                         }
                         serde_json::to_value(result).map_err(serialize_error)?
                     }
-                    "record.status" => {
-                        serde_json::to_value(service.status().map_err(command_error)?)
-                            .map_err(serialize_error)?
-                    }
+                    "record.status" => serde_json::to_value(
+                        context
+                            .audio
+                            .refresh_status()
+                            .map_err(|error| error.to_string())
+                            .map_err(command_error)?,
+                    )
+                    .map_err(serialize_error)?,
                     "record.list" => {
                         let params: RecordListParams = decode(params)?;
                         serde_json::to_value(
-                            service
-                                .list(params.query.as_deref())
+                            recording::list_recordings(&context, params.query.as_deref())
                                 .map_err(command_error)?,
                         )
                         .map_err(serialize_error)?
@@ -788,8 +801,7 @@ impl HostState {
                     "record.rename" => {
                         let params: RecordRenameParams = decode(params)?;
                         serde_json::to_value(
-                            service
-                                .rename_recording(&params.id, &params.new_name)
+                            recording::rename_recording(&context, &params.id, &params.new_name)
                                 .map_err(command_error)?,
                         )
                         .map_err(serialize_error)?
@@ -797,8 +809,7 @@ impl HostState {
                     "record.archive" => {
                         let params: RecordIdParams = decode(params)?;
                         serde_json::to_value(
-                            service
-                                .archive_recording(&params.id)
+                            recording::archive_recording(&context, &params.id)
                                 .map_err(command_error)?,
                         )
                         .map_err(serialize_error)?
@@ -806,8 +817,7 @@ impl HostState {
                     "record.promote" => {
                         let params: RecordIdParams = decode(params)?;
                         serde_json::to_value(
-                            service
-                                .promote_recording(&params.id)
+                            recording::promote_recording(&context, &params.id)
                                 .map_err(command_error)?,
                         )
                         .map_err(serialize_error)?
@@ -815,23 +825,18 @@ impl HostState {
                     "record.tag" => {
                         let params: RecordTagParams = decode(params)?;
                         serde_json::to_value(
-                            service
-                                .tag_recording(&params.id, params.tag, params.note)
+                            recording::tag_recording(&context, &params.id, params.tag, params.note)
                                 .map_err(command_error)?,
                         )
                         .map_err(serialize_error)?
                     }
                     "record.delete" => {
                         let params: RecordIdParams = decode(params)?;
-                        service
-                            .delete_recording(&params.id)
-                            .map_err(command_error)?;
+                        recording::delete_recording(&context, &params.id).map_err(command_error)?;
                         Value::Null
                     }
                     "record.duplicates" => serde_json::to_value(
-                        service
-                            .detect_duplicate_recordings()
-                            .map_err(command_error)?,
+                        recording::detect_duplicate_recordings(&context).map_err(command_error)?,
                     )
                     .map_err(serialize_error)?,
                     _ => unreachable!(),
@@ -969,7 +974,7 @@ impl HostState {
         let context = self.session_context();
         let result = match command {
             "track.audio-input.set" => {
-                let params: SessionTrackAudioInputParams = decode(params)?;
+                let params: AudioInputParams = decode(params)?;
                 Some(
                     session_adapter::set_track_audio_input(
                         &context,
@@ -987,7 +992,7 @@ impl HostState {
                 )
             }
             "track.midi-input.set" => {
-                let params: SessionTrackMidiInputParams = decode(params)?;
+                let params: MidiInputParams = decode(params)?;
                 Some(
                     session_adapter::set_track_midi_input(
                         &context,
@@ -1012,7 +1017,7 @@ impl HostState {
                 )
             }
             "instrument.set" => {
-                let params: SessionPluginPathParams = decode(params)?;
+                let params: PluginPathParams = decode(params)?;
                 Some(
                     session_adapter::set_track_instrument_with_expected_sequence(
                         &context,
@@ -1031,7 +1036,7 @@ impl HostState {
                 )
             }
             "effect.add" => {
-                let params: SessionPluginPathParams = decode(params)?;
+                let params: PluginPathParams = decode(params)?;
                 Some(
                     session_adapter::add_track_effect_with_expected_sequence(
                         &context,
@@ -1043,7 +1048,7 @@ impl HostState {
                 )
             }
             "effect.remove" => {
-                let params: SessionEffectParams = decode(params)?;
+                let params: EffectRemoveParams = decode(params)?;
                 Some(
                     session_adapter::remove_track_effect(
                         &context,
@@ -1054,7 +1059,7 @@ impl HostState {
                 )
             }
             "effect.reorder" => {
-                let params: SessionEffectReorderParams = decode(params)?;
+                let params: EffectReorderParams = decode(params)?;
                 Some(
                     session_adapter::reorder_track_effects(
                         &context,
@@ -1065,7 +1070,7 @@ impl HostState {
                 )
             }
             "device.bypass" => {
-                let params: SessionDeviceBypassParams = decode(params)?;
+                let params: DeviceBypassParams = decode(params)?;
                 Some(
                     session_adapter::set_track_device_bypassed(
                         &context,
@@ -1077,7 +1082,7 @@ impl HostState {
                 )
             }
             "device.parameter.set" => {
-                let params: SessionDeviceParameterParams = decode(params)?;
+                let params: DeviceParameterParams = decode(params)?;
                 Some(
                     session_adapter::set_track_device_parameter(
                         &context,
@@ -1090,7 +1095,7 @@ impl HostState {
                 )
             }
             "missing.relink" => {
-                let params: SessionMissingRelinkParams = decode(params)?;
+                let params: MissingRelinkParams = decode(params)?;
                 let asset_id =
                     riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {
                         ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
@@ -1105,14 +1110,14 @@ impl HostState {
                 )
             }
             "missing.disable-plugin" => {
-                let params: SessionDeviceIdParams = decode(params)?;
+                let params: DeviceIdParams = decode(params)?;
                 Some(
                     session_adapter::disable_missing_plugin(&context, &params.device_id)
                         .map_err(|error| error.protocol_error())?,
                 )
             }
             "missing.replace-plugin" => {
-                let params: SessionMissingPluginReplaceParams = decode(params)?;
+                let params: MissingPluginReplaceParams = decode(params)?;
                 Some(
                     session_adapter::replace_missing_track_plugin_with_expected_sequence(
                         &context,
@@ -1207,24 +1212,25 @@ impl HostState {
         }))
     }
 
-    fn after_canonical_commit(&self, _session: &CreativeSession) -> Result<(), ProtocolError> {
+    fn after_canonical_commit(
+        &self,
+        effect: CanonicalMutationEffect,
+    ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
         library::index::refresh(&self.data_root, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
-        if self.core.safe_mode() {
-            return Ok(());
-        }
-        let key = riffra_core::ProjectionKey {
-            sequence: canonical.sequence,
-            session_revision: canonical.session.arrangement.revision,
-        };
-        let snapshot =
-            crate::runtime_snapshot::runtime_timeline_snapshot(&self.data_root, &canonical.session);
-        let _ = self.runtime.submit_nonblocking(snapshot, key);
-        Ok(())
+        let mutation = commit::finalize_arrangement_mutation(
+            canonical,
+            self.runtime.as_ref(),
+            &self.data_root,
+            self.core.safe_mode(),
+            effect,
+        )
+        .map_err(command_error)?;
+        Ok(mutation)
     }
 
     fn scan_plugins(&self, root: PathBuf) -> Result<plugins::ScanReport, String> {
@@ -2542,79 +2548,6 @@ struct SessionTrackIdParams {
     track_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionTrackAudioInputParams {
-    track_id: String,
-    channel_index: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionTrackMidiInputParams {
-    track_id: String,
-    device_id: Option<String>,
-    channel: Option<u8>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionPluginPathParams {
-    track_id: String,
-    plugin_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionEffectParams {
-    track_id: String,
-    device_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionEffectReorderParams {
-    track_id: String,
-    device_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionDeviceBypassParams {
-    track_id: String,
-    device_id: String,
-    bypassed: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionDeviceParameterParams {
-    track_id: String,
-    device_id: String,
-    parameter_index: u32,
-    value: f32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionMissingRelinkParams {
-    asset_id: String,
-    new_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionDeviceIdParams {
-    device_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionMissingPluginReplaceParams {
-    device_id: String,
-    new_path: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2900,6 +2833,20 @@ mod tests {
             ))
             .unwrap();
         assert!(mutation.ok);
+        assert_eq!(
+            mutation
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let mutation_result: crate::model::ArrangementMutationResult =
+            serde_json::from_value(mutation.result.unwrap().value).unwrap();
+        assert_eq!(mutation_result.canonical.sequence, 1);
+        assert!(matches!(
+            mutation_result.projection,
+            crate::model::ArrangementProjectionOutcome::NotRequired
+        ));
         let event = events.recv().unwrap();
         assert_eq!(event.event, "canonical-state-changed");
         assert_eq!(event.payload["sequence"], 1);
@@ -3025,7 +2972,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_host_shutdown_releases_the_startup_worker_before_reopen() {
+    fn normal_host_returns_arrangement_mutation_before_shutdown() {
         let data_root = std::env::temp_dir().join(format!(
             "riffra-runtime-startup-shutdown-{}-{}",
             std::process::id(),
@@ -3041,12 +2988,150 @@ mod tests {
             ),
         };
         let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        let response = host.dispatch_control(ControlRequest::new(
+            "track-add",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+
+        assert!(response.ok);
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let mutation: crate::model::ArrangementMutationResult =
+            serde_json::from_value(response.result.unwrap().value).unwrap();
+        assert_eq!(mutation.canonical.sequence, 1);
+        assert!(matches!(
+            mutation.projection,
+            crate::model::ArrangementProjectionOutcome::Queued
+                | crate::model::ArrangementProjectionOutcome::Failed { .. }
+        ));
+
+        let marker = host.dispatch_control(ControlRequest::new(
+            "marker-add",
+            ControlCommand::new(
+                "marker.add",
+                serde_json::json!({"name": "Verse", "tick": 0}),
+            ),
+            Some(1),
+        ));
+        assert!(marker.ok);
+        assert_eq!(
+            marker
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let marker: crate::model::ArrangementMutationResult =
+            serde_json::from_value(marker.result.unwrap().value).unwrap();
+        assert_eq!(marker.canonical.sequence, 2);
+        assert!(matches!(
+            marker.projection,
+            crate::model::ArrangementProjectionOutcome::NotRequired
+        ));
+
+        let settings = host.dispatch_control(ControlRequest::new(
+            "session-settings-update",
+            ControlCommand::new(
+                "session.settings.update",
+                serde_json::json!({"note": "authoring note"}),
+            ),
+            Some(2),
+        ));
+        assert!(settings.ok);
+        assert_eq!(
+            settings
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let settings: crate::model::ArrangementMutationResult =
+            serde_json::from_value(settings.result.unwrap().value).unwrap();
+        assert_eq!(settings.canonical.sequence, 3);
+        assert!(matches!(
+            settings.projection,
+            crate::model::ArrangementProjectionOutcome::NotRequired
+        ));
+
         host.shutdown();
         drop(host);
 
         let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         reopened.shutdown();
         drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn normal_host_publishes_canonical_state_before_projection_status() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-event-order-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let events = host
+            .state
+            .subscribe_events()
+            .expect("Host event subscription should be available");
+
+        let response = host.dispatch_control(ControlRequest::new(
+            "track-add",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+        assert!(response.ok);
+
+        let mut canonical_index = None;
+        let mut projection_index = None;
+        for index in 0..16 {
+            let event = events
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("Host should publish the mutation events");
+            if event.event == "canonical-state-changed"
+                && event.payload["sequence"].as_u64() == Some(1)
+            {
+                canonical_index = Some(index);
+            }
+            if event.event == "runtime-projection-status"
+                && event.payload["targetProjectionSequence"].as_u64() == Some(1)
+            {
+                projection_index = Some(index);
+                break;
+            }
+        }
+
+        assert!(
+            canonical_index.is_some_and(|canonical| {
+                projection_index.is_some_and(|projection| canonical < projection)
+            }),
+            "canonical state must be published before projection status"
+        );
+
+        host.shutdown();
+        drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
 

@@ -4,10 +4,10 @@
 
 コマンドは次の 2 系統しかない。4 つの実行形態(ワンショット / 対話 / serve / attach)は同じコマンドへの要求経路の違いであり、引数は共通である。
 
-| 系統             | 主なコマンド                                                             | 実行できる場所                 |
-| ---------------- | ------------------------------------------------------------------------ | ------------------------------ |
-| 正準状態の編集   | session / track / clip / midi-note / marker / rack / missing 復旧        | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                              | 実行できる場所                 |
+| ---------------- | ------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / rack / missing 復旧 | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin  | Live Host(`serve`)+ `--attach` |
 
 ## 正準状態の編集
 
@@ -24,12 +24,40 @@ riffra --data-root ./riffra-data session get
 # Track 追加 → 応答 result.value.arrangement.tracks[*] から ID を得る
 riffra --data-root ./riffra-data track add --name Drums --kind audio
 
-# MIDI Clip 作成 → clip ID を得て Note を積む
-riffra --data-root ./riffra-data midi-clip create --track-id track:01j... --start-tick 0 --duration-ticks 3840 --name Verse
-riffra --data-root ./riffra-data midi-note add --clip-id clip:01j... --pitch 36 --start-tick 0 --duration-ticks 240 --velocity 100 --channel 1
+# MIDI Clip 作成 → clip ID を得て音楽上のNoteを積む
+riffra --data-root ./riffra-data music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
+riffra --data-root ./riffra-data music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
 ```
 
-位置指定はすべて tick 単位である。Timebase の既定は PPQ 960 なので、4 分音符 = 960 tick、16 分音符 = 240 tick となる。変更は `timebase update` で行う。MIDI channel は 1〜16 の範囲で指定する。
+通常の作曲では、対応する `music.*` の音楽表現を使う。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
+
+### Music Operations
+
+#### MIDI ClipとNote
+
+```powershell
+riffra --data-root ./riffra-data music midi-clip create `
+  --track-id track:01j... --start 5:1 --end 13:1 --name Piano
+
+riffra --data-root ./riffra-data music note insert `
+  --clip-id midi-clip:01j... `
+  --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"},{"pitch":"E4","position":"5:1+1/2","duration":"1/8"},{"pitch":"G4","position":"5:2","duration":"1/2","velocity":92}]'
+```
+
+`position` はArrangement全体の絶対位置で、Clip内部の相対位置ではない。`velocity` の既定値は100、`channel` の既定値は1である。複数Noteは1回の `music note insert` で渡す。
+
+#### Region
+
+Regionは自由な名前を持つ時間範囲である。`Intro`や`Verse`などの種類は固定されず、重複・入れ子・同名を許可する。
+
+```powershell
+riffra --data-root ./riffra-data music region add `
+  --name "A'" --start 5:1 --end 13:1
+riffra --data-root ./riffra-data music region list
+riffra --data-root ./riffra-data music region update `
+  --region-id region:01j... --name "A' variation" --start 5:1 --end 17:1
+riffra --data-root ./riffra-data music region remove --region-id region:01j...
+```
 
 ### Undo / Redo
 
@@ -56,7 +84,7 @@ riffra --data-root ./riffra-data --interactive
 | `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                        |
 | `history get`             | -                                                                                                 | 履歴状態                                                                                    |
 | `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                        |
-| `timebase update`         | [`--ppq`] [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]               | 指定した項目だけ更新。`--ppq` の変更は既存 MIDI note の tick 解釈に影響する                 |
+| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                       |
 
 ### Track と入力 Routing
 
@@ -98,7 +126,7 @@ $ids = Get-Content -Raw .\midi-clip-ids.json
 riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 ```
 
-### MIDI Note
+### 低レベル MIDI Note
 
 | コマンド                           | 主要引数                                                                                                   |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -111,6 +139,8 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 | `midi-note quantize`               | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` `--grid-ticks 240`                              |
 | `midi-note transform`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` [`--transpose-semitones`] [`--velocity-offset`] |
 | `midi-note duplicate`              | `--clip-id` `--note-ids a,b,c` / `--note-ids-json '[...]'` `--offset-ticks 3840`                           |
+
+低レベルMIDI操作は、既存NoteのIDを指定した直接編集や、CC・Pitch Bendなどを含むイベントを直接編集する場合に使う。通常の音符の作成・配置には `music midi-clip` と `music note` を使う。
 
 ### Marker・Range・Automation
 

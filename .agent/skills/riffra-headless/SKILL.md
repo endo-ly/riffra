@@ -37,6 +37,28 @@ description: >-
 
 各系統に含まれるコマンドの一覧と引数は [references/commands.md](references/commands.md) を参照。
 
+## 楽曲制作の入力契約
+
+通常の作曲では `music.*` コマンドを優先する。位置・音価・音高は次の表記で渡し、Coreがプロジェクトの拍子と正準TimelineTickへ変換する。
+
+```text
+位置: 5:1、5:3+1/2
+音価: 1/4、1/8、3/8、1/12
+音高: C4、F#4、Bb3
+```
+
+通常の楽曲制作で、次の計算や補助スクリプトは行わない。
+
+- PPQを使った手計算
+- 小節・拍からtickへの手計算
+- 音名からMIDI pitch番号への手計算
+- クリップ開始位置を使った相対tickの計算
+- Node.js / Python / PowerShellでのMIDI note JSON生成
+
+通常の作曲では、対応する `music.*` 操作がある場合はそれを優先する。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作で使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。
+
+`music.*` はStandalone、serve、Attachedで同じControl契約を使える。
+
 ## DataRoot
 
 CLI には既定の場所はなく `--data-root` が必須である。位置は自由(慣例は `./riffra-data`)で、作った場所は呼び出し側が引き回す。同じ DataRoot を同時に所有できるプロセスは 1 つだけである。
