@@ -5,10 +5,11 @@ use crate::DomainError;
 use serde::de::Error as DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 /// A non-negative normalized fraction.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicalFraction {
     pub numerator: u32,
     pub denominator: u32,
@@ -81,7 +82,7 @@ impl<'de> Deserialize<'de> for MusicalFraction {
 }
 
 /// A one-origin bar and beat position with an optional beat-relative offset.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicalPosition {
     pub bar: u32,
     pub beat: u32,
@@ -171,7 +172,7 @@ impl<'de> Deserialize<'de> for MusicalPosition {
 }
 
 /// A positive duration expressed as a fraction of a whole note.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicalDuration {
     pub numerator: u32,
     pub denominator: u32,
@@ -230,14 +231,83 @@ impl<'de> Deserialize<'de> for MusicalDuration {
     }
 }
 
-/// A pitch represented by its MIDI note number after parsing.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// A pitch name that retains its enharmonic spelling while exposing its MIDI value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicalPitch {
-    midi_pitch: u8,
+    letter: NoteLetter,
+    accidental: Accidental,
+    octave: i8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NoteLetter {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+}
+
+impl NoteLetter {
+    fn semitone(self) -> i16 {
+        match self {
+            Self::A => 9,
+            Self::B => 11,
+            Self::C => 0,
+            Self::D => 2,
+            Self::E => 4,
+            Self::F => 5,
+            Self::G => 7,
+        }
+    }
+}
+
+impl fmt::Display for NoteLetter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::A => 'A',
+            Self::B => 'B',
+            Self::C => 'C',
+            Self::D => 'D',
+            Self::E => 'E',
+            Self::F => 'F',
+            Self::G => 'G',
+        };
+        formatter.write_char(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Accidental {
+    Natural,
+    Sharp,
+    Flat,
+}
+
+impl Accidental {
+    fn semitone(self) -> i16 {
+        match self {
+            Self::Natural => 0,
+            Self::Sharp => 1,
+            Self::Flat => -1,
+        }
+    }
+}
+
+impl fmt::Display for Accidental {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Natural => Ok(()),
+            Self::Sharp => formatter.write_char('#'),
+            Self::Flat => formatter.write_char('b'),
+        }
+    }
 }
 
 impl MusicalPitch {
-    /// Parses a pitch name and returns its MIDI representation.
+    /// Parses a pitch name and retains its enharmonic spelling.
     ///
     /// # Errors
     ///
@@ -249,21 +319,18 @@ impl MusicalPitch {
 
     /// Returns the MIDI note number represented by this pitch.
     pub fn midi_pitch(self) -> u8 {
-        self.midi_pitch
+        let midi_pitch =
+            (i16::from(self.octave) + 1) * 12 + self.letter.semitone() + self.accidental.semitone();
+        u8::try_from(midi_pitch).expect("a musical pitch always has a valid MIDI value")
     }
 }
 
 impl fmt::Display for MusicalPitch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const NAMES: [&str; 12] = [
-            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-        ];
-        let octave = i16::from(self.midi_pitch / 12) - 1;
         write!(
             formatter,
-            "{}{}",
-            NAMES[usize::from(self.midi_pitch % 12)],
-            octave
+            "{}{}{}",
+            self.letter, self.accidental, self.octave
         )
     }
 }
@@ -276,37 +343,40 @@ impl FromStr for MusicalPitch {
         let note = chars
             .next()
             .ok_or_else(|| invalid_value("pitch must contain a note name"))?;
-        let semitone = match note.to_ascii_uppercase() {
-            'C' => 0,
-            'D' => 2,
-            'E' => 4,
-            'F' => 5,
-            'G' => 7,
-            'A' => 9,
-            'B' => 11,
+        let letter = match note.to_ascii_uppercase() {
+            'A' => NoteLetter::A,
+            'B' => NoteLetter::B,
+            'C' => NoteLetter::C,
+            'D' => NoteLetter::D,
+            'E' => NoteLetter::E,
+            'F' => NoteLetter::F,
+            'G' => NoteLetter::G,
             _ => return Err(invalid_value("pitch note must be between A and G")),
         };
         let accidental = match chars.clone().next() {
             Some('#') => {
                 chars.next();
-                1
+                Accidental::Sharp
             }
             Some('b') => {
                 chars.next();
-                -1
+                Accidental::Flat
             }
-            _ => 0,
+            _ => Accidental::Natural,
         };
         let octave = chars
             .as_str()
             .parse::<i16>()
             .map_err(|_| invalid_value("pitch octave must be an integer"))?;
-        let midi_pitch = (octave + 1) * 12 + semitone + accidental;
+        let midi_pitch = (octave + 1) * 12 + letter.semitone() + accidental.semitone();
         if !(0..=127).contains(&midi_pitch) {
             return Err(invalid_value("pitch must be within the MIDI range"));
         }
-        let midi_pitch = midi_pitch as u8;
-        Ok(Self { midi_pitch })
+        Ok(Self {
+            letter,
+            accidental,
+            octave: i8::try_from(octave).expect("a valid MIDI pitch has an i8 octave"),
+        })
     }
 }
 
@@ -582,10 +652,12 @@ mod tests {
 
     #[test]
     fn pitch_enharmonics_share_the_same_midi_value() {
-        assert_eq!(
-            "C#4".parse::<MusicalPitch>().unwrap().midi_pitch(),
-            "Db4".parse::<MusicalPitch>().unwrap().midi_pitch()
-        );
+        let sharp = "C#4".parse::<MusicalPitch>().unwrap();
+        let flat = "Db4".parse::<MusicalPitch>().unwrap();
+        assert_eq!(sharp.midi_pitch(), flat.midi_pitch());
+        assert_eq!(sharp.to_string(), "C#4");
+        assert_eq!(flat.to_string(), "Db4");
+        assert_eq!(serde_json::to_string(&flat).unwrap(), r#""Db4""#);
         assert_eq!("C-1".parse::<MusicalPitch>().unwrap().midi_pitch(), 0);
         assert_eq!("G9".parse::<MusicalPitch>().unwrap().midi_pitch(), 127);
     }
