@@ -67,7 +67,7 @@ interface ArrangeTrackProps {
   onRename: (name: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  onReorder: (sourceTrackId: string) => void;
+  onReorder: (sourceTrackId: string, insertAfter: boolean) => void;
   onResize: () => void;
   onSetTrackSize?: (size: TrackSize) => void;
   automationOpen: boolean;
@@ -85,6 +85,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [dropHint, setDropHint] = useState<'before' | 'after' | null>(null);
   const [pendingTrackValues, setPendingTrackValues] = useState<PendingTrackValues>({});
 
   useEffect(() => {
@@ -142,7 +143,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const laneCount = props.timeline.laneCount;
   const laneHeight = trackLaneHeight(props.trackSize);
   const showMix = props.trackSize !== 'compact';
-  const trackMeta = props.track.kind === 'instrument' ? 'INSTRUMENT' : 'AUDIO';
 
   const onResizePointerDown = (event: React.PointerEvent) => {
     event.preventDefault();
@@ -193,38 +193,48 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
             '--track-color': resolveTrackColor(props.track, props.trackIndex ?? 0),
           } as CSSProperties
         }
+        data-drop={dropHint ?? undefined}
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
             props.onSelectTrack();
           }
         }}
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes('application/x-riffra-track')) {
-            event.preventDefault();
-          }
+          if (!event.dataTransfer.types.includes('application/x-riffra-track')) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setDropHint(event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after');
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+          setDropHint(null);
         }}
         onDrop={(event) => {
           const sourceTrackId = event.dataTransfer.getData('application/x-riffra-track');
+          setDropHint(null);
           if (!sourceTrackId) return;
           event.preventDefault();
           event.stopPropagation();
-          props.onReorder(sourceTrackId);
+          const bounds = event.currentTarget.getBoundingClientRect();
+          props.onReorder(sourceTrackId, event.clientY >= bounds.top + bounds.height / 2);
         }}
       >
-        <div className={styles.trackIdentity}>
+        <div
+          className={styles.trackIdentity}
+          draggable
+          title="Drag to reorder track"
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('application/x-riffra-track', props.track.id);
+          }}
+          onDragEnd={() => setDropHint(null)}
+        >
           <div className={styles.trackNameRow}>
-            <span className={styles.trackColorDot} aria-hidden="true" />
-            <span
-              className={styles.trackGrip}
-              draggable
-              title="Reorder track"
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('application/x-riffra-track', props.track.id);
-              }}
-            >
-              <Icon name="grip" />
-            </span>
+            <Icon
+              name={props.track.kind === 'instrument' ? 'note' : 'wave'}
+              className={styles.trackKindIcon}
+            />
             {renaming ? (
               <input
                 autoFocus
@@ -257,9 +267,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                 {props.track.name}
               </span>
             )}
-          </div>
-          <div className={styles.trackMeta}>
-            <span>{trackMeta}</span>
           </div>
         </div>
         <div className={styles.trackSwitches}>

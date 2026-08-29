@@ -15,6 +15,7 @@ import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 const noopRetryRuntimeProjection = async (): Promise<void> => undefined;
@@ -97,7 +98,7 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(scroller.scrollLeft).toBe(0));
     await waitFor(() =>
       expect(container.querySelector('[class*="playhead"]')?.getAttribute('style')).toContain(
-        'translate3d(192px',
+        `translate3d(${TRACK_HEADER_WIDTH}px`,
       ),
     );
   });
@@ -1617,8 +1618,9 @@ describe('WorkspaceArrange', () => {
     // Act
     fireEvent.keyDown(window, { key: 'f' });
 
-    // Assert: 0..3840 ticks fitted into 1184 usable px -> zoom = 1184/3840 * 10 = 3.083...
-    expect(zoom.textContent).toBe('308%');
+    // Assert: 0..3840 ticks fitted into the usable width -> zoom = usable / 3840 * 10
+    const usableWidth = 1408 - TRACK_HEADER_WIDTH - 32;
+    expect(zoom.textContent).toBe(`${Math.round((usableWidth / 3840) * 10 * 100)}%`);
   });
 
   it('does not zoom with the F key when no Clip exists', () => {

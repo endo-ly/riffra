@@ -1178,9 +1178,20 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
-                  onReorder={(sourceTrackId) =>
-                    void editor.commit(props.api.reorderTrack(sourceTrackId, trackIndex))
-                  }
+                  onReorder={(sourceTrackId, insertAfter) => {
+                    const sourceIndex = arrangement.tracks.findIndex(
+                      (candidate) => candidate.id === sourceTrackId,
+                    );
+                    if (sourceIndex < 0 || sourceIndex === trackIndex) return;
+                    const targetIndex = insertAfter
+                      ? sourceIndex < trackIndex
+                        ? trackIndex
+                        : trackIndex + 1
+                      : sourceIndex < trackIndex
+                        ? trackIndex - 1
+                        : trackIndex;
+                    void editor.commit(props.api.reorderTrack(sourceTrackId, targetIndex));
+                  }}
                   onResize={() => cycleTrackSize(track.id)}
                   onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
                   automationOpen={Boolean(automationParameters[track.id])}

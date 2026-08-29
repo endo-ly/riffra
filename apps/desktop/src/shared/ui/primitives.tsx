@@ -1,6 +1,6 @@
 import styles from './Meter.module.css';
 
-export function Icon({ name }: { name: string }) {
+export function Icon({ name, className }: { name: string; className?: string }) {
   const paths: Record<string, string> = {
     search:
       'M11 4a7 7 0 1 0 4.9 12l4.55 4.55 1.4-1.4-4.55-4.55A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
@@ -37,7 +37,7 @@ export function Icon({ name }: { name: string }) {
     import: 'M12 3 6.6 8.4 8 9.8l3-3V15h2V6.8l3 3 1.4-1.4L12 3ZM5 18h14v2H5v-2Z',
   };
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24">
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className}>
       <path d={paths[name] ?? paths.plus} />
     </svg>
   );

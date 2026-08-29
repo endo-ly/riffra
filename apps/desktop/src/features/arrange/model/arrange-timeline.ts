@@ -1,6 +1,7 @@
 import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/domain';
 
-export const TRACK_HEADER_WIDTH = 192;
+/** Header column width, shared between the timeline geometry math and the CSS layout. */
+export const TRACK_HEADER_WIDTH = 224;
 export const BASE_PIXELS_PER_QUARTER = 96;
 
 export type SnapGrid =
@@ -219,5 +220,5 @@ export function buildTrackTimeline(
 }
 
 export function trackLaneHeight(size: TrackSize) {
-  return size === 'compact' ? 50 : size === 'large' ? 96 : 70;
+  return size === 'compact' ? 50 : size === 'large' ? 96 : 76;
 }
