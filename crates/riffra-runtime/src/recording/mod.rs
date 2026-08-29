@@ -2,7 +2,6 @@ pub mod application;
 pub mod materialize;
 pub mod model;
 pub mod repository;
-pub mod service;
 
 pub use application::{
     RecordingContext, archive_recording, delete_recording, detect_duplicate_recordings,
@@ -15,4 +14,3 @@ pub use repository::{
     RecordingAsset, archive, audio_paths, delete, detect_duplicates, list, media_paths,
     preflight_audio_paths, promote, rename, save_asset_ids, save_capture_start,
 };
-pub use service::RecordingService;

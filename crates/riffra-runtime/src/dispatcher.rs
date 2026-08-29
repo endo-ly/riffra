@@ -1131,17 +1131,17 @@ struct ReorderParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AudioInputParams {
-    track_id: String,
-    channel_index: u32,
+pub(crate) struct AudioInputParams {
+    pub(crate) track_id: String,
+    pub(crate) channel_index: u32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MidiInputParams {
-    track_id: String,
-    device_id: Option<String>,
-    channel: Option<u8>,
+pub(crate) struct MidiInputParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: Option<String>,
+    pub(crate) channel: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1420,60 +1420,60 @@ struct ProjectImportParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectRemoveParams {
-    track_id: String,
-    device_id: String,
+pub(crate) struct EffectRemoveParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectReorderParams {
-    track_id: String,
-    device_ids: Vec<String>,
+pub(crate) struct EffectReorderParams {
+    pub(crate) track_id: String,
+    pub(crate) device_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceBypassParams {
-    track_id: String,
-    device_id: String,
-    bypassed: bool,
+pub(crate) struct DeviceBypassParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) bypassed: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginPathParams {
-    track_id: String,
-    plugin_path: String,
+pub(crate) struct PluginPathParams {
+    pub(crate) track_id: String,
+    pub(crate) plugin_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceParameterParams {
-    track_id: String,
-    device_id: String,
-    parameter_index: u32,
-    value: f32,
+pub(crate) struct DeviceParameterParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) parameter_index: u32,
+    pub(crate) value: f32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingRelinkParams {
-    asset_id: String,
-    new_path: String,
+pub(crate) struct MissingRelinkParams {
+    pub(crate) asset_id: String,
+    pub(crate) new_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceIdParams {
-    device_id: String,
+pub(crate) struct DeviceIdParams {
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingPluginReplaceParams {
-    device_id: String,
-    new_path: String,
+pub(crate) struct MissingPluginReplaceParams {
+    pub(crate) device_id: String,
+    pub(crate) new_path: String,
 }
 
 #[cfg(test)]
