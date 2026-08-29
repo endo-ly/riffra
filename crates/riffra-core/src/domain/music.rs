@@ -318,6 +318,10 @@ impl MusicalPitch {
     }
 
     /// Returns the MIDI note number represented by this pitch.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the pitch's internal MIDI-range invariant is violated.
     pub fn midi_pitch(self) -> u8 {
         let midi_pitch =
             (i16::from(self.octave) + 1) * 12 + self.letter.semitone() + self.accidental.semitone();
