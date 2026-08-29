@@ -195,7 +195,7 @@
   min-width: 2px;
   color: var(--color-status-danger);
   font-size: var(--font-size-micro);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   background: color-mix(in srgb, var(--color-status-danger) 58%, transparent);
 }
 .punchRange::before,
@@ -227,7 +227,7 @@
   overflow: hidden;
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   white-space: nowrap;
   background: color-mix(in srgb, var(--color-status-danger) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-status-danger) 80%, transparent);
@@ -240,7 +240,7 @@
   left: 50%;
   transform: translateX(-50%);
   font-size: var(--font-size-micro);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
@@ -360,9 +360,8 @@
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--color-status-warning) 34%, var(--color-bg-panel));
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   transform: translateX(-50%);
   cursor: grab;
@@ -398,21 +397,20 @@
 }
 
 .trackRow[data-selected='true'] .trackHeader {
-  box-shadow: inset 3px 0 0 var(--track-color, var(--color-selection-accent));
-  background: color-mix(
-    in srgb,
-    var(--color-bg-panel) 92%,
-    var(--track-color, var(--color-selection-accent))
-  );
+  border-left-color: var(--track-color);
+  background: color-mix(in srgb, var(--track-color) 7%, var(--color-bg-panel));
 }
+
 .trackRow[data-focused='true'] .trackHeader {
-  background: color-mix(in srgb, var(--color-bg-panel) 94%, var(--color-accent-primary));
-  box-shadow: inset 0 -2px 0 var(--color-accent-primary);
+  background: var(--color-bg-surface-raised);
 }
+
+.trackRow[data-focused='true'] .trackName {
+  color: var(--color-text-strong);
+}
+
 .trackRow[data-selected='true'][data-focused='true'] .trackHeader {
-  box-shadow:
-    inset 3px 0 0 var(--track-color, var(--color-selection-accent)),
-    inset 0 -2px 0 var(--color-accent-primary);
+  background: color-mix(in srgb, var(--track-color) 7%, var(--color-bg-surface-raised));
 }
 
 /*
@@ -442,14 +440,19 @@
   padding: 6px 8px 6px 10px;
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
-  border-left: 3px solid var(--track-color, transparent);
+  border-left: 3px solid transparent;
 }
 
 .trackGrip {
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
   color: var(--color-text-disabled);
-  font-size: var(--font-size-micro);
   cursor: grab;
+}
+.trackGrip svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 .trackGrip:active {
   cursor: grabbing;
@@ -464,6 +467,14 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.trackColorDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--track-color);
 }
 .trackName {
   min-width: 0;
@@ -497,7 +508,7 @@
     var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
 }
 .trackMeta > span {
   min-width: 0;
@@ -516,17 +527,20 @@
   grid-column: 3;
 }
 .trackMenu summary {
-  width: 25px;
-  height: 20px;
+  width: 26px;
+  height: 22px;
   display: grid;
   place-content: center;
   color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
   list-style: none;
+}
+.trackMenu summary svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 .trackMenu summary::-webkit-details-marker {
   display: none;
@@ -540,7 +554,7 @@
 .trackMenu > div {
   position: absolute;
   z-index: 30;
-  top: 24px;
+  top: 26px;
   right: 0;
   width: 112px;
   display: none;
@@ -592,9 +606,9 @@
   color: var(--color-status-danger);
 }
 .trackSwitches .muteActive {
-  color: var(--color-text-on-accent);
-  background: var(--color-status-warning);
-  border-color: var(--color-status-warning);
+  color: var(--color-bg-app);
+  background: var(--color-text-muted);
+  border-color: var(--color-text-muted);
 }
 .trackSwitches .soloActive {
   color: var(--color-text-on-accent);
@@ -632,9 +646,9 @@
 }
 
 .trackControl input {
-  width: 100%;
-  height: 3px;
-  accent-color: var(--color-accent-primary);
+  --slider-height: 14px;
+  --slider-track-height: 2px;
+  --slider-thumb-height: 12px;
 }
 
 .trackControl output {
@@ -730,7 +744,7 @@
   height: var(--size-control-dense);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
-  background: var(--color-bg-control);
+  background-color: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -848,7 +862,7 @@
     700 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.08em;
   pointer-events: none;
 }
 .clip.midiClip {
@@ -923,7 +937,7 @@
     var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.08em;
 }
 .clipGainLine {
   position: absolute;
@@ -1019,8 +1033,8 @@
 .playhead {
   left: 0;
   z-index: 9;
-  background: var(--color-status-danger);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--color-status-danger) 55%, transparent);
+  background: var(--color-text-strong);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-text-strong) 45%, transparent);
 }
 .playhead::before {
   content: '';
@@ -1029,14 +1043,14 @@
   left: -5px;
   width: 11px;
   height: 8px;
-  background: var(--color-status-danger);
+  background: var(--color-text-strong);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .playhead span {
   position: absolute;
   top: 8px;
   left: 3px;
-  color: var(--color-status-danger);
+  color: var(--color-text-strong);
 }
 .snapGuide {
   z-index: 10;

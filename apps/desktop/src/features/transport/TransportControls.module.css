@@ -62,11 +62,11 @@
 
 .transportActions button.toggleActive {
   color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
 }
 
 .transportActions button.toggleActive:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
 }
 
 .transportActions .playButton {
@@ -79,11 +79,12 @@
 }
 
 .transportActions .playButton.playing {
-  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--color-accent-primary) 42%, black);
 }
 
 .transportActions .playButton.playing:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 50%, black);
 }
 
 .transportActions .playButton svg {
@@ -92,12 +93,12 @@
 }
 
 .transportActions .recordButton.active {
-  color: var(--color-status-danger);
-  background: color-mix(in srgb, var(--color-status-danger) 13%, transparent);
+  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--color-status-danger) 46%, black);
 }
 
 .transportActions .recordButton.active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-status-danger) 19%, transparent);
+  background: color-mix(in srgb, var(--color-status-danger) 54%, black);
 }
 
 .transportActions .countInButton {
@@ -135,7 +136,7 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   line-height: 1;
 }
 
@@ -143,12 +144,12 @@
 .timebase select {
   height: var(--size-control-dense);
   box-sizing: border-box;
-  padding: 0 6px;
+  padding: 0 20px 0 6px;
   color: var(--color-text-secondary);
   font-family: 'DM Mono', Consolas, monospace;
   font-size: var(--font-size-small);
   font-variant-numeric: tabular-nums;
-  background: var(--color-bg-control);
+  background-color: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }

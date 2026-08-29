@@ -57,7 +57,7 @@
     700 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
 }
 
 .shellNotice {
@@ -81,7 +81,7 @@
     700 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
 }
 
 .safeModeNotice {
@@ -130,7 +130,7 @@
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   background: var(--color-status-danger);
   border: 1px solid var(--color-status-danger);
   border-radius: var(--radius-sm);
@@ -190,6 +190,10 @@
   border-radius: var(--radius-sm);
 }
 .commandPalette > button:hover {
+  background: var(--color-bg-control-hover);
+}
+
+.commandPalette > button[data-active='true'] {
   background: var(--color-bg-control-hover);
 }
 .commandPalette > button span {

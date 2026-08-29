@@ -93,7 +93,7 @@
 .pluginPicker header strong {
   color: var(--color-text-primary);
   font-size: var(--font-size-small);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .pluginPickerCancel {

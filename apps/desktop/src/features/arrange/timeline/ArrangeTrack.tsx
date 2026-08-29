@@ -21,6 +21,8 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
 import { resolveTrackColor } from '../inspector/track-colors';
+import { Icon } from '@/shared/ui/primitives';
+import controls from '@/shared/ui/controls.module.css';
 import styles from '../WorkspaceArrange.module.css';
 
 interface ArrangeTrackProps {
@@ -211,6 +213,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       >
         <div className={styles.trackIdentity}>
           <div className={styles.trackNameRow}>
+            <span className={styles.trackColorDot} aria-hidden="true" />
             <span
               className={styles.trackGrip}
               draggable
@@ -220,7 +223,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                 event.dataTransfer.setData('application/x-riffra-track', props.track.id);
               }}
             >
-              ⠿
+              <Icon name="grip" />
             </span>
             {renaming ? (
               <input
@@ -315,7 +318,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           )}
         </div>
         <details ref={detailsRef} className={styles.trackMenu}>
-          <summary aria-label={`${props.track.name} track menu`}>•••</summary>
+          <summary aria-label={`${props.track.name} track menu`}>
+            <Icon name="more" />
+          </summary>
           <div>
             {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
               <button
@@ -370,6 +375,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               <span>VOL</span>
               <input
                 key={`${props.track.id}:gain:${props.track.gainDb}`}
+                className={controls.slider}
                 aria-label={`${props.track.name} gain`}
                 type="range"
                 min="-60"
@@ -390,6 +396,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
               <span>PAN</span>
               <input
                 key={`${props.track.id}:pan:${props.track.pan}`}
+                className={controls.slider}
                 aria-label={`${props.track.name} pan`}
                 type="range"
                 min="-1"

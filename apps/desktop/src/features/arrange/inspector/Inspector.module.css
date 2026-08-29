@@ -154,7 +154,7 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   font-weight: 600;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.08em;
 }
 
 .headerMeta {
@@ -163,7 +163,7 @@
     var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
 }
 
 .headerAction {
@@ -261,7 +261,7 @@
   padding: 0 7px;
   color: var(--color-text-primary);
   font-size: var(--font-size-small);
-  background: var(--color-bg-control);
+  background-color: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -278,12 +278,7 @@
 }
 
 select.control {
-  appearance: none;
   padding-right: 22px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%237d8794' d='M12 16.5 5.5 9h13Z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  background-size: 12px;
 }
 
 .value {
@@ -329,35 +324,7 @@ select.control {
 }
 
 .range {
-  width: 100%;
-  height: 18px;
-  appearance: none;
-  background: transparent;
-}
-
-.range::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--color-bg-control-raised);
-  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
-}
-
-.range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 9px;
-  height: 13px;
-  margin-top: -5px;
-  background: var(--color-accent-primary);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 55%, black);
-  border-radius: 2px;
-}
-
-.range::-webkit-slider-thumb:hover {
-  background: var(--color-selection-highlight);
-}
-
-.range:focus-visible::-webkit-slider-runnable-track {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  composes: slider from '../../../shared/ui/controls.module.css';
 }
 
 .segmented {
@@ -383,7 +350,7 @@ select.control {
   min-width: 34px;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .transformGrid {
@@ -408,7 +375,7 @@ select.control {
 
 .segmented button[aria-pressed='true'] {
   color: var(--color-text-strong);
-  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
 }
 
 .smallButton {
@@ -589,7 +556,7 @@ select.control {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
+  min-height: 28px;
   padding: 3px 5px;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
@@ -665,7 +632,7 @@ select.control {
   padding: 4px 5px 5px;
   color: var(--color-status-warning);
   font-size: var(--font-size-micro);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .missingState .smallButton {

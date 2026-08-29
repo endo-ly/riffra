@@ -24,7 +24,8 @@
 .dialog h2 {
   margin: 0;
   color: var(--color-text-strong);
-  font-size: var(--font-size-emphasis);
+  font-size: var(--font-size-title);
+  font-weight: 600;
 }
 
 .dialog p {

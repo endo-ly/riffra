@@ -57,7 +57,7 @@
 .mode button,
 .controls > button,
 .state button {
-  min-height: 30px;
+  min-height: 28px;
   padding: 0 10px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
@@ -86,10 +86,9 @@
   color: var(--color-text-primary) !important;
   background: color-mix(
     in srgb,
-    var(--color-accent-secondary) 20%,
+    var(--color-accent-primary) 16%,
     var(--color-bg-control)
   ) !important;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
 }
 
 .velocity {
@@ -209,7 +208,7 @@
 
 .state strong {
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-title);
 }
 
 .state span {

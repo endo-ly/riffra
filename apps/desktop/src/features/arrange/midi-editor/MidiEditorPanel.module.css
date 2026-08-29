@@ -173,8 +173,8 @@
   bottom: 0;
   width: 1px;
   pointer-events: none;
-  background: var(--color-status-danger);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--color-status-danger) 55%, transparent);
+  background: var(--color-text-strong);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-text-strong) 45%, transparent);
 }
 
 .marquee {

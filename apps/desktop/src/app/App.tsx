@@ -1,6 +1,7 @@
 import type { NativeApi } from '@/native/native-api';
 import clsx from 'clsx';
 import {
+  Fragment,
   useEffect,
   useState,
   type CSSProperties,
@@ -80,6 +81,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   } | null>(null);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [restoreCandidate, setRestoreCandidate] = useState<string | null>(null);
+  const [commandActive, setCommandActive] = useState(0);
   const {
     hostConnectionState,
     localHosts,
@@ -213,6 +215,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     }
   }, [hostConnected, setAudioSettingsOpen, setCommandOpen]);
 
+  useEffect(() => {
+    if (commandOpen) setCommandActive(0);
+  }, [commandOpen]);
+
   const sessionSelector = (
     <SessionSelector
       session={null}
@@ -245,6 +251,26 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const shellStyle = {
     '--layout-left-column-width': `${leftColumnWidth}px`,
   } as CSSProperties;
+  const commandItems = [
+    {
+      section: 'PROJECT',
+      label: 'Import Project',
+      description: 'Open a project.json manifest',
+      run: () => void importSession(),
+    },
+    {
+      section: 'PROJECT',
+      label: 'Export Project',
+      description: 'Write a collected project manifest',
+      run: () => void exportSession(),
+    },
+    {
+      section: 'SETTINGS',
+      label: 'Audio Settings',
+      description: 'Configure driver and Windows devices',
+      run: () => setAudioSettingsOpen(true),
+    },
+  ];
   return (
     <main
       className={clsx(shellStyles.appShell, panelResize && shellStyles.isPanelResizing)}
@@ -501,37 +527,49 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           >
             <label>
               <Icon name="command" />
-              <input autoFocus placeholder="Search actions, assets, settings…" />
+              <input
+                autoFocus
+                placeholder="Search actions, assets, settings…"
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    setCommandActive((index) => Math.min(index + 1, commandItems.length - 1));
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setCommandActive((index) => Math.max(index - 1, 0));
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const item = commandItems[commandActive];
+                    if (item) {
+                      setCommandOpen(false);
+                      item.run();
+                    }
+                  } else if (event.key === 'Escape') {
+                    setCommandOpen(false);
+                  }
+                }}
+              />
             </label>
-            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>PROJECT</span>
-            <button
-              onClick={() => {
-                setCommandOpen(false);
-                void importSession();
-              }}
-            >
-              <span>Import Project</span>
-              <small>Open a project.json manifest</small>
-            </button>
-            <button
-              onClick={() => {
-                setCommandOpen(false);
-                void exportSession();
-              }}
-            >
-              <span>Export Project</span>
-              <small>Write a collected project manifest</small>
-            </button>
-            <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>SETTINGS</span>
-            <button
-              onClick={() => {
-                setCommandOpen(false);
-                setAudioSettingsOpen(true);
-              }}
-            >
-              <span>Audio Settings</span>
-              <small>Configure driver and Windows devices</small>
-            </button>
+            {commandItems.map((item, index) => (
+              <Fragment key={item.label}>
+                {(index === 0 || commandItems[index - 1].section !== item.section) && (
+                  <span className={clsx(surface.eyebrow, styles.commandEyebrow)}>
+                    {item.section}
+                  </span>
+                )}
+                <button
+                  data-active={index === commandActive || undefined}
+                  onMouseEnter={() => setCommandActive(index)}
+                  onClick={() => {
+                    setCommandOpen(false);
+                    item.run();
+                  }}
+                >
+                  <span>{item.label}</span>
+                  <small>{item.description}</small>
+                </button>
+              </Fragment>
+            ))}
             <footer>
               <span>↑↓ Navigate</span>
               <span>↵ Select</span>
