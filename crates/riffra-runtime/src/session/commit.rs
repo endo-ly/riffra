@@ -27,13 +27,12 @@ pub fn publish_canonical_state<D: RuntimeDriver>(
 }
 
 pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
-    core: &AppCore<AudioSupervisor>,
+    canonical: riffra_core::CanonicalState,
     runtime: &RuntimeReconciler<D>,
     data_root: &Path,
     safe_mode: bool,
     effect: CanonicalMutationEffect,
 ) -> Result<ArrangementMutationResult, String> {
-    let canonical = core.canonical_state().map_err(|error| error.to_string())?;
     if safe_mode || matches!(effect, CanonicalMutationEffect::CanonicalOnly) {
         return Ok(ArrangementMutationResult {
             canonical,
@@ -97,8 +96,9 @@ where
 pub fn arrangement_mutation_result<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
+    let canonical = context.core.canonical_state()?;
     finalize_arrangement_mutation(
-        context.core,
+        canonical,
         context.runtime,
         context.data_root,
         context.safe_mode,
@@ -110,8 +110,9 @@ pub fn arrangement_mutation_result<D: RuntimeDriver>(
 pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
+    let canonical = context.core.canonical_state()?;
     finalize_arrangement_mutation(
-        context.core,
+        canonical,
         context.runtime,
         context.data_root,
         context.safe_mode,

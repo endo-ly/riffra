@@ -1111,8 +1111,12 @@ fn finalize_arrange_recording(
     )?;
     let (base_session, candidate_session) = materialize_arrange_candidate(prepared, outputs)?;
     commit_recording_session(context, &base_session, candidate_session)?;
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     commit::finalize_arrangement_mutation(
-        context.core,
+        canonical,
         context.runtime,
         context.data_root,
         context.safe_mode,
@@ -1569,8 +1573,12 @@ fn place_recording_on_timeline(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_recording_session(context, &base_session, session)?;
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
     Ok(Some(commit::finalize_arrangement_mutation(
-        context.core,
+        canonical,
         context.runtime,
         context.data_root,
         context.safe_mode,

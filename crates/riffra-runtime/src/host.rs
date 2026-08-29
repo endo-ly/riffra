@@ -1216,17 +1216,20 @@ impl HostState {
         &self,
         effect: CanonicalMutationEffect,
     ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
+        let canonical = self
+            .canonical()
+            .map_err(|error| command_error(error.to_string()))?;
+        library::index::refresh(&self.data_root, &canonical.session);
+        self.events
+            .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         let mutation = commit::finalize_arrangement_mutation(
-            self.core.as_ref(),
+            canonical,
             self.runtime.as_ref(),
             &self.data_root,
             self.core.safe_mode(),
             effect,
         )
         .map_err(command_error)?;
-        library::index::refresh(&self.data_root, &mutation.canonical.session);
-        self.events
-            .emit(HostEvent::CanonicalStateChanged(mutation.canonical.clone()));
         Ok(mutation)
     }
 
@@ -3066,6 +3069,69 @@ mod tests {
         let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         reopened.shutdown();
         drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn normal_host_publishes_canonical_state_before_projection_status() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-event-order-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let events = host
+            .state
+            .subscribe_events()
+            .expect("Host event subscription should be available");
+
+        let response = host.dispatch_control(ControlRequest::new(
+            "track-add",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+        assert!(response.ok);
+
+        let mut canonical_index = None;
+        let mut projection_index = None;
+        for index in 0..16 {
+            let event = events
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("Host should publish the mutation events");
+            if event.event == "canonical-state-changed"
+                && event.payload["sequence"].as_u64() == Some(1)
+            {
+                canonical_index = Some(index);
+            }
+            if event.event == "runtime-projection-status"
+                && event.payload["targetProjectionSequence"].as_u64() == Some(1)
+            {
+                projection_index = Some(index);
+                break;
+            }
+        }
+
+        assert!(
+            canonical_index.is_some_and(|canonical| {
+                projection_index.is_some_and(|projection| canonical < projection)
+            }),
+            "canonical state must be published before projection status"
+        );
+
+        host.shutdown();
+        drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
 
