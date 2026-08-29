@@ -8,8 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// A non-negative normalized fraction.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct MusicalFraction {
     pub numerator: u32,
     pub denominator: u32,
@@ -17,6 +16,10 @@ pub struct MusicalFraction {
 
 impl MusicalFraction {
     /// Creates and reduces a non-negative fraction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `denominator` is zero.
     pub fn new(numerator: u32, denominator: u32) -> Result<Self, DomainError> {
         if denominator == 0 {
             return Err(invalid_value("fraction denominator must be positive"));
@@ -26,6 +29,54 @@ impl MusicalFraction {
             numerator: numerator / divisor,
             denominator: denominator / divisor,
         })
+    }
+}
+
+impl Default for MusicalFraction {
+    fn default() -> Self {
+        Self {
+            numerator: 0,
+            denominator: 1,
+        }
+    }
+}
+
+impl Serialize for MusicalFraction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct FractionFields {
+            numerator: u32,
+            denominator: u32,
+        }
+
+        let fraction = MusicalFraction::new(self.numerator, self.denominator)
+            .map_err(serde::ser::Error::custom)?;
+        FractionFields {
+            numerator: fraction.numerator,
+            denominator: fraction.denominator,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for MusicalFraction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct FractionFields {
+            numerator: u32,
+            denominator: u32,
+        }
+
+        let fields = FractionFields::deserialize(deserializer)?;
+        MusicalFraction::new(fields.numerator, fields.denominator).map_err(D::Error::custom)
     }
 }
 
@@ -39,6 +90,11 @@ pub struct MusicalPosition {
 
 impl MusicalPosition {
     /// Creates a position and validates its beat-relative offset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bar or beat is zero, or when the offset is
+    /// not a proper fraction.
     pub fn new(bar: u32, beat: u32, offset: MusicalFraction) -> Result<Self, DomainError> {
         if bar == 0 {
             return Err(invalid_value("bar must be one or greater"));
@@ -123,6 +179,10 @@ pub struct MusicalDuration {
 
 impl MusicalDuration {
     /// Creates and reduces a positive musical duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the numerator is zero or the denominator is zero.
     pub fn new(numerator: u32, denominator: u32) -> Result<Self, DomainError> {
         if numerator == 0 {
             return Err(invalid_value("duration numerator must be positive"));
@@ -178,6 +238,11 @@ pub struct MusicalPitch {
 
 impl MusicalPitch {
     /// Parses a pitch name and returns its MIDI representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `value` is not a supported pitch name or falls
+    /// outside the MIDI pitch range.
     pub fn new(value: &str) -> Result<Self, DomainError> {
         value.parse()
     }
@@ -267,6 +332,11 @@ impl<'de> Deserialize<'de> for MusicalPitch {
 
 impl ProjectTimebase {
     /// Converts a project-wide bar/beat position to an absolute timeline tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timebase or position is invalid, or when the
+    /// resulting tick cannot be represented.
     pub fn musical_position_to_tick(
         self,
         position: MusicalPosition,
@@ -316,6 +386,11 @@ impl ProjectTimebase {
     }
 
     /// Converts a whole-note fraction to the nearest positive timeline duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timebase or duration is invalid, or when the
+    /// result rounds to zero or cannot be represented.
     pub fn musical_duration_to_ticks(self, duration: MusicalDuration) -> Result<u64, DomainError> {
         let duration = MusicalDuration::new(duration.numerator, duration.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
@@ -402,6 +477,13 @@ mod tests {
             "1/2"
         );
         assert_eq!("Db4".parse::<MusicalPitch>().unwrap().midi_pitch(), 61);
+        let fraction: MusicalFraction =
+            serde_json::from_str(r#"{"numerator":2,"denominator":4}"#).unwrap();
+        assert_eq!(fraction, MusicalFraction::new(1, 2).unwrap());
+        assert_eq!(
+            serde_json::to_string(&fraction).unwrap(),
+            r#"{"numerator":1,"denominator":2}"#
+        );
     }
 
     #[test]

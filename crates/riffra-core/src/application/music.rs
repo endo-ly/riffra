@@ -21,6 +21,12 @@ where
     S: SessionStorage + ?Sized,
 {
     /// Creates an empty MIDI Clip from absolute musical positions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a musical position is invalid, the range is not
+    /// positive, the Track is missing or not an Instrument Track, or the
+    /// canonical commit cannot be persisted.
     pub fn create_musical_midi_clip(
         &self,
         track_id: &str,
@@ -28,7 +34,6 @@ where
         end: MusicalPosition,
         name: Option<String>,
     ) -> Result<CreativeSession, ApplicationError> {
-        let name = normalize_midi_clip_name(name);
         self.commit_arrangement(|arrangement| {
             let start_tick = arrangement.timebase.musical_position_to_tick(start)?;
             let end_tick = arrangement.timebase.musical_position_to_tick(end)?;
@@ -43,25 +48,23 @@ where
                 )
                 .into());
             }
-            arrangement
-                .add_midi_clip(MidiClip {
-                    id: next_id("midi-clip"),
-                    name,
-                    track_id: track_id.to_owned(),
-                    asset_id: None,
-                    start_tick,
-                    duration_ticks,
-                    notes: Vec::new(),
-                    events: Vec::new(),
-                    muted: false,
-                    loop_enabled: false,
-                    recording_take_id: None,
-                })
-                .map_err(Into::into)
+            super::arrangement::create_midi_clip_in_arrangement(
+                arrangement,
+                track_id,
+                start_tick,
+                duration_ticks,
+                name,
+            )
         })
     }
 
     /// Inserts MIDI notes whose positions are absolute within the arrangement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input is empty, a musical value is invalid,
+    /// a note precedes the Clip, the Clip is missing, or the canonical commit
+    /// cannot be persisted.
     pub fn insert_musical_notes(
         &self,
         clip_id: &str,
@@ -124,11 +127,20 @@ where
     }
 
     /// Lists all named timeline ranges.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the canonical session cannot be read.
     pub fn list_regions(&self) -> Result<Vec<TimelineRegion>, ApplicationError> {
         Ok(self.get_session()?.arrangement.regions)
     }
 
     /// Adds a named timeline range from absolute musical positions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name, positions, or range is invalid, or the
+    /// canonical commit cannot be persisted.
     pub fn add_region(
         &self,
         name: String,
@@ -151,6 +163,11 @@ where
     }
 
     /// Updates a named timeline range using only the supplied fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is missing, an updated field is
+    /// invalid, or the canonical commit cannot be persisted.
     pub fn update_region(
         &self,
         region_id: &str,
@@ -176,6 +193,11 @@ where
     }
 
     /// Removes a named timeline range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is missing or the canonical commit
+    /// cannot be persisted.
     pub fn remove_region(&self, region_id: &str) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
             arrangement.remove_region(region_id).map_err(Into::into)

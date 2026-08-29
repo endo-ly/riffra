@@ -506,6 +506,11 @@ impl Arrangement {
     }
 
     /// Validates a named timeline range without imposing a section taxonomy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region has an empty id or name, or when its
+    /// end is not after its start.
     pub fn validate_region(&self, region: &TimelineRegion) -> Result<(), DomainError> {
         if region.id.trim().is_empty()
             || region.name.trim().is_empty()
@@ -519,6 +524,11 @@ impl Arrangement {
     }
 
     /// Adds a named range to the arrangement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid or its id is already in
+    /// use.
     pub fn add_region(&mut self, region: TimelineRegion) -> Result<(), DomainError> {
         self.validate_region(&region)?;
         if self.regions.iter().any(|existing| existing.id == region.id) {
@@ -532,6 +542,11 @@ impl Arrangement {
     }
 
     /// Updates a named range while preserving its identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is missing or the updated region is
+    /// invalid.
     pub fn update_region(
         &mut self,
         region_id: &str,
@@ -565,6 +580,10 @@ impl Arrangement {
     }
 
     /// Removes a named range from the arrangement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is not registered.
     pub fn remove_region(&mut self, region_id: &str) -> Result<(), DomainError> {
         let before = self.regions.len();
         self.regions.retain(|region| region.id != region_id);
