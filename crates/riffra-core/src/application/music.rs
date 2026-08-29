@@ -274,6 +274,13 @@ mod tests {
                         velocity: Some(92),
                         channel: Some(2),
                     },
+                    MusicalMidiNoteInput {
+                        pitch: "A4".parse().unwrap(),
+                        position: "13:1".parse().unwrap(),
+                        duration: "1/8".parse().unwrap(),
+                        velocity: None,
+                        channel: None,
+                    },
                 ],
             )
             .unwrap();
@@ -285,6 +292,24 @@ mod tests {
         assert_eq!(notes[1].start_tick, TimelineTick(6_080));
         assert_eq!(notes[1].duration_ticks, 320);
         assert_eq!(notes[1].note, 70);
+        assert_eq!(notes[2].start_tick, TimelineTick(30_720));
+        assert_eq!(notes[2].duration_ticks, 480);
+        assert_eq!(notes[2].note, 69);
+        assert_eq!(inserted.arrangement.midi_clips[0].duration_ticks, 31_200);
+        assert!(
+            application
+                .insert_musical_notes(
+                    &clip_id,
+                    vec![MusicalMidiNoteInput {
+                        pitch: "C4".parse().unwrap(),
+                        position: "4:4".parse().unwrap(),
+                        duration: "1/8".parse().unwrap(),
+                        velocity: None,
+                        channel: None,
+                    }],
+                )
+                .is_err()
+        );
         assert_eq!(storage.0.lock().unwrap().len(), 3);
     }
 

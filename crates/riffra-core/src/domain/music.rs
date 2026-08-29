@@ -511,6 +511,29 @@ mod tests {
                 .unwrap(),
             TimelineTick(2_880)
         );
+
+        let five_four = ProjectTimebase {
+            time_signature_numerator: 5,
+            ..timebase
+        };
+        assert_eq!(
+            five_four
+                .musical_position_to_tick("2:1".parse().unwrap())
+                .unwrap(),
+            TimelineTick(4_800)
+        );
+
+        let seven_eight = ProjectTimebase {
+            time_signature_numerator: 7,
+            time_signature_denominator: 8,
+            ..timebase
+        };
+        assert_eq!(
+            seven_eight
+                .musical_position_to_tick("2:1".parse().unwrap())
+                .unwrap(),
+            TimelineTick(3_360)
+        );
     }
 
     #[test]
