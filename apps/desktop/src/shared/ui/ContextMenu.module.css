@@ -6,8 +6,8 @@
   padding: 4px;
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
-  border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
 }
 
 .menu button {
@@ -18,7 +18,7 @@
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 

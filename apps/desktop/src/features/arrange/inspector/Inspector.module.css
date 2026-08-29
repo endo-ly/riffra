@@ -38,8 +38,8 @@
   padding: 8px;
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-default);
-  border-radius: 6px;
-  box-shadow: var(--shadow-overlay);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
 }
 
 .colorSwatch {
@@ -75,12 +75,12 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .identityIcon svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .identityName {
@@ -95,7 +95,7 @@
   text-overflow: ellipsis;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .identityName:hover {
@@ -172,7 +172,7 @@
   color: var(--color-accent-primary);
   font-size: var(--font-size-micro);
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .headerAction:disabled {
@@ -263,7 +263,7 @@
   font-size: var(--font-size-small);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .control:hover {
@@ -301,7 +301,7 @@ select.control {
   text-align: right;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .value:hover {
@@ -320,10 +320,10 @@ select.control {
   text-align: right;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
-.valueInput:focus {
+.valueInput:focus-visible {
   border-color: var(--color-accent-primary);
   outline: none;
 }
@@ -366,7 +366,7 @@ select.control {
   padding: 2px;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .segmentedGap {
@@ -399,7 +399,7 @@ select.control {
   font-size: var(--font-size-micro);
   font-weight: 500;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .segmented button:hover {
@@ -421,7 +421,7 @@ select.control {
   font-size: var(--font-size-micro);
   background: var(--color-bg-control-raised);
   border: 1px solid var(--color-border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .smallButton:hover {
@@ -449,12 +449,12 @@ select.control {
   color: var(--color-text-muted);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .iconButton svg {
-  width: 11px;
-  height: 11px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .iconButton:hover,
@@ -475,7 +475,7 @@ select.control {
   color: var(--color-accent-primary);
   font-size: var(--font-size-micro);
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .textButton.plain {
@@ -506,7 +506,7 @@ select.control {
   display: grid;
   gap: 4px;
   padding: 3px 5px 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .take:hover {
@@ -525,8 +525,8 @@ select.control {
 }
 
 .takeLine > svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
   color: var(--color-text-muted);
 }
 
@@ -543,7 +543,7 @@ select.control {
   font-weight: 600;
   letter-spacing: 0.08em;
   background: color-mix(in srgb, var(--color-accent-secondary) 10%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .badge.muted {
@@ -593,7 +593,7 @@ select.control {
   padding: 3px 5px;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .deviceRow:hover {
@@ -608,12 +608,12 @@ select.control {
   place-items: center;
   color: var(--color-text-secondary);
   background: var(--color-bg-control-raised);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .deviceIcon svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .deviceMeta {
@@ -683,12 +683,12 @@ select.control {
   font-size: var(--font-size-micro);
   background: transparent;
   border: 1px dashed var(--color-border-default);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .addRow svg {
-  width: 11px;
-  height: 11px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .addRow:hover {

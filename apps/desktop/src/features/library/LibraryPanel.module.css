@@ -23,7 +23,7 @@
   color: var(--color-text-secondary);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -34,7 +34,7 @@
 }
 
 .sectionHeader svg {
-  width: 11px;
+  width: var(--size-icon-sm);
   flex: 0 0 auto;
   color: var(--color-text-muted);
 }
@@ -63,7 +63,7 @@
   line-height: 15px;
   text-align: center;
   background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .toolbar {
@@ -84,7 +84,7 @@
   color: var(--color-text-muted);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .search:focus-within {
@@ -92,8 +92,8 @@
 }
 
 .search svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .search input {
@@ -119,12 +119,12 @@
   color: var(--color-text-muted);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .toolButton svg {
-  width: 13px;
-  height: 13px;
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
 }
 
 .toolButton:hover {
@@ -146,7 +146,7 @@
   padding: 7px;
   background: color-mix(in srgb, var(--color-accent-primary) 5%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .librarySearchRow {
@@ -166,8 +166,8 @@
 }
 
 .librarySearchRow svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
   color: var(--color-text-muted);
 }
 
@@ -263,11 +263,11 @@
   font-size: var(--font-size-micro);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
 }
 
-.assetField input:focus {
+.assetField input:focus-visible {
   border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
 }
 
@@ -311,7 +311,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .pluginRow:hover {
@@ -326,12 +326,12 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .rowIcon svg {
-  width: 13px;
-  height: 13px;
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
 }
 
 .pluginRow > div {
@@ -371,14 +371,14 @@
   color: var(--color-text-muted);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   opacity: 0;
 }
 
 .pluginAdd svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .pluginRow:hover .pluginAdd,
@@ -402,7 +402,7 @@
   width: 100%;
   margin-top: 2px;
   background: transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .recordingRow:hover,
@@ -444,12 +444,12 @@
   place-items: center;
   color: var(--color-text-disabled);
   opacity: 0;
-  transition: opacity 0.14s ease;
+  transition: opacity var(--duration-fast) ease;
 }
 
 .assetGrip svg {
-  width: 12px;
-  height: 12px;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .recordingRow:hover .assetGrip,

@@ -47,14 +47,14 @@
   line-height: 1.45;
   background: color-mix(in srgb, var(--color-status-warning) 18%, var(--color-bg-panel));
   border: 1px solid color-mix(in srgb, var(--color-status-warning) 55%, transparent);
-  border-radius: 6px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-toast);
 }
 .runtimeBanner strong {
   flex: 0 0 auto;
   color: var(--color-status-warning);
   font:
-    700 8px 'DM Mono',
+    700 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   letter-spacing: 0.12em;
@@ -72,13 +72,13 @@
   transform: translateX(-50%);
   font-size: var(--font-size-micro);
   line-height: 1.5;
-  border-radius: 6px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-toast);
 }
 
 .shellNotice strong {
   font:
-    700 8px 'DM Mono',
+    700 var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   letter-spacing: 0.12em;
@@ -133,8 +133,8 @@
   letter-spacing: 0.04em;
   background: var(--color-status-danger);
   border: 1px solid var(--color-status-danger);
-  border-radius: 5px;
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-toast);
 }
 .commandBackdrop {
   position: fixed;
@@ -151,8 +151,8 @@
   overflow: hidden;
   background: var(--color-bg-overlay);
   border: 1px solid var(--color-border-strong);
-  border-radius: 9px;
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
 }
 .commandPalette label {
   height: 54px;
@@ -187,7 +187,7 @@
   padding: 3px 9px;
   text-align: left;
   background: transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 .commandPalette > button:hover {
   background: var(--color-bg-control-hover);
@@ -198,7 +198,7 @@
 .commandPalette > button small {
   grid-column: 1;
   color: var(--color-text-secondary);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 .commandPalette > button kbd {
   grid-column: 2;
@@ -209,7 +209,24 @@
   gap: 16px;
   padding: 9px 14px;
   color: var(--color-text-muted);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
   background: var(--color-bg-panel);
   border-top: 1px solid var(--color-border-default);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .commandPalette {
+    animation: palette-in var(--duration-slow) ease-out;
+  }
+
+  @keyframes palette-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }

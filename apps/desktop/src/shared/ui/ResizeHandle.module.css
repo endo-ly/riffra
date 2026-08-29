@@ -30,7 +30,7 @@
   transform: translate(-50%, -50%);
   background: transparent;
   border-radius: 2px;
-  transition: background 0.14s ease;
+  transition: background var(--duration-fast) ease;
 }
 
 .horizontal .grip {

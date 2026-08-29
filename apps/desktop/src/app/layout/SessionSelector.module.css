@@ -17,18 +17,18 @@
   color: var(--color-text-primary);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .trigger:hover,
 .trigger[aria-expanded='true'] {
-  background: var(--color-bg-surface-raised);
+  background: var(--color-bg-control-hover);
   border-color: var(--color-border-default);
 }
 
 .trigger > svg {
-  width: 10px;
+  width: var(--size-icon-sm);
   color: var(--color-text-muted);
   transform: rotate(90deg);
 }
@@ -108,8 +108,8 @@
   padding: 8px;
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
-  border-radius: 6px;
-  box-shadow: var(--shadow-overlay);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
 }
 
 .panel[data-placement='above'] {
@@ -140,11 +140,11 @@
   font-size: var(--font-size-control);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
 }
 
-.renameInput:focus {
+.renameInput:focus-visible {
   border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
 }
 
@@ -162,7 +162,7 @@
   color: var(--color-text-primary);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   text-align: left;
 }
 
@@ -205,7 +205,7 @@
   color: var(--color-text-secondary);
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   text-align: left;
   font-size: var(--font-size-control);
 }

@@ -5,7 +5,7 @@
   padding: 8px;
   background: color-mix(in srgb, var(--color-accent-primary) 5%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 .inboxOperations header {
   display: flex;
@@ -40,11 +40,11 @@
   font-size: var(--font-size-micro);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
 }
 
-.field input:focus {
+.field input:focus-visible {
   border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
 }
 

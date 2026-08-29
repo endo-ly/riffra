@@ -14,7 +14,7 @@
   justify-content: center;
   gap: 7px;
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--font-size-small);
   font-weight: 600;
 }
@@ -45,7 +45,7 @@
   padding: 19px;
   background: rgba(18, 23, 29, 0.92);
   border: 1px solid var(--color-border-default);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
 }
 
 .sectionCard > header {
@@ -67,7 +67,7 @@
   font-family: 'DM Mono', monospace;
   font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .statusSuccess {

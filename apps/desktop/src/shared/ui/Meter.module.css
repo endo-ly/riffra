@@ -5,7 +5,7 @@
   min-width: 45px;
   overflow: hidden;
   background: var(--color-border-subtle);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .meter i {

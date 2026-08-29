@@ -192,7 +192,7 @@
   box-sizing: border-box;
   background: rgba(141, 116, 208, 0.7);
   border: 1px solid var(--midi-note-border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   pointer-events: none;
 }
 
@@ -253,7 +253,7 @@
   min-width: 4px;
   background: var(--midi-note);
   border: 1px solid var(--midi-note-border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: grab;
   user-select: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
@@ -341,8 +341,8 @@
   z-index: 3;
   min-width: 4px;
   padding: 0;
-  background: rgba(78, 142, 255, 0.7);
-  border: 1px solid rgba(133, 181, 255, 0.92);
+  background: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 82%, transparent);
   border-radius: 2px 2px 0 0;
   cursor: ns-resize;
 }
@@ -350,7 +350,7 @@
 .velocityBar:hover,
 .velocityBar.velocitySelected {
   background: var(--color-accent-primary);
-  border-color: #d5ffff;
+  border-color: var(--color-selection-highlight);
 }
 
 .empty {
