@@ -1,12 +1,20 @@
 //! Shared wiring for the Core canonical commit boundary.
 
-use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome};
+use crate::model::{
+    ArrangementMutationResult, ArrangementProjectionOutcome, RuntimeProjectionState,
+};
 use crate::session::context::SessionContext;
 use crate::session::error::AdapterError;
-use crate::{AudioSupervisor, HostEvent, RuntimeDriver};
+use crate::{AudioSupervisor, HostEvent, RuntimeDriver, RuntimeReconciler};
 use riffra_core::{AppCore, ApplicationError, CreativeSession};
 use riffra_host::SessionStore;
 use std::path::Path;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanonicalMutationEffect {
+    CanonicalOnly,
+    ProjectArrangement,
+}
 
 pub fn publish_canonical_state<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
@@ -16,6 +24,46 @@ pub fn publish_canonical_state<D: RuntimeDriver>(
         .events
         .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
     Ok(canonical)
+}
+
+pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
+    core: &AppCore<AudioSupervisor>,
+    runtime: &RuntimeReconciler<D>,
+    data_root: &Path,
+    safe_mode: bool,
+    effect: CanonicalMutationEffect,
+) -> Result<ArrangementMutationResult, String> {
+    let canonical = core.canonical_state().map_err(|error| error.to_string())?;
+    if safe_mode || matches!(effect, CanonicalMutationEffect::CanonicalOnly) {
+        return Ok(ArrangementMutationResult {
+            canonical,
+            projection: ArrangementProjectionOutcome::NotRequired,
+        });
+    }
+
+    let status = runtime.submit_nonblocking(
+        crate::runtime_snapshot::runtime_timeline_snapshot(data_root, &canonical.session),
+        riffra_core::ProjectionKey {
+            sequence: canonical.sequence,
+            session_revision: canonical.session.arrangement.revision,
+        },
+    );
+    let projection = match status.last_error {
+        Some(message) => {
+            runtime.mark_projection_failed(message.clone());
+            ArrangementProjectionOutcome::Failed { message }
+        }
+        None if status.state == RuntimeProjectionState::Failed => {
+            let message = "runtime projection failed".to_owned();
+            runtime.mark_projection_failed(message.clone());
+            ArrangementProjectionOutcome::Failed { message }
+        }
+        None => ArrangementProjectionOutcome::Queued,
+    };
+    Ok(ArrangementMutationResult {
+        canonical,
+        projection,
+    })
 }
 
 /// Runs a Core application operation and updates the Host library index
@@ -49,33 +97,27 @@ where
 pub fn arrangement_mutation_result<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
-    let canonical = context.core.canonical_state()?;
-    if context.safe_mode {
-        return Ok(ArrangementMutationResult {
-            canonical,
-            projection: ArrangementProjectionOutcome::NotRequired,
-        });
-    }
-    let projection = match crate::session::transport::sync_arrangement(context) {
-        Ok(()) => ArrangementProjectionOutcome::Queued,
-        Err(message) => {
-            context.runtime.mark_projection_failed(message.clone());
-            ArrangementProjectionOutcome::Failed { message }
-        }
-    };
-    Ok(ArrangementMutationResult {
-        canonical,
-        projection,
-    })
+    finalize_arrangement_mutation(
+        context.core,
+        context.runtime,
+        context.data_root,
+        context.safe_mode,
+        CanonicalMutationEffect::ProjectArrangement,
+    )
+    .map_err(AdapterError::from)
 }
 
 pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
-    Ok(ArrangementMutationResult {
-        canonical: context.core.canonical_state()?,
-        projection: ArrangementProjectionOutcome::NotRequired,
-    })
+    finalize_arrangement_mutation(
+        context.core,
+        context.runtime,
+        context.data_root,
+        context.safe_mode,
+        CanonicalMutationEffect::CanonicalOnly,
+    )
+    .map_err(AdapterError::from)
 }
 
 /// Imports a project manifest and commits the resulting production state.

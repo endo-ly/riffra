@@ -12,7 +12,11 @@ use crate::model::{AudioStatus, RuntimeProjectionStatus};
 use crate::recording::{self, RecordingContext};
 use crate::render::{self, RenderOptions, RenderResult};
 use crate::runtime::{RuntimeError, RuntimeReconciler};
-use crate::session::{adapter as session_adapter, context::SessionContext};
+use crate::session::{
+    adapter as session_adapter,
+    commit::{self, CanonicalMutationEffect},
+    context::SessionContext,
+};
 use crate::startup;
 use crate::{
     AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
@@ -277,7 +281,7 @@ impl HostState {
                 )
                 .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
-                let mutation = self.after_canonical_commit()?;
+                let mutation = self.after_canonical_commit(result.projection_effect())?;
                 let sequence = mutation.canonical.sequence;
                 return Ok((
                     "arrangementMutation",
@@ -1210,40 +1214,20 @@ impl HostState {
 
     fn after_canonical_commit(
         &self,
+        effect: CanonicalMutationEffect,
     ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
-        let canonical = self
-            .canonical()
-            .map_err(|error| command_error(error.to_string()))?;
-        library::index::refresh(&self.data_root, &canonical.session);
+        let mutation = commit::finalize_arrangement_mutation(
+            self.core.as_ref(),
+            self.runtime.as_ref(),
+            &self.data_root,
+            self.core.safe_mode(),
+            effect,
+        )
+        .map_err(command_error)?;
+        library::index::refresh(&self.data_root, &mutation.canonical.session);
         self.events
-            .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
-        if self.core.safe_mode() {
-            return Ok(crate::model::ArrangementMutationResult {
-                canonical,
-                projection: crate::model::ArrangementProjectionOutcome::NotRequired,
-            });
-        }
-        let key = riffra_core::ProjectionKey {
-            sequence: canonical.sequence,
-            session_revision: canonical.session.arrangement.revision,
-        };
-        let snapshot =
-            crate::runtime_snapshot::runtime_timeline_snapshot(&self.data_root, &canonical.session);
-        let status = self.runtime.submit_nonblocking(snapshot, key);
-        let projection = match status.state {
-            crate::model::RuntimeProjectionState::Failed => {
-                crate::model::ArrangementProjectionOutcome::Failed {
-                    message: status
-                        .last_error
-                        .unwrap_or_else(|| "runtime projection failed".into()),
-                }
-            }
-            _ => crate::model::ArrangementProjectionOutcome::Queued,
-        };
-        Ok(crate::model::ArrangementMutationResult {
-            canonical,
-            projection,
-        })
+            .emit(HostEvent::CanonicalStateChanged(mutation.canonical.clone()));
+        Ok(mutation)
     }
 
     fn scan_plugins(&self, root: PathBuf) -> Result<plugins::ScanReport, String> {
@@ -3026,6 +3010,54 @@ mod tests {
             mutation.projection,
             crate::model::ArrangementProjectionOutcome::Queued
                 | crate::model::ArrangementProjectionOutcome::Failed { .. }
+        ));
+
+        let marker = host.dispatch_control(ControlRequest::new(
+            "marker-add",
+            ControlCommand::new(
+                "marker.add",
+                serde_json::json!({"name": "Verse", "tick": 0}),
+            ),
+            Some(1),
+        ));
+        assert!(marker.ok);
+        assert_eq!(
+            marker
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let marker: crate::model::ArrangementMutationResult =
+            serde_json::from_value(marker.result.unwrap().value).unwrap();
+        assert_eq!(marker.canonical.sequence, 2);
+        assert!(matches!(
+            marker.projection,
+            crate::model::ArrangementProjectionOutcome::NotRequired
+        ));
+
+        let settings = host.dispatch_control(ControlRequest::new(
+            "session-settings-update",
+            ControlCommand::new(
+                "session.settings.update",
+                serde_json::json!({"note": "authoring note"}),
+            ),
+            Some(2),
+        ));
+        assert!(settings.ok);
+        assert_eq!(
+            settings
+                .result
+                .as_ref()
+                .map(|result| result.result_type.as_str()),
+            Some("arrangementMutation")
+        );
+        let settings: crate::model::ArrangementMutationResult =
+            serde_json::from_value(settings.result.unwrap().value).unwrap();
+        assert_eq!(settings.canonical.sequence, 3);
+        assert!(matches!(
+            settings.projection,
+            crate::model::ArrangementProjectionOutcome::NotRequired
         ));
 
         host.shutdown();
