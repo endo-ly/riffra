@@ -9,9 +9,10 @@ import type { RecordingSessionRecord } from "./RecordingSessionRecord";
 import type { RecordingTakeRecord } from "./RecordingTakeRecord";
 import type { TimelineLoopRange } from "./TimelineLoopRange";
 import type { TimelinePunchRange } from "./TimelinePunchRange";
+import type { TimelineRegion } from "./TimelineRegion";
 import type { Track } from "./Track";
 
 /**
  * The Arrange workspace's production state.
  */
-export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, punchRange?: TimelinePunchRange, tracks: Array<Track>, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, automationLanes: Array<AutomationLane>, markers: Array<Marker>, recordingSessions: Array<RecordingSessionRecord>, recordingPasses: Array<RecordingPassRecord>, takes: Array<RecordingTakeRecord>, };
+export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, punchRange?: TimelinePunchRange, tracks: Array<Track>, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, automationLanes: Array<AutomationLane>, markers: Array<Marker>, regions: Array<TimelineRegion>, recordingSessions: Array<RecordingSessionRecord>, recordingPasses: Array<RecordingPassRecord>, takes: Array<RecordingTakeRecord>, };

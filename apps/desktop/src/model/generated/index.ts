@@ -80,6 +80,7 @@ export type { SessionSettings } from './SessionSettings';
 export type { TakeAudioSource } from './TakeAudioSource';
 export type { TimelineLoopRange } from './TimelineLoopRange';
 export type { TimelinePunchRange } from './TimelinePunchRange';
+export type { TimelineRegion } from './TimelineRegion';
 export type { Track } from './Track';
 export type { TrackDeviceSummary } from './TrackDeviceSummary';
 export type { TrackKind } from './TrackKind';

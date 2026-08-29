@@ -2,7 +2,7 @@ use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, Trac
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate,
+    MidiNoteUpdate, MusicalMidiNoteInput,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
@@ -458,6 +458,27 @@ impl<'a, A> HostDispatcher<'a, A> {
                         .insert_midi_notes(&params.clip_id, params.notes)?,
                 )
             }
+            "music.midi-clip.create" => {
+                let params: MusicalMidiClipCreateParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .create_musical_midi_clip(
+                            &params.track_id,
+                            params.start,
+                            params.end,
+                            params.name,
+                        )?,
+                )
+            }
+            "music.note.insert" => {
+                let params: MusicalNoteInsertParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .insert_musical_notes(&params.clip_id, params.notes)?,
+                )
+            }
             "midi-note.update" => {
                 let params: MidiNoteUpdateParams = decode(request.params)?;
                 self.session(self.core.application(&self.storage).update_midi_notes(
@@ -567,6 +588,34 @@ impl<'a, A> HostDispatcher<'a, A> {
                         .remove_marker(&params.marker_id)?,
                 )
             }
+            "music.region.list" => {
+                self.value("regions", canonical.session.arrangement.regions.clone())
+            }
+            "music.region.add" => {
+                let params: MusicalRegionAddParams = decode(request.params)?;
+                self.session(self.core.application(&self.storage).add_region(
+                    params.name,
+                    params.start,
+                    params.end,
+                )?)
+            }
+            "music.region.update" => {
+                let params: MusicalRegionUpdateParams = decode(request.params)?;
+                self.session(self.core.application(&self.storage).update_region(
+                    &params.region_id,
+                    params.name,
+                    params.start,
+                    params.end,
+                )?)
+            }
+            "music.region.remove" => {
+                let params: MusicalRegionIdParams = decode(request.params)?;
+                self.session(
+                    self.core
+                        .application(&self.storage)
+                        .remove_region(&params.region_id)?,
+                )
+            }
             "timebase.update" => {
                 let params: TimebasePatchParams = decode(request.params)?;
                 if params.is_empty() {
@@ -579,7 +628,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                     self.core
                         .application(&self.storage)
                         .update_timebase(ProjectTimebase {
-                            ppq: params.ppq.unwrap_or(current.ppq),
+                            ppq: current.ppq,
                             bpm: params.bpm.unwrap_or(current.bpm),
                             time_signature_numerator: params
                                 .time_signature_numerator
@@ -924,6 +973,7 @@ fn is_read_command(command: &str) -> bool {
             | "track.list"
             | "audio-clip.list"
             | "midi-clip.list"
+            | "music.region.list"
             | "project.export"
     )
 }
@@ -1189,6 +1239,45 @@ struct MidiNoteInsertParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MusicalMidiClipCreateParams {
+    track_id: String,
+    start: riffra_core::MusicalPosition,
+    end: riffra_core::MusicalPosition,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteInsertParams {
+    clip_id: String,
+    notes: Vec<MusicalMidiNoteInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionAddParams {
+    name: String,
+    start: riffra_core::MusicalPosition,
+    end: riffra_core::MusicalPosition,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionUpdateParams {
+    region_id: String,
+    name: Option<String>,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalRegionIdParams {
+    region_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MidiNoteUpdateParams {
     clip_id: String,
     note_id: String,
@@ -1278,9 +1367,9 @@ struct MarkerIdParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 struct TimebasePatchParams {
-    ppq: Option<u32>,
     bpm: Option<f64>,
     time_signature_numerator: Option<u8>,
     time_signature_denominator: Option<u8>,
@@ -1288,8 +1377,7 @@ struct TimebasePatchParams {
 
 impl TimebasePatchParams {
     fn is_empty(&self) -> bool {
-        self.ppq.is_none()
-            && self.bpm.is_none()
+        self.bpm.is_none()
             && self.time_signature_numerator.is_none()
             && self.time_signature_denominator.is_none()
     }
@@ -1498,7 +1586,6 @@ mod tests {
             .dispatch(request(
                 "timebase.update",
                 json!({
-                    "ppq": 960,
                     "bpm": 100.0,
                     "timeSignatureNumerator": 7,
                     "timeSignatureDenominator": 8
@@ -1515,6 +1602,85 @@ mod tests {
                 time_signature_denominator: 8,
             }
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn timebase_update_rejects_ppq_as_an_external_field() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-ppq-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let error = dispatcher
+            .dispatch(request("timebase.update", json!({"ppq": 960})))
+            .unwrap_err();
+        assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn musical_commands_create_canonical_notes_and_regions() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-music-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "start": "5:1",
+                    "end": "13:1",
+                    "name": "Piano"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let clip_id = session.arrangement.midi_clips[0].id.clone();
+        let region = dispatcher
+            .dispatch(request(
+                "music.region.add",
+                json!({"name":"A'","start":"5:1","end":"13:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(region.value).unwrap();
+        assert_eq!(session.arrangement.regions[0].name, "A'");
+        let inserted = dispatcher
+            .dispatch(request(
+                "music.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [
+                        {"pitch":"C4","position":"5:1","duration":"1/8"},
+                        {"pitch":"E4","position":"5:1+1/2","duration":"1/8"},
+                        {"pitch":"G4","position":"5:2","duration":"1/2","velocity":92},
+                        {"pitch":"Bb4","position":"6:3+1/3","duration":"1/12"}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(inserted.value).unwrap();
+        let clip = &session.arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, riffra_core::TimelineTick(15_360));
+        assert_eq!(clip.duration_ticks, 30_720);
+        assert_eq!(clip.notes.len(), 4);
+        assert_eq!(clip.notes[0].note, 60);
+        assert_eq!(clip.notes[0].start_tick, riffra_core::TimelineTick(0));
+        assert_eq!(clip.notes[1].start_tick, riffra_core::TimelineTick(480));
+        assert_eq!(clip.notes[2].note, 67);
+        assert_eq!(clip.notes[3].note, 70);
+        assert_eq!(clip.notes[3].start_tick, riffra_core::TimelineTick(6_080));
+        assert_eq!(clip.notes[3].duration_ticks, 320);
+
+        let listed = dispatcher
+            .dispatch(request("music.region.list", json!({})))
+            .unwrap();
+        assert_eq!(listed.result_type, "regions");
+        assert_eq!(listed.value.as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
