@@ -26,10 +26,3 @@ pub fn set_master_gain_db(
     let canonical = context.core.canonical_state().map_err(AdapterError::from)?;
     Ok(SessionAudioPair { canonical, audio })
 }
-
-// Missing-dependency recovery operations.
-//
-// Relink and disable both mutate the canonical session (asset references or
-// the rack's disabled-placeholder flag) and persist through the canonical
-// commit. The Asset layer's `content_location` is rewritten when relinking so
-// the canonical row follows the user's new file.

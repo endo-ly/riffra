@@ -15,14 +15,10 @@
 //! production changes to Core, and compensates host resources when an external
 //! operation fails.
 
-mod arrangement;
-mod midi_import;
 mod rack;
 mod recording;
 mod runtime;
 
-pub use arrangement::*;
-pub use midi_import::*;
 pub use rack::*;
 pub use recording::*;
 pub use runtime::*;
@@ -30,7 +26,7 @@ pub use runtime::*;
 #[cfg(test)]
 use rack::commit_plugin_arrangement;
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use crate::RuntimeDriver;
 use crate::asset;
@@ -38,11 +34,7 @@ use crate::model::{AudioStatus, SessionAudioPair};
 use crate::plugin_catalog;
 #[cfg(test)]
 use riffra_core::CreativeSession;
-use riffra_core::{
-    AssetId, AssetKind, AudioClipMove, AudioClipPatch, AudioTakeVariant, AutomationParameter,
-    AutomationPoint, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase, TimelineTick,
-    TrackKind,
-};
+use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
 use riffra_host::SessionStore;
 
 pub use crate::session::commit::{
@@ -55,11 +47,7 @@ pub use crate::session::transport::{
     go_to_start_timeline, play_timeline, prepare_arrangement_candidate, seek_timeline,
     stop_timeline, sync_arrangement_runtime,
 };
-use riffra_core::application::{
-    AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate, SessionSettingsPatch,
-};
-use riffra_core::domain::TrackPatch;
+use riffra_core::application::SessionSettingsPatch;
 
 pub fn undo(
     context: &SessionContext<'_>,
@@ -94,83 +82,13 @@ mod tests {
     use super::*;
     use riffra_core::{
         AudioClip, DeviceKind, RackDevice, RecordingPassRecord, RecordingTakeRecord,
-        TakeAudioSource, Track,
+        TakeAudioSource, TimelineTick, Track,
     };
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Barrier, Mutex, mpsc};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
-
-    struct BarrierCommitDriver {
-        commit_started: Arc<Barrier>,
-        release_commit: Arc<Barrier>,
-        commit_gate_used: AtomicBool,
-        loaded: Mutex<Vec<u64>>,
-        pending: Mutex<Option<u64>>,
-        generation: AtomicU64,
-    }
-
-    impl BarrierCommitDriver {
-        fn new() -> Self {
-            Self {
-                commit_started: Arc::new(Barrier::new(2)),
-                release_commit: Arc::new(Barrier::new(2)),
-                commit_gate_used: AtomicBool::new(false),
-                loaded: Mutex::new(Vec::new()),
-                pending: Mutex::new(None),
-                generation: AtomicU64::new(1),
-            }
-        }
-    }
-
-    impl crate::ProjectionDriver for BarrierCommitDriver {
-        fn prepare_timeline_snapshot(
-            &self,
-            snapshot: Value,
-            _timeout: Duration,
-        ) -> Result<(), crate::RuntimeError> {
-            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
-            Ok(())
-        }
-
-        fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), crate::RuntimeError> {
-            if self
-                .commit_gate_used
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                self.commit_started.wait();
-                self.release_commit.wait();
-            }
-            let revision = self.pending.lock().unwrap().take().ok_or_else(|| {
-                crate::RuntimeError::NativeRejected(
-                    "No prepared timeline snapshot is available.".into(),
-                )
-            })?;
-            self.loaded.lock().unwrap().push(revision);
-            Ok(())
-        }
-
-        fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), crate::RuntimeError> {
-            self.pending.lock().unwrap().take();
-            Ok(())
-        }
-
-        fn runtime_generation(&self) -> u64 {
-            self.generation.load(std::sync::atomic::Ordering::Relaxed)
-        }
-    }
-
-    impl crate::TransportDriver for BarrierCommitDriver {
-        fn play_timeline(&self) -> Result<(), crate::RuntimeError> {
-            Ok(())
-        }
-
-        fn stop_timeline(&self) -> Result<(), crate::RuntimeError> {
-            Ok(())
-        }
-    }
 
     struct CandidateRuntimeDriver {
         fail_prepare: AtomicBool,
@@ -478,101 +396,6 @@ mod tests {
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1, 0]);
         let _ = std::fs::remove_file(&root);
-    }
-
-    #[test]
-    fn update_track_returns_while_runtime_commit_is_blocked() {
-        // Arrange
-        let root = std::env::temp_dir().join(format!("riffra-barrier-{}", riffra_host::now_ms()));
-        let session = {
-            let mut session = CreativeSession::new(1);
-            session
-                .arrangement
-                .tracks
-                .push(Track::audio("track:a".into(), "Audio".into()));
-            session
-                .arrangement
-                .tracks
-                .push(Track::audio("track:b".into(), "Audio".into()));
-            session
-        };
-        let store = riffra_host::SessionStore::new(&root);
-        store.ensure_layout().unwrap();
-        let driver = Arc::new(BarrierCommitDriver::new());
-        let runtime = Arc::new(crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
-        let audio = Arc::new(crate::AudioSupervisor::offline("test"));
-        let core = Arc::new(riffra_core::AppCore::new(
-            root.clone(),
-            session,
-            audio.as_ref().clone(),
-            false,
-            false,
-        ));
-        let context = SessionContext {
-            core: core.as_ref(),
-            audio: audio.as_ref(),
-            runtime: runtime.as_ref(),
-            data_root: &root,
-            safe_mode: false,
-            events: &crate::NoopHostEventSink,
-        };
-
-        update_track(
-            &context,
-            "track:a",
-            TrackPatch {
-                muted: Some(true),
-                ..Default::default()
-            },
-        )
-        .expect("initial update_track must succeed");
-        driver.commit_started.wait();
-
-        let (update_result_tx, update_result_rx) = mpsc::channel();
-        let update_context = {
-            let runtime = Arc::clone(&runtime);
-            let audio = Arc::clone(&audio);
-            let core = Arc::clone(&core);
-            let root = root.clone();
-            thread::spawn(move || {
-                let context = SessionContext {
-                    core: core.as_ref(),
-                    audio: audio.as_ref(),
-                    runtime: runtime.as_ref(),
-                    data_root: &root,
-                    safe_mode: false,
-                    events: &crate::NoopHostEventSink,
-                };
-                let result = update_track(
-                    &context,
-                    "track:b",
-                    TrackPatch {
-                        muted: Some(true),
-                        ..Default::default()
-                    },
-                );
-                update_result_tx.send(result).unwrap();
-            })
-        };
-        let update_result = update_result_rx.recv_timeout(Duration::from_secs(1));
-
-        // Act
-        driver.release_commit.wait();
-        update_context.join().unwrap();
-
-        // Assert
-        update_result
-            .expect("update_track must return while commit is blocked")
-            .expect("update_track must succeed while commit is blocked");
-        let expected_revision = core.snapshot().unwrap().session.arrangement.revision;
-        wait_until(Duration::from_secs(1), || {
-            driver.loaded.lock().unwrap().last() == Some(&expected_revision)
-        });
-        assert_eq!(
-            driver.loaded.lock().unwrap().last(),
-            Some(&expected_revision)
-        );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -37,6 +37,7 @@ use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
 use crate::runtime_snapshot::runtime_timeline_snapshot;
+use crate::session::commit::{self, CanonicalMutationEffect};
 use riffra_core::AppCore;
 use riffra_core::{
     AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, Provenance,
@@ -1110,7 +1111,17 @@ fn finalize_arrange_recording(
     )?;
     let (base_session, candidate_session) = materialize_arrange_candidate(prepared, outputs)?;
     commit_recording_session(context, &base_session, candidate_session)?;
-    arrangement_mutation_result(context)
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
+    commit::finalize_arrangement_mutation(
+        canonical,
+        context.runtime,
+        context.data_root,
+        context.safe_mode,
+        CanonicalMutationEffect::ProjectArrangement,
+    )
 }
 
 fn commit_recording_session(
@@ -1126,40 +1137,6 @@ fn commit_recording_session(
         .map_err(|error| error.to_string())?;
     crate::library::index::refresh(context.data_root, &committed);
     Ok(())
-}
-
-fn arrangement_mutation_result(
-    context: &RecordingContext<'_>,
-) -> Result<ArrangementMutationResult, String> {
-    let canonical = context
-        .core
-        .canonical_state()
-        .map_err(|error| error.to_string())?;
-    if context.safe_mode {
-        return Ok(ArrangementMutationResult {
-            canonical,
-            projection: ArrangementProjectionOutcome::NotRequired,
-        });
-    }
-    let snapshot = context.core.snapshot().map_err(|error| error.to_string())?;
-    let status = context.runtime.submit_nonblocking(
-        runtime_timeline_snapshot(context.data_root, &snapshot.session),
-        riffra_core::ProjectionKey {
-            sequence: snapshot.sequence,
-            session_revision: snapshot.session.arrangement.revision,
-        },
-    );
-    if let Some(message) = status.last_error {
-        context.runtime.mark_projection_failed(message.clone());
-        return Ok(ArrangementMutationResult {
-            canonical,
-            projection: ArrangementProjectionOutcome::Failed { message },
-        });
-    }
-    Ok(ArrangementMutationResult {
-        canonical,
-        projection: ArrangementProjectionOutcome::Queued,
-    })
 }
 
 fn next_recording_pass_ordinal(
@@ -1596,7 +1573,17 @@ fn place_recording_on_timeline(
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
     commit_recording_session(context, &base_session, session)?;
-    Ok(Some(arrangement_mutation_result(context)?))
+    let canonical = context
+        .core
+        .canonical_state()
+        .map_err(|error| error.to_string())?;
+    Ok(Some(commit::finalize_arrangement_mutation(
+        canonical,
+        context.runtime,
+        context.data_root,
+        context.safe_mode,
+        CanonicalMutationEffect::ProjectArrangement,
+    )?))
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read

@@ -1,8 +1,9 @@
 use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, TrackSummary};
+use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate, MusicalMidiNoteInput,
+    MidiNoteUpdate, MusicalMidiNoteInput, SessionSettingsPatch,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
@@ -155,6 +156,13 @@ pub struct DispatchResult {
     pub result_type: &'static str,
     pub value: Value,
     pub sequence: u64,
+    projection_effect: CanonicalMutationEffect,
+}
+
+impl DispatchResult {
+    pub(crate) fn projection_effect(&self) -> CanonicalMutationEffect {
+        self.projection_effect
+    }
 }
 
 impl HostDispatcher<'static, ()> {
@@ -240,11 +248,20 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
         let result = match request.name.as_str() {
             "session.get" => self.session(canonical.session.clone()),
-            "session.settings.update" => self.session(
-                self.core
-                    .application(&self.storage)
-                    .update_session_settings(decode(request.params)?)?,
-            ),
+            "session.settings.update" => {
+                let params: SessionSettingsPatch = decode(request.params)?;
+                let effect = if params.metronome_enabled.is_some() {
+                    CanonicalMutationEffect::ProjectArrangement
+                } else {
+                    CanonicalMutationEffect::CanonicalOnly
+                };
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .update_session_settings(params)?,
+                    effect,
+                )
+            }
             "history.get" => self.value("history", canonical.history),
             "track.list" => self.value(
                 "tracks",
@@ -564,28 +581,33 @@ impl<'a, A> HostDispatcher<'a, A> {
             }
             "marker.add" => {
                 let params: MarkerAddParams = decode(request.params)?;
-                self.session(
+                self.session_with_effect(
                     self.core
                         .application(&self.storage)
                         .add_marker(TimelineTick(params.tick), params.name)?,
+                    CanonicalMutationEffect::CanonicalOnly,
                 )
             }
             "marker.update" => {
                 let params: MarkerUpdateParams = decode(request.params)?;
-                self.session(self.core.application(&self.storage).update_marker(
-                    &params.marker_id,
-                    MarkerPatch {
-                        name: params.name,
-                        tick: params.tick.map(TimelineTick),
-                    },
-                )?)
+                self.session_with_effect(
+                    self.core.application(&self.storage).update_marker(
+                        &params.marker_id,
+                        MarkerPatch {
+                            name: params.name,
+                            tick: params.tick.map(TimelineTick),
+                        },
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
             }
             "marker.remove" => {
                 let params: MarkerIdParams = decode(request.params)?;
-                self.session(
+                self.session_with_effect(
                     self.core
                         .application(&self.storage)
                         .remove_marker(&params.marker_id)?,
+                    CanonicalMutationEffect::CanonicalOnly,
                 )
             }
             "music.region.list" => {
@@ -593,27 +615,34 @@ impl<'a, A> HostDispatcher<'a, A> {
             }
             "music.region.add" => {
                 let params: MusicalRegionAddParams = decode(request.params)?;
-                self.session(self.core.application(&self.storage).add_region(
-                    params.name,
-                    params.start,
-                    params.end,
-                )?)
+                self.session_with_effect(
+                    self.core.application(&self.storage).add_region(
+                        params.name,
+                        params.start,
+                        params.end,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
             }
             "music.region.update" => {
                 let params: MusicalRegionUpdateParams = decode(request.params)?;
-                self.session(self.core.application(&self.storage).update_region(
-                    &params.region_id,
-                    params.name,
-                    params.start,
-                    params.end,
-                )?)
+                self.session_with_effect(
+                    self.core.application(&self.storage).update_region(
+                        &params.region_id,
+                        params.name,
+                        params.start,
+                        params.end,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
             }
             "music.region.remove" => {
                 let params: MusicalRegionIdParams = decode(request.params)?;
-                self.session(
+                self.session_with_effect(
                     self.core
                         .application(&self.storage)
                         .remove_region(&params.region_id)?,
+                    CanonicalMutationEffect::CanonicalOnly,
                 )
             }
             "timebase.update" => {
@@ -871,24 +900,44 @@ impl<'a, A> HostDispatcher<'a, A> {
                 })
                 .expect("arrangement mutation results serialize"),
                 sequence: canonical.sequence,
+                projection_effect: CanonicalMutationEffect::CanonicalOnly,
             });
         }
         Ok(DispatchResult {
             result_type: result.result_type,
             value: result.value,
             sequence,
+            projection_effect: result.projection_effect,
         })
     }
 
     fn session(&self, session: CreativeSession) -> DispatchResult {
-        self.value("session", session)
+        self.session_with_effect(session, CanonicalMutationEffect::ProjectArrangement)
+    }
+
+    fn session_with_effect(
+        &self,
+        session: CreativeSession,
+        projection_effect: CanonicalMutationEffect,
+    ) -> DispatchResult {
+        self.value_with_effect("session", session, projection_effect)
     }
 
     fn value<T: serde::Serialize>(&self, result_type: &'static str, value: T) -> DispatchResult {
+        self.value_with_effect(result_type, value, CanonicalMutationEffect::CanonicalOnly)
+    }
+
+    fn value_with_effect<T: serde::Serialize>(
+        &self,
+        result_type: &'static str,
+        value: T,
+        projection_effect: CanonicalMutationEffect,
+    ) -> DispatchResult {
         DispatchResult {
             result_type,
             value: serde_json::to_value(value).expect("canonical values must serialize"),
             sequence: 0,
+            projection_effect,
         }
     }
 
@@ -1131,17 +1180,17 @@ struct ReorderParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AudioInputParams {
-    track_id: String,
-    channel_index: u32,
+pub(crate) struct AudioInputParams {
+    pub(crate) track_id: String,
+    pub(crate) channel_index: u32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MidiInputParams {
-    track_id: String,
-    device_id: Option<String>,
-    channel: Option<u8>,
+pub(crate) struct MidiInputParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: Option<String>,
+    pub(crate) channel: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1420,60 +1469,60 @@ struct ProjectImportParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectRemoveParams {
-    track_id: String,
-    device_id: String,
+pub(crate) struct EffectRemoveParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EffectReorderParams {
-    track_id: String,
-    device_ids: Vec<String>,
+pub(crate) struct EffectReorderParams {
+    pub(crate) track_id: String,
+    pub(crate) device_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceBypassParams {
-    track_id: String,
-    device_id: String,
-    bypassed: bool,
+pub(crate) struct DeviceBypassParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) bypassed: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginPathParams {
-    track_id: String,
-    plugin_path: String,
+pub(crate) struct PluginPathParams {
+    pub(crate) track_id: String,
+    pub(crate) plugin_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceParameterParams {
-    track_id: String,
-    device_id: String,
-    parameter_index: u32,
-    value: f32,
+pub(crate) struct DeviceParameterParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) parameter_index: u32,
+    pub(crate) value: f32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingRelinkParams {
-    asset_id: String,
-    new_path: String,
+pub(crate) struct MissingRelinkParams {
+    pub(crate) asset_id: String,
+    pub(crate) new_path: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceIdParams {
-    device_id: String,
+pub(crate) struct DeviceIdParams {
+    pub(crate) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingPluginReplaceParams {
-    device_id: String,
-    new_path: String,
+pub(crate) struct MissingPluginReplaceParams {
+    pub(crate) device_id: String,
+    pub(crate) new_path: String,
 }
 
 #[cfg(test)]
@@ -1613,6 +1662,44 @@ mod tests {
             .dispatch(request("timebase.update", json!({"ppq": 960})))
             .unwrap_err();
         assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn metadata_mutations_report_when_runtime_projection_is_unnecessary() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-effect-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let settings = dispatcher
+            .dispatch(request(
+                "session.settings.update",
+                json!({"note":"authoring note"}),
+            ))
+            .unwrap();
+        assert_eq!(
+            settings.projection_effect,
+            super::CanonicalMutationEffect::CanonicalOnly
+        );
+
+        let marker = dispatcher
+            .dispatch(request("marker.add", json!({"name":"Verse","tick":0})))
+            .unwrap();
+        assert_eq!(
+            marker.projection_effect,
+            super::CanonicalMutationEffect::CanonicalOnly
+        );
+
+        let metronome = dispatcher
+            .dispatch(request(
+                "session.settings.update",
+                json!({"metronomeEnabled":true}),
+            ))
+            .unwrap();
+        assert_eq!(
+            metronome.projection_effect,
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 

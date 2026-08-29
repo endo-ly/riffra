@@ -16,7 +16,6 @@ const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 struct RuntimeProjectionAdapter<'a, D: RuntimeDriver> {
     data_root: &'a Path,
     runtime: &'a RuntimeReconciler<D>,
-    wait_for_activation: bool,
 }
 
 impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
@@ -26,37 +25,11 @@ impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
             session_revision: request.session().arrangement.revision,
         };
         let snapshot = runtime_timeline_snapshot(self.data_root, request.session());
-        if self.wait_for_activation {
-            self.runtime
-                .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
-                .map(|_| ())
-                .map_err(|error| PortError::Runtime(error.to_string()))
-        } else {
-            self.runtime.submit_nonblocking(snapshot, key);
-            Ok(())
-        }
+        self.runtime
+            .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
+            .map(|_| ())
+            .map_err(|error| PortError::Runtime(error.to_string()))
     }
-}
-
-/// Enqueues the latest canonical Session for the Audio Runtime without
-/// blocking on the reconcile cycle. The Runtime applies the latest projection
-/// as soon as an in-flight cycle completes; workflows that need the graph
-/// active before returning use [`sync_arrangement_runtime`] instead.
-pub(crate) fn sync_arrangement<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-) -> Result<(), String> {
-    let projection = RuntimeProjectionAdapter {
-        data_root: context.data_root,
-        runtime: context.runtime,
-        wait_for_activation: false,
-    };
-    let store = riffra_host::SessionStore::new(context.data_root);
-    context
-        .core
-        .application(&store)
-        .project_current(&projection)
-        .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
@@ -65,7 +38,6 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     let projection = RuntimeProjectionAdapter {
         data_root: context.data_root,
         runtime: context.runtime,
-        wait_for_activation: true,
     };
     let store = riffra_host::SessionStore::new(context.data_root);
     context

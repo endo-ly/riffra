@@ -54,7 +54,7 @@ try {
         Out-File (Join-Path $dataRoot 'track.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached track.add failed' }
     $track = Get-Content (Join-Path $dataRoot 'track.json') | ConvertFrom-Json
-    if (-not $track.ok -or $track.result.type -ne 'session' -or $track.sequence -ne 1) {
+    if (-not $track.ok -or $track.result.type -ne 'arrangementMutation' -or $track.sequence -ne 1) {
         throw 'Attached track.add returned an invalid contract'
     }
     & $binary --data-root $dataRoot --attach undo |

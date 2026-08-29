@@ -60,7 +60,7 @@ jq -e '.ok == true and .result.type == "hostBootstrap" and .result.value.canonic
     "$data_root/bootstrap.json" >/dev/null
 "$binary" --data-root "$data_root" --attach track add \
     --name "Process Test" --kind instrument >"$data_root/track.json"
-jq -e '.ok == true and .result.type == "session" and .sequence == 1' \
+jq -e '.ok == true and .result.type == "arrangementMutation" and .sequence == 1' \
     "$data_root/track.json" >/dev/null
 "$binary" --data-root "$data_root" --attach undo >"$data_root/undo.json"
 jq -e '.ok == true and .result.type == "arrangementMutation" and .sequence == 2' \
