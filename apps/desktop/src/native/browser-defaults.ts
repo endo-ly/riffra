@@ -29,6 +29,7 @@ export function defaultSession(): CreativeSession {
       midiClips: [],
       automationLanes: [],
       markers: [],
+      regions: [],
       recordingSessions: [],
       recordingPasses: [],
       takes: [],
