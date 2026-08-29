@@ -63,19 +63,21 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ### 4.2 アレンジ（時間軸）
 
-| エンティティ                               | 役割                                                                                                                                                                                                  |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TimelineTick`                             | 時間軸の基本単位。`TIMELINE_PPQ = 960`：1拍を960分割                                                                                                                                                  |
-| `ProjectTimebase`                          | 拍子・テンポ・ppq からなる音楽クロック。ルーラー・スナップ・MIDI・トランスポートが共有                                                                                                                |
-| `FrameRange` / `FrameDuration`             | ソース素材のフレーム範囲／持続時間（サンプルレートを併せ持つ）                                                                                                                                        |
-| `TimelineLoopRange` / `TimelinePunchRange` | ループ区間（無効化しても端点保持）とパンチ録音区間                                                                                                                                                    |
-| `Track`                                    | Audio / Instrument の2種類。ゲイン・パン・ミュート・ソロ・アーム・モニタリング・入力ルート・インストゥルメント・トラックラックを保持                                                                  |
-| `AudioClip`                                | 非破壊オーディオクリップ。`asset_id` + `source_range` + `timeline_duration`、ゲイン・パン・フェード・ループ・ミュート。録音テイクへの関連（recording_take_id）と`take_variant`（raw/processed）を持つ |
-| `MidiClip`                                 | 非破壊 MIDI クリップ。`MidiNote`（ピアノロール編集対象）と `MidiEvent`（CC/ピッチベンド/チャンネルプレッシャーを忠実保持）を持つ。`asset_id` は任意（セッション内で完結する MIDI は持たない）         |
-| `AudioClipPatch` / `MidiClipPatch`         | 部分更新。None のフィールドは現値を維持                                                                                                                                                               |
-| `AutomationLane` / `AutomationPoint`       | トラックミックスパラメータ（volume / pan）のタイムライン制御データ                                                                                                                                    |
-| `Marker`                                   | ルーラー表示用の名前付き位置情報（音声処理には影響しない）                                                                                                                                            |
-| `Arrangement`                              | 上記のすべてを束ねるアレンジのルート。revision（編集のたびに単調増加）、timebase、tracks、clips、automation、markers、録音レコード群を持つ                                                            |
+| エンティティ                                           | 役割                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TimelineTick`                                         | 時間軸の基本単位。`TIMELINE_PPQ = 960`：1拍を960分割                                                                                                                                                                         |
+| `MusicalPosition` / `MusicalDuration` / `MusicalPitch` | CLIやGUIなどの制作操作が使う音楽表現。小節・拍、全音符を1とする有理数、音名を表し、CoreでTimelineTickまたはMIDI pitchへ変換する。`MusicalPitch` は入力した音名と臨時記号の表記を保持する。ノートの正準状態としては保存しない |
+| `ProjectTimebase`                                      | 拍子・テンポ・ppq からなる音楽クロック。ルーラー・スナップ・MIDI・トランスポートが共有                                                                                                                                       |
+| `FrameRange` / `FrameDuration`                         | ソース素材のフレーム範囲／持続時間（サンプルレートを併せ持つ）                                                                                                                                                               |
+| `TimelineLoopRange` / `TimelinePunchRange`             | ループ区間（無効化しても端点保持）とパンチ録音区間                                                                                                                                                                           |
+| `Track`                                                | Audio / Instrument の2種類。ゲイン・パン・ミュート・ソロ・アーム・モニタリング・入力ルート・インストゥルメント・トラックラックを保持                                                                                         |
+| `AudioClip`                                            | 非破壊オーディオクリップ。`asset_id` + `source_range` + `timeline_duration`、ゲイン・パン・フェード・ループ・ミュート。録音テイクへの関連（recording_take_id）と`take_variant`（raw/processed）を持つ                        |
+| `MidiClip`                                             | 非破壊 MIDI クリップ。`MidiNote`（ピアノロール編集対象）と `MidiEvent`（CC/ピッチベンド/チャンネルプレッシャーを忠実保持）を持つ。`asset_id` は任意（セッション内で完結する MIDI は持たない）                                |
+| `AudioClipPatch` / `MidiClipPatch`                     | 部分更新。None のフィールドは現値を維持                                                                                                                                                                                      |
+| `AutomationLane` / `AutomationPoint`                   | トラックミックスパラメータ（volume / pan）のタイムライン制御データ                                                                                                                                                           |
+| `Marker`                                               | ルーラー表示用の名前付き位置情報（音声処理には影響しない）                                                                                                                                                                   |
+| `TimelineRegion`                                       | セクション種別を持たない、自由な名前付き時間範囲。重複・入れ子・同名を許可し、音声処理やHarmonyなどの所有権は持たない                                                                                                        |
+| `Arrangement`                                          | 上記のすべてを束ねるアレンジのルート。revision（編集のたびに単調増加）、timebase、tracks、clips、automation、markers、regions、録音レコード群を持つ                                                                          |
 
 ### 4.3 録音
 
@@ -128,6 +130,7 @@ flowchart TD
     AR --> AC[AudioClip]
     AR --> MC[MidiClip]
     AR --> AU[AutomationLane]
+    AR --> RG[TimelineRegion]
     AR --> RS[RecordingSessionRecord]
     RS --> RP[RecordingPassRecord]
     RP --> RT[RecordingTakeRecord]
@@ -151,19 +154,21 @@ flowchart TD
 
 `validate_and_normalize`（`CreativeSession`）と `normalize_fields`（`AudioClip`）が守る規則。ロードと保存の両方の境界で適用される。
 
-| 対象           | ルール                                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------- |
-| session_id     | 空文字禁止。新規は `scratch-<ms>`                                                                                    |
-| タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ    |
-| ゲイン         | マスター `-90.0..=0.0`、クリップ・トラック・デバイス `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化 |
-| パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                         |
-| フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                              |
-| カウントイン   | `0..=8` 拍                                                                                                           |
-| AssetId        | `asset:<UUIDv7>` のみ有効（旧形式・任意文字列は拒否）                                                                |
-| 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                |
-| 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）    |
-| 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                |
-| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                               |
+| 対象           | ルール                                                                                                                                                                                  |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| session_id     | 空文字禁止。新規は `scratch-<ms>`                                                                                                                                                       |
+| タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                       |
+| 音楽操作値     | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する |
+| TimelineRegion | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                       |
+| ゲイン         | マスター `-90.0..=0.0`、クリップ・トラック・デバイス `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化                                                                    |
+| パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                                                                                            |
+| フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                 |
+| カウントイン   | `0..=8` 拍                                                                                                                                                                              |
+| AssetId        | `asset:<UUIDv7>` のみ有効（旧形式・任意文字列は拒否）                                                                                                                                   |
+| 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                   |
+| 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                       |
+| 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                   |
+| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                                                                                  |
 
 ---
 

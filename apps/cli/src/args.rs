@@ -55,6 +55,10 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: MidiNoteCommand,
     },
+    Music {
+        #[command(subcommand)]
+        command: MusicCommand,
+    },
     Clip {
         #[command(subcommand)]
         command: ClipCommand,
@@ -521,6 +525,93 @@ pub struct MidiNoteBulkArgs {
     pub notes_json: String,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum MusicCommand {
+    MidiClip {
+        #[command(subcommand)]
+        command: MusicMidiClipCommand,
+    },
+    Note {
+        #[command(subcommand)]
+        command: MusicNoteCommand,
+    },
+    Region {
+        #[command(subcommand)]
+        command: MusicRegionCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MusicMidiClipCommand {
+    Create(MusicalMidiClipCreateArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalMidiClipCreateArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub start: String,
+    #[arg(long)]
+    pub end: String,
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MusicNoteCommand {
+    Insert(MusicalNoteBulkArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteBulkArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long, alias = "notes")]
+    pub notes_json: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MusicRegionCommand {
+    List,
+    Add(MusicalRegionAddArgs),
+    Update(MusicalRegionUpdateArgs),
+    Remove(MusicalRegionIdArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalRegionAddArgs {
+    #[arg(long)]
+    pub name: String,
+    #[arg(long)]
+    pub start: String,
+    #[arg(long)]
+    pub end: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalRegionUpdateArgs {
+    #[arg(long)]
+    pub region_id: String,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub start: Option<String>,
+    #[arg(long)]
+    pub end: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalRegionIdArgs {
+    #[arg(long)]
+    pub region_id: String,
+}
+
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNoteUpdateArgs {
@@ -686,10 +777,6 @@ pub enum TimebaseCommand {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimebaseArgs {
-    /// PPQ; changing it changes the interpretation of existing MIDI note ticks.
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ppq: Option<u32>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bpm: Option<f64>,
@@ -1266,6 +1353,22 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 id_list_value("midi-note.duplicate", args, &["noteIds"])?
             }
         },
+        CliCommand::Music { command } => match command {
+            MusicCommand::MidiClip { command } => match command {
+                MusicMidiClipCommand::Create(args) => value("music.midi-clip.create", args),
+            },
+            MusicCommand::Note { command } => match command {
+                MusicNoteCommand::Insert(args) => {
+                    json_string("music.note.insert", args.clip_id, "notes", args.notes_json)?
+                }
+            },
+            MusicCommand::Region { command } => match command {
+                MusicRegionCommand::List => simple("music.region.list"),
+                MusicRegionCommand::Add(args) => value("music.region.add", args),
+                MusicRegionCommand::Update(args) => value("music.region.update", args),
+                MusicRegionCommand::Remove(args) => value("music.region.remove", args),
+            },
+        },
         CliCommand::Clip { command } => match command {
             ClipCommand::Remove(args) => {
                 id_list_value("clip.remove", args, &["audioClipIds", "midiClipIds"])?
@@ -1619,6 +1722,94 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "timebase.update");
         assert_eq!(request.params, json!({"bpm": 140.0}));
+    }
+
+    #[test]
+    fn music_commands_preserve_musical_input_without_calculating_ticks() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "midi-clip",
+            "create",
+            "--track-id",
+            "track:1",
+            "--start",
+            "5:1",
+            "--end",
+            "13:1",
+            "--name",
+            "Piano",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.midi-clip.create");
+        assert_eq!(
+            request.params,
+            json!({"trackId":"track:1","start":"5:1","end":"13:1","name":"Piano"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--notes-json",
+            r#"[{"pitch":"C4","position":"5:1","duration":"1/8"}]"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.note.insert");
+        assert_eq!(
+            request.params,
+            json!({
+                "clipId":"midi-clip:1",
+                "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
+            })
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "region",
+            "add",
+            "--name",
+            "A'",
+            "--start",
+            "5:1",
+            "--end",
+            "13:1",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.region.add");
+        assert_eq!(
+            request.params,
+            json!({"name":"A'","start":"5:1","end":"13:1"})
+        );
+    }
+
+    #[test]
+    fn timebase_update_does_not_accept_ppq_as_an_external_field() {
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "--data-root",
+                "data",
+                "timebase",
+                "update",
+                "--ppq",
+                "960",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

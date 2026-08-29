@@ -454,6 +454,8 @@ pub struct Arrangement {
     #[serde(default)]
     pub markers: Vec<Marker>,
     #[serde(default)]
+    pub regions: Vec<TimelineRegion>,
+    #[serde(default)]
     pub recording_sessions: Vec<RecordingSessionRecord>,
     #[serde(default)]
     pub recording_passes: Vec<RecordingPassRecord>,
@@ -469,6 +471,18 @@ pub struct Marker {
     pub id: String,
     pub name: String,
     pub tick: u64,
+}
+
+/// A named half-open range on the project timeline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineRegion {
+    pub id: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub start_tick: TimelineTick,
+    #[ts(type = "number")]
+    pub end_tick: TimelineTick,
 }
 
 impl Arrangement {
@@ -487,6 +501,97 @@ impl Arrangement {
             ));
         }
         self.timebase = timebase;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Validates a named timeline range without imposing a section taxonomy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region has an empty id or name, or when its
+    /// end is not after its start.
+    pub fn validate_region(&self, region: &TimelineRegion) -> Result<(), DomainError> {
+        if region.id.trim().is_empty()
+            || region.name.trim().is_empty()
+            || region.end_tick <= region.start_tick
+        {
+            return Err(DomainError::InvalidTimelineRegion(
+                "regions require an id, a name, and a positive range".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Adds a named range to the arrangement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid or its id is already in
+    /// use.
+    pub fn add_region(&mut self, region: TimelineRegion) -> Result<(), DomainError> {
+        self.validate_region(&region)?;
+        if self.regions.iter().any(|existing| existing.id == region.id) {
+            return Err(DomainError::InvalidTimelineRegion(
+                "region ids must be unique".into(),
+            ));
+        }
+        self.regions.push(region);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Updates a named range while preserving its identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is missing or the updated region is
+    /// invalid.
+    pub fn update_region(
+        &mut self,
+        region_id: &str,
+        name: Option<String>,
+        start_tick: Option<TimelineTick>,
+        end_tick: Option<TimelineTick>,
+    ) -> Result<(), DomainError> {
+        let index = self
+            .regions
+            .iter()
+            .position(|region| region.id == region_id)
+            .ok_or_else(|| {
+                DomainError::InvalidTimelineRegion(format!(
+                    "region '{region_id}' is not registered"
+                ))
+            })?;
+        let mut region = self.regions[index].clone();
+        if let Some(name) = name {
+            region.name = name;
+        }
+        if let Some(start_tick) = start_tick {
+            region.start_tick = start_tick;
+        }
+        if let Some(end_tick) = end_tick {
+            region.end_tick = end_tick;
+        }
+        self.validate_region(&region)?;
+        self.regions[index] = region;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Removes a named range from the arrangement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is not registered.
+    pub fn remove_region(&mut self, region_id: &str) -> Result<(), DomainError> {
+        let before = self.regions.len();
+        self.regions.retain(|region| region.id != region_id);
+        if self.regions.len() == before {
+            return Err(DomainError::InvalidTimelineRegion(format!(
+                "region '{region_id}' is not registered"
+            )));
+        }
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }

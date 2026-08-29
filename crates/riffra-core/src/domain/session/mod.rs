@@ -236,6 +236,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             midi_clips: Vec::new(),
             automation_lanes: Vec::new(),
             markers: Vec::new(),
+            regions: Vec::new(),
             recording_sessions: arrangement.recording_sessions.clone(),
             recording_passes: arrangement.recording_passes.clone(),
             takes: arrangement.takes.clone(),
@@ -374,6 +375,23 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         } else {
             normalized_name
         };
+    }
+    if arrangement.regions.len() > 256 {
+        return Err("an arrangement cannot contain more than 256 timeline regions".into());
+    }
+    arrangement
+        .regions
+        .sort_by_key(|region| (region.start_tick, region.end_tick));
+    let mut region_ids = std::collections::HashSet::new();
+    for region in &mut arrangement.regions {
+        if region.id.trim().is_empty()
+            || !region_ids.insert(region.id.as_str())
+            || region.name.trim().is_empty()
+            || region.end_tick <= region.start_tick
+        {
+            return Err("timeline regions require unique ids, names, and positive ranges".into());
+        }
+        region.name = region.name.trim().chars().take(80).collect();
     }
     if arrangement.recording_sessions.len() > 256
         || arrangement.recording_passes.len() > 4096
@@ -693,6 +711,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn timeline_regions_allow_overlap_and_nesting_but_require_valid_ranges() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:outer".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(3_840),
+            })
+            .unwrap();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:inner".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            })
+            .unwrap();
+        assert_eq!(arrangement.regions.len(), 2);
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:empty".into(),
+                    name: " ".into(),
+                    start_tick: TimelineTick(0),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:inverted".into(),
+                    name: "B".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+    }
+
     fn arrangement_with_clip(asset: AssetId) -> Arrangement {
         let mut arrangement = Arrangement {
             revision: 0,
@@ -709,6 +769,7 @@ mod tests {
             midi_clips: Vec::new(),
             automation_lanes: Vec::new(),
             markers: Vec::new(),
+            regions: Vec::new(),
             recording_sessions: Vec::new(),
             recording_passes: Vec::new(),
             takes: Vec::new(),
