@@ -27,6 +27,9 @@ interface ArrangeToolbarProps {
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
+  playSurfaceAvailable: boolean;
+  playSurfaceOpen: boolean;
+  onTogglePlaySurface: () => void;
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
@@ -81,6 +84,18 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
             : 'Select a Track to edit Automation'
         }
         onClick={props.onToggleAutomation}
+      />
+      <ToolbarToggle
+        active={props.playSurfaceOpen}
+        icon="keys"
+        ariaLabel="Play Surface"
+        disabled={!props.playSurfaceAvailable}
+        title={
+          props.playSurfaceAvailable
+            ? 'Show or hide the Play Surface for the focused Instrument Track'
+            : 'Focus an Instrument Track to use the Play Surface'
+        }
+        onClick={props.onTogglePlaySurface}
       />
     </Toolbar>
   );

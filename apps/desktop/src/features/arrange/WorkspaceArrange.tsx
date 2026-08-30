@@ -305,12 +305,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     return () => clearToast('arrange.status');
   }, [playbackOutOfSync, retryRuntimeProjection, statusMessage, statusPersistent]);
 
-  const openPlaySurface = (trackId: string) => {
-    props.setSelection({ kind: 'track', trackId });
-    props.onFocusTrack(trackId);
-    setPlaySurfaceMode('expanded');
-  };
-
   const detailControls = (
     <>
       <ToolbarButton
@@ -788,14 +782,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     });
   };
 
-  const cycleTrackSize = (trackId: string) => {
-    const sizes: TrackSize[] = ['compact', 'normal', 'large'];
-    const current = trackSizes[trackId] ?? trackSize;
-    setTrackSizes((value) => ({
-      ...value,
-      [trackId]: sizes[(sizes.indexOf(current) + 1) % sizes.length],
-    }));
-  };
   const setTrackSizeForTrack = (trackId: string, size: TrackSize) => {
     setTrackSizes((value) => ({ ...value, [trackId]: size }));
   };
@@ -906,6 +892,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onToggleAutomation={() => {
           if (selectedTrackId) toggleAutomation(selectedTrackId);
         }}
+        playSurfaceAvailable={focusedTrack?.kind === 'instrument'}
+        playSurfaceOpen={playSurfaceMode !== 'closed'}
+        onTogglePlaySurface={() =>
+          setPlaySurfaceMode(playSurfaceMode === 'closed' ? 'expanded' : 'closed')
+        }
       />
 
       {pluginPicker && (
@@ -1130,9 +1121,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     props.setSelection({ kind: 'track', trackId: track.id });
                     props.onFocusTrack(track.kind === 'instrument' ? track.id : null);
                   }}
-                  onOpenPlaySurface={
-                    track.kind === 'instrument' ? () => openPlaySurface(track.id) : undefined
-                  }
                   timelineWidth={timelineWidth}
                   pixelsPerTick={pixelsPerTick}
                   trackSize={trackSizes[track.id] ?? trackSize}
@@ -1178,6 +1166,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
+                  missingDeviceIds={[
+                    ...(props.missingDeviceIds ?? []),
+                    ...(transport?.missingDeviceIds ?? []),
+                  ]}
+                  onAddDevice={() =>
+                    setPluginPicker({
+                      trackId: track.id,
+                      kind: track.kind === 'audio' ? 'effect' : 'instrument',
+                    })
+                  }
+                  onOpenPluginEditor={(deviceId) => {
+                    void props.api
+                      .openTrackPluginEditor(track.id, deviceId)
+                      .catch((error: unknown) => {
+                        editor.setMessage(error instanceof Error ? error.message : String(error));
+                      });
+                  }}
                   onReorder={(sourceTrackId, insertAfter) => {
                     const sourceIndex = arrangement.tracks.findIndex(
                       (candidate) => candidate.id === sourceTrackId,
@@ -1192,10 +1197,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                         : trackIndex;
                     void editor.commit(props.api.reorderTrack(sourceTrackId, targetIndex));
                   }}
-                  onResize={() => cycleTrackSize(track.id)}
                   onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
-                  automationOpen={Boolean(automationParameters[track.id])}
-                  onToggleAutomation={() => toggleAutomation(track.id)}
                 />
                 {automationParameters[track.id] && (
                   <AutomationLaneView

@@ -538,7 +538,7 @@
   z-index: 30;
   top: 26px;
   right: 0;
-  width: 112px;
+  width: 148px;
   display: none;
   padding: 4px;
   background: var(--color-bg-surface-raised);
@@ -551,17 +551,25 @@
   display: grid;
 }
 .trackMenu button {
-  padding: 6px 7px;
+  padding: 3px 7px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   text-align: left;
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .trackMenu button:hover {
   color: var(--color-text-primary);
   background: var(--color-bg-control-hover);
+}
+.trackMenu .menuSeparator {
+  margin: 4px 2px;
+  border: 0;
+  border-top: 1px solid var(--color-border-default);
 }
 .trackMenu .deleteTrack {
   color: var(--color-status-danger);
@@ -583,6 +591,12 @@
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  display: grid;
+  place-content: center;
+}
+.trackSwitches button svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 .trackSwitches .armButton {
   color: var(--color-status-danger);

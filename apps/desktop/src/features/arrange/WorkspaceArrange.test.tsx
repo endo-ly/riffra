@@ -1090,6 +1090,46 @@ describe('WorkspaceArrange', () => {
     expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
   });
 
+  it('opens the inserted plugin editor from the track menu', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:guitar',
+      name: 'Guitar',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: {
+        devices: [
+          {
+            id: 'device:amp',
+            name: 'Amplitube',
+            kind: 'plugin',
+            bypassed: false,
+            gainDb: 0,
+            parameterValues: [],
+            disabledPlaceholder: false,
+          },
+        ],
+        macros: [],
+      },
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    render(<Harness api={api} initialSession={session} />);
+
+    // Act
+    fireEvent.click(screen.getByLabelText('Guitar track menu'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Amplitube' }));
+
+    // Assert
+    await waitFor(() => expect(api.calls).toContain('openTrackPluginEditor'));
+  });
+
   it('keeps an unavailable clip on the timeline and labels its missing source', async () => {
     const session = defaultSession();
     const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
@@ -1941,7 +1981,10 @@ describe('WorkspaceArrange', () => {
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const { container } = render(<Harness api={api} initialSession={session} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open Play Surface' }));
+    fireEvent.click(screen.getByText('Play Surface Instrument'));
+    const playSurfaceToggle = screen.getByRole('button', { name: 'Play Surface' });
+    await waitFor(() => expect(playSurfaceToggle).toBeEnabled());
+    fireEvent.click(playSurfaceToggle);
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Compact Play Surface' }));
     expect(screen.getByRole('button', { name: 'Expand Play Surface' })).toBeInTheDocument();

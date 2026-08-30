@@ -22,6 +22,9 @@ describe('ArrangeToolbar', () => {
         automationAvailable
         automationOpen={false}
         onToggleAutomation={vi.fn()}
+        playSurfaceAvailable
+        playSurfaceOpen={false}
+        onTogglePlaySurface={vi.fn()}
       />,
     );
 

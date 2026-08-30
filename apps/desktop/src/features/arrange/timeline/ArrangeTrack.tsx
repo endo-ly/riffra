@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type {
   AudioAnalysis,
   AudioClip,
@@ -53,7 +53,6 @@ interface ArrangeTrackProps {
   ) => void;
   onSelect: (clipId: string, append?: boolean) => void;
   onSelectTrack: () => void;
-  onOpenPlaySurface?: () => void;
   onTrim: (
     event: React.PointerEvent<HTMLSpanElement>,
     clip: AudioClip,
@@ -68,10 +67,10 @@ interface ArrangeTrackProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onReorder: (sourceTrackId: string, insertAfter: boolean) => void;
-  onResize: () => void;
   onSetTrackSize?: (size: TrackSize) => void;
-  automationOpen: boolean;
-  onToggleAutomation: () => void;
+  missingDeviceIds: string[];
+  onAddDevice: () => void;
+  onOpenPluginEditor: (deviceId: string) => void;
 }
 
 interface PendingTrackValues {
@@ -174,6 +173,63 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
+
+  const closeMenu = () => detailsRef.current?.removeAttribute('open');
+  const availableDevices = [
+    ...(props.track.instrument ? [props.track.instrument] : []),
+    ...props.track.rack.devices,
+  ].filter((device) => !device.disabledPlaceholder && !props.missingDeviceIds.includes(device.id));
+  const trackMenuItems: ReactNode[] = [];
+  if (availableDevices.length > 0) {
+    for (const device of availableDevices) {
+      trackMenuItems.push(
+        <button
+          key={device.id}
+          onClick={() => {
+            closeMenu();
+            props.onOpenPluginEditor(device.id);
+          }}
+        >
+          Open {device.name}
+        </button>,
+      );
+    }
+  } else {
+    trackMenuItems.push(
+      <button
+        key="add-device"
+        onClick={() => {
+          closeMenu();
+          props.onAddDevice();
+        }}
+      >
+        {props.track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument'}
+      </button>,
+    );
+  }
+  trackMenuItems.push(
+    <hr key="separator-actions" className={styles.menuSeparator} />,
+    <button
+      key="duplicate"
+      onClick={() => {
+        closeMenu();
+        props.onDuplicate();
+      }}
+    >
+      Duplicate
+    </button>,
+    <hr key="separator-delete" className={styles.menuSeparator} />,
+    <button
+      key="delete"
+      className={styles.deleteTrack}
+      onClick={() => {
+        closeMenu();
+        props.onDelete();
+      }}
+    >
+      Delete
+    </button>,
+  );
 
   return (
     <div
@@ -328,53 +384,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           <summary aria-label={`${props.track.name} track menu`}>
             <Icon name="more" />
           </summary>
-          <div>
-            {props.track.kind === 'instrument' && props.onOpenPlaySurface && (
-              <button
-                onClick={(event) => {
-                  props.onOpenPlaySurface?.();
-                  event.currentTarget.closest('details')?.removeAttribute('open');
-                }}
-              >
-                Open Play Surface
-              </button>
-            )}
-            <button
-              onClick={(event) => {
-                setRenaming(true);
-                event.currentTarget.closest('details')?.removeAttribute('open');
-              }}
-            >
-              Rename
-            </button>
-            <button
-              onClick={(event) => {
-                props.onDuplicate();
-                event.currentTarget.closest('details')?.removeAttribute('open');
-              }}
-            >
-              Duplicate
-            </button>
-            <button
-              onClick={(event) => {
-                props.onResize();
-                event.currentTarget.closest('details')?.removeAttribute('open');
-              }}
-            >
-              Height: {props.trackSize}
-            </button>
-            <button
-              onClick={(event) => {
-                props.onToggleAutomation();
-                event.currentTarget.closest('details')?.removeAttribute('open');
-              }}
-            >
-              {props.automationOpen ? 'Hide' : 'Show'} Automation
-            </button>
-            <button className={styles.deleteTrack} onClick={props.onDelete}>
-              Delete
-            </button>
-          </div>
+          <div>{trackMenuItems}</div>
         </details>
         {showMix && (
           <>

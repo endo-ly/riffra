@@ -121,14 +121,15 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 
 左側は編集操作、右側は表示操作としてまとまりを持たせる。
 
-| 要素          | 挙動                                          |
-| ------------- | --------------------------------------------- |
-| Select        | Clip の選択、移動、Trim、Marquee など通常編集 |
-| Split         | 指定位置で Clip を分割                        |
-| Snap          | Timeline の時間編集に使う Grid                |
-| Automation    | 選択 Track の Automation Lane を開閉          |
-| Bars / Time   | Ruler の表示形式を切替                        |
-| Timeline Zoom | 時間方向の拡大・縮小                          |
+| 要素          | 挙動                                            |
+| ------------- | ----------------------------------------------- |
+| Select        | Clip の選択、移動、Trim、Marquee など通常編集   |
+| Split         | 指定位置で Clip を分割                          |
+| Snap          | Timeline の時間編集に使う Grid                  |
+| Automation    | 選択 Track の Automation Lane を開閉            |
+| Play Surface  | Focused Instrument Track の Play Surface を開閉 |
+| Bars / Time   | Ruler の表示形式を切替                          |
+| Timeline Zoom | 時間方向の拡大・縮小                            |
 
 Snap は Clip 移動、Trim、Split、Time Selection、Marker 移動など Timeline 上の時間操作で共通に使う。
 
@@ -176,20 +177,27 @@ Track Header は Track の識別と、演奏・録音中に頻繁に触る操作
 └──────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-| 項目              | 仕様                                     |
-| ----------------- | ---------------------------------------- |
-| Track Name        | 選択と名前変更の入口                     |
-| Track Kind        | Audio / Instrument の識別                |
-| Mute / Solo / Arm | Header から直接変更                      |
-| Monitoring        | Audio Track の現在状態を表示・変更       |
-| Mix               | 表示密度に応じて Volume / Pan を操作     |
-| Reorder           | Track の並べ替え                         |
-| Height            | Track ごとの表示密度変更                 |
-| Focus             | Instrument Track を演奏先として Focus    |
-| Properties        | Track の属性と状態を表示・編集する       |
-| Play Surface      | Focused Track として Play Surface を開く |
+| 項目              | 仕様                                  |
+| ----------------- | ------------------------------------- |
+| Track Name        | 選択と名前変更の入口                  |
+| Track Kind        | Audio / Instrument の識別             |
+| Mute / Solo / Arm | Header から直接変更                   |
+| Monitoring        | Audio Track の現在状態を表示・変更    |
+| Mix               | 表示密度に応じて Volume / Pan を操作  |
+| Reorder           | Track の並べ替え                      |
+| Height            | Track ごとの表示密度変更              |
+| Focus             | Instrument Track を演奏先として Focus |
+| Properties        | Track の属性と状態を表示・編集する    |
 
 Input、Monitoring、名称など Track 自体の詳細属性は Properties が扱う。既存の Track view に含まれる Instrument / Effect Chain の操作項目は Devices の編集面へ移す対象として扱い、Properties は Track 属性へ集中する。Volume / Pan は制作中の確認頻度が高いため Track Header に簡易操作を置き、Properties では数値確認と精密調整を行える。
+
+Track Menu は Track 単位の操作をまとめる。Audio Track と Instrument Track で同じ構造を持ち、Device の編集面への入口と Track の複製・削除を提供する。Device が挿入された Track では挿入済み Device をそのまま開けるため、Track を選んで Plugin Editor へ至る最短経路になる。
+
+| 項目                           | 仕様                                                             |
+| ------------------------------ | ---------------------------------------------------------------- |
+| Open `<Device 名>`             | 挿入済み Device の Plugin Editor を開く。Instrument、Effect の順 |
+| Choose Instrument / Add Effect | Device が未挿入のときの追加入口。Track Kind に応じて候補を絞る   |
+| Duplicate / Delete             | Track の複製と削除。Delete は Clip 数の確認を伴う                |
 
 ### 3.4 Clip 共通操作
 
@@ -585,7 +593,7 @@ Play Surface の配置、Closed / Compact / Expanded の表示段階、Keyboard 
 
 Play Surface、Computer Keyboard、演奏用 MIDI 入力は Focused Instrument Track へ送る。
 
-Track Header の Focus / Play Surface 操作から演奏先を変更できる。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
+Arrange Toolbar の Play Surface で Play Surface を開閉し、Focused Instrument Track へ入力する。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
 
 ```text
 Arrange Selection ───────────────→ Properties / Timeline editing
