@@ -30,6 +30,7 @@ export function defaultSession(): CreativeSession {
       automationLanes: [],
       markers: [],
       regions: [],
+      harmonyEvents: [],
       recordingSessions: [],
       recordingPasses: [],
       takes: [],
