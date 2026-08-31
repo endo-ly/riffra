@@ -539,6 +539,84 @@ pub enum MusicCommand {
         #[command(subcommand)]
         command: MusicRegionCommand,
     },
+    Harmony {
+        #[command(subcommand)]
+        command: MusicHarmonyCommand,
+    },
+    Phrase {
+        #[command(subcommand)]
+        command: MusicPhraseCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MusicHarmonyCommand {
+    Resolve(MusicalHarmonyResolveArgs),
+    List,
+    Insert(MusicalHarmonyInsertArgs),
+    Update(MusicalHarmonyUpdateArgs),
+    Remove(MusicalHarmonyRemoveArgs),
+    Realize(MusicalHarmonyRealizeArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalHarmonyResolveArgs {
+    #[arg(long)]
+    pub chord: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalHarmonyInsertArgs {
+    #[arg(long, alias = "events")]
+    pub events_json: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalHarmonyUpdateArgs {
+    #[arg(long)]
+    pub event_id: String,
+    #[arg(long, alias = "patch")]
+    pub patch_json: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalHarmonyRemoveArgs {
+    #[arg(long, alias = "event-ids")]
+    pub event_ids_json: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalHarmonyRealizeArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    pub start: Option<String>,
+    #[arg(long)]
+    pub end: Option<String>,
+    #[arg(long)]
+    pub lowest_octave: Option<i8>,
+    #[arg(long)]
+    pub rhythm_json: Option<String>,
+    #[arg(long)]
+    pub velocity: Option<u8>,
+    #[arg(long)]
+    pub channel: Option<u8>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MusicPhraseCommand {
+    Insert(MusicalPhraseInsertArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalPhraseInsertArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long, alias = "phrase")]
+    pub phrase_json: String,
+    #[arg(long)]
+    pub channel: Option<u8>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1368,6 +1446,26 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 MusicRegionCommand::Update(args) => value("music.region.update", args),
                 MusicRegionCommand::Remove(args) => value("music.region.remove", args),
             },
+            MusicCommand::Harmony { command } => match command {
+                MusicHarmonyCommand::Resolve(args) => value("music.harmony.resolve", args),
+                MusicHarmonyCommand::List => simple("music.harmony.list"),
+                MusicHarmonyCommand::Insert(args) => json_string_with_fields(
+                    "music.harmony.insert",
+                    json!({}),
+                    "events",
+                    args.events_json,
+                )?,
+                MusicHarmonyCommand::Update(args) => harmony_update(args)?,
+                MusicHarmonyCommand::Remove(args) => {
+                    let ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
+                        .map_err(|error| format!("--event-ids-json is invalid JSON: {error}"))?;
+                    value("music.harmony.remove", json!({"eventIds": ids}))
+                }
+                MusicHarmonyCommand::Realize(args) => harmony_realize(args)?,
+            },
+            MusicCommand::Phrase { command } => match command {
+                MusicPhraseCommand::Insert(args) => phrase_insert(args)?,
+            },
         },
         CliCommand::Clip { command } => match command {
             ClipCommand::Remove(args) => {
@@ -1576,6 +1674,63 @@ fn json_string_with_fields<T: Serialize>(
                 .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?,
         );
     Ok(value(command, object))
+}
+
+fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, String> {
+    let patch = serde_json::from_str::<Value>(&args.patch_json)
+        .map_err(|error| format!("--patch-json is invalid JSON: {error}"))?;
+    let mut params = json!({"eventId": args.event_id});
+    let object = patch
+        .as_object()
+        .ok_or_else(|| "--patch-json must contain a JSON object".to_string())?;
+    params
+        .as_object_mut()
+        .expect("object literal produces an object")
+        .extend(object.clone());
+    Ok(value("music.harmony.update", params))
+}
+
+fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, String> {
+    let mut params = serde_json::Map::new();
+    params.insert("clipId".into(), Value::String(args.clip_id));
+    if let Some(start) = args.start {
+        params.insert("start".into(), Value::String(start));
+    }
+    if let Some(end) = args.end {
+        params.insert("end".into(), Value::String(end));
+    }
+    if let Some(lowest_octave) = args.lowest_octave {
+        params.insert("lowestOctave".into(), json!(lowest_octave));
+    }
+    if let Some(rhythm_json) = args.rhythm_json {
+        let rhythm = serde_json::from_str::<Value>(&rhythm_json)
+            .map_err(|error| format!("--rhythm-json is invalid JSON: {error}"))?;
+        params.insert("rhythm".into(), rhythm);
+    }
+    if let Some(velocity) = args.velocity {
+        params.insert("velocity".into(), json!(velocity));
+    }
+    if let Some(channel) = args.channel {
+        params.insert("channel".into(), json!(channel));
+    }
+    Ok(value("music.harmony.realize", Value::Object(params)))
+}
+
+fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String> {
+    let phrase = serde_json::from_str::<Value>(&args.phrase_json)
+        .map_err(|error| format!("--phrase-json is invalid JSON: {error}"))?;
+    let mut params = phrase
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "--phrase-json must contain a JSON object".to_string())?;
+    if params.contains_key("clipId") {
+        return Err("--phrase-json must not contain clipId".into());
+    }
+    params.insert("clipId".into(), Value::String(args.clip_id));
+    if let Some(channel) = args.channel {
+        params.insert("channel".into(), json!(channel));
+    }
+    Ok(value("music.phrase.insert", Value::Object(params)))
 }
 
 fn id_list_value<T: Serialize>(
@@ -1794,6 +1949,67 @@ mod tests {
             request.params,
             json!({"name":"A'","start":"5:1","end":"13:1"})
         );
+    }
+
+    #[test]
+    fn harmony_and_phrase_commands_keep_high_level_json_inputs_intact() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "harmony",
+            "insert",
+            "--events-json",
+            r#"[{"start":"1:1","end":"2:1","chord":"Dm9"}]"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.harmony.insert");
+        assert_eq!(
+            request.params,
+            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "harmony",
+            "realize",
+            "--clip-id",
+            "midi-clip:1",
+            "--lowest-octave",
+            "3",
+            "--rhythm-json",
+            r#"{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]}"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.harmony.realize");
+        assert_eq!(request.params["clipId"], "midi-clip:1");
+        assert_eq!(request.params["lowestOctave"], 3);
+        assert_eq!(request.params["rhythm"]["length"], "1/2");
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "phrase",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--phrase-json",
+            r#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]}"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.phrase.insert");
+        assert_eq!(request.params["clipId"], "midi-clip:1");
+        assert_eq!(request.params["pattern"]["length"], "1/1");
+        assert_eq!(request.params["placements"][0]["anchor"], "C4");
     }
 
     #[test]

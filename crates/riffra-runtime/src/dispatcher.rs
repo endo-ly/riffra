@@ -2,15 +2,16 @@ use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, Trac
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
-    AudioAssetClipPlacement, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
+    AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch,
+    HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
     MidiNoteUpdate, MusicalMidiNoteInput, SessionSettingsPatch,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
     AppCore, ApplicationError, AssetId, AssetKind, AudioClipMove, AudioClipPatch,
     AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange, MidiClipMove,
-    MidiClipPatch, MidiInputRoute, ProjectTimebase, RackDevice, TimelineTick, TrackKind,
-    TrackPatch,
+    MidiClipPatch, MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RackDevice,
+    RhythmPattern, TimelineTick, TrackKind, TrackPatch,
 };
 use riffra_host::{DataRootLease, SessionStore, now_ms};
 use serde::Deserialize;
@@ -496,6 +497,77 @@ impl<'a, A> HostDispatcher<'a, A> {
                         .insert_musical_notes(&params.clip_id, params.notes)?,
                 )
             }
+            "music.harmony.resolve" => {
+                let params: MusicalHarmonyResolveParams = decode(request.params)?;
+                self.value(
+                    "harmonyChord",
+                    self.core
+                        .application(&self.storage)
+                        .resolve_harmony_chord(&params.chord)?,
+                )
+            }
+            "music.harmony.list" => self.value(
+                "harmonyEvents",
+                self.core.application(&self.storage).list_harmony_events()?,
+            ),
+            "music.harmony.insert" => {
+                let params: MusicalHarmonyInsertParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .insert_harmony_events(params.events)?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.harmony.update" => {
+                let params: MusicalHarmonyUpdateParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .update_harmony_event(&params.event_id, params.patch)?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.harmony.remove" => {
+                let params: MusicalHarmonyRemoveParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core
+                        .application(&self.storage)
+                        .remove_harmony_events(params.event_ids)?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.harmony.realize" => {
+                let params: MusicalHarmonyRealizeParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core.application(&self.storage).realize_harmony(
+                        &params.clip_id,
+                        HarmonyRealizeSelection {
+                            start: params.start,
+                            end: params.end,
+                        },
+                        ChordVoicingInput {
+                            lowest_octave: params.lowest_octave.unwrap_or(3),
+                        },
+                        params.rhythm,
+                        params.velocity,
+                        params.channel,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "music.phrase.insert" => {
+                let params: MusicalPhraseInsertParams = decode(request.params)?;
+                self.session_with_effect(
+                    self.core.application(&self.storage).insert_phrase_pattern(
+                        &params.clip_id,
+                        params.pattern,
+                        params.placements,
+                        params.channel,
+                    )?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
             "midi-note.update" => {
                 let params: MidiNoteUpdateParams = decode(request.params)?;
                 self.session(self.core.application(&self.storage).update_midi_notes(
@@ -610,9 +682,10 @@ impl<'a, A> HostDispatcher<'a, A> {
                     CanonicalMutationEffect::CanonicalOnly,
                 )
             }
-            "music.region.list" => {
-                self.value("regions", canonical.session.arrangement.regions.clone())
-            }
+            "music.region.list" => self.value(
+                "regions",
+                self.core.application(&self.storage).list_regions()?,
+            ),
             "music.region.add" => {
                 let params: MusicalRegionAddParams = decode(request.params)?;
                 self.session_with_effect(
@@ -1022,6 +1095,8 @@ fn is_read_command(command: &str) -> bool {
             | "track.list"
             | "audio-clip.list"
             | "midi-clip.list"
+            | "music.harmony.resolve"
+            | "music.harmony.list"
             | "music.region.list"
             | "project.export"
     )
@@ -1300,6 +1375,53 @@ struct MusicalMidiClipCreateParams {
 struct MusicalNoteInsertParams {
     clip_id: String,
     notes: Vec<MusicalMidiNoteInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalHarmonyResolveParams {
+    chord: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalHarmonyInsertParams {
+    events: Vec<HarmonyEventInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalHarmonyUpdateParams {
+    event_id: String,
+    #[serde(flatten)]
+    patch: HarmonyEventPatch,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalHarmonyRemoveParams {
+    event_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalHarmonyRealizeParams {
+    clip_id: String,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
+    lowest_octave: Option<i8>,
+    rhythm: Option<RhythmPattern>,
+    velocity: Option<u8>,
+    channel: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalPhraseInsertParams {
+    clip_id: String,
+    pattern: PhrasePattern,
+    placements: Vec<PhrasePlacement>,
+    channel: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1768,6 +1890,121 @@ mod tests {
             .unwrap();
         assert_eq!(listed.result_type, "regions");
         assert_eq!(listed.value.as_array().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn harmony_and_phrase_commands_use_music_level_contracts() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-harmony-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let clip = dispatcher
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": session.arrangement.tracks[0].id,
+                    "start": "1:1",
+                    "end": "3:1"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(clip.value).unwrap();
+        let clip_id = session.arrangement.midi_clips[0].id.clone();
+
+        let resolved = dispatcher
+            .dispatch(request(
+                "music.harmony.resolve",
+                json!({"chord":"G7(b9,#11)/F"}),
+            ))
+            .unwrap();
+        assert_eq!(resolved.result_type, "harmonyChord");
+        assert_eq!(resolved.value["root"], "G");
+        assert_eq!(resolved.value["bass"], "F");
+        assert_eq!(
+            resolved.value["tones"],
+            json!(["G", "B", "D", "F", "Ab", "C#"])
+        );
+
+        let inserted = dispatcher
+            .dispatch(request(
+                "music.harmony.insert",
+                json!({
+                    "events": [
+                        {"start":"1:1","end":"2:1","chord":"C/E"},
+                        {"start":"2:1","end":"3:1","pitches":["Bb","C","E"],"bass":"F","label":"cluster"}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(inserted.value.clone()).unwrap();
+        let harmony_ids = session
+            .arrangement
+            .harmony_events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(harmony_ids.len(), 2);
+
+        let listed = dispatcher
+            .dispatch(request("music.harmony.list", json!({})))
+            .unwrap();
+        assert_eq!(listed.result_type, "harmonyEvents");
+        assert_eq!(listed.value[0]["start"], "1:1");
+        assert!(listed.value[0].get("startTick").is_none());
+
+        dispatcher
+            .dispatch(request(
+                "music.harmony.realize",
+                json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
+            ))
+            .unwrap();
+        let updated = dispatcher
+            .dispatch(request(
+                "music.harmony.update",
+                json!({"eventId": harmony_ids[0], "chord":"Dm9"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(updated.value.clone()).unwrap();
+        assert_eq!(session.arrangement.harmony_events[0].chord.name, "Dm9");
+
+        let phrase = dispatcher
+            .dispatch(request(
+                "music.phrase.insert",
+                json!({
+                    "clipId": clip_id,
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0},
+                            {"offset":"1/8","duration":"1/8","semitones":2}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(phrase.value.clone()).unwrap();
+        assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);
+
+        dispatcher
+            .dispatch(request(
+                "music.harmony.remove",
+                json!({"eventIds":[harmony_ids[0], harmony_ids[1]]}),
+            ))
+            .unwrap();
+        let listed = dispatcher
+            .dispatch(request("music.harmony.list", json!({})))
+            .unwrap();
+        assert!(listed.value.as_array().unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
