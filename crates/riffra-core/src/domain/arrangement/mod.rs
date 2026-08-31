@@ -2,6 +2,7 @@
 
 use crate::DomainError;
 use crate::domain::asset::AssetId;
+use crate::domain::music::HarmonyEvent;
 use crate::domain::rack::{RackDevice, RackInstance};
 use crate::domain::recording::*;
 use crate::domain::timeline::{
@@ -9,7 +10,10 @@ use crate::domain::timeline::{
     TimelinePunchRange, TimelineTick,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use ts_rs::TS;
+
+pub(crate) const MAX_MIDI_NOTES_PER_CLIP: usize = 200_000;
 
 /// The production source hosted by a timeline track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
@@ -456,6 +460,8 @@ pub struct Arrangement {
     #[serde(default)]
     pub regions: Vec<TimelineRegion>,
     #[serde(default)]
+    pub harmony_events: Vec<HarmonyEvent>,
+    #[serde(default)]
     pub recording_sessions: Vec<RecordingSessionRecord>,
     #[serde(default)]
     pub recording_passes: Vec<RecordingPassRecord>,
@@ -592,6 +598,94 @@ impl Arrangement {
                 "region '{region_id}' is not registered"
             )));
         }
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Adds harmony events as one arrangement edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidHarmony`] when an event is invalid or an
+    /// id is duplicated.
+    pub fn add_harmony_events(&mut self, events: Vec<HarmonyEvent>) -> Result<(), DomainError> {
+        if events.is_empty() {
+            return Err(DomainError::InvalidHarmony(
+                "at least one harmony event is required".into(),
+            ));
+        }
+        let mut ids = self
+            .harmony_events
+            .iter()
+            .map(|event| event.id.as_str())
+            .collect::<HashSet<_>>();
+        for event in &events {
+            event.validate()?;
+            if !ids.insert(event.id.as_str()) {
+                return Err(DomainError::InvalidHarmony(
+                    "harmony event ids must be unique".into(),
+                ));
+            }
+        }
+        self.harmony_events.extend(events);
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Replaces one harmony event while preserving its identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidHarmony`] when the event is missing or
+    /// invalid.
+    pub fn update_harmony_event(
+        &mut self,
+        event_id: &str,
+        event: HarmonyEvent,
+    ) -> Result<(), DomainError> {
+        let index = self
+            .harmony_events
+            .iter()
+            .position(|existing| existing.id == event_id)
+            .ok_or_else(|| {
+                DomainError::InvalidHarmony(format!("harmony event '{event_id}' is not registered"))
+            })?;
+        if event.id != event_id {
+            return Err(DomainError::InvalidHarmony(
+                "harmony event identity cannot be changed".into(),
+            ));
+        }
+        event.validate()?;
+        self.harmony_events[index] = event;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Removes one or more harmony events atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidHarmony`] when the id list is empty,
+    /// contains duplicates, or references a missing event.
+    pub fn remove_harmony_events(&mut self, event_ids: Vec<String>) -> Result<(), DomainError> {
+        if event_ids.is_empty() {
+            return Err(DomainError::InvalidHarmony(
+                "at least one harmony event id is required".into(),
+            ));
+        }
+        let ids = event_ids.iter().map(String::as_str).collect::<HashSet<_>>();
+        if ids.len() != event_ids.len()
+            || event_ids.iter().any(|id| id.trim().is_empty())
+            || event_ids
+                .iter()
+                .any(|id| !self.harmony_events.iter().any(|event| event.id == *id))
+        {
+            return Err(DomainError::InvalidHarmony(
+                "harmony event ids must be unique and registered".into(),
+            ));
+        }
+        self.harmony_events
+            .retain(|event| !ids.contains(event.id.as_str()));
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -769,7 +863,7 @@ impl Arrangement {
                 "MIDI clips require non-empty identity and a positive duration.".into(),
             ));
         }
-        if clip.notes.len() > 200_000 || clip.events.len() > 200_000 {
+        if clip.notes.len() > MAX_MIDI_NOTES_PER_CLIP || clip.events.len() > 200_000 {
             return Err(DomainError::InvalidClip(format!(
                 "MIDI clip '{}' contains too many events.",
                 clip.name

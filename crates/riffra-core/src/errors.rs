@@ -18,6 +18,8 @@ pub enum DomainError {
     /// A musical value cannot be represented by the project timebase.
     #[error("invalid musical value: {0}")]
     InvalidMusicalValue(String),
+    #[error("invalid harmony: {0}")]
+    InvalidHarmony(String),
     /// A named timeline range violates its structural invariants.
     #[error("invalid timeline region: {0}")]
     InvalidTimelineRegion(String),

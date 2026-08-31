@@ -26,11 +26,11 @@ use crate::render::{RenderOptions, RenderRange, RenderResult};
 use riffra_core::{
     Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
     AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CanonicalState,
-    CreativeSession, DeviceKind, FrameDuration, FrameRange, HistoryState, Marker, MidiClip,
-    MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote, MonitoringState, ProjectTimebase,
-    RackDevice, RackInstance, RackMacro, RecordingPassRecord, RecordingSessionRecord,
-    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange,
-    TimelineRegion, Track, TrackKind,
+    CreativeSession, DeviceKind, FrameDuration, FrameRange, HarmonyChord, HarmonyEvent,
+    HistoryState, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote,
+    MonitoringState, MusicalNoteName, ProjectTimebase, RackDevice, RackInstance, RackMacro,
+    RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
+    SessionSettings, TimelineLoopRange, TimelineRegion, Track, TrackKind,
 };
 use riffra_runtime::{
     ArrangementProjectionOutcome, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
@@ -57,6 +57,9 @@ fn export_types() {
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
     TimelineRegion::export_all(&cfg).expect("TimelineRegion bindings");
+    MusicalNoteName::export_all(&cfg).expect("MusicalNoteName bindings");
+    HarmonyChord::export_all(&cfg).expect("HarmonyChord bindings");
+    HarmonyEvent::export_all(&cfg).expect("HarmonyEvent bindings");
     TrackKind::export_all(&cfg).expect("TrackKind bindings");
     MonitoringState::export_all(&cfg).expect("MonitoringState bindings");
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");

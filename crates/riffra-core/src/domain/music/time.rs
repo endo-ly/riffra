@@ -1,11 +1,10 @@
-//! Musical value types and their conversion to the canonical timeline.
+//! Musical time values and their conversion to the canonical timeline.
 
-use super::timeline::{ProjectTimebase, TimelineTick};
 use crate::DomainError;
+use crate::domain::timeline::{ProjectTimebase, TimelineTick};
 use serde::de::Error as DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use std::fmt::Write as _;
 use std::str::FromStr;
 
 /// A non-negative normalized fraction.
@@ -20,7 +19,7 @@ impl MusicalFraction {
     ///
     /// # Errors
     ///
-    /// Returns an error when `denominator` is zero.
+    /// Returns an error when denominator is zero.
     pub fn new(numerator: u32, denominator: u32) -> Result<Self, DomainError> {
         if denominator == 0 {
             return Err(invalid_value("fraction denominator must be positive"));
@@ -231,160 +230,44 @@ impl<'de> Deserialize<'de> for MusicalDuration {
     }
 }
 
-/// A pitch name that retains its enharmonic spelling while exposing its MIDI value.
+/// A non-negative offset expressed as a fraction of a whole note.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MusicalPitch {
-    letter: NoteLetter,
-    accidental: Accidental,
-    octave: i8,
+pub struct MusicalOffset {
+    pub numerator: u32,
+    pub denominator: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NoteLetter {
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-}
-
-impl NoteLetter {
-    fn semitone(self) -> i16 {
-        match self {
-            Self::A => 9,
-            Self::B => 11,
-            Self::C => 0,
-            Self::D => 2,
-            Self::E => 4,
-            Self::F => 5,
-            Self::G => 7,
-        }
-    }
-}
-
-impl fmt::Display for NoteLetter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            Self::A => 'A',
-            Self::B => 'B',
-            Self::C => 'C',
-            Self::D => 'D',
-            Self::E => 'E',
-            Self::F => 'F',
-            Self::G => 'G',
-        };
-        formatter.write_char(value)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Accidental {
-    Natural,
-    Sharp,
-    Flat,
-}
-
-impl Accidental {
-    fn semitone(self) -> i16 {
-        match self {
-            Self::Natural => 0,
-            Self::Sharp => 1,
-            Self::Flat => -1,
-        }
-    }
-}
-
-impl fmt::Display for Accidental {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Natural => Ok(()),
-            Self::Sharp => formatter.write_char('#'),
-            Self::Flat => formatter.write_char('b'),
-        }
-    }
-}
-
-impl MusicalPitch {
-    /// Parses a pitch name and retains its enharmonic spelling.
+impl MusicalOffset {
+    /// Creates and reduces a non-negative musical offset.
     ///
     /// # Errors
     ///
-    /// Returns an error when `value` is not a supported pitch name or falls
-    /// outside the MIDI pitch range.
-    pub fn new(value: &str) -> Result<Self, DomainError> {
-        value.parse()
-    }
-
-    /// Returns the MIDI note number represented by this pitch.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if the pitch's internal MIDI-range invariant is violated.
-    pub fn midi_pitch(self) -> u8 {
-        let midi_pitch =
-            (i16::from(self.octave) + 1) * 12 + self.letter.semitone() + self.accidental.semitone();
-        u8::try_from(midi_pitch).expect("a musical pitch always has a valid MIDI value")
-    }
-}
-
-impl fmt::Display for MusicalPitch {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{}{}{}",
-            self.letter, self.accidental, self.octave
-        )
-    }
-}
-
-impl FromStr for MusicalPitch {
-    type Err = DomainError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let mut chars = value.trim().chars();
-        let note = chars
-            .next()
-            .ok_or_else(|| invalid_value("pitch must contain a note name"))?;
-        let letter = match note.to_ascii_uppercase() {
-            'A' => NoteLetter::A,
-            'B' => NoteLetter::B,
-            'C' => NoteLetter::C,
-            'D' => NoteLetter::D,
-            'E' => NoteLetter::E,
-            'F' => NoteLetter::F,
-            'G' => NoteLetter::G,
-            _ => return Err(invalid_value("pitch note must be between A and G")),
-        };
-        let accidental = match chars.clone().next() {
-            Some('#') => {
-                chars.next();
-                Accidental::Sharp
-            }
-            Some('b') => {
-                chars.next();
-                Accidental::Flat
-            }
-            _ => Accidental::Natural,
-        };
-        let octave = chars
-            .as_str()
-            .parse::<i16>()
-            .map_err(|_| invalid_value("pitch octave must be an integer"))?;
-        let midi_pitch = (octave + 1) * 12 + letter.semitone() + accidental.semitone();
-        if !(0..=127).contains(&midi_pitch) {
-            return Err(invalid_value("pitch must be within the MIDI range"));
-        }
+    /// Returns an error when the denominator is zero.
+    pub fn new(numerator: u32, denominator: u32) -> Result<Self, DomainError> {
+        let fraction = MusicalFraction::new(numerator, denominator)?;
         Ok(Self {
-            letter,
-            accidental,
-            octave: i8::try_from(octave).expect("a valid MIDI pitch has an i8 octave"),
+            numerator: fraction.numerator,
+            denominator: fraction.denominator,
         })
     }
 }
 
-impl Serialize for MusicalPitch {
+impl fmt::Display for MusicalOffset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.numerator, self.denominator)
+    }
+}
+
+impl FromStr for MusicalOffset {
+    type Err = DomainError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let fraction = parse_fraction(value.trim(), "offset")?;
+        Self::new(fraction.numerator, fraction.denominator)
+    }
+}
+
+impl Serialize for MusicalOffset {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -393,7 +276,7 @@ impl Serialize for MusicalPitch {
     }
 }
 
-impl<'de> Deserialize<'de> for MusicalPitch {
+impl<'de> Deserialize<'de> for MusicalOffset {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -463,8 +346,8 @@ impl ProjectTimebase {
     ///
     /// # Errors
     ///
-    /// Returns an error when the timebase or duration is invalid, or when the
-    /// result rounds to zero or cannot be represented.
+    /// Returns an error when the timebase or duration is invalid, when the
+    /// result rounds to zero, or when it cannot be represented.
     pub fn musical_duration_to_ticks(self, duration: MusicalDuration) -> Result<u64, DomainError> {
         let duration = MusicalDuration::new(duration.numerator, duration.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
@@ -478,6 +361,24 @@ impl ProjectTimebase {
             return Err(invalid_value("duration resolves to zero ticks"));
         }
         u64::try_from(ticks).map_err(|_| invalid_value("duration is too large"))
+    }
+
+    /// Converts a non-negative whole-note offset to the nearest timeline tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timebase or offset is invalid, or when the
+    /// result cannot be represented.
+    pub fn musical_offset_to_ticks(self, offset: MusicalOffset) -> Result<u64, DomainError> {
+        let offset = MusicalOffset::new(offset.numerator, offset.denominator)?;
+        let whole_note_ticks = u128::from(self.ppq)
+            .checked_mul(4)
+            .ok_or_else(|| invalid_value("offset is too large"))?;
+        let ticks = round_fraction(
+            whole_note_ticks * u128::from(offset.numerator),
+            u128::from(offset.denominator),
+        );
+        u64::try_from(ticks).map_err(|_| invalid_value("offset is too large"))
     }
 
     fn ticks_per_notated_beat(self) -> Result<u64, DomainError> {
@@ -550,7 +451,6 @@ mod tests {
             "6/12".parse::<MusicalDuration>().unwrap().to_string(),
             "1/2"
         );
-        assert_eq!("Db4".parse::<MusicalPitch>().unwrap().midi_pitch(), 61);
         let fraction: MusicalFraction =
             serde_json::from_str(r#"{"numerator":2,"denominator":4}"#).unwrap();
         assert_eq!(fraction, MusicalFraction::new(1, 2).unwrap());
@@ -633,8 +533,6 @@ mod tests {
         assert!("1:5".parse::<MusicalPosition>().is_ok());
         assert!("1:1+1/1".parse::<MusicalPosition>().is_err());
         assert!("0/4".parse::<MusicalDuration>().is_err());
-        assert!("H4".parse::<MusicalPitch>().is_err());
-        assert!("C10".parse::<MusicalPitch>().is_err());
         assert!(
             ProjectTimebase::default()
                 .musical_position_to_tick(MusicalPosition {
@@ -652,17 +550,5 @@ mod tests {
                 })
                 .is_err()
         );
-    }
-
-    #[test]
-    fn pitch_enharmonics_share_the_same_midi_value() {
-        let sharp = "C#4".parse::<MusicalPitch>().unwrap();
-        let flat = "Db4".parse::<MusicalPitch>().unwrap();
-        assert_eq!(sharp.midi_pitch(), flat.midi_pitch());
-        assert_eq!(sharp.to_string(), "C#4");
-        assert_eq!(flat.to_string(), "Db4");
-        assert_eq!(serde_json::to_string(&flat).unwrap(), r#""Db4""#);
-        assert_eq!("C-1".parse::<MusicalPitch>().unwrap().midi_pitch(), 0);
-        assert_eq!("G9".parse::<MusicalPitch>().unwrap().midi_pitch(), 127);
     }
 }

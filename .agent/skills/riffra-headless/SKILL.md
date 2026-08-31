@@ -59,6 +59,14 @@ description: >-
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
+### 和声・フレーズ・リズム
+
+和声は一般的なChord Symbolをそのまま `music harmony insert` へ渡す。解釈を確認したいときは `music harmony resolve` を使う。parserで表現できない特殊な音集合は、`pitches`、任意の `root` / `bass`、`label` を持つexplicit tonesで指定する。
+
+反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。独立した `music rhythm` 操作はない。
+
+和声のTone、MIDI pitch番号、Phrase / Rhythmの反復、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算しない。Coreが解決・展開し、HarmonyEventを正準セッションへ保存する。
+
 ## DataRoot
 
 CLI には既定の場所はなく `--data-root` が必須である。位置は自由(慣例は `./riffra-data`)で、作った場所は呼び出し側が引き回す。同じ DataRoot を同時に所有できるプロセスは 1 つだけである。
