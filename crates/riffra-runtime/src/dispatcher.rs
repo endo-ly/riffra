@@ -553,7 +553,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                         params.velocity,
                         params.channel,
                     )?,
-                    CanonicalMutationEffect::CanonicalOnly,
+                    CanonicalMutationEffect::ProjectArrangement,
                 )
             }
             "music.phrase.insert" => {
@@ -565,7 +565,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                         params.placements,
                         params.channel,
                     )?,
-                    CanonicalMutationEffect::CanonicalOnly,
+                    CanonicalMutationEffect::ProjectArrangement,
                 )
             }
             "midi-note.update" => {
@@ -1959,12 +1959,16 @@ mod tests {
         assert_eq!(listed.value[0]["start"], "1:1");
         assert!(listed.value[0].get("startTick").is_none());
 
-        dispatcher
+        let realized = dispatcher
             .dispatch(request(
                 "music.harmony.realize",
                 json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
             ))
             .unwrap();
+        assert_eq!(
+            realized.projection_effect(),
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
         let updated = dispatcher
             .dispatch(request(
                 "music.harmony.update",
@@ -1991,6 +1995,10 @@ mod tests {
                 }),
             ))
             .unwrap();
+        assert_eq!(
+            phrase.projection_effect(),
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
         let session: riffra_core::CreativeSession =
             serde_json::from_value(phrase.value.clone()).unwrap();
         assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);
