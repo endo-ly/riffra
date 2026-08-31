@@ -1683,6 +1683,9 @@ fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, Stri
     let object = patch
         .as_object()
         .ok_or_else(|| "--patch-json must contain a JSON object".to_string())?;
+    if object.contains_key("eventId") {
+        return Err("--patch-json must not contain eventId".into());
+    }
     params
         .as_object_mut()
         .expect("object literal produces an object")
@@ -2010,6 +2013,25 @@ mod tests {
         assert_eq!(request.params["clipId"], "midi-clip:1");
         assert_eq!(request.params["pattern"]["length"], "1/1");
         assert_eq!(request.params["placements"][0]["anchor"], "C4");
+    }
+
+    #[test]
+    fn harmony_update_rejects_event_id_in_the_patch_payload() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "harmony",
+            "update",
+            "--event-id",
+            "harmony:A",
+            "--patch-json",
+            r#"{"eventId":"harmony:B","chord":"C"}"#,
+        ])
+        .unwrap();
+
+        assert!(cli.request().is_err());
     }
 
     #[test]
