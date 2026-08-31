@@ -1,6 +1,9 @@
 //! Harmony application operations.
 
-use super::{ResolvedMidiNoteInput, insert_resolved_midi_notes_in_arrangement};
+use super::{
+    ResolvedMidiNoteInput, available_midi_note_capacity, insert_resolved_midi_notes_in_arrangement,
+    push_resolved_midi_note, repeated_offset_to_ticks,
+};
 use crate::application::Application;
 use crate::domain::{
     HarmonyChord, HarmonyEvent, MusicalNoteName, MusicalPosition, RhythmPattern, TimelineTick,
@@ -23,6 +26,9 @@ pub struct HarmonyEventInput {
 }
 
 /// Partial update for one canonical harmony event.
+///
+/// A chord symbol and explicit tone fields are alternative complete chord
+/// definitions. Explicit fields are never inherited from the current chord.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarmonyEventPatch {
@@ -30,9 +36,9 @@ pub struct HarmonyEventPatch {
     pub end: Option<MusicalPosition>,
     pub chord: Option<String>,
     pub pitches: Option<Vec<MusicalNoteName>>,
-    pub root: Option<Option<MusicalNoteName>>,
-    pub bass: Option<Option<MusicalNoteName>>,
-    pub label: Option<Option<String>>,
+    pub root: Option<MusicalNoteName>,
+    pub bass: Option<MusicalNoteName>,
+    pub label: Option<String>,
 }
 
 /// The lowest octave used by deterministic chord realization.
@@ -136,46 +142,50 @@ where
                         "harmony event '{event_id}' is not registered"
                     ))
                 })?;
-            let definition_fields = patch.pitches.is_some()
-                || patch.chord.is_some()
-                || patch.root.is_some()
-                || patch.bass.is_some()
-                || patch.label.is_some();
-            let chord = if let Some(symbol) = patch.chord {
-                if patch.pitches.is_some()
-                    || patch.root.is_some()
-                    || patch.bass.is_some()
-                    || patch.label.is_some()
-                {
+            let HarmonyEventPatch {
+                start,
+                end,
+                chord,
+                pitches,
+                root,
+                bass,
+                label,
+            } = patch;
+            let chord = match (chord, pitches) {
+                (Some(symbol), None) => {
+                    if root.is_some() || bass.is_some() || label.is_some() {
+                        return Err(crate::DomainError::InvalidHarmony(
+                            "a chord symbol cannot include explicit harmony fields".into(),
+                        )
+                        .into());
+                    }
+                    HarmonyChord::resolve(&symbol)?
+                }
+                (None, Some(pitches)) => HarmonyChord::from_explicit(pitches, root, bass, label)?,
+                (Some(_), Some(_)) => {
                     return Err(crate::DomainError::InvalidHarmony(
-                        "a chord patch cannot include explicit harmony fields".into(),
+                        "a harmony patch must use either a chord symbol or explicit tones".into(),
                     )
                     .into());
                 }
-                HarmonyChord::resolve(&symbol)?
-            } else if definition_fields {
-                let tones = patch.pitches.unwrap_or_else(|| current.chord.tones.clone());
-                let root = patch.root.unwrap_or(current.chord.root);
-                let bass = patch.bass.unwrap_or(current.chord.bass);
-                let name = match patch.label {
-                    Some(Some(label)) => Some(label),
-                    Some(None) => None,
-                    None => Some(current.chord.name.clone()),
-                };
-                HarmonyChord::from_explicit(tones, root, bass, name)?
-            } else {
-                current.chord.clone()
+                (None, None) => {
+                    if root.is_some() || bass.is_some() || label.is_some() {
+                        return Err(crate::DomainError::InvalidHarmony(
+                            "explicit harmony fields require pitches".into(),
+                        )
+                        .into());
+                    }
+                    current.chord.clone()
+                }
             };
             let timebase = arrangement.timebase;
             let event = HarmonyEvent {
                 id: event_id.to_owned(),
-                start_tick: patch
-                    .start
+                start_tick: start
                     .map(|position| timebase.musical_position_to_tick(position))
                     .transpose()?
                     .unwrap_or(current.start_tick),
-                end_tick: patch
-                    .end
+                end_tick: end
                     .map(|position| timebase.musical_position_to_tick(position))
                     .transpose()?
                     .unwrap_or(current.end_tick),
@@ -263,6 +273,7 @@ where
             let clip_end = TimelineTick(clip_start.0.checked_add(clip.duration_ticks).ok_or_else(
                 || crate::DomainError::InvalidHarmony("clip range is too large".into()),
             )?);
+            let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
             let timebase = arrangement.timebase;
             let start_tick = selection
                 .start
@@ -308,24 +319,18 @@ where
                         crate::DomainError::InvalidHarmony("harmony event range is invalid".into())
                     })?;
                 if let Some(pattern) = &pattern {
-                    let pattern_length = timebase.musical_duration_to_ticks(pattern.length)?;
                     let mut repeat = 0_u64;
                     loop {
-                        let repeat_offset =
-                            pattern_length.checked_mul(repeat).ok_or_else(|| {
-                                crate::DomainError::InvalidHarmony(
-                                    "rhythm pattern is too large".into(),
-                                )
-                            })?;
                         let mut added_step = false;
                         for step in &pattern.steps {
-                            let offset = timebase.musical_offset_to_ticks(step.offset)?;
-                            let onset = event
-                                .start_tick
-                                .0
-                                .checked_add(repeat_offset)
-                                .and_then(|value| value.checked_add(offset))
-                                .ok_or_else(|| {
+                            let offset = repeated_offset_to_ticks(
+                                timebase,
+                                pattern.length,
+                                repeat,
+                                step.offset,
+                            )?;
+                            let onset =
+                                event.start_tick.0.checked_add(offset).ok_or_else(|| {
                                     crate::DomainError::InvalidHarmony(
                                         "rhythm onset is too large".into(),
                                     )
@@ -336,13 +341,17 @@ where
                             added_step = true;
                             let duration = timebase.musical_duration_to_ticks(step.duration)?;
                             for pitch in &pitches {
-                                notes.push(ResolvedMidiNoteInput {
-                                    pitch: pitch.midi_pitch(),
-                                    absolute_start_tick: TimelineTick(onset),
-                                    duration_ticks: duration,
-                                    velocity: step.velocity.or(velocity).unwrap_or(100),
-                                    channel: channel.unwrap_or(1),
-                                });
+                                push_resolved_midi_note(
+                                    &mut notes,
+                                    available_notes,
+                                    ResolvedMidiNoteInput {
+                                        pitch: pitch.midi_pitch(),
+                                        absolute_start_tick: TimelineTick(onset),
+                                        duration_ticks: duration,
+                                        velocity: step.velocity.or(velocity).unwrap_or(100),
+                                        channel: channel.unwrap_or(1),
+                                    },
+                                )?;
                             }
                         }
                         if !added_step {
@@ -352,13 +361,17 @@ where
                     }
                 } else {
                     for pitch in &pitches {
-                        notes.push(ResolvedMidiNoteInput {
-                            pitch: pitch.midi_pitch(),
-                            absolute_start_tick: event.start_tick,
-                            duration_ticks: event_duration,
-                            velocity: velocity.unwrap_or(100),
-                            channel: channel.unwrap_or(1),
-                        });
+                        push_resolved_midi_note(
+                            &mut notes,
+                            available_notes,
+                            ResolvedMidiNoteInput {
+                                pitch: pitch.midi_pitch(),
+                                absolute_start_tick: event.start_tick,
+                                duration_ticks: event_duration,
+                                velocity: velocity.unwrap_or(100),
+                                channel: channel.unwrap_or(1),
+                            },
+                        )?;
                     }
                 }
             }
@@ -521,6 +534,60 @@ mod tests {
                 .is_err()
         );
         assert_eq!(application.list_harmony_events().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn harmony_definition_patch_replaces_explicit_fields_without_inheriting_them() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            (),
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let inserted = application
+            .insert_harmony_events(vec![HarmonyEventInput {
+                start: "1:1".parse().unwrap(),
+                end: "2:1".parse().unwrap(),
+                chord: Some("C/E".into()),
+                pitches: None,
+                root: None,
+                bass: None,
+                label: None,
+            }])
+            .unwrap();
+        let event_id = inserted.arrangement.harmony_events[0].id.clone();
+
+        let updated = application
+            .update_harmony_event(
+                &event_id,
+                HarmonyEventPatch {
+                    pitches: Some(vec![
+                        "D".parse().unwrap(),
+                        "F".parse().unwrap(),
+                        "A".parse().unwrap(),
+                    ]),
+                    ..HarmonyEventPatch::default()
+                },
+            )
+            .unwrap();
+        let chord = &updated.arrangement.harmony_events[0].chord;
+        assert_eq!(chord.name, "D F A");
+        assert_eq!(chord.root, None);
+        assert_eq!(chord.bass, None);
+        assert!(
+            application
+                .update_harmony_event(
+                    &event_id,
+                    HarmonyEventPatch {
+                        root: Some("D".parse().unwrap()),
+                        ..HarmonyEventPatch::default()
+                    },
+                )
+                .is_err()
+        );
     }
 
     #[test]

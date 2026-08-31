@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ts_rs::TS;
 
+pub(crate) const MAX_MIDI_NOTES_PER_CLIP: usize = 200_000;
+
 /// The production source hosted by a timeline track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -600,36 +602,6 @@ impl Arrangement {
         Ok(())
     }
 
-    /// Validates a canonical harmony event without imposing a progression
-    /// structure or forbidding overlap.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DomainError::InvalidHarmony`] when the event is invalid.
-    pub fn validate_harmony_event(&self, event: &HarmonyEvent) -> Result<(), DomainError> {
-        event.validate()?;
-        if self
-            .harmony_events
-            .iter()
-            .any(|existing| existing.id == event.id)
-        {
-            return Err(DomainError::InvalidHarmony(
-                "harmony event ids must be unique".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Adds a harmony event to the arrangement.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DomainError::InvalidHarmony`] when the event is invalid or
-    /// its id is already in use.
-    pub fn add_harmony_event(&mut self, event: HarmonyEvent) -> Result<(), DomainError> {
-        self.add_harmony_events(vec![event])
-    }
-
     /// Adds harmony events as one arrangement edit.
     ///
     /// # Errors
@@ -891,7 +863,7 @@ impl Arrangement {
                 "MIDI clips require non-empty identity and a positive duration.".into(),
             ));
         }
-        if clip.notes.len() > 200_000 || clip.events.len() > 200_000 {
+        if clip.notes.len() > MAX_MIDI_NOTES_PER_CLIP || clip.events.len() > 200_000 {
             return Err(DomainError::InvalidClip(format!(
                 "MIDI clip '{}' contains too many events.",
                 clip.name

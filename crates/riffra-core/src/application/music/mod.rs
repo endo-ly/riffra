@@ -11,7 +11,8 @@ pub use harmony::{
 use super::*;
 use crate::DomainError;
 use crate::domain::{
-    MidiNote, MusicalDuration, MusicalPitch, MusicalPosition, TimelineRegion, TimelineTick,
+    MidiNote, MusicalDuration, MusicalOffset, MusicalPitch, MusicalPosition, ProjectTimebase,
+    TimelineRegion, TimelineTick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +106,10 @@ where
             ));
         }
         self.commit_arrangement(|arrangement| {
+            let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
+            if inputs.len() > available_notes {
+                return Err(too_many_midi_notes().into());
+            }
             let timebase = arrangement.timebase;
             let notes = inputs
                 .into_iter()
@@ -241,14 +246,23 @@ fn insert_resolved_midi_notes_in_arrangement(
             "at least one musical midi note is required".into(),
         ));
     }
-    let clip_start = arrangement
+    let (clip_start, available_notes) = arrangement
         .midi_clips
         .iter()
         .find(|clip| clip.id == clip_id)
-        .map(|clip| clip.start_tick)
+        .map(|clip| {
+            (
+                clip.start_tick,
+                crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP.checked_sub(clip.notes.len()),
+            )
+        })
         .ok_or_else(|| {
             DomainError::InvalidClip(format!("midi clip '{clip_id}' is not registered"))
         })?;
+    let available_notes = available_notes.ok_or_else(too_many_midi_notes)?;
+    if inputs.len() > available_notes {
+        return Err(too_many_midi_notes());
+    }
     let notes = inputs
         .into_iter()
         .map(|input| {
@@ -272,6 +286,109 @@ fn insert_resolved_midi_notes_in_arrangement(
         })
         .collect::<Result<Vec<_>, DomainError>>()?;
     arrangement.insert_midi_notes(clip_id, notes)
+}
+
+fn available_midi_note_capacity(
+    arrangement: &crate::domain::Arrangement,
+    clip_id: &str,
+) -> Result<usize, DomainError> {
+    arrangement
+        .midi_clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .map(|clip| {
+            crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP
+                .checked_sub(clip.notes.len())
+                .ok_or_else(too_many_midi_notes)
+        })
+        .ok_or_else(|| {
+            DomainError::InvalidClip(format!("midi clip '{clip_id}' is not registered"))
+        })?
+}
+
+fn push_resolved_midi_note(
+    notes: &mut Vec<ResolvedMidiNoteInput>,
+    available_notes: usize,
+    note: ResolvedMidiNoteInput,
+) -> Result<(), DomainError> {
+    if notes.len() >= available_notes {
+        return Err(too_many_midi_notes());
+    }
+    notes.push(note);
+    Ok(())
+}
+
+fn too_many_midi_notes() -> DomainError {
+    DomainError::InvalidClip(format!(
+        "a MIDI clip cannot contain more than {} notes",
+        crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP
+    ))
+}
+
+fn repeated_offset_to_ticks(
+    timebase: ProjectTimebase,
+    pattern_length: MusicalDuration,
+    repeat: u64,
+    step_offset: MusicalOffset,
+) -> Result<u64, DomainError> {
+    let length_numerator = u128::from(pattern_length.numerator)
+        .checked_mul(u128::from(repeat))
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let length_denominator = u128::from(pattern_length.denominator);
+    let offset_numerator = u128::from(step_offset.numerator);
+    let offset_denominator = u128::from(step_offset.denominator);
+    let denominator_gcd = gcd_u128(length_denominator, offset_denominator);
+    let left_multiplier = offset_denominator / denominator_gcd;
+    let right_multiplier = length_denominator / denominator_gcd;
+    let numerator = length_numerator
+        .checked_mul(left_multiplier)
+        .and_then(|value| {
+            offset_numerator
+                .checked_mul(right_multiplier)
+                .and_then(|offset| value.checked_add(offset))
+        })
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let denominator = length_denominator
+        .checked_mul(left_multiplier)
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    rational_to_ticks(timebase, numerator, denominator)
+}
+
+fn rational_to_ticks(
+    timebase: ProjectTimebase,
+    mut numerator: u128,
+    mut denominator: u128,
+) -> Result<u64, DomainError> {
+    if denominator == 0 || timebase.ppq == 0 {
+        return Err(DomainError::InvalidMusicalValue(
+            "musical timebase is invalid".into(),
+        ));
+    }
+    let fraction_gcd = gcd_u128(numerator, denominator);
+    numerator /= fraction_gcd;
+    denominator /= fraction_gcd;
+    let whole_note_ticks = u128::from(timebase.ppq)
+        .checked_mul(4)
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let tick_gcd = gcd_u128(whole_note_ticks, denominator);
+    let scaled_numerator = numerator
+        .checked_mul(whole_note_ticks / tick_gcd)
+        .ok_or_else(|| DomainError::InvalidMusicalValue("pattern offset is too large".into()))?;
+    let scaled_denominator = denominator / tick_gcd;
+    let whole = scaled_numerator / scaled_denominator;
+    let remainder = scaled_numerator % scaled_denominator;
+    let rounded = whole + u128::from(remainder >= scaled_denominator - remainder);
+    u64::try_from(rounded)
+        .map_err(|_| DomainError::InvalidMusicalValue("pattern offset is too large".into()))
+}
+
+fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
 }
 
 fn normalize_region_name(name: String) -> Result<String, ApplicationError> {

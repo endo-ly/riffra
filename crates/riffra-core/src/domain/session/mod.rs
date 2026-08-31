@@ -269,7 +269,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
         if clip.duration_ticks == 0 {
             return Err(format!("MIDI clip '{}' must have a duration.", clip.name));
         }
-        if clip.notes.len() > 200_000 {
+        if clip.notes.len() > MAX_MIDI_NOTES_PER_CLIP {
             return Err(format!(
                 "MIDI clip '{}' contains too many notes.",
                 clip.name
