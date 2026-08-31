@@ -77,6 +77,8 @@ riffra --data-root ./riffra-data music harmony remove `
   --event-ids-json '["harmony:01j..."]'
 ```
 
+`harmony update` の `patch-json` では、`chord` と `pitches` は完全なChord定義として排他的に扱う。`pitches` を使う場合に限り `root`、`bass`、`label` を指定でき、指定しない値を現在のChordから継承しない。`root`、`bass`、`label` だけの更新や、`chord` との併用は拒否される。
+
 parserに適さない音集合は `chord` と同時に指定せず、`pitches`、任意の `root` / `bass`、`label` をイベントJSONへ渡す。
 
 #### Harmony realization
