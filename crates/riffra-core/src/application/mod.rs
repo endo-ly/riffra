@@ -23,7 +23,10 @@ use crate::ports::SessionStorage;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub use music::MusicalMidiNoteInput;
+pub use music::{
+    ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
+    MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalRegionView,
+};
 
 /// Partial update for session-wide production settings.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]

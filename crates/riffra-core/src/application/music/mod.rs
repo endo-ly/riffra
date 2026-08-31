@@ -1,8 +1,18 @@
 //! Music-oriented application operations over the canonical arrangement.
 
+mod harmony;
+mod phrase;
+
+pub use harmony::{
+    ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
+    MusicalHarmonyEventView,
+};
+
 use super::*;
 use crate::DomainError;
-use crate::domain::{MidiNote, MusicalDuration, MusicalPitch, MusicalPosition, TimelineRegion};
+use crate::domain::{
+    MidiNote, MusicalDuration, MusicalPitch, MusicalPosition, TimelineRegion, TimelineTick,
+};
 use serde::{Deserialize, Serialize};
 
 /// A MIDI note described using musical position, duration, and pitch values.
@@ -14,6 +24,25 @@ pub struct MusicalMidiNoteInput {
     pub duration: MusicalDuration,
     pub velocity: Option<u8>,
     pub channel: Option<u8>,
+}
+
+/// A music-level view of a named timeline range.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalRegionView {
+    pub id: String,
+    pub name: String,
+    pub start: MusicalPosition,
+    pub end: MusicalPosition,
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedMidiNoteInput {
+    pitch: u8,
+    absolute_start_tick: TimelineTick,
+    duration_ticks: u64,
+    velocity: u8,
+    channel: u8,
 }
 
 impl<'a, A, S> Application<'a, A, S>
@@ -76,52 +105,12 @@ where
             ));
         }
         self.commit_arrangement(|arrangement| {
-            let clip_start = arrangement
-                .midi_clips
-                .iter()
-                .find(|clip| clip.id == clip_id)
-                .map(|clip| clip.start_tick)
-                .ok_or_else(|| {
-                    crate::DomainError::InvalidClip(format!(
-                        "midi clip '{clip_id}' is not registered"
-                    ))
-                })?;
             let timebase = arrangement.timebase;
             let notes = inputs
                 .into_iter()
-                .map(|input| {
-                    let absolute_tick = timebase.musical_position_to_tick(input.position)?;
-                    let start_tick =
-                        absolute_tick.0.checked_sub(clip_start.0).ok_or_else(|| {
-                            crate::DomainError::InvalidMusicalValue(
-                                "note position must not precede the MIDI clip".into(),
-                            )
-                        })?;
-                    let duration_ticks = timebase.musical_duration_to_ticks(input.duration)?;
-                    let velocity = input.velocity.unwrap_or(100);
-                    let channel = input.channel.unwrap_or(1);
-                    if velocity > 127 {
-                        return Err(crate::DomainError::InvalidMusicalValue(
-                            "midi velocity must be between 0 and 127".into(),
-                        ));
-                    }
-                    if !(1..=16).contains(&channel) {
-                        return Err(crate::DomainError::InvalidMusicalValue(
-                            "midi channel must be between 1 and 16".into(),
-                        ));
-                    }
-                    Ok(MidiNote {
-                        id: next_id("note"),
-                        note: input.pitch.midi_pitch(),
-                        start_tick: TimelineTick(start_tick),
-                        duration_ticks,
-                        velocity,
-                        channel,
-                    })
-                })
-                .collect::<Result<Vec<_>, DomainError>>()?;
-            arrangement
-                .insert_midi_notes(clip_id, notes)
+                .map(|input| resolve_musical_note(timebase, input))
+                .collect::<Result<Vec<_>, _>>()?;
+            insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
                 .map_err(Into::into)
         })
     }
@@ -131,8 +120,20 @@ where
     /// # Errors
     ///
     /// Returns an error when the canonical session cannot be read.
-    pub fn list_regions(&self) -> Result<Vec<TimelineRegion>, ApplicationError> {
-        Ok(self.get_session()?.arrangement.regions)
+    pub fn list_regions(&self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
+        let session = self.get_session()?;
+        let timebase = session.arrangement.timebase;
+        Ok(session
+            .arrangement
+            .regions
+            .into_iter()
+            .map(|region| MusicalRegionView {
+                id: region.id,
+                name: region.name,
+                start: timebase.tick_to_musical_position(region.start_tick),
+                end: timebase.tick_to_musical_position(region.end_tick),
+            })
+            .collect())
     }
 
     /// Adds a named timeline range from absolute musical positions.
@@ -203,6 +204,74 @@ where
             arrangement.remove_region(region_id).map_err(Into::into)
         })
     }
+}
+
+fn resolve_musical_note(
+    timebase: crate::domain::ProjectTimebase,
+    input: MusicalMidiNoteInput,
+) -> Result<ResolvedMidiNoteInput, DomainError> {
+    let velocity = input.velocity.unwrap_or(100);
+    let channel = input.channel.unwrap_or(1);
+    if velocity > 127 {
+        return Err(DomainError::InvalidMusicalValue(
+            "midi velocity must be between 0 and 127".into(),
+        ));
+    }
+    if !(1..=16).contains(&channel) {
+        return Err(DomainError::InvalidMusicalValue(
+            "midi channel must be between 1 and 16".into(),
+        ));
+    }
+    Ok(ResolvedMidiNoteInput {
+        pitch: input.pitch.midi_pitch(),
+        absolute_start_tick: timebase.musical_position_to_tick(input.position)?,
+        duration_ticks: timebase.musical_duration_to_ticks(input.duration)?,
+        velocity,
+        channel,
+    })
+}
+
+fn insert_resolved_midi_notes_in_arrangement(
+    arrangement: &mut crate::domain::Arrangement,
+    clip_id: &str,
+    inputs: Vec<ResolvedMidiNoteInput>,
+) -> Result<(), DomainError> {
+    if inputs.is_empty() {
+        return Err(DomainError::InvalidMusicalValue(
+            "at least one musical midi note is required".into(),
+        ));
+    }
+    let clip_start = arrangement
+        .midi_clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .map(|clip| clip.start_tick)
+        .ok_or_else(|| {
+            DomainError::InvalidClip(format!("midi clip '{clip_id}' is not registered"))
+        })?;
+    let notes = inputs
+        .into_iter()
+        .map(|input| {
+            let start_tick = input
+                .absolute_start_tick
+                .0
+                .checked_sub(clip_start.0)
+                .ok_or_else(|| {
+                    DomainError::InvalidMusicalValue(
+                        "note position must not precede the MIDI clip".into(),
+                    )
+                })?;
+            Ok(MidiNote {
+                id: next_id("note"),
+                note: input.pitch,
+                start_tick: TimelineTick(start_tick),
+                duration_ticks: input.duration_ticks,
+                velocity: input.velocity,
+                channel: input.channel,
+            })
+        })
+        .collect::<Result<Vec<_>, DomainError>>()?;
+    arrangement.insert_midi_notes(clip_id, notes)
 }
 
 fn normalize_region_name(name: String) -> Result<String, ApplicationError> {

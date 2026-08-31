@@ -7,6 +7,7 @@ edition = "2024"
 rust-version = "1.88"
 
 [dependencies]
+chordparser = "=4.0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12"

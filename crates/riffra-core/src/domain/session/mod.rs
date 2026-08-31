@@ -237,6 +237,7 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             automation_lanes: Vec::new(),
             markers: Vec::new(),
             regions: Vec::new(),
+            harmony_events: arrangement.harmony_events.clone(),
             recording_sessions: arrangement.recording_sessions.clone(),
             recording_passes: arrangement.recording_passes.clone(),
             takes: arrangement.takes.clone(),
@@ -392,6 +393,20 @@ fn normalize_arrangement(arrangement: &mut Arrangement) -> Result<(), String> {
             return Err("timeline regions require unique ids, names, and positive ranges".into());
         }
         region.name = region.name.trim().chars().take(80).collect();
+    }
+    if arrangement.harmony_events.len() > 16_384 {
+        return Err("an arrangement cannot contain more than 16,384 harmony events".into());
+    }
+    arrangement
+        .harmony_events
+        .sort_by_key(|event| (event.start_tick, event.end_tick, event.id.clone()));
+    let mut harmony_event_ids = std::collections::HashSet::new();
+    for event in &arrangement.harmony_events {
+        if !harmony_event_ids.insert(event.id.as_str()) || event.validate().is_err() {
+            return Err(
+                "harmony events require unique ids, positive ranges, and valid chords".into(),
+            );
+        }
     }
     if arrangement.recording_sessions.len() > 256
         || arrangement.recording_passes.len() > 4096
@@ -770,6 +785,7 @@ mod tests {
             automation_lanes: Vec::new(),
             markers: Vec::new(),
             regions: Vec::new(),
+            harmony_events: Vec::new(),
             recording_sessions: Vec::new(),
             recording_passes: Vec::new(),
             takes: Vec::new(),
@@ -829,6 +845,65 @@ mod tests {
         assert_eq!(arrangement.automation_lanes[0].points[1].value, 24.0);
         arrangement.remove_track("main").unwrap();
         assert!(arrangement.automation_lanes.is_empty());
+    }
+
+    #[test]
+    fn harmony_events_are_sorted_without_rejecting_overlap_or_gaps() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let chord = HarmonyChord::resolve("C").unwrap();
+        let mut arrangement = Arrangement {
+            harmony_events: vec![
+                HarmonyEvent {
+                    id: "harmony:late".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(3_840),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:overlap".into(),
+                    start_tick: TimelineTick(960),
+                    end_tick: TimelineTick(2_880),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:gap".into(),
+                    start_tick: TimelineTick(4_800),
+                    end_tick: TimelineTick(5_760),
+                    chord,
+                },
+            ],
+            ..Arrangement::default()
+        };
+
+        normalize_arrangement(&mut arrangement).unwrap();
+
+        assert_eq!(
+            arrangement
+                .harmony_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["harmony:overlap", "harmony:late", "harmony:gap"]
+        );
+    }
+
+    #[test]
+    fn harmony_event_ids_must_be_unique_during_normalization() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let event = HarmonyEvent {
+            id: "harmony:duplicate".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(960),
+            chord: HarmonyChord::resolve("C").unwrap(),
+        };
+        let mut arrangement = Arrangement {
+            harmony_events: vec![event.clone(), event],
+            ..Arrangement::default()
+        };
+
+        assert!(normalize_arrangement(&mut arrangement).is_err());
     }
 
     #[test]
