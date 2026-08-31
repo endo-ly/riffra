@@ -59,6 +59,48 @@ riffra --data-root ./riffra-data music region update `
 riffra --data-root ./riffra-data music region remove --region-id region:01j...
 ```
 
+#### Harmony
+
+Chord Symbolの解決結果は `HarmonyChord` として返り、和声イベントはArrangement全体の音楽座標で管理される。イベント同士の重複・入れ子・gapは許可される。
+
+```powershell
+riffra --data-root ./riffra-data music harmony resolve `
+  --chord "G7(b9,#11)/F"
+
+riffra --data-root ./riffra-data music harmony insert `
+  --events-json '[{"start":"1:1","end":"2:1","chord":"Dm9"},{"start":"2:1","end":"3:1","chord":"G7(b9,#11)"}]'
+
+riffra --data-root ./riffra-data music harmony list
+riffra --data-root ./riffra-data music harmony update `
+  --event-id harmony:01j... --patch-json '{"chord":"Cmaj9","start":"3:1","end":"4:1"}'
+riffra --data-root ./riffra-data music harmony remove `
+  --event-ids-json '["harmony:01j..."]'
+```
+
+parserに適さない音集合は `chord` と同時に指定せず、`pitches`、任意の `root` / `bass`、`label` をイベントJSONへ渡す。
+
+#### Harmony realization
+
+指定したHarmonyEventをCoreが決定的なvoicingでMIDI Noteへ展開する。`--lowest-octave` の既定値は3、`--velocity` の既定値は100、`--channel` の既定値は1である。slash bassは最低音になる。
+
+```powershell
+riffra --data-root ./riffra-data music harmony realize `
+  --clip-id midi-clip:01j... --start 1:1 --end 5:1 --lowest-octave 3 `
+  --rhythm-json '{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"},{"offset":"1/4","duration":"1/16","velocity":112}]}'
+```
+
+#### Phrase
+
+Phraseの相対音高はanchorからの半音差で指定する。Patternは複数配置へCoreが展開し、生成Noteを1回の編集として保存する。
+
+```powershell
+riffra --data-root ./riffra-data music phrase insert `
+  --clip-id midi-clip:01j... `
+  --phrase-json '{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0},{"offset":"1/8","duration":"1/8","semitones":2},{"offset":"1/4","duration":"1/4","semitones":5},{"offset":"1/2","duration":"1/4","semitones":7}]},"placements":[{"position":"5:1","anchor":"C4","repeats":2},{"position":"9:1","anchor":"Eb4","repeats":1}]}'
+```
+
+`PhrasePattern` と `RhythmPattern` は操作入力であり、正準セッションへ二重保存しない。Chord ToneやNote JSONをエージェント側で展開する必要はない。
+
 ### Undo / Redo
 
 履歴はプロセス内にあるため、ワンショットではなく `--interactive` の連続要求として送る。
