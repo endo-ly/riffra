@@ -1,5 +1,13 @@
 //! Session lifecycle application operations.
 
+mod inspection;
+
+pub use inspection::{
+    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, MusicalMarkerView,
+    MusicalRangeInspection, ProjectInspection, SessionInspection, SessionInspectionQuery,
+    TrackInspection, inspect_canonical_state,
+};
+
 use super::*;
 
 impl<'a, A, S> Application<'a, A, S>

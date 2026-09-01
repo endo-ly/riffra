@@ -37,6 +37,20 @@ description: >-
 
 各系統に含まれるコマンドの一覧と引数は [references/commands.md](references/commands.md) を参照。
 
+## Agentの制作ループ
+
+既存Sessionを編集する場合は、次の順序で構造と音を確認する。
+
+1. `session inspect` で現在の構造と `sequence` を取得する
+2. 必要なら `--start` / `--end` または `--track-id` で対象を絞る
+3. 取得した `sequence` を `--expected-sequence` としてMutationへ渡す
+4. 編集後に同じ範囲をもう一度 `session inspect` する
+5. 音を確認するときだけ同じ範囲を `render start` し、`job get` で完了を確認する
+6. 必要なら既存の `analysis start` で音声の観測値を取得する
+7. 採用しない変更は `undo` し、再度Inspectする
+
+`session inspect` は構造確認、`render start` は音の確認に使い分ける。`session get` はInspectに含まれない詳細が必要な場合だけ使う。ConflictになったMutationは自動再送せず、最新の状態をInspectして編集内容を決め直す。InspectとRenderの音楽座標はそのまま渡し、tick、MIDI pitch番号、Harmony toneはエージェント側で計算しない。
+
 ## 楽曲制作の入力契約
 
 通常の作曲では `music.*` コマンドを優先する。位置・音価・音高は次の表記で渡し、Coreがプロジェクトの拍子と正準TimelineTickへ変換する。
@@ -172,6 +186,6 @@ Event frameはRuntime型を直接持たない。
 | -------------------- | --------------------------------------------- | ---------------------------------------------------- |
 | `invalidRequest`     | 要求形式・params・未知のコマンドが不正        | params のキー名(camelCase)と型を見直す               |
 | `commandFailed`      | Core / Host / 保存処理の失敗(ID 不存在など)   | message の内容に対処する                             |
-| `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | `details.currentSequence` を取得して再試行           |
+| `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | 最新状態を `session inspect` して編集内容を決め直す  |
 | `hostUnavailable`    | Attached が Host へ接続できない               | `control/host.json` の有無と Host プロセスの生存確認 |
 | `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える                    |

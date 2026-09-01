@@ -27,6 +27,11 @@ pub use music::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
     MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalRegionView,
 };
+pub use session::{
+    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, MusicalMarkerView,
+    MusicalRangeInspection, ProjectInspection, SessionInspection, SessionInspectionQuery,
+    TrackInspection, inspect_canonical_state,
+};
 
 /// Partial update for session-wide production settings.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]

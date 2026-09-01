@@ -348,7 +348,7 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 
 | 分類                   | コマンド                                                                                                                                                                                                                                                                                                                              |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session / History      | `session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                                               |
+| Session / History      | `session inspect`、`session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                            |
 | Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                          |
 | Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                           |
 | MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/clear/quantize/transform/duplicate`                                                                                                                                              |
@@ -360,6 +360,8 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
 Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
+
+`session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、必要な件数だけを返す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
 
 `track list` は軽量な `TrackSummary` 投影を返す。Track と device の識別情報・ミキサー情報は含むが、device の `parameterValues` は含まない。完全な device 状態が必要な場合は `session get` を使う。
 
@@ -377,7 +379,7 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 
 プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。プラグインエディタのopen command、録音、プレビュー、VSTスキャン、ライブラリmetadata、解析は現在HostのRuntime / shared serviceを使う。エディタから発生したplugin state / parameterの永続化はHost内のcoordinatorがCanonical commitを行い、Desktop WebViewの往復には依存しない。
 
-`render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
+`render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。音楽座標の部分Renderは`start` / `end`の`MusicalPosition`を受け取り、Runtime境界で既存のRender計画向けtickへ変換する。`trackId`との併用でTrack単位の部分Renderも指定できる。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
 
 ---
 

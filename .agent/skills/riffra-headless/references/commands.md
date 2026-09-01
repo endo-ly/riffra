@@ -13,13 +13,17 @@
 
 ### 基本サイクル
 
-1. 現在状態を把握する。俯瞰は `track list` / `audio-clip list` / `midi-clip list` などの個別照会で行う。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、セッション全体が必要なときだけ使う
-2. 編集コマンドを実行する。応答の `result.value` に CreativeSession(`type: "session"`)または CanonicalState(`type: "arrangementMutation"`)が返るので、対象 ID(`track:*` / `clip:*` / `note:*` / `marker:*`)を読む
-3. 複数クライアントが並走しうる場合は、直前応答の `sequence` を次の `--expected-sequence` に渡す
+1. `session inspect` で現在の構造と `sequence` を把握する。必要なら `--start` / `--end` または `--track-id` で対象を絞る。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う
+2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡し、対象 ID(`track:*` / `clip:*` / `note:*` / `marker:*`)を読む
+3. 編集後は同じ範囲を `session inspect` し、音を確認するときだけ `render start` と `job get` を使う。採用しない変更は `undo` して再Inspectする
+4. `conflict` になったMutationは自動再送せず、最新状態をInspectして編集内容を決め直す
 
 ```powershell
-# 現状把握
-riffra --data-root ./riffra-data session get
+# 現在の構造と sequence を把握
+riffra --data-root ./riffra-data session inspect
+
+# 必要な範囲だけ確認
+riffra --data-root ./riffra-data session inspect --start 9:1 --end 13:1 --track-id track:01j...
 
 # Track 追加 → 応答 result.value.arrangement.tracks[*] から ID を得る
 riffra --data-root ./riffra-data track add --name Drums --kind audio
@@ -122,13 +126,14 @@ riffra --data-root ./riffra-data --interactive
 
 ### Session と Timebase
 
-| コマンド                  | 主要引数                                                                                          | 備考                                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意 |
-| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                        |
-| `history get`             | -                                                                                                 | 履歴状態                                                                                    |
-| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                        |
-| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                       |
+| コマンド                  | 主要引数                                                                                          | 備考                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `session inspect`         | [`--start <bar:beat>` `--end <bar:beat>`] [`--track-id <id>`]                                     | 軽量な構造Projection。全Track/Clip/Region/Harmony/Markerを返し、Note/Event/Automation Point/Plugin stateは展開しない。`--start`と`--end`は両方指定する |
+| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意                                                            |
+| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                   |
+| `history get`             | -                                                                                                 | 履歴状態                                                                                                                                               |
+| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                   |
+| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                  |
 
 ### Track と入力 Routing
 
@@ -325,11 +330,12 @@ riffra --data-root ./riffra-data --attach record promote --id rec:01j...
 
 ```powershell
 riffra --data-root ./riffra-data --attach render start --range loop-range --normalize true
+riffra --data-root ./riffra-data --attach render start --start 9:1 --end 13:1 --track-id track:01j...
 riffra --data-root ./riffra-data --attach job get --id job:01j...
 riffra --data-root ./riffra-data --attach job cancel --id job:01j...
 ```
 
-- `render start --range entire-arrangement|loop-range|time-selection`。`time-selection` は `--start-tick` と `--end-tick` が必須。[`--normalize true|false`] と [`--track-id`](ソロ書き出し)を指定できる
+- `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
 - 応答は `type: "job"` のジョブ ID。完了は `job get` で確認し、進行中の停止は `job cancel`
 - 出力は `exports/render-{ms}/timeline.wav` と manifest として書き出される
 
