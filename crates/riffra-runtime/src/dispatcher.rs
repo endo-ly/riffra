@@ -1,4 +1,6 @@
-use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, TrackSummary};
+use crate::model::{
+    ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
+};
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
@@ -14,7 +16,7 @@ use riffra_core::{
     MidiClipPatch, MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RackDevice,
     RhythmPattern, TimelineTick, TrackKind, TrackPatch,
 };
-use riffra_host::{DataRootLease, SessionStore, now_ms};
+use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -106,6 +108,29 @@ enum StorageRef<'a> {
     Borrowed(&'a SessionStore),
 }
 
+impl StorageRef<'_> {
+    fn store(&self) -> &SessionStore {
+        match self {
+            Self::Owned(storage) => storage,
+            Self::Borrowed(storage) => storage,
+        }
+    }
+}
+
+enum ProjectStoreRef<'a> {
+    Owned(ProjectStore),
+    Borrowed(&'a ProjectStore),
+}
+
+impl ProjectStoreRef<'_> {
+    fn as_ref(&self) -> &ProjectStore {
+        match self {
+            Self::Owned(store) => store,
+            Self::Borrowed(store) => store,
+        }
+    }
+}
+
 impl<'a> SessionStorage for StorageRef<'a> {
     fn save(&self, session: &CreativeSession) -> Result<(), PortError> {
         match self {
@@ -146,6 +171,7 @@ pub struct HostDispatcher<'a, A> {
     _lease: Option<DataRootLease>,
     core: CoreRef<'a, A>,
     storage: StorageRef<'a>,
+    project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
     allow_runtime_commands: bool,
 }
@@ -172,9 +198,13 @@ impl HostDispatcher<'static, ()> {
     pub fn open(data_root: PathBuf) -> Result<Self, String> {
         let lease = DataRootLease::acquire(&data_root)
             .map_err(|error| format!("data root could not be opened: {error}"))?;
-        let storage = SessionStore::new(&data_root);
-        let loaded = storage
-            .load_or_create()
+        let project_store = ProjectStore::new(&data_root);
+        let loaded = project_store
+            .initialize()
+            .map_err(|error| error.to_string())?
+            .loaded;
+        let storage = project_store
+            .active_session_store()
             .map_err(|error| error.to_string())?;
         let core = AppCore::new(
             data_root.clone(),
@@ -187,6 +217,7 @@ impl HostDispatcher<'static, ()> {
             _lease: Some(lease),
             core: CoreRef::Owned(core),
             storage: StorageRef::Owned(storage),
+            project_store: ProjectStoreRef::Owned(project_store),
             data_root,
             allow_runtime_commands: false,
         })
@@ -198,12 +229,14 @@ impl<'a, A> HostDispatcher<'a, A> {
     pub(crate) fn borrowed(
         core: &'a AppCore<A>,
         storage: &'a SessionStore,
+        project_store: &'a ProjectStore,
         data_root: &'a Path,
     ) -> Self {
         Self {
             _lease: None,
             core: CoreRef::Borrowed(core),
             storage: StorageRef::Borrowed(storage),
+            project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
             allow_runtime_commands: true,
         }
@@ -249,6 +282,46 @@ impl<'a, A> HostDispatcher<'a, A> {
             ));
         }
         let result = match request.name.as_str() {
+            "project.list" => self.value("projectState", self.project_state()?),
+            "project.create" => {
+                let params: ProjectCreateParams = decode(request.params)?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create(params.name)
+                    .map_err(|error| error.to_string())?;
+                self.activate_project(&summary.project_id)?
+            }
+            "project.open" => {
+                let params: ProjectOpenParams = decode(request.params)?;
+                self.activate_project(&params.project_id)?
+            }
+            "project.rename" => {
+                let params: ProjectRenameParams = decode(request.params)?;
+                let session = self
+                    .core
+                    .application(&self.storage)
+                    .update_session_settings(SessionSettingsPatch {
+                        project_name: Some(Some(params.name)),
+                        ..Default::default()
+                    })?;
+                crate::library::index::refresh(&self.data_root, self.storage.store(), &session);
+                self.value_with_effect(
+                    "projectState",
+                    self.project_state()?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "project.import" => {
+                let params: ProjectImportParams = decode(request.params)?;
+                let session = riffra_host::import_project(&self.data_root, &params.path)?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create_from_session(&session)
+                    .map_err(|error| error.to_string())?;
+                self.activate_project(&summary.project_id)?
+            }
             "session.get" => self.session(canonical.session.clone()),
             "session.inspect" => {
                 let params: SessionInspectionQuery = decode(request.params)?;
@@ -793,15 +866,6 @@ impl<'a, A> HostDispatcher<'a, A> {
                 "projectExport",
                 riffra_host::export_project(&self.data_root, &canonical.session, now_ms())?,
             ),
-            "project.import" => {
-                let params: ProjectImportParams = decode(request.params)?;
-                let session = riffra_host::import_project(&self.data_root, &params.path)?;
-                self.session(
-                    self.core
-                        .application(&self.storage)
-                        .import_project(session)?,
-                )
-            }
             "instrument.set" => {
                 let params: PluginPathParams = decode(request.params)?;
                 let snapshot = self.core.snapshot()?;
@@ -995,6 +1059,63 @@ impl<'a, A> HostDispatcher<'a, A> {
         self.session_with_effect(session, CanonicalMutationEffect::ProjectArrangement)
     }
 
+    fn project_state(&self) -> Result<ProjectState, DispatchError> {
+        Ok(ProjectState {
+            active_project_id: self
+                .project_store
+                .as_ref()
+                .active_project_id()
+                .map_err(|error| error.to_string())?,
+            projects: self
+                .project_store
+                .as_ref()
+                .list()
+                .map_err(|error| error.to_string())?,
+        })
+    }
+
+    fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
+        let session = self
+            .project_store
+            .as_ref()
+            .load(project_id)
+            .map_err(|error| error.to_string())?
+            .session;
+        self.project_store
+            .as_ref()
+            .set_active(project_id)
+            .map_err(|error| error.to_string())?;
+        self.activate_core_session(session.clone())
+            .map_err(DispatchError::from)?;
+        crate::library::index::refresh(&self.data_root, self.storage.store(), &session);
+        self.value_with_sequence("projectState", self.project_state()?)
+    }
+
+    fn activate_core_session(&self, session: CreativeSession) -> Result<(), ApplicationError> {
+        match &self.core {
+            CoreRef::Owned(core) => core.activate_session(session).map(|_| ()),
+            CoreRef::Borrowed(core) => (*core).activate_session(session).map(|_| ()),
+        }
+    }
+
+    fn value_with_sequence<T: serde::Serialize>(
+        &self,
+        result_type: &'static str,
+        value: T,
+    ) -> Result<DispatchResult, DispatchError> {
+        let sequence = self
+            .core
+            .snapshot()
+            .map_err(|error| error.to_string())?
+            .sequence;
+        Ok(DispatchResult {
+            result_type,
+            value: serde_json::to_value(value).expect("project values must serialize"),
+            sequence,
+            projection_effect: CanonicalMutationEffect::CanonicalOnly,
+        })
+    }
+
     fn session_with_effect(
         &self,
         session: CreativeSession,
@@ -1106,6 +1227,7 @@ fn is_read_command(command: &str) -> bool {
             | "music.harmony.resolve"
             | "music.harmony.list"
             | "music.region.list"
+            | "project.list"
             | "project.export"
     )
 }
@@ -1593,6 +1715,24 @@ struct AssetImportParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCreateParams {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectOpenParams {
+    project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRenameParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ProjectImportParams {
     path: PathBuf,
 }
@@ -1700,6 +1840,121 @@ mod tests {
     }
 
     #[test]
+    fn project_commands_keep_containers_independent_and_switch_the_active_session() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-projects-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let initial = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap();
+        let initial_id = initial.value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(initial.value["projects"].as_array().unwrap().len(), 1);
+
+        let created = dispatcher
+            .dispatch(request("project.create", json!({"name":"Second"})))
+            .unwrap();
+        let second_id = created.value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(second_id, initial_id);
+        assert_eq!(created.value["projects"].as_array().unwrap().len(), 2);
+        let second_session = dispatcher
+            .dispatch(request("session.get", json!({})))
+            .unwrap();
+        assert_eq!(second_session.value["projectName"], "Second");
+
+        dispatcher
+            .dispatch(request("project.open", json!({"projectId": initial_id})))
+            .unwrap();
+        let reopened = dispatcher
+            .dispatch(request("session.get", json!({})))
+            .unwrap();
+        assert_eq!(reopened.value["projectName"], Value::Null);
+
+        dispatcher
+            .dispatch(request("project.rename", json!({"name":"First"})))
+            .unwrap();
+        let renamed = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap();
+        assert_eq!(
+            renamed.value["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|project| project["projectId"] == initial_id)
+                .unwrap()["name"],
+            "First"
+        );
+        assert!(
+            root.join("projects")
+                .join(second_id)
+                .join("session.json")
+                .is_file()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_import_creates_a_new_active_container_without_overwriting_the_source() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-import-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let initial_id = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap()
+            .value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        dispatcher
+            .dispatch(request("project.rename", json!({"name":"Source"})))
+            .unwrap();
+        let export = dispatcher
+            .dispatch(request("project.export", json!({})))
+            .unwrap();
+        let manifest = export.value["path"].as_str().unwrap().to_owned();
+
+        let imported = dispatcher
+            .dispatch(request("project.import", json!({"path":manifest})))
+            .unwrap();
+        let imported_id = imported.value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(imported_id, initial_id);
+        assert_eq!(imported.value["projects"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            dispatcher
+                .dispatch(request("session.get", json!({})))
+                .unwrap()
+                .value["projectName"],
+            "Source"
+        );
+
+        dispatcher
+            .dispatch(request("project.open", json!({"projectId":initial_id})))
+            .unwrap();
+        assert_eq!(
+            dispatcher
+                .dispatch(request("session.get", json!({})))
+                .unwrap()
+                .value["projectName"],
+            "Source"
+        );
+        assert!(
+            root.join("projects")
+                .join(&imported_id)
+                .join("session.json")
+                .is_file()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn session_inspect_is_read_only_scoped_and_lightweight() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-inspect-{}", now_ms()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
@@ -1780,13 +2035,17 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-invalid-{}", std::process::id()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
-        let before = fs::read(root.join("scratch/current.json")).unwrap();
+        let workspace: Value =
+            serde_json::from_slice(&fs::read(root.join("workspace.json")).unwrap()).unwrap();
+        let project_id = workspace["activeProjectId"].as_str().unwrap();
+        let current = root.join("projects").join(project_id).join("session.json");
+        let before = fs::read(&current).unwrap();
         assert!(
             dispatcher
                 .dispatch(request("track.remove", json!({"trackId":"track:missing"}),))
                 .is_err()
         );
-        assert_eq!(fs::read(root.join("scratch/current.json")).unwrap(), before);
+        assert_eq!(fs::read(current).unwrap(), before);
         let _ = fs::remove_dir_all(root);
     }
 

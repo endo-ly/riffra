@@ -5,6 +5,14 @@ use riffra_core::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Project selection state shared by Desktop and CLI clients.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectState {
+    pub active_project_id: String,
+    pub projects: Vec<riffra_host::ProjectSummary>,
+}
+
 /// Lightweight Track projection used by `track.list`.
 ///
 /// Device parameter arrays are intentionally omitted. The complete device

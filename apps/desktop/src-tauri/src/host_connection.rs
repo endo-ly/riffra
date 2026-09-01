@@ -1026,6 +1026,7 @@ impl HostConnectionManager {
     ) -> BootstrapState {
         BootstrapState {
             canonical: bootstrap.canonical.clone(),
+            project_state: bootstrap.project_state.clone(),
             plugin_catalog: bootstrap.plugin_catalog.clone(),
             runtime_started: bootstrap.runtime_started,
             runtime_startup_finished: bootstrap.runtime_startup_finished,
@@ -1137,6 +1138,9 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
     match event {
         HostEvent::CanonicalStateChanged(value) => {
             HostEventFrame::new("canonical-state-changed", json!(value))
+        }
+        HostEvent::ProjectStateChanged(value) => {
+            HostEventFrame::new("project-state-changed", json!(value))
         }
         HostEvent::RuntimeStartupFinished { succeeded } => {
             HostEventFrame::new("runtime-startup-finished", json!({"succeeded": succeeded}))

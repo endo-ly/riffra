@@ -145,6 +145,41 @@ impl<A> AppCore<A> {
         self.safe_mode
     }
 
+    /// Replaces the canonical session while switching Project containers.
+    ///
+    /// Activation advances the canonical sequence and clears all history. It
+    /// deliberately does not persist the session because the ProjectStore has
+    /// already completed the Project-scoped save before activation.
+    ///
+    /// # Errors
+    /// Returns an error when the supplied session is invalid or Core state is
+    /// unavailable.
+    pub fn activate_session(
+        &self,
+        session: CreativeSession,
+    ) -> Result<CreativeSession, ApplicationError> {
+        let _operation = self
+            .operation_gate
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        let session = session
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)?;
+        self.begin_exchange();
+        if let Ok(mut canonical) = self.session.lock() {
+            *canonical = session.clone();
+        } else {
+            self.end_exchange();
+            return Err(ApplicationError::StateLock);
+        }
+        self.end_exchange();
+        self.history
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?
+            .clear();
+        Ok(session)
+    }
+
     /// Captures the canonical session and projection sequence as one pair.
     pub fn snapshot(&self) -> Result<CanonicalSnapshot, ApplicationError> {
         loop {
@@ -1213,6 +1248,38 @@ mod tests {
         let redone = core.redo(&storage).unwrap();
         assert_eq!(redone.arrangement.tracks[0].name, "Main");
         assert_eq!(storage.sessions.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn project_activation_swaps_canonical_state_without_persisting_or_retaining_history() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        core.application(&storage)
+            .add_track("Old project", TrackKind::Audio)
+            .unwrap();
+        let saved_before_activation = storage.sessions.lock().unwrap().len();
+
+        let mut next = CreativeSession::new(2);
+        next.project_name = Some("Next project".into());
+        let activated = core.activate_session(next).unwrap();
+
+        assert_eq!(activated.project_name.as_deref(), Some("Next project"));
+        assert_eq!(core.canonical_state().unwrap().sequence, 2);
+        assert_eq!(
+            core.canonical_state().unwrap().session.session_id,
+            "scratch-2"
+        );
+        assert_eq!(core.history_state().unwrap(), HistoryState::default());
+        assert_eq!(
+            storage.sessions.lock().unwrap().len(),
+            saved_before_activation
+        );
     }
 
     #[test]

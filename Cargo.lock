@@ -2684,6 +2684,8 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "ts-rs",
+ "uuid",
  "windows-sys 0.61.2",
 ]
 

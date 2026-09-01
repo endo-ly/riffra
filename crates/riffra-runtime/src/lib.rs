@@ -44,9 +44,9 @@ pub use host::{DawHost, HostBootstrap, HostConfig, HostError};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
-    AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
-    RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
-    TrackDeviceSummary, TrackRackSummary, TrackSummary,
+    AudioStatus, DeviceChannels, MidiDeviceInfo, ProjectState, RecordingFinalizationOutcome,
+    RecordingStatus, RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair, TrackDeviceSummary, TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
@@ -64,6 +64,8 @@ use riffra_core::CanonicalState;
 pub enum HostEvent {
     /// The canonical state changed after a successful Core commit.
     CanonicalStateChanged(CanonicalState),
+    /// The active Project or Project list changed.
+    ProjectStateChanged(ProjectState),
     /// Startup completed, with the result of the runtime handshake.
     RuntimeStartupFinished { succeeded: bool },
     /// The latest canonical arrangement projection state.
@@ -88,6 +90,9 @@ impl HostEvent {
         let (event, payload) = match self {
             Self::CanonicalStateChanged(value) => {
                 ("canonical-state-changed", serde_json::to_value(value))
+            }
+            Self::ProjectStateChanged(value) => {
+                ("project-state-changed", serde_json::to_value(value))
             }
             Self::RuntimeStartupFinished { succeeded } => (
                 "runtime-startup-finished",

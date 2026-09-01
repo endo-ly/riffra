@@ -142,19 +142,25 @@ fn upsert_library_entry_preserving_metadata(
     Ok(())
 }
 
-pub fn sync_session(data_root: &Path, session: &CreativeSession) -> Result<(), String> {
+pub fn sync_session(
+    data_root: &Path,
+    project_id: &str,
+    session: &CreativeSession,
+) -> Result<(), String> {
     let connection = open(data_root)?;
-    let project_id = format!("project:{}", session.session_id);
+    let library_project_id = format!("project:{project_id}");
     let project = LibraryAsset {
-        id: project_id.clone(),
+        id: library_project_id,
         name: session
             .project_name
             .clone()
-            .unwrap_or_else(|| "Untitled Scratch".into()),
+            .unwrap_or_else(|| "Untitled Project".into()),
         kind: "project".into(),
         path: Some(
             data_root
-                .join("scratch/current.json")
+                .join("projects")
+                .join(project_id)
+                .join("session.json")
                 .to_string_lossy()
                 .into_owned(),
         ),
@@ -429,6 +435,8 @@ mod tests {
 
     use riffra_core::CreativeSession;
 
+    const TEST_PROJECT_ID: &str = "01900000-0000-7000-8000-000000000001";
+
     fn root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-library-{name}-{}", now_ms()))
     }
@@ -437,7 +445,7 @@ mod tests {
     fn indexes_session_and_finds_assets_across_kinds() {
         let directory = root("search");
         let session = CreativeSession::new(now_ms());
-        sync_session(&directory, &session).unwrap();
+        sync_session(&directory, TEST_PROJECT_ID, &session).unwrap();
         let results = search(&directory, "project").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind, "project");
@@ -517,7 +525,7 @@ mod tests {
         .unwrap();
         // Library Read Model entry that happens to share a search token.
         let session = CreativeSession::new(now_ms());
-        sync_session(&directory, &session).unwrap();
+        sync_session(&directory, TEST_PROJECT_ID, &session).unwrap();
 
         let results = search(&directory, "important").unwrap();
         let canonical_match = results

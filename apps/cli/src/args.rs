@@ -957,8 +957,31 @@ pub struct AssetPreviewArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {
+    List,
+    Create(ProjectCreateArgs),
+    Open(ProjectOpenArgs),
+    Rename(ProjectRenameArgs),
     Export,
     Import(ProjectImportArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectCreateArgs {
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOpenArgs {
+    pub project_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRenameArgs {
+    pub name: String,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -1521,6 +1544,12 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             AssetCommand::StopPreview => simple("asset.preview.stop"),
         },
         CliCommand::Project { command } => match command {
+            ProjectCommand::List => simple("project.list"),
+            ProjectCommand::Create(args) => value("project.create", args),
+            ProjectCommand::Open(args) => {
+                value("project.open", json!({"projectId": args.project_id}))
+            }
+            ProjectCommand::Rename(args) => value("project.rename", args),
             ProjectCommand::Export => simple("project.export"),
             ProjectCommand::Import(args) => value("project.import", json!({"path":args.path})),
         },

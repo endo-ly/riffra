@@ -117,10 +117,9 @@ pub(crate) fn set_track_instrument_with_expected_sequence(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_instrument(
             track_id,
             name,
@@ -165,10 +164,9 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_effect(
             track_id,
             name,
@@ -467,10 +465,9 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Plugin")
         .to_owned();
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {

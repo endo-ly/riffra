@@ -18,9 +18,7 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
 }
 
 #[tauri::command]
-pub(crate) async fn export_scratch_session(
-    app: AppHandle,
-) -> Result<projects::ProjectExport, String> {
+pub(crate) async fn export_project(app: AppHandle) -> Result<projects::ProjectExport, String> {
     run_blocking(app, |state| {
         state.host_connection.dispatch("project.export", json!({}))
     })

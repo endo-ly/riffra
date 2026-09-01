@@ -89,7 +89,12 @@ pub fn export(
     session: &CreativeSession,
     exported_at_ms: u64,
 ) -> Result<ProjectExport, String> {
-    let name = safe_name(session.project_name.as_deref().unwrap_or("scratch"));
+    let name = safe_name(
+        session
+            .project_name
+            .as_deref()
+            .unwrap_or("Untitled Project"),
+    );
     let directory = data_root
         .join("exports")
         .join(format!("{name}-{exported_at_ms}"));
@@ -333,7 +338,7 @@ fn safe_name(value: &str) -> String {
         .collect::<String>();
     result.truncate(80);
     if result.is_empty() {
-        "scratch".into()
+        "project".into()
     } else {
         result
     }

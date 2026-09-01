@@ -1,5 +1,6 @@
 use crate::{AudioSupervisor, HostEventSink, RuntimeDriver, RuntimeReconciler};
 use riffra_core::{AppCore, CreativeSession};
+use riffra_host::SessionStore;
 use std::path::Path;
 
 /// Concrete dependencies shared by Session application operations.
@@ -7,6 +8,7 @@ pub struct SessionContext<'a, D: RuntimeDriver = AudioSupervisor> {
     pub core: &'a AppCore<AudioSupervisor>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<D>,
+    pub storage: SessionStore,
     pub data_root: &'a Path,
     pub safe_mode: bool,
     pub events: &'a dyn HostEventSink,

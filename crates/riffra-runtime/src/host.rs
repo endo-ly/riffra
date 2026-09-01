@@ -8,7 +8,7 @@ use crate::dispatcher::{
     MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
 };
 use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
-use crate::model::{AudioStatus, RuntimeProjectionStatus};
+use crate::model::{AudioStatus, ProjectState, RuntimeProjectionStatus};
 use crate::recording::{self, RecordingContext};
 use crate::render::{self, RenderOptions, RenderResult};
 use crate::runtime::{RuntimeError, RuntimeReconciler};
@@ -29,7 +29,7 @@ use riffra_control::{
     ProtocolError, new_instance_id,
 };
 use riffra_core::{AppCore, CanonicalState};
-use riffra_host::{DataRootLease, SessionStore, now_ms};
+use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -80,6 +80,7 @@ pub enum HostError {
 #[serde(rename_all = "camelCase")]
 pub struct HostBootstrap {
     pub canonical: CanonicalState,
+    pub project_state: ProjectState,
     pub plugin_catalog: Vec<plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
@@ -96,6 +97,7 @@ pub(crate) struct HostState {
     identity: HostIdentity,
     pub(crate) data_root: PathBuf,
     core: Arc<AppCore<AudioSupervisor>>,
+    project_store: ProjectStore,
     storage: SessionStore,
     runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     events: SharedHostEventSink,
@@ -138,6 +140,7 @@ impl HostState {
         };
         Ok(HostBootstrap {
             canonical: self.canonical()?,
+            project_state: self.project_state()?,
             plugin_catalog: plugin_catalog::load(&self.data_root)
                 .map_err(|error| HostError::State(error.to_string()))?,
             runtime_started: self.core.audio().startup_completed(),
@@ -152,6 +155,19 @@ impl HostState {
             safe_mode: self.core.safe_mode(),
             recovery_candidates,
             data_root: self.data_root.clone(),
+        })
+    }
+
+    fn project_state(&self) -> Result<ProjectState, HostError> {
+        Ok(ProjectState {
+            active_project_id: self
+                .project_store
+                .active_project_id()
+                .map_err(|error| HostError::State(error.to_string()))?,
+            projects: self
+                .project_store
+                .list()
+                .map_err(|error| HostError::State(error.to_string()))?,
         })
     }
 
@@ -181,6 +197,7 @@ impl HostState {
             core: self.core.as_ref(),
             audio: self.core.audio(),
             runtime: self.runtime.as_ref(),
+            storage: self.storage.clone(),
             data_root: &self.data_root,
             safe_mode: self.core.safe_mode(),
             events: self.events.as_ref(),
@@ -257,6 +274,17 @@ impl HostState {
         params: Value,
         current: CanonicalState,
     ) -> Result<(&'static str, Value, u64), ProtocolError> {
+        if matches!(
+            command,
+            "project.list"
+                | "project.create"
+                | "project.open"
+                | "project.rename"
+                | "project.import"
+                | "project.export"
+        ) {
+            return self.dispatch_project(command, params, current);
+        }
         if command == "audio.master-gain.set" {
             let params: MasterGainParams = decode(params)?;
             let pair = session_adapter::set_master_gain_db(&self.session_context(), params.gain_db)
@@ -274,12 +302,17 @@ impl HostState {
                 return Ok(result);
             }
             let current_sequence = current.sequence;
-            let result = HostDispatcher::borrowed(&self.core, &self.storage, &self.data_root)
-                .dispatch_with_canonical(
-                    riffra_control::ControlCommand::new(command, params),
-                    current,
-                )
-                .map_err(|error| error.protocol_error())?;
+            let result = HostDispatcher::borrowed(
+                &self.core,
+                &self.storage,
+                &self.project_store,
+                &self.data_root,
+            )
+            .dispatch_with_canonical(
+                riffra_control::ControlCommand::new(command, params),
+                current,
+            )
+            .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
                 let mutation = self.after_canonical_commit(result.projection_effect())?;
                 let sequence = mutation.canonical.sequence;
@@ -754,6 +787,7 @@ impl HostState {
                     core: &self.core,
                     audio: self.core.audio(),
                     runtime: &self.runtime,
+                    storage: self.storage.clone(),
                     data_root: &self.data_root,
                     safe_mode: self.core.safe_mode(),
                 };
@@ -1141,13 +1175,6 @@ impl HostState {
                         .map_err(|error| error.protocol_error())?,
                 )
             }
-            "project.import-scratch" => {
-                let params: ProjectImportParams = decode(params)?;
-                Some(
-                    session_adapter::import_session(&context, &params.path)
-                        .map_err(|error| error.protocol_error())?,
-                )
-            }
             "plugin.state.persist" => {
                 let params: PluginStatePersistParams = decode(params)?;
                 Some(
@@ -1212,6 +1239,133 @@ impl HostState {
         }))
     }
 
+    fn dispatch_project(
+        &self,
+        command: &str,
+        params: Value,
+        current: CanonicalState,
+    ) -> Result<(&'static str, Value, u64), ProtocolError> {
+        match command {
+            "project.list" => Ok((
+                "projectState",
+                serde_json::to_value(self.project_state_for_command()?).map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "project.export" => Ok((
+                "projectExport",
+                serde_json::to_value(
+                    riffra_host::export_project(&self.data_root, &current.session, now_ms())
+                        .map_err(command_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "project.create" => {
+                let params: ProjectCreateParams = decode(params)?;
+                self.ensure_switch_allowed()?;
+                let summary = self
+                    .project_store
+                    .create(params.name)
+                    .map_err(|error| command_error(error.to_string()))?;
+                self.activate_project(&summary.project_id, current.sequence)
+            }
+            "project.open" => {
+                let params: ProjectOpenParams = decode(params)?;
+                self.ensure_switch_allowed()?;
+                self.activate_project(&params.project_id, current.sequence)
+            }
+            "project.rename" => {
+                let params: ProjectRenameParams = decode(params)?;
+                let _ = self
+                    .core
+                    .application(&self.storage)
+                    .update_session_settings(riffra_core::application::SessionSettingsPatch {
+                        project_name: Some(Some(params.name)),
+                        ..Default::default()
+                    })
+                    .map_err(|error| command_error(error.to_string()))?;
+                let canonical =
+                    self.after_canonical_commit(CanonicalMutationEffect::CanonicalOnly)?;
+                let project_state = self.project_state_for_command()?;
+                self.events
+                    .emit(HostEvent::ProjectStateChanged(project_state.clone()));
+                Ok((
+                    "projectState",
+                    serde_json::to_value(project_state).map_err(serialize_error)?,
+                    canonical.canonical.sequence,
+                ))
+            }
+            "project.import" => {
+                let params: ProjectImportParams = decode(params)?;
+                self.ensure_switch_allowed()?;
+                let session = riffra_host::import_project(&self.data_root, &params.path)
+                    .map_err(command_error)?;
+                let summary = self
+                    .project_store
+                    .create_from_session(&session)
+                    .map_err(|error| command_error(error.to_string()))?;
+                self.activate_project(&summary.project_id, current.sequence)
+            }
+            _ => Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                format!("unknown project command: {command}"),
+            )),
+        }
+    }
+
+    fn project_state_for_command(&self) -> Result<crate::model::ProjectState, ProtocolError> {
+        Ok(crate::model::ProjectState {
+            active_project_id: self
+                .project_store
+                .active_project_id()
+                .map_err(|error| command_error(error.to_string()))?,
+            projects: self
+                .project_store
+                .list()
+                .map_err(|error| command_error(error.to_string()))?,
+        })
+    }
+
+    fn ensure_switch_allowed(&self) -> Result<(), ProtocolError> {
+        let status = self.core.audio().status().map_err(audio_error)?;
+        if status.recording.active {
+            return Err(command_error("Stop recording before switching Projects."));
+        }
+        if !self.core.safe_mode() {
+            self.runtime
+                .stop(status.timeline_tick.unwrap_or_default())
+                .map_err(runtime_error)?;
+        }
+        Ok(())
+    }
+
+    fn activate_project(
+        &self,
+        project_id: &str,
+        _current_sequence: u64,
+    ) -> Result<(&'static str, Value, u64), ProtocolError> {
+        let loaded = self
+            .project_store
+            .load(project_id)
+            .map_err(|error| command_error(error.to_string()))?;
+        self.project_store
+            .set_active(project_id)
+            .map_err(|error| command_error(error.to_string()))?;
+        self.core
+            .activate_session(loaded.session)
+            .map_err(|error| command_error(error.to_string()))?;
+        let mutation = self.after_canonical_commit(CanonicalMutationEffect::ProjectArrangement)?;
+        let project_state = self.project_state_for_command()?;
+        self.events
+            .emit(HostEvent::ProjectStateChanged(project_state.clone()));
+        let sequence = mutation.canonical.sequence;
+        Ok((
+            "projectState",
+            serde_json::to_value(project_state).map_err(serialize_error)?,
+            sequence,
+        ))
+    }
+
     fn after_canonical_commit(
         &self,
         effect: CanonicalMutationEffect,
@@ -1219,7 +1373,7 @@ impl HostState {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
-        library::index::refresh(&self.data_root, &canonical.session);
+        library::index::refresh(&self.data_root, &self.storage, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         let mutation = commit::finalize_arrangement_mutation(
@@ -1796,9 +1950,13 @@ impl DawHost {
                 HostError::DataRoot(error.to_string())
             }
         })?;
-        let storage = SessionStore::new(&config.data_root);
-        let loaded = storage
-            .load_or_create()
+        let project_store = ProjectStore::new(&config.data_root);
+        let loaded = project_store
+            .initialize()
+            .map_err(|error| HostError::Session(error.to_string()))?
+            .loaded;
+        let storage = project_store
+            .active_session_store()
             .map_err(|error| HostError::Session(error.to_string()))?;
         let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
         let event_hub = HostEventHub::new(events);
@@ -1847,6 +2005,7 @@ impl DawHost {
                 loaded.recovered_from_generation,
                 config.safe_mode,
             )),
+            project_store,
             storage,
             runtime,
             events,
@@ -1885,7 +2044,7 @@ impl DawHost {
             return Err(HostError::State(error.to_string()));
         }
         if let Ok(canonical) = state.canonical() {
-            library::index::refresh(&state.data_root, &canonical.session);
+            library::index::refresh(&state.data_root, &state.storage, &canonical.session);
         }
         let plugin_persistence = PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),
@@ -2401,6 +2560,24 @@ struct ProjectRestoreParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectCreateParams {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectOpenParams {
+    project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRenameParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ProjectImportParams {
     path: PathBuf,
 }
@@ -2906,6 +3083,28 @@ mod tests {
         let event = events.recv().unwrap();
         assert_eq!(event.event, "canonical-state-changed");
         assert_eq!(event.payload["sequence"], 1);
+
+        let created = client
+            .request(&ControlRequest::new(
+                "project-create",
+                ControlCommand::new("project.create", serde_json::json!({"name": "Second"})),
+                Some(1),
+            ))
+            .unwrap();
+        assert!(created.ok);
+        let created_state: crate::model::ProjectState =
+            serde_json::from_value(created.result.unwrap().value).unwrap();
+        assert_eq!(created_state.projects.len(), 2);
+
+        let event = events.recv().unwrap();
+        assert_eq!(event.event, "canonical-state-changed");
+        assert_eq!(event.payload["sequence"], 2);
+        let event = events.recv().unwrap();
+        assert_eq!(event.event, "project-state-changed");
+        assert_eq!(
+            event.payload["activeProjectId"],
+            created_state.active_project_id
+        );
 
         let discovered = LocalHostRegistry::current_user()
             .discover()

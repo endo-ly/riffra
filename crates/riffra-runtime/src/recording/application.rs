@@ -54,6 +54,7 @@ pub struct RecordingContext<'a> {
     pub core: &'a AppCore<AudioSupervisor>,
     pub audio: &'a AudioSupervisor,
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+    pub storage: riffra_host::SessionStore,
     pub data_root: &'a Path,
     pub safe_mode: bool,
 }
@@ -1129,13 +1130,12 @@ fn commit_recording_session(
     base: &CreativeSession,
     candidate: CreativeSession,
 ) -> Result<(), String> {
-    let store = riffra_host::SessionStore::new(context.data_root);
     let committed = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .commit_recording(base, candidate)
         .map_err(|error| error.to_string())?;
-    crate::library::index::refresh(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &context.storage, &committed);
     Ok(())
 }
 
@@ -1725,6 +1725,10 @@ mod tests {
             }),
             audio,
             runtime,
+            storage: riffra_host::SessionStore::new(
+                data_root,
+                "01900000-0000-7000-8000-000000000001",
+            ),
             data_root,
             safe_mode,
         }
@@ -1733,7 +1737,7 @@ mod tests {
     #[test]
     fn recording_merge_preserves_unrelated_session_edits() {
         let root = temp_root("recording-merge");
-        let storage = riffra_host::SessionStore::new(&root);
+        let storage = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         storage.ensure_layout().unwrap();
         let base = CreativeSession::new(1);
         let mut candidate = base.clone();
@@ -1845,6 +1849,7 @@ mod tests {
             core: &core,
             audio: &audio,
             runtime: &runtime,
+            storage: riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001"),
             data_root: &root,
             safe_mode: false,
         };

@@ -14,8 +14,8 @@ use crate::missing::MissingDependency;
 use crate::model::{
     ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
     AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, DeviceChannels,
-    MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult,
-    RecoveryCandidate, RuntimeProjectionStatus, SessionAudioPair,
+    MidiDeviceInfo, ProjectState, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionStatus, SessionAudioPair,
 };
 use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use crate::projects::ProjectExport;
@@ -107,6 +107,7 @@ fn export_types() {
     TrackRackSummary::export_all(&cfg).expect("TrackRackSummary bindings");
     TrackSummary::export_all(&cfg).expect("TrackSummary bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
+    ProjectState::export_all(&cfg).expect("ProjectState bindings");
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");
     AudioDriverConfig::export_all(&cfg).expect("AudioDriverConfig bindings");
     LibraryAsset::export_all(&cfg).expect("LibraryAsset bindings");

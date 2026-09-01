@@ -3,8 +3,8 @@ use ts_rs::TS;
 
 pub use riffra_runtime::RuntimeProjectionStatus;
 pub use riffra_runtime::{
-    ArrangementMutationResult, AudioDeviceProbe, AudioStatus, DeviceChannels, RecordingStopResult,
-    SessionAudioPair,
+    ArrangementMutationResult, AudioDeviceProbe, AudioStatus, DeviceChannels, ProjectState,
+    RecordingStopResult, SessionAudioPair,
 };
 #[cfg(test)]
 pub use riffra_runtime::{
@@ -29,6 +29,7 @@ pub struct RecoveryCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub canonical: riffra_core::CanonicalState,
+    pub project_state: ProjectState,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
