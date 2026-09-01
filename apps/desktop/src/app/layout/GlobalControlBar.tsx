@@ -7,13 +7,14 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
+  ProjectState,
 } from '@/model/domain';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
 import type { TransportControlsApi } from '@/features/transport/transport-api';
 import { Icon } from '@/shared/ui/primitives';
-import { SessionSelector } from './SessionSelector';
+import { ProjectHostSelector } from './ProjectHostSelector';
 import styles from './GlobalControlBar.module.css';
 
 interface GlobalControlBarProps {
@@ -23,9 +24,8 @@ interface GlobalControlBarProps {
   historyState: HistoryState;
   onUndo: () => void;
   onRedo: () => void;
-  onRenameSession: (name: string) => void;
-  onExportSession: () => void;
-  onImportSession: () => void;
+  onExportProject: () => void;
+  onImportProject: () => void;
   onToggleMute: () => void;
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
@@ -44,10 +44,16 @@ interface GlobalControlBarProps {
   localHosts: LocalHostInfo[];
   hostSwitching: boolean;
   hostConnectionError: string | null;
-  onRefreshHosts: () => Promise<unknown>;
+  onRefresh: () => Promise<unknown>;
   onSwitchHost: (target: HostTarget) => Promise<unknown>;
   onReconnectHost: () => Promise<unknown>;
   hostConnected: boolean;
+  projectState: ProjectState | null;
+  projectSwitching: boolean;
+  projectError: string | null;
+  onCreateProject: (name?: string) => Promise<unknown>;
+  onOpenProject: (projectId: string) => Promise<unknown>;
+  onRenameProject: (name: string) => Promise<unknown>;
 }
 
 export function GlobalControlBar(props: GlobalControlBarProps) {
@@ -68,20 +74,28 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
       data-global-control-bar
     >
       <div className={styles.projectControls}>
-        <SessionSelector
+        <ProjectHostSelector
           session={props.session}
           state={props.hostConnectionState}
           hosts={props.localHosts}
           switching={props.hostSwitching}
           error={props.hostConnectionError}
-          onRefresh={props.onRefreshHosts}
+          onRefresh={props.onRefresh}
           onSwitch={props.onSwitchHost}
           onReconnect={props.onReconnectHost}
-          onRenameSession={props.onRenameSession}
-          onExportSession={props.onExportSession}
-          onImportSession={props.onImportSession}
+          onExportProject={props.onExportProject}
+          onImportProject={props.onImportProject}
+          projectState={props.projectState}
+          projectSwitching={props.projectSwitching}
+          projectError={props.projectError}
+          onCreateProject={props.onCreateProject}
+          onOpenProject={props.onOpenProject}
+          onRenameProject={props.onRenameProject}
         />
-        <fieldset className={styles.projectHostBoundControls} disabled={!props.hostConnected}>
+        <fieldset
+          className={styles.projectHostBoundControls}
+          disabled={!props.hostConnected || props.projectSwitching}
+        >
           <div className={styles.historyControls} role="group" aria-label="History">
             <button
               type="button"
@@ -107,7 +121,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
 
       <fieldset
         className={clsx(styles.transportControls, styles.hostBoundControls)}
-        disabled={!props.hostConnected}
+        disabled={!props.hostConnected || props.projectSwitching}
       >
         <TransportControls
           session={props.session}
@@ -125,7 +139,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
 
       <fieldset
         className={clsx(styles.audioControls, styles.hostBoundControls)}
-        disabled={!props.hostConnected}
+        disabled={!props.hostConnected || props.projectSwitching}
       >
         <AudioMonitor
           session={props.session}

@@ -5,6 +5,7 @@ import type { NativeEventApi, TransportApi } from '@/native/native-api';
 
 interface TransportControllerOptions {
   hostGeneration?: number;
+  projectId?: string | null;
   api: Pick<
     NativeEventApi & TransportApi,
     'onTransportStatus' | 'playTimeline' | 'stopTimeline' | 'goToStartTimeline'
@@ -20,6 +21,7 @@ export function useTransportController({
   api,
   sessionRef,
   hostGeneration = 0,
+  projectId = null,
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
@@ -31,7 +33,7 @@ export function useTransportController({
     sequenceRef.current = 0;
     pendingPlayRef.current = null;
     setTimelinePlaying(false);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   const nextTransportSequence = useCallback(() => {
     sequenceRef.current += 1;

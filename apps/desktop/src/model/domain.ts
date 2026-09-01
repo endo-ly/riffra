@@ -54,6 +54,8 @@ export type {
   MonitoringState,
   PluginEntry,
   ProjectExport,
+  ProjectState,
+  ProjectSummary,
   ProjectTimebase,
   RackDevice,
   RackInstance,

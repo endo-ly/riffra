@@ -1,27 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { BootstrapState, CanonicalState, CreativeSession, HistoryState } from '@/model/domain';
+import type {
+  BootstrapState,
+  CanonicalState,
+  CreativeSession,
+  HistoryState,
+  ProjectState,
+} from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
 import { openProjectManifest } from '@/native/dialog';
 import { getHostGeneration, isNativeRuntime, logNativeError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
-interface UseSessionOptions {
+interface UseProjectOptions {
+  boot: BootstrapState | null;
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
   hostGeneration: number;
 }
 
-export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSessionOptions) {
+export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseProjectOptions) {
   const {
     undoSession,
     redoSession,
     getHistoryState,
-    updateSessionSettings,
-    exportSession: exportSessionApi,
-    importSession: importSessionApi,
+    listProjects,
+    createProject: createProjectApi,
+    openProject: openProjectApi,
+    renameProject: renameProjectApi,
+    exportProject: exportProjectApi,
+    importProject: importProjectApi,
     restoreRecoveryGeneration,
   } = api;
-  const { setBoot, hostGeneration } = options;
+  const { boot, setBoot, hostGeneration } = options;
   const [session, setSession] = useState<CreativeSession | null>(null);
   const [historyState, setHistoryState] = useState<HistoryState>({
     canUndo: false,
@@ -29,6 +39,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
   });
   const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [projectSwitching, setProjectSwitching] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const sequenceRef = useRef(0);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
@@ -44,6 +56,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     setHistoryState({ canUndo: false, canRedo: false });
     setAutosaveError(null);
     setExportMessage(null);
+    setProjectSwitching(false);
+    setProjectError(null);
     setBoot(null);
   }, [hostGeneration, setBoot]);
 
@@ -129,34 +143,53 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     if (session) void refreshHistory();
   }, [refreshHistory, session]);
 
-  const renameSession = useCallback(
-    async (next: string) => {
-      if (!session) return;
-      const name = next.trim().slice(0, 160);
+  const performProjectOperation = useCallback(
+    async (operation: () => Promise<ProjectState>, label: string): Promise<ProjectState | null> => {
       const generationAtRequest = hostGeneration;
+      setProjectSwitching(true);
+      setProjectError(null);
       try {
-        const result = await updateSessionSettings({ projectName: name || null });
-        if (currentHostGeneration.current !== generationAtRequest) return;
-        const projectionFailed = applyArrangementMutation(
-          result,
-          applyCanonicalState,
-          setAutosaveError,
-        );
-        if (!projectionFailed) setAutosaveError(null);
+        const next = await operation();
+        if (currentHostGeneration.current !== generationAtRequest) return null;
+        setBoot((current) => (current ? { ...current, projectState: next } : current));
+        return next;
       } catch (error) {
-        if (currentHostGeneration.current !== generationAtRequest) return;
-        setAutosaveError(
-          `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        if (currentHostGeneration.current !== generationAtRequest) return null;
+        const message = `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+        setProjectError(message);
+        return null;
+      } finally {
+        if (currentHostGeneration.current === generationAtRequest) setProjectSwitching(false);
       }
     },
-    [applyCanonicalState, hostGeneration, session, updateSessionSettings],
+    [hostGeneration, setBoot],
   );
 
-  const exportSession = useCallback(async () => {
+  const refreshProjects = useCallback(
+    () => performProjectOperation(listProjects, 'Project list refresh'),
+    [listProjects, performProjectOperation],
+  );
+
+  const createProject = useCallback(
+    (name?: string) => performProjectOperation(() => createProjectApi(name), 'Project creation'),
+    [createProjectApi, performProjectOperation],
+  );
+
+  const openProject = useCallback(
+    (projectId: string) =>
+      performProjectOperation(() => openProjectApi(projectId), 'Project opening'),
+    [openProjectApi, performProjectOperation],
+  );
+
+  const renameProject = useCallback(
+    (name: string) => performProjectOperation(() => renameProjectApi(name), 'Project rename'),
+    [performProjectOperation, renameProjectApi],
+  );
+
+  const exportProject = useCallback(async () => {
     const generationAtRequest = hostGeneration;
     try {
-      const result = await exportSessionApi();
+      const result = await exportProjectApi();
       if (currentHostGeneration.current !== generationAtRequest) return;
       setExportMessage(
         result
@@ -171,9 +204,9 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
         }`,
       );
     }
-  }, [exportSessionApi, hostGeneration]);
+  }, [exportProjectApi, hostGeneration]);
 
-  const importSession = useCallback(async () => {
+  const importProject = useCallback(async () => {
     if (!isNativeRuntime()) return;
     let path: string | null;
     try {
@@ -185,21 +218,19 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     if (!path) return;
     const generationAtRequest = hostGeneration;
     try {
-      const imported = await importSessionApi(path.trim());
+      const imported = await performProjectOperation(async () => {
+        const state = await importProjectApi(path.trim());
+        if (!state) throw new Error('Project import returned no state');
+        return state;
+      }, 'Project import');
       if (currentHostGeneration.current !== generationAtRequest) return;
       if (!imported) {
-        setExportMessage('Import failed; the current session remains safe.');
+        setExportMessage('Import failed; the current Project remains safe.');
         return;
       }
-      const projectionFailed = applyArrangementMutation(
-        imported,
-        applyCanonicalState,
-        setAutosaveError,
-      );
       setBoot((current) => (current ? { ...current, recoveredFromGeneration: false } : current));
-      if (!projectionFailed) setAutosaveError(null);
       setExportMessage(
-        `Imported session: ${imported.canonical.session.projectName ?? imported.canonical.session.sessionId}`,
+        `Imported Project: ${imported.projects.find((project) => project.projectId === imported.activeProjectId)?.name ?? imported.activeProjectId}`,
       );
     } catch (error) {
       if (currentHostGeneration.current !== generationAtRequest) return;
@@ -209,7 +240,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
         }`,
       );
     }
-  }, [applyCanonicalState, hostGeneration, importSessionApi, setBoot]);
+  }, [hostGeneration, importProjectApi, performProjectOperation, setBoot]);
 
   const restoreRecovery = useCallback(
     async (fileName: string) => {
@@ -261,9 +292,15 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseSes
     setExportMessage,
     undo,
     redo,
-    renameSession,
-    exportSession,
-    importSession,
+    renameProject,
+    projectState: boot?.projectState ?? null,
+    projectSwitching,
+    projectError,
+    refreshProjects,
+    createProject,
+    openProject,
+    exportProject,
+    importProject,
     restoreRecovery,
     dismissRecovery,
   };

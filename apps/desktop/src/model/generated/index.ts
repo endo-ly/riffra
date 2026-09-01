@@ -56,6 +56,8 @@ export type { PluginEntry } from './PluginEntry';
 export type { PluginFormat } from './PluginFormat';
 export type { PluginScanState } from './PluginScanState';
 export type { ProjectExport } from './ProjectExport';
+export type { ProjectState } from './ProjectState';
+export type { ProjectSummary } from './ProjectSummary';
 export type { ProjectTimebase } from './ProjectTimebase';
 export type { RackDevice } from './RackDevice';
 export type { RackInstance } from './RackInstance';

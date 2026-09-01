@@ -5,8 +5,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
-import { defaultSession } from '@/native/browser-defaults';
-import { SessionSelector } from './SessionSelector';
+import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
+import { ProjectHostSelector } from './ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
   openHostDataRoot: vi.fn().mockResolvedValue(null),
@@ -37,7 +37,7 @@ const hosts: LocalHostInfo[] = [
 
 function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
   return render(
-    <SessionSelector
+    <ProjectHostSelector
       session={defaultSession()}
       state={state}
       hosts={hosts}
@@ -46,34 +46,51 @@ function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
       onRefresh={vi.fn().mockResolvedValue(undefined)}
       onSwitch={vi.fn().mockResolvedValue(null)}
       onReconnect={vi.fn().mockResolvedValue(null)}
+      projectState={defaultProjectState()}
       {...overrides}
     />,
   );
 }
 
-describe('SessionSelector', () => {
-  it('shows the session, its actions, and verified local Host candidates', () => {
+describe('ProjectHostSelector', () => {
+  it('shows the Project, its actions, and verified local Host candidates', () => {
     renderSelector();
 
-    fireEvent.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
-    expect(screen.getByRole('textbox', { name: 'Session name' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Export Project' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
   });
 
-  it('commits an inline session rename on Enter', async () => {
-    const onRenameSession = vi.fn();
+  it('commits an inline Project rename on Enter', async () => {
+    const onRenameProject = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    renderSelector(embedded, { onRenameSession });
+    renderSelector(embedded, { onRenameProject });
 
-    await user.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
-    await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'My Project');
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    const nameInput = screen.getByRole('textbox', { name: 'Project name' });
+    await user.clear(nameInput);
+    await user.type(nameInput, 'My Project');
     await user.keyboard('{Enter}');
 
-    expect(onRenameSession).toHaveBeenCalledOnce();
-    expect(onRenameSession).toHaveBeenCalledWith('My Project');
+    expect(onRenameProject).toHaveBeenCalledOnce();
+    expect(onRenameProject).toHaveBeenCalledWith('My Project');
+  });
+
+  it('uses one Refresh action for the selector', async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onRefresh });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+
+    expect(screen.getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Refresh Projects' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('menuitem', { name: 'Refresh' }));
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {
@@ -85,7 +102,7 @@ describe('SessionSelector', () => {
       reason: 'Host event connection closed',
     };
     render(
-      <SessionSelector
+      <ProjectHostSelector
         session={defaultSession()}
         state={state}
         hosts={hosts}
@@ -94,10 +111,11 @@ describe('SessionSelector', () => {
         onRefresh={vi.fn().mockResolvedValue(undefined)}
         onSwitch={vi.fn().mockResolvedValue(null)}
         onReconnect={reconnect}
+        projectState={defaultProjectState()}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Session: Untitled Scratch/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect' }));
 
     await waitFor(() => expect(reconnect).toHaveBeenCalledOnce());

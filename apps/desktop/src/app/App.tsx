@@ -21,7 +21,7 @@ import { Icon } from '@/shared/ui/primitives';
 import surface from '@/shared/ui/Surface.module.css';
 import { ToastStack } from '@/shared/ui/ToastStack';
 import { GlobalControlBar } from './layout/GlobalControlBar';
-import { SessionSelector } from './layout/SessionSelector';
+import { ProjectHostSelector } from './layout/ProjectHostSelector';
 import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
@@ -87,7 +87,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     localHosts,
     hostSwitching,
     hostConnectionError,
-    refreshLocalHosts,
+    refreshProjectHost,
     switchHost,
     reconnectHost,
     hostConnected,
@@ -131,7 +131,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     setCommandOpen,
     refreshAudioDevices,
     probeAudioChannels,
-    renameSession,
+    renameProject,
+    projectState,
+    projectSwitching,
+    projectError,
+    createProject,
+    openProject,
     undo,
     redo,
     toggleMute,
@@ -139,8 +144,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     previewSelectedLibraryAsset,
     updateSelectedLibraryAsset,
     recoverAudio,
-    exportSession,
-    importSession,
+    exportProject,
+    importProject,
     restoreRecovery,
     dismissRecovery,
     selectAudioDriver,
@@ -155,6 +160,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     session,
     applyCanonicalState,
     hostConnectionState.generation,
+    projectState?.activeProjectId ?? null,
   );
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
 
@@ -220,15 +226,23 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   }, [commandOpen]);
 
   const sessionSelector = (
-    <SessionSelector
+    <ProjectHostSelector
       session={null}
       state={hostConnectionState}
       hosts={localHosts}
       switching={hostSwitching}
       error={hostConnectionError}
-      onRefresh={refreshLocalHosts}
+      onRefresh={refreshProjectHost}
       onSwitch={switchHost}
       onReconnect={reconnectHost}
+      projectState={boot?.projectState ?? projectState}
+      projectSwitching={projectSwitching}
+      projectError={projectError}
+      onCreateProject={createProject}
+      onOpenProject={openProject}
+      onRenameProject={renameProject}
+      onImportProject={() => void importProject()}
+      onExportProject={() => void exportProject()}
     />
   );
 
@@ -256,13 +270,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       section: 'PROJECT',
       label: 'Import Project',
       description: 'Open a project.json manifest',
-      run: () => void importSession(),
+      run: () => void importProject(),
     },
     {
       section: 'PROJECT',
       label: 'Export Project',
       description: 'Write a collected project manifest',
-      run: () => void exportSession(),
+      run: () => void exportProject(),
     },
     {
       section: 'SETTINGS',
@@ -281,7 +295,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         localHosts={localHosts}
         hostSwitching={hostSwitching}
         hostConnectionError={hostConnectionError}
-        onRefreshHosts={refreshLocalHosts}
+        onRefresh={refreshProjectHost}
         onSwitchHost={switchHost}
         onReconnectHost={reconnectHost}
         hostConnected={hostConnected}
@@ -291,9 +305,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         historyState={historyState}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
-        onRenameSession={(name) => void renameSession(name)}
-        onExportSession={() => void exportSession()}
-        onImportSession={() => void importSession()}
+        onExportProject={() => void exportProject()}
+        onImportProject={() => void importProject()}
+        projectState={projectState}
+        projectSwitching={projectSwitching}
+        projectError={projectError}
+        onCreateProject={createProject}
+        onOpenProject={openProject}
+        onRenameProject={renameProject}
         onToggleMute={() => void toggleMute()}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
@@ -482,6 +501,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
 
         <section className={shellStyles.workspace}>
           <WorkspaceArrange
+            key={projectState?.activeProjectId ?? 'no-project'}
             hostGeneration={hostConnectionState.generation}
             session={session}
             applyCanonicalState={applyCanonicalState}

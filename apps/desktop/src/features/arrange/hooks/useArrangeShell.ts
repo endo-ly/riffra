@@ -11,6 +11,7 @@ export function useArrangeShell(
   session: CreativeSession | null,
   applyCanonicalState: (canonical: CanonicalState) => boolean,
   hostGeneration = 0,
+  projectId: string | null = null,
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
@@ -20,7 +21,7 @@ export function useArrangeShell(
   useEffect(() => {
     setSelection({ kind: 'none' });
     setFocusedTrackId(null);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   const selectedTrack = useMemo(
     () =>

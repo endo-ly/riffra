@@ -1,5 +1,10 @@
 import { listen } from '@tauri-apps/api/event';
-import type { AudioStatus, CanonicalState, RuntimeProjectionStatus } from '@/model/domain';
+import type {
+  AudioStatus,
+  CanonicalState,
+  ProjectState,
+  RuntimeProjectionStatus,
+} from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import type { NativeEventApi } from '../native-api';
 import { isNativeRuntime } from '../invoke';
@@ -26,6 +31,7 @@ export const eventApi: NativeEventApi = {
   onAudioMeters: (callback) => subscribe<AudioMeters>('audio-meters', callback),
   onCanonicalStateChanged: (callback) =>
     subscribe<CanonicalState>('canonical-state-changed', callback),
+  onProjectStateChanged: (callback) => subscribe<ProjectState>('project-state-changed', callback),
   onTransportStatus: (callback) => subscribe<TransportStatus>('transport-status', callback),
   onRuntimeProjectionStatus: (callback) =>
     subscribe<RuntimeProjectionStatus>('runtime-projection-status', callback),

@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AudioStatus, BootstrapState, CanonicalState, CreativeSession } from '@/model/domain';
+import type {
+  AudioStatus,
+  BootstrapState,
+  CanonicalState,
+  CreativeSession,
+  ProjectState,
+} from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
 import { publishAudioMeters, resetAudioMeters } from '@/shared/audio/audio-meters';
@@ -17,7 +23,10 @@ type AppRuntimeApi = BootstrapApi &
   ProjectApi &
   ProjectSettingsApi &
   Pick<AudioApi, 'getAudioStatus'> &
-  Pick<NativeEventApi, 'onAudioStatus' | 'onAudioMeters' | 'onCanonicalStateChanged'>;
+  Pick<
+    NativeEventApi,
+    'onAudioStatus' | 'onAudioMeters' | 'onCanonicalStateChanged' | 'onProjectStateChanged'
+  >;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
 export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
@@ -28,7 +37,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
-  const sessionHook = useProject(api, { setBoot, hostGeneration });
+  const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
   const { applyCanonicalState, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
 
@@ -50,6 +59,10 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         }
       },
     );
+    const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
+      if (disposed || getHostGeneration() !== effectGeneration) return;
+      setBoot((current) => (current ? { ...current, projectState } : current));
+    });
     const runtimeStartupListener = api
       .onRuntimeStartupFinished((event) => {
         if (disposed || getHostGeneration() !== effectGeneration) return;
@@ -126,6 +139,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       unlistenAudio();
       unlistenRuntimeStartupFinished?.();
       unlistenCanonicalStateChanged();
+      unlistenProjectStateChanged();
       unlistenMeters();
     };
   }, [api, applyCanonicalState, hostGeneration, mergeBootstrapState]);

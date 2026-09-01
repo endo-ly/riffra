@@ -120,6 +120,9 @@ export class FakeNativeApi implements NativeApi {
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
   private readonly canonicalStateListeners = new Set<(state: CanonicalState) => void>();
+  private readonly projectStateListeners = new Set<
+    (state: BootstrapState['projectState']) => void
+  >();
   private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
   private readonly hostConnectionListeners = new Set<(event: HostConnectionChangedEvent) => void>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
@@ -218,11 +221,23 @@ export class FakeNativeApi implements NativeApi {
   restoreRecoveryGeneration(...args: Parameters<NativeApi['restoreRecoveryGeneration']>) {
     return this.command('restoreRecoveryGeneration', args);
   }
-  exportSession(...args: Parameters<NativeApi['exportSession']>) {
-    return this.command('exportSession', args);
+  exportProject(...args: Parameters<NativeApi['exportProject']>) {
+    return this.command('exportProject', args);
   }
-  importSession(...args: Parameters<NativeApi['importSession']>) {
-    return this.command('importSession', args);
+  listProjects(...args: Parameters<NativeApi['listProjects']>) {
+    return this.command('listProjects', args);
+  }
+  createProject(...args: Parameters<NativeApi['createProject']>) {
+    return this.command('createProject', args);
+  }
+  openProject(...args: Parameters<NativeApi['openProject']>) {
+    return this.command('openProject', args);
+  }
+  renameProject(...args: Parameters<NativeApi['renameProject']>) {
+    return this.command('renameProject', args);
+  }
+  importProject(...args: Parameters<NativeApi['importProject']>) {
+    return this.command('importProject', args);
   }
   importMidiFile(...args: Parameters<NativeApi['importMidiFile']>) {
     return this.command('importMidiFile', args);
@@ -533,6 +548,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onCanonicalStateChanged');
     return this.subscribe(this.canonicalStateListeners, callback);
   }
+  onProjectStateChanged(callback: Parameters<NativeApi['onProjectStateChanged']>[0]) {
+    this.recordCall('onProjectStateChanged');
+    return this.subscribe(this.projectStateListeners, callback);
+  }
   onAudioMeters(callback: Parameters<NativeApi['onAudioMeters']>[0]) {
     this.recordCall('onAudioMeters');
     return this.subscribe(this.audioMetersListeners, callback);
@@ -624,6 +643,11 @@ export class FakeNativeApi implements NativeApi {
     this.canonicalStateListeners.forEach((listener) => listener(state));
   }
 
+  emitProjectStateChanged(state: BootstrapState['projectState']): void {
+    this.bootstrapState = { ...this.bootstrapState, projectState: state };
+    this.projectStateListeners.forEach((listener) => listener(state));
+  }
+
   emitHostConnectionChanged(
     state: Partial<HostConnectionState> & Pick<HostConnectionState, 'generation'>,
     bootstrap: BootstrapState | null = this.bootstrapState,
@@ -699,6 +723,12 @@ export class FakeNativeApi implements NativeApi {
       }
       case 'getHistoryState':
         return Promise.resolve({ canUndo: false, canRedo: false });
+      case 'listProjects':
+      case 'createProject':
+      case 'openProject':
+      case 'renameProject':
+      case 'importProject':
+        return Promise.resolve(this.bootstrapState.projectState);
       case 'listRecordings':
         return Promise.resolve(this.recordings);
       case 'searchLibrary':
@@ -729,7 +759,7 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
       case 'cancelBackgroundJob':
         return Promise.resolve(this.jobs.get(String(arguments_[0])) ?? null);
-      case 'exportSession':
+      case 'exportProject':
       case 'importMidiFile':
       case 'importMidiBytes':
       case 'analyzeAsset':
@@ -814,7 +844,6 @@ const sessionAudioMethodNames = new Set<keyof NativeApi>(['setMasterGainDb']);
 const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'relinkMissingDependency',
   'restoreRecoveryGeneration',
-  'importSession',
   'undoSession',
   'redoSession',
   'updateSessionSettings',
@@ -904,6 +933,17 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
   };
   return {
     pluginCatalog: [],
+    projectState: {
+      activeProjectId: '01900000-0000-7000-8000-000000000001',
+      projects: [
+        {
+          projectId: '01900000-0000-7000-8000-000000000001',
+          name: 'Untitled Project',
+          updatedAtMs: Date.now(),
+          error: null,
+        },
+      ],
+    },
     runtimeStarted: true,
     runtimeStartupFinished: true,
     recoveredFromGeneration: false,

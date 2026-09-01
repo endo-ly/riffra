@@ -1,4 +1,4 @@
-import type { CanonicalState, CreativeSession } from '@/model/generated';
+import type { CanonicalState, CreativeSession, ProjectState } from '@/model/generated';
 
 /** Creates the canonical state used by browser fixtures and fallback paths. */
 export function canonicalState(session: CreativeSession): CanonicalState {
@@ -42,5 +42,19 @@ export function defaultSession(): CreativeSession {
       metronomeEnabled: false,
       note: '',
     },
+  };
+}
+
+export function defaultProjectState(): ProjectState {
+  return {
+    activeProjectId: '01900000-0000-7000-8000-000000000001',
+    projects: [
+      {
+        projectId: '01900000-0000-7000-8000-000000000001',
+        name: 'Untitled Project',
+        updatedAtMs: Date.now(),
+        error: null,
+      },
+    ],
   };
 }

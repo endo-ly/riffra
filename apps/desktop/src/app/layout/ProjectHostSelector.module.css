@@ -39,7 +39,7 @@
   gap: 1px;
 }
 
-.sessionName,
+.projectName,
 .hostLine {
   min-width: 0;
   display: flex;
@@ -50,7 +50,7 @@
   white-space: nowrap;
 }
 
-.sessionName {
+.projectName {
   color: var(--color-text-strong);
   font-size: var(--font-size-emphasis);
   font-weight: 600;
@@ -150,6 +150,59 @@
 
 .renameInput::placeholder {
   color: var(--color-text-disabled);
+}
+
+.projectList {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.projectItem {
+  width: 100%;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.projectItem > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.projectItem strong,
+.projectItem small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectItem strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.projectItem small {
+  color: var(--color-status-danger);
+  font-size: var(--font-size-micro);
+}
+
+.projectItem:hover:not(:disabled) {
+  background: var(--color-bg-control-hover);
+}
+
+.projectItem:disabled {
+  opacity: 0.65;
 }
 
 .hostItem {
