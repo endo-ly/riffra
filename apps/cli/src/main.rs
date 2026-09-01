@@ -1,10 +1,12 @@
 mod args;
 mod attached;
+mod output;
 mod serve;
 
 use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
+use output::compact_agent_response;
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
 use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
@@ -58,7 +60,11 @@ fn run() -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let response = attached.request(&request)?;
+        let response = compact_agent_response(
+            &request.command,
+            &request.params,
+            attached.request(&request)?,
+        );
         if response.ok {
             return write_response(&response);
         }
@@ -80,13 +86,18 @@ fn run() -> Result<(), String> {
     let dispatched = dispatcher
         .dispatch_request(request.clone())
         .map_err(|error| error.to_string())?;
-    write_response(&ControlResponse::success(
+    let response = ControlResponse::success(
         request.request_id,
         dispatched.sequence,
         CommandResult {
             result_type: dispatched.result_type.into(),
             value: dispatched.value,
         },
+    );
+    write_response(&compact_agent_response(
+        &request.command,
+        &request.params,
+        response,
     ))
 }
 
@@ -124,13 +135,17 @@ fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
         }
     };
     match dispatcher.dispatch_request(request.clone()) {
-        Ok(result) => ControlResponse::success(
-            request.request_id,
-            result.sequence,
-            CommandResult {
-                result_type: result.result_type.into(),
-                value: result.value,
-            },
+        Ok(result) => compact_agent_response(
+            &request.command,
+            &request.params,
+            ControlResponse::success(
+                request.request_id,
+                result.sequence,
+                CommandResult {
+                    result_type: result.result_type.into(),
+                    value: result.value,
+                },
+            ),
         ),
         Err(error) => ControlResponse::failure(request.request_id, None, error.protocol_error()),
     }
@@ -155,6 +170,7 @@ mod tests {
     use super::handle_request;
     use riffra_control::ErrorCode;
     use riffra_runtime::Dispatcher;
+    use serde_json::json;
     use std::fs;
 
     #[test]
@@ -168,6 +184,195 @@ mod tests {
         assert!(response.ok);
         assert_eq!(response.request_id, "42");
         assert!(response.sequence.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_mutations_return_a_compact_receipt() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-mutation-receipt-{}",
+            std::process::id()
+        ));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
+        );
+
+        assert!(response.ok);
+        assert_eq!(response.sequence, Some(1));
+        let result = response.result.unwrap();
+        assert_eq!(result.result_type, "mutation");
+        assert!(result.value.get("canonical").is_none());
+        assert!(result.value.get("entityIds").is_some());
+        assert!(!result.value.to_string().contains("arrangement"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_receipt_contains_only_generated_notes_and_invalid_ids_fail() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-note-duplicate-receipt-{}",
+            std::process::id()
+        ));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let track = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "track",
+                "command": "track.add",
+                "expectedSequence": 0,
+                "params": {"name": "Keys", "kind": "instrument"}
+            })
+            .to_string(),
+        );
+        let track_id = track.result.as_ref().unwrap().value["entityIds"]["tracks"][0]
+            .as_str()
+            .unwrap();
+        let clip = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "clip",
+                "command": "midi-clip.create",
+                "expectedSequence": 1,
+                "params": {
+                    "trackId": track_id,
+                    "startTick": 0,
+                    "durationTicks": 1920
+                }
+            })
+            .to_string(),
+        );
+        let clip_id = clip.result.as_ref().unwrap().value["entityIds"]["midiClips"][0]
+            .as_str()
+            .unwrap();
+
+        let first_note = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "note-1",
+                "command": "midi-note.add",
+                "expectedSequence": 2,
+                "params": {
+                    "clipId": clip_id,
+                    "pitch": 60,
+                    "startTick": 0,
+                    "durationTicks": 480,
+                    "velocity": 96,
+                    "channel": 1
+                }
+            })
+            .to_string(),
+        );
+        let first_note_id = first_note.result.as_ref().unwrap().value["entityIds"]["midiNotes"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let second_note = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "note-2",
+                "command": "midi-note.add",
+                "expectedSequence": 3,
+                "params": {
+                    "clipId": clip_id,
+                    "pitch": 64,
+                    "startTick": 480,
+                    "durationTicks": 480,
+                    "velocity": 96,
+                    "channel": 1
+                }
+            })
+            .to_string(),
+        );
+        let second_note_id = second_note.result.as_ref().unwrap().value["entityIds"]["midiNotes"]
+            [0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+        let duplicated = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "duplicate",
+                "command": "midi-note.duplicate",
+                "expectedSequence": 4,
+                "params": {
+                    "clipId": clip_id,
+                    "noteIds": [first_note_id, second_note_id],
+                    "offsetTicks": 480
+                }
+            })
+            .to_string(),
+        );
+        assert!(duplicated.ok);
+        assert_eq!(duplicated.result.as_ref().unwrap().result_type, "mutation");
+        let generated_ids = duplicated.result.as_ref().unwrap().value["entityIds"]["midiNotes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(generated_ids.len(), 2);
+        assert!(generated_ids.iter().all(|id| {
+            id.as_str() != Some(first_note_id.as_str())
+                && id.as_str() != Some(second_note_id.as_str())
+        }));
+        assert_ne!(generated_ids[0], generated_ids[1]);
+
+        let invalid = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "invalid-duplicate",
+                "command": "midi-note.duplicate",
+                "expectedSequence": 5,
+                "params": {
+                    "clipId": clip_id,
+                    "noteIds": [first_note_id, "note:missing"],
+                    "offsetTicks": 480
+                }
+            })
+            .to_string(),
+        );
+        assert!(!invalid.ok);
+        assert_eq!(
+            invalid.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::CommandFailed)
+        );
+        assert!(invalid.result.is_none());
+
+        let current = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId": "inspect",
+                "command": "session.inspect",
+                "params": {}
+            })
+            .to_string(),
+        );
+        assert_eq!(current.sequence, Some(5));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_undo_requires_the_current_expected_sequence() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-cli-undo-sequence-{}", std::process::id()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let mutation = handle_request(
+            &dispatcher,
+            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
+        );
+        assert_eq!(mutation.sequence, Some(1));
+
+        let response = handle_request(
+            &dispatcher,
+            r#"{"requestId":"undo","command":"undo","expectedSequence":0,"params":{}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::Conflict)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

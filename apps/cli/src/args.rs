@@ -167,10 +167,25 @@ pub enum HostCommand {
 #[derive(Debug, Subcommand)]
 pub enum SessionCommand {
     Get,
+    Inspect(SessionInspectArgs),
     Settings {
         #[command(subcommand)]
         command: SessionSettingsCommand,
     },
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInspectArgs {
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1290,9 +1305,9 @@ pub struct RenderStartArgs {
     #[arg(long, default_value = "entire-arrangement")]
     pub range: String,
     #[arg(long)]
-    pub start_tick: Option<u64>,
+    pub start: Option<String>,
     #[arg(long)]
-    pub end_tick: Option<u64>,
+    pub end: Option<String>,
     #[arg(long)]
     pub normalize: Option<bool>,
     #[arg(long)]
@@ -1331,6 +1346,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         },
         CliCommand::Session { command } => match command {
             SessionCommand::Get => simple("session.get"),
+            SessionCommand::Inspect(args) => value("session.inspect", args),
             SessionCommand::Settings { command } => match command {
                 SessionSettingsCommand::Update(args) => value("session.settings.update", args),
             },
@@ -1612,25 +1628,25 @@ fn value<T: Serialize>(command: &str, params: T) -> ControlCommand {
 }
 
 fn render_start(args: RenderStartArgs) -> Result<ControlCommand, String> {
-    let range = match args.range.as_str() {
-        "entire-arrangement" => json!({"kind": "entireArrangement"}),
-        "loop-range" => json!({"kind": "loopRange"}),
-        "time-selection" => {
-            let start_tick = args
-                .start_tick
-                .ok_or_else(|| "--start-tick is required for --range time-selection".to_string())?;
-            let end_tick = args
-                .end_tick
-                .ok_or_else(|| "--end-tick is required for --range time-selection".to_string())?;
-            json!({
-                "kind": "timeSelection",
-                "startTick": start_tick,
-                "endTick": end_tick,
-            })
+    let has_start = args.start.is_some();
+    let has_end = args.end.is_some();
+    if has_start != has_end {
+        return Err("--start and --end must be provided together".into());
+    }
+    let range = match (args.range.as_str(), has_start) {
+        ("entire-arrangement", false) => json!({"kind": "entireArrangement"}),
+        ("loop-range", false) => json!({"kind": "loopRange"}),
+        ("entire-arrangement", true) => json!({
+            "kind": "timeSelection",
+            "start": args.start.expect("start was checked"),
+            "end": args.end.expect("end was checked"),
+        }),
+        ("loop-range", true) => {
+            return Err("--range loop-range cannot be combined with --start or --end".into());
         }
-        other => {
+        (other, _) => {
             return Err(format!(
-                "--range must be entire-arrangement, loop-range, or time-selection (got {other})"
+                "--range must be entire-arrangement or loop-range (got {other})"
             ));
         }
     };
@@ -1880,6 +1896,81 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "timebase.update");
         assert_eq!(request.params, json!({"bpm": 140.0}));
+    }
+
+    #[test]
+    fn session_inspect_preserves_optional_musical_scope() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "session",
+            "inspect",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+            "--track-id",
+            "track:keys",
+        ])
+        .unwrap();
+
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "session.inspect");
+        assert_eq!(
+            request.params,
+            json!({"start":"9:1","end":"13:1","trackId":"track:keys"})
+        );
+    }
+
+    #[test]
+    fn render_start_uses_musical_time_selection_and_rejects_mixed_ranges() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+            "--track-id",
+            "track:keys",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params["options"]["range"],
+            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--range",
+            "loop-range",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--start",
+            "9:1",
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
     }
 
     #[test]

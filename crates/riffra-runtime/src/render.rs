@@ -1,5 +1,5 @@
 use crate::asset;
-use riffra_core::{AssetId, CreativeSession, OfflineRenderRequest, RenderRuntime};
+use riffra_core::{AssetId, CreativeSession, MusicalPosition, OfflineRenderRequest, RenderRuntime};
 use riffra_render_worker::RenderWorker;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,10 +25,10 @@ pub enum RenderRange {
     EntireArrangement,
     LoopRange,
     TimeSelection {
-        #[ts(type = "number")]
-        start_tick: u64,
-        #[ts(type = "number")]
-        end_tick: u64,
+        #[ts(type = "string")]
+        start: MusicalPosition,
+        #[ts(type = "string")]
+        end: MusicalPosition,
     },
 }
 
@@ -402,12 +402,23 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
             }
             Ok((loop_range.start_tick.0, loop_range.end_tick.0))
         }
-        RenderRange::TimeSelection {
-            start_tick,
-            end_tick,
-        } if end_tick > start_tick => Ok((*start_tick, *end_tick)),
-        RenderRange::TimeSelection { .. } => {
-            Err("Time Selection must have a positive duration.".into())
+        RenderRange::TimeSelection { start, end } => {
+            let start_tick = session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(*start)
+                .map_err(|error| error.to_string())?
+                .0;
+            let end_tick = session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(*end)
+                .map_err(|error| error.to_string())?
+                .0;
+            if end_tick <= start_tick {
+                return Err("Time Selection must have a positive duration.".into());
+            }
+            Ok((start_tick, end_tick))
         }
     }
 }
@@ -513,11 +524,55 @@ mod tests {
             resolve_range(
                 &session_with_clips(),
                 &RenderRange::TimeSelection {
-                    start_tick: 100,
-                    end_tick: 100,
+                    start: "1:1".parse().unwrap(),
+                    end: "1:1".parse().unwrap(),
                 },
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn time_selection_converts_musical_positions_at_the_render_boundary() {
+        let session = session_with_clips();
+        assert_eq!(
+            resolve_range(
+                &session,
+                &RenderRange::TimeSelection {
+                    start: "9:1".parse().unwrap(),
+                    end: "13:1".parse().unwrap(),
+                },
+            )
+            .unwrap(),
+            (30_720, 46_080)
+        );
+        assert_eq!(
+            resolve_range(
+                &session,
+                &RenderRange::TimeSelection {
+                    start: "1:2+1/2".parse().unwrap(),
+                    end: "2:1".parse().unwrap(),
+                },
+            )
+            .unwrap(),
+            (1_440, 3_840)
+        );
+    }
+
+    #[test]
+    fn time_selection_uses_the_project_time_signature() {
+        let mut session = session_with_clips();
+        session.arrangement.timebase.time_signature_numerator = 3;
+        assert_eq!(
+            resolve_range(
+                &session,
+                &RenderRange::TimeSelection {
+                    start: "3:1".parse().unwrap(),
+                    end: "4:1".parse().unwrap(),
+                },
+            )
+            .unwrap(),
+            (5_760, 8_640)
         );
     }
 

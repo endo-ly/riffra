@@ -778,6 +778,30 @@ mod tests {
             inserted.arrangement.midi_clips[0].notes[1].id
         );
 
+        let existing_note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+        let empty_selection = application
+            .duplicate_midi_notes(&clip_id, Vec::new(), 1_920)
+            .unwrap_err();
+        assert!(empty_selection.to_string().contains("no midi notes"));
+
+        let missing_note = application
+            .duplicate_midi_notes(
+                &clip_id,
+                vec![existing_note_id.clone(), "note:missing".into()],
+                1_920,
+            )
+            .unwrap_err();
+        assert!(missing_note.to_string().contains("not found"));
+
+        let duplicate_selection = application
+            .duplicate_midi_notes(
+                &clip_id,
+                vec![existing_note_id.clone(), existing_note_id],
+                1_920,
+            )
+            .unwrap_err();
+        assert!(duplicate_selection.to_string().contains("duplicate"));
+
         let note_ids = inserted.arrangement.midi_clips[0]
             .notes
             .iter()

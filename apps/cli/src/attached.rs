@@ -1,3 +1,4 @@
+use crate::output::compact_agent_response;
 use riffra_control::{
     ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
     ProtocolError,
@@ -47,7 +48,9 @@ impl AttachedBackend {
                 Ok(request) => match request.validate() {
                     Err(error) => ControlResponse::failure(request.request_id, None, error),
                     Ok(()) => match self.request(&request) {
-                        Ok(response) => response,
+                        Ok(response) => {
+                            compact_agent_response(&request.command, &request.params, response)
+                        }
                         Err(error) => ControlResponse::failure(
                             request.request_id,
                             None,

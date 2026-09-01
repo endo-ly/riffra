@@ -2724,6 +2724,62 @@ mod tests {
     }
 
     #[test]
+    fn stale_render_and_undo_requests_are_rejected_by_the_canonical_sequence() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-sequence-guard-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        let mutation = host.dispatch_control(ControlRequest::new(
+            "track-add",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+        assert!(mutation.ok);
+        assert_eq!(mutation.sequence, Some(1));
+
+        let undo = host.dispatch_control(ControlRequest::new(
+            "stale-undo",
+            ControlCommand::new("undo", serde_json::json!({})),
+            Some(0),
+        ));
+        assert!(!undo.ok);
+        assert_eq!(
+            undo.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::Conflict)
+        );
+
+        let render = host.dispatch_control(ControlRequest::new(
+            "stale-render",
+            ControlCommand::new("render.start", serde_json::json!({})),
+            Some(0),
+        ));
+        assert!(!render.ok);
+        assert_eq!(
+            render.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::Conflict)
+        );
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
     fn host_info_returns_the_lightweight_selector_payload() {
         let data_root = std::env::temp_dir().join(format!(
             "riffra-runtime-info-{}-{}",

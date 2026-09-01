@@ -50,18 +50,20 @@ try {
         $bootstrap.result.value.canonical.sequence -ne 0) {
         throw 'Attached host.bootstrap returned an invalid contract'
     }
-    & $binary --data-root $dataRoot --attach track add --name 'Process Test' --kind instrument |
+    & $binary --data-root $dataRoot --attach --expected-sequence 0 track add --name 'Process Test' --kind instrument |
         Out-File (Join-Path $dataRoot 'track.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached track.add failed' }
     $track = Get-Content (Join-Path $dataRoot 'track.json') | ConvertFrom-Json
-    if (-not $track.ok -or $track.result.type -ne 'arrangementMutation' -or $track.sequence -ne 1) {
+    if (-not $track.ok -or $track.result.type -ne 'mutation' -or $track.sequence -ne 1 -or
+        $null -ne $track.result.value.canonical -or $track.result.value.entityIds.tracks.Count -ne 1) {
         throw 'Attached track.add returned an invalid contract'
     }
-    & $binary --data-root $dataRoot --attach undo |
+    & $binary --data-root $dataRoot --attach --expected-sequence 1 undo |
         Out-File (Join-Path $dataRoot 'undo.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached undo failed' }
     $undo = Get-Content (Join-Path $dataRoot 'undo.json') | ConvertFrom-Json
-    if (-not $undo.ok -or $undo.result.type -ne 'arrangementMutation' -or $undo.sequence -ne 2) {
+    if (-not $undo.ok -or $undo.result.type -ne 'mutation' -or $undo.sequence -ne 2 -or
+        $null -ne $undo.result.value.canonical) {
         throw 'Attached undo returned an invalid contract'
     }
 
