@@ -304,7 +304,7 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 
 ### 8.2 応答とエラー
 
-成功応答には、結果が対応する正準シーケンスを含める。`session.get`はStandalone、serve、Attachedの全経路で`result.type: "session"`と`CreativeSession`を返す。Rack、欠落依存、Undo/RedoなどRuntime投影と結び付くアレンジ変更は`result.type: "arrangementMutation"`とし、`result.value.canonical`が正準状態、`result.value.projection`が投影結果を表す。この場合は`result.value.canonical.sequence`と応答の`sequence`が一致する。その他の変更は各コマンド固有の結果型を使う。
+成功応答には、結果が対応する正準シーケンスを含める。HostとDesktopが共有するControl protocolでは、`session.get`は`result.type: "session"`と`CreativeSession`を返す。Rack、欠落依存、Undo/RedoなどRuntime投影と結び付くアレンジ変更は`result.type: "arrangementMutation"`とし、`result.value.canonical`が正準状態、`result.value.projection`が投影結果を表す。この場合は`result.value.canonical.sequence`と応答の`sequence`が一致する。その他の変更は各コマンド固有の結果型を使う。
 
 読み取りコマンドは1つの`CanonicalState`スナップショットから結果と応答シーケンスを構築する。応答を組み立てる途中で別の正準状態を読み直さない。
 
@@ -361,7 +361,9 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 
 Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
 
-`session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、必要な件数だけを返す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
+`session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、件数に固定上限を設けない。`automationLaneCount` はTrack全体のLane数、`automationPointCount` は指定範囲に含まれるPoint数を表す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
+
+Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答を軽量な `mutation` receiptへ変換する。receiptは応答の `sequence`、Projection状態、構造Entity ID(Track、Clip、Region、Harmony、Marker、Automation Lane、Device)を含み、Noteを生成する操作では生成されたMIDI Note IDも含む。Canonical Session、MIDI Note/Eventの内容、Automation Point、Plugin parameter、`stateData` は含まない。後続操作に必要な最新状態は `session inspect` で取得する。DesktopとHost間の共有Control protocolではDesktop同期のためCanonical結果を維持する。
 
 `track list` は軽量な `TrackSummary` 投影を返す。Track と device の識別情報・ミキサー情報は含むが、device の `parameterValues` は含まない。完全な device 状態が必要な場合は `session get` を使う。
 
@@ -380,6 +382,8 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。プラグインエディタのopen command、録音、プレビュー、VSTスキャン、ライブラリmetadata、解析は現在HostのRuntime / shared serviceを使う。エディタから発生したplugin state / parameterの永続化はHost内のcoordinatorがCanonical commitを行い、Desktop WebViewの往復には依存しない。
 
 `render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。音楽座標の部分Renderは`start` / `end`の`MusicalPosition`を受け取り、Runtime境界で既存のRender計画向けtickへ変換する。`trackId`との併用でTrack単位の部分Renderも指定できる。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
+
+`expectedSequence` はMutationだけでなく `render.start`、`undo`、`redo` にも適用される。Inspect後に人間の編集が入った場合、対象Snapshotを別の状態でRenderしたり直前の別ユーザーの編集をUndoしたりしないようConflictで拒否する。RenderやUndoのConflictは自動再送せず、最新状態を再Inspectする。SequenceのRevision tokenは同じ `AppCore` の有効期間でだけ成立し、Standaloneのワンショットプロセス間では共有されない。
 
 ---
 

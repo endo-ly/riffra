@@ -1,10 +1,12 @@
 mod args;
 mod attached;
+mod output;
 mod serve;
 
 use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
+use output::compact_agent_response;
 use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
 use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
@@ -58,7 +60,11 @@ fn run() -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let response = attached.request(&request)?;
+        let response = compact_agent_response(
+            &request.command,
+            &request.params,
+            attached.request(&request)?,
+        );
         if response.ok {
             return write_response(&response);
         }
@@ -80,13 +86,18 @@ fn run() -> Result<(), String> {
     let dispatched = dispatcher
         .dispatch_request(request.clone())
         .map_err(|error| error.to_string())?;
-    write_response(&ControlResponse::success(
+    let response = ControlResponse::success(
         request.request_id,
         dispatched.sequence,
         CommandResult {
             result_type: dispatched.result_type.into(),
             value: dispatched.value,
         },
+    );
+    write_response(&compact_agent_response(
+        &request.command,
+        &request.params,
+        response,
     ))
 }
 
@@ -124,13 +135,17 @@ fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
         }
     };
     match dispatcher.dispatch_request(request.clone()) {
-        Ok(result) => ControlResponse::success(
-            request.request_id,
-            result.sequence,
-            CommandResult {
-                result_type: result.result_type.into(),
-                value: result.value,
-            },
+        Ok(result) => compact_agent_response(
+            &request.command,
+            &request.params,
+            ControlResponse::success(
+                request.request_id,
+                result.sequence,
+                CommandResult {
+                    result_type: result.result_type.into(),
+                    value: result.value,
+                },
+            ),
         ),
         Err(error) => ControlResponse::failure(request.request_id, None, error.protocol_error()),
     }
@@ -168,6 +183,51 @@ mod tests {
         assert!(response.ok);
         assert_eq!(response.request_id, "42");
         assert!(response.sequence.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_mutations_return_a_compact_receipt() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-mutation-receipt-{}",
+            std::process::id()
+        ));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let response = handle_request(
+            &dispatcher,
+            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
+        );
+
+        assert!(response.ok);
+        assert_eq!(response.sequence, Some(1));
+        let result = response.result.unwrap();
+        assert_eq!(result.result_type, "mutation");
+        assert!(result.value.get("canonical").is_none());
+        assert!(result.value.get("entityIds").is_some());
+        assert!(!result.value.to_string().contains("arrangement"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_undo_requires_the_current_expected_sequence() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-cli-undo-sequence-{}", std::process::id()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let mutation = handle_request(
+            &dispatcher,
+            r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
+        );
+        assert_eq!(mutation.sequence, Some(1));
+
+        let response = handle_request(
+            &dispatcher,
+            r#"{"requestId":"undo","command":"undo","expectedSequence":0,"params":{}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::Conflict)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

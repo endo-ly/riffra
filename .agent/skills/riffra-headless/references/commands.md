@@ -15,22 +15,24 @@
 
 1. `session inspect` で現在の構造と `sequence` を把握する。必要なら `--start` / `--end` または `--track-id` で対象を絞る。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う
 2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡し、対象 ID(`track:*` / `clip:*` / `note:*` / `marker:*`)を読む
-3. 編集後は同じ範囲を `session inspect` し、音を確認するときだけ `render start` と `job get` を使う。採用しない変更は `undo` して再Inspectする
-4. `conflict` になったMutationは自動再送せず、最新状態をInspectして編集内容を決め直す
+3. 編集後は同じ範囲を `session inspect` し、音を確認するときは確認後の `sequence` を `--expected-sequence` に指定した `render start` と `job get` を使う。採用しない変更は変更後の `sequence` を `--expected-sequence` に指定した `undo` を実行して再Inspectする
+4. `conflict` になったMutation・Render・Undo・Redoは自動再送せず、最新状態をInspectして内容を決め直す
 
 ```powershell
 # 現在の構造と sequence を把握
-riffra --data-root ./riffra-data session inspect
+riffra --data-root ./riffra-data --attach session inspect
 
 # 必要な範囲だけ確認
-riffra --data-root ./riffra-data session inspect --start 9:1 --end 13:1 --track-id track:01j...
+riffra --data-root ./riffra-data --attach session inspect --start 9:1 --end 13:1 --track-id track:01j...
 
-# Track 追加 → 応答 result.value.arrangement.tracks[*] から ID を得る
-riffra --data-root ./riffra-data track add --name Drums --kind audio
+# Track 追加 → 軽量なmutation receiptからIDを得て、続けてInspectで状態を確認する
+riffra --data-root ./riffra-data --attach --expected-sequence 0 track add --name Drums --kind audio
+riffra --data-root ./riffra-data --attach session inspect
 
-# MIDI Clip 作成 → clip ID を得て音楽上のNoteを積む
-riffra --data-root ./riffra-data music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
-riffra --data-root ./riffra-data music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
+# MIDI Clip 作成 → 再Inspectで状態を確認して音楽上のNoteを積む
+riffra --data-root ./riffra-data --attach --expected-sequence 1 music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
+riffra --data-root ./riffra-data --attach session inspect --track-id track:01j...
+riffra --data-root ./riffra-data --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
 ```
 
 通常の作曲では、対応する `music.*` の音楽表現を使う。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
@@ -117,10 +119,12 @@ riffra --data-root ./riffra-data --interactive
 
 ```json
 {"requestId":"u1","command":"track.add","params":{"name":"Bass","kind":"instrument"}}
-{"requestId":"u2","command":"undo","params":{}}
-{"requestId":"u3","command":"redo","params":{}}
+{"requestId":"u2","command":"undo","expectedSequence":1,"params":{}}
+{"requestId":"u3","command":"redo","expectedSequence":0,"params":{}}
 {"requestId":"u4","command":"history.get","params":{}}
 ```
+
+`sequence` の競合保護は同じ `AppCore` の有効期間でだけ成立する。Standaloneのワンショットを跨ぐRevision tokenとしては使えないため、GUIと共同編集する場合はLive Hostへ `--attach` し、Standaloneで連続操作する場合は上記の `--interactive` を使う。
 
 以下のコマンドはすべての実行形態で同じ引数で使える。稼働中の Desktop や Live Host を相手にするときは `--attach` を付ける。引数はロングフラグ(camelCase を kebab-case 化)で渡し、完全な一覧は `cargo run -p riffra-cli -- <command> --help` で確認できる。
 
@@ -329,13 +333,14 @@ riffra --data-root ./riffra-data --attach record promote --id rec:01j...
 ### レンダリング(非同期ジョブ)
 
 ```powershell
-riffra --data-root ./riffra-data --attach render start --range loop-range --normalize true
-riffra --data-root ./riffra-data --attach render start --start 9:1 --end 13:1 --track-id track:01j...
+riffra --data-root ./riffra-data --attach --expected-sequence 43 render start --range loop-range --normalize true
+riffra --data-root ./riffra-data --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
 riffra --data-root ./riffra-data --attach job get --id job:01j...
 riffra --data-root ./riffra-data --attach job cancel --id job:01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
+- `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
 - 応答は `type: "job"` のジョブ ID。完了は `job get` で確認し、進行中の停止は `job cancel`
 - 出力は `exports/render-{ms}/timeline.wav` と manifest として書き出される
 

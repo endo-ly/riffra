@@ -542,19 +542,27 @@ fn inspect_midi_clip(
 }
 
 fn midi_counts(clip: &MidiClip, selection: Option<SelectionTicks>) -> (usize, usize) {
+    let Some(selection) = selection else {
+        return (clip.notes.len(), clip.events.len());
+    };
     let notes = clip
         .notes
         .iter()
         .filter(|note| {
             let start = clip.start_tick.0.saturating_add(note.start_tick.0);
             let end = start.saturating_add(note.duration_ticks);
-            includes_range(selection, start, end)
+            includes_range(Some(selection), start, end)
         })
         .count();
     let events = clip
         .events
         .iter()
-        .filter(|event| includes_point(selection, clip.start_tick.0.saturating_add(event.tick.0)))
+        .filter(|event| {
+            includes_point(
+                Some(selection),
+                clip.start_tick.0.saturating_add(event.tick.0),
+            )
+        })
         .count();
     (notes, events)
 }
@@ -588,7 +596,10 @@ fn includes_point(selection: Option<SelectionTicks>, point: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CreativeSession, MidiClip, MidiEvent, MidiEventKind, MidiNote, Track};
+    use crate::{
+        AutomationLane, CreativeSession, HarmonyChord, HarmonyEvent, MidiClip, MidiEvent,
+        MidiEventKind, MidiNote, RackDevice, RackInstance, TimelineRegion, Track,
+    };
 
     fn canonical(session: CreativeSession) -> CanonicalState {
         CanonicalState {
@@ -677,6 +688,264 @@ mod tests {
         assert_eq!(inspection.counts.midi_clips, 1);
         assert_eq!(inspection.counts.midi_notes, 1);
         assert_eq!(inspection.counts.midi_events, 0);
+    }
+
+    #[test]
+    fn range_filters_arrangement_objects_and_automation_points_at_boundaries() {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::instrument("track:keys".into(), "Keys".into()));
+        let chord = HarmonyChord::resolve("C").unwrap();
+        session.arrangement.regions = vec![
+            TimelineRegion {
+                id: "region:before".into(),
+                name: "Before".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(960),
+            },
+            TimelineRegion {
+                id: "region:inside".into(),
+                name: "Inside".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            },
+            TimelineRegion {
+                id: "region:after".into(),
+                name: "After".into(),
+                start_tick: TimelineTick(1_920),
+                end_tick: TimelineTick(2_880),
+            },
+        ];
+        session.arrangement.harmony_events = vec![
+            HarmonyEvent {
+                id: "harmony:before".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(960),
+                chord: chord.clone(),
+            },
+            HarmonyEvent {
+                id: "harmony:inside".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+                chord,
+            },
+            HarmonyEvent {
+                id: "harmony:after".into(),
+                start_tick: TimelineTick(1_920),
+                end_tick: TimelineTick(2_880),
+                chord: HarmonyChord::resolve("G").unwrap(),
+            },
+        ];
+        session.arrangement.markers = vec![
+            crate::Marker {
+                id: "marker:start".into(),
+                name: "Start".into(),
+                tick: 960,
+            },
+            crate::Marker {
+                id: "marker:end".into(),
+                name: "End".into(),
+                tick: 1_920,
+            },
+        ];
+        session.arrangement.automation_lanes = vec![AutomationLane {
+            id: "lane:volume".into(),
+            track_id: "track:keys".into(),
+            parameter: crate::AutomationParameter::Volume,
+            points: vec![
+                crate::AutomationPoint {
+                    id: "point:start".into(),
+                    tick: TimelineTick(960),
+                    value: 0.5,
+                },
+                crate::AutomationPoint {
+                    id: "point:end".into(),
+                    tick: TimelineTick(1_920),
+                    value: 0.75,
+                },
+            ],
+        }];
+
+        let inspection = inspect_canonical_state(
+            &canonical(session.clone()),
+            SessionInspectionQuery {
+                start: Some("1:2".parse().unwrap()),
+                end: Some("1:3".parse().unwrap()),
+                track_id: Some("track:keys".into()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            inspection
+                .regions
+                .iter()
+                .map(|region| region.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["region:inside"]
+        );
+        assert_eq!(
+            inspection
+                .harmony_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["harmony:inside"]
+        );
+        assert_eq!(
+            inspection
+                .markers
+                .iter()
+                .map(|marker| marker.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["marker:start"]
+        );
+        assert_eq!(inspection.counts.automation_points, 1);
+
+        let outside = inspect_canonical_state(
+            &canonical(session),
+            SessionInspectionQuery {
+                start: Some("2:1".parse().unwrap()),
+                end: Some("2:2".parse().unwrap()),
+                track_id: Some("track:keys".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(outside.counts.automation_lanes, 1);
+        assert_eq!(outside.counts.automation_points, 0);
+    }
+
+    #[test]
+    fn inspection_has_no_fixed_structural_cap_and_omits_detail_payloads() {
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::instrument("track:keys".into(), "Keys".into());
+        track.instrument = Some(RackDevice {
+            id: "device:synth".into(),
+            name: "Synth".into(),
+            kind: DeviceKind::Plugin,
+            path: Some("synth.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: vec![0.25],
+            state_data: Some("large plugin state".into()),
+            disabled_placeholder: false,
+        });
+        track.rack = RackInstance {
+            devices: Vec::new(),
+            macros: Vec::new(),
+        };
+        session.arrangement.tracks.push(track);
+        session.arrangement.midi_clips = (0..129)
+            .map(|index| MidiClip {
+                id: format!("clip:{index}"),
+                name: format!("Clip {index}"),
+                track_id: "track:keys".into(),
+                asset_id: None,
+                start_tick: TimelineTick(index * 960),
+                duration_ticks: 960,
+                notes: vec![MidiNote {
+                    id: format!("note:{index}"),
+                    note: 60,
+                    start_tick: TimelineTick(0),
+                    duration_ticks: 480,
+                    velocity: 100,
+                    channel: 1,
+                }],
+                events: vec![MidiEvent {
+                    id: format!("event:{index}"),
+                    kind: MidiEventKind::ControlChange,
+                    tick: TimelineTick(0),
+                    channel: 1,
+                    data1: 1,
+                    data2: 2,
+                }],
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            })
+            .collect();
+        session.arrangement.harmony_events = (0..129)
+            .map(|index| HarmonyEvent {
+                id: format!("harmony:{index}"),
+                start_tick: TimelineTick(index * 960),
+                end_tick: TimelineTick((index + 1) * 960),
+                chord: HarmonyChord::resolve("C").unwrap(),
+            })
+            .collect();
+        session.arrangement.automation_lanes = vec![AutomationLane {
+            id: "lane:volume".into(),
+            track_id: "track:keys".into(),
+            parameter: crate::AutomationParameter::Volume,
+            points: vec![crate::AutomationPoint {
+                id: "point:volume".into(),
+                tick: TimelineTick(0),
+                value: 0.5,
+            }],
+        }];
+
+        let inspection = inspect_canonical_state(
+            &canonical(session),
+            SessionInspectionQuery {
+                start: None,
+                end: None,
+                track_id: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(inspection.counts.midi_clips, 129);
+        assert_eq!(inspection.counts.midi_notes, 129);
+        assert_eq!(inspection.counts.midi_events, 129);
+        assert_eq!(inspection.counts.harmony_events, 129);
+        assert_eq!(inspection.counts.automation_lanes, 1);
+        assert_eq!(inspection.counts.automation_points, 1);
+        assert_eq!(
+            inspection.tracks[0].instrument.as_ref().unwrap().id,
+            "device:synth"
+        );
+        let encoded = serde_json::to_string(&inspection).unwrap();
+        for field in ["notes", "events", "points", "stateData", "parameterValues"] {
+            assert!(!encoded.contains(field), "unexpected field {field}");
+        }
+    }
+
+    #[test]
+    fn harmony_inspection_preserves_gaps_without_synthesizing_no_chord_events() {
+        let mut session = CreativeSession::new(1);
+        session.arrangement.harmony_events = vec![
+            HarmonyEvent {
+                id: "harmony:c".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(960),
+                chord: HarmonyChord::resolve("C").unwrap(),
+            },
+            HarmonyEvent {
+                id: "harmony:g".into(),
+                start_tick: TimelineTick(1_920),
+                end_tick: TimelineTick(2_880),
+                chord: HarmonyChord::resolve("G").unwrap(),
+            },
+        ];
+
+        let inspection = inspect_canonical_state(
+            &canonical(session),
+            SessionInspectionQuery {
+                start: None,
+                end: None,
+                track_id: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(inspection.harmony_events.len(), 2);
+        assert!(
+            inspection
+                .harmony_events
+                .iter()
+                .all(|event| event.chord.name != "N.C.")
+        );
     }
 
     #[test]
