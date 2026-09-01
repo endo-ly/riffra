@@ -91,7 +91,7 @@ riffra-control（crates/riffra-control）: current-user Local Host接続基盤
   └─ Named Pipe / Unix Domain Socketのframingと権限境界
 
 riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
-  ├─ SessionStore / Asset Repository / Project package
+  ├─ ProjectStore / Project-scoped SessionStore / Asset Repository / Project package
   ├─ WAV metadata / MIDI SMF parser
   └─ DataRootLease（プロセス間の排他所有）
 
@@ -104,7 +104,7 @@ riffra-core（crates/riffra-core）: プラットフォーム非依存のApplica
   └─ Tauri・WebView・OS統合を含まない
 
 CLI ホスト（apps/cli）
-  ├─ riffra-host のDataRootLease / SessionStoreを取得する
+  ├─ riffra-host のDataRootLease / ProjectStore / SessionStoreを取得する
   ├─ AppCore と SessionStorage Port を直接利用する
   ├─ ワンショット引数と対話型 JSON Lines を同じ Dispatcher へ渡す
   └─ 永続編集だけを行うStandaloneモードと、DawHostを起動するserveモードを持つ
@@ -115,8 +115,9 @@ Attached CLI（apps/cli --attach）
   └─ Host Control Serverを通じて正準操作を要求する
 
 永続化・外部境界
-  ├─ riffra-host: SessionStore / Asset Repository / Project package / file parsers
-  ├─ SessionStore: scratch/current.json + generations（§6）
+  ├─ riffra-host: ProjectStore / SessionStore / Asset Repository / Project package / file parsers
+  ├─ ProjectStore: workspace.json + projects/<project-id>（§6）
+  ├─ SessionStore: projects/<project-id>/session.json + generations（§6）
   ├─ ライブラリ索引: SQLite リードモデル（§8）
   └─ ランタイム境界: AudioSupervisor → riffra-audio サイドカー（§5）
 ```
@@ -187,9 +188,12 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ```text
 <data_root>/
-├─ scratch/
-│  ├─ current.json          # 現行セッション（正準の保存先）
-│  └─ generations/          # 世代スナップショット {ms}-{pid}.json（最大20件）
+├─ workspace.json            # Active Project の識別
+├─ .riffra.lock              # DataRoot の排他所有
+├─ projects/
+│  └─ <project-id>/          # UUID形式のProject container
+│     ├─ session.json        # Projectの現行CreativeSession
+│     └─ generations/        # 世代スナップショット（最大20件）
 ├─ library/riffra.db        # ライブラリ索引（SQLite リードモデル）
 ├─ recordings/
 │  ├─ inbox/                # 録音キャプチャ（録音直後のテイク置き場）
@@ -203,24 +207,26 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.2 アトミック保存と世代管理
 
-`riffra-host::SessionStore` は、クラッシュしても current.json が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
+`riffra-host::SessionStore` は、Projectごとに、クラッシュしても `session.json` が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
 
-1. 現在の current.json を generations/ へコピー
+1. 現在の `session.json` を同じProjectの `generations/` へコピー
 2. 新内容を `.tmp` へ書き、`sync_all`（fsync）
 3. `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`（Windows）または `rename` で置換
 4. 古い世代を20件を超えて削除
 
-保存前にスクラッチ領域の空き容量を検証し、容量不足では保存を拒否する。保存はプロセス内のグローバルロックで直列化される。
+保存前にProject領域の空き容量を検証し、容量不足では保存を拒否する。保存はプロセス内のグローバルロックで直列化される。
 
 ### 6.3 ロードと回復
 
-`load_or_create()` は以下の順で解決する。
+`ProjectStore` はDataRootの初期化時に最初のProjectを作成するか、`workspace.json` のActive Projectを選ぶ。各Projectの `SessionStore` は以下の順で解決する。
 
-1. current.json を読み、`deserialize_session` → `validate_and_normalize` → **アセット参照検証** を通れば採用
-2. 破損・参照不正なら generations/ を新しい順に読み、**スキーマ検証に通る最新世代** を `recovered_from_generation: true` として採用
-3. 世代も無い場合は新規セッションを作成して保存
+1. `session.json` を読み、`deserialize_session` → `validate_and_normalize` → **アセット参照検証** を通れば採用
+2. 破損・参照不正なら同じProjectの `generations/` を新しい順に読み、**スキーマ検証に通る最新世代** を `recovered_from_generation: true` として採用
+3. 新規DataRootにProjectが無い場合だけ、空のCreativeSessionを作成して保存
 
-破損した current.json は**決して上書きしない**（唯一の回復手段を壊さない）。起動時に世代回復が発生した場合は `recovery_candidates()` が世代ファイルからメタデータだけを軽量に読み、ユーザー選択の `restore_generation()` が指定世代を正準状態として復元・保存する。
+破損した `session.json` は**決して上書きしない**（唯一の回復手段を壊さない）。起動時に世代回復が発生した場合は `recovery_candidates()` が世代ファイルからメタデータだけを軽量に読み、ユーザー選択の `restore_generation()` が指定世代を正準状態として復元・保存する。Active Project以外の読込不能Projectも一覧から除外せず、読込エラーを持つProjectとして表示できる。
+
+旧形式の制作データを新形式へ移す場合は、Riffra外で旧バージョンからProjectをExportし、新しいDataRootへImportする。Riffraは旧形式のデータを読み込まない。
 
 ### 6.4 参照整合
 
@@ -228,7 +234,9 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ### 6.5 DataRootの所有
 
-DesktopのEmbedded Host、Standalone CLI、`riffra serve`は起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。DesktopのAttached modeとAttached CLIはDataRootを開かず、接続先Hostへ制御要求だけを送る。
+WindowsのDesktop Embedded Hostは、既定でユーザーの `Music/Riffra` 配下をDataRootとして使用する。Standalone CLIと `riffra serve` は指定されたDataRootを使用し、Attached modeのDesktopとAttached CLIは接続先HostのDataRootを開かない。
+
+これらのローカルHostは起動時に `riffra-host::DataRootLease` を取得し、ホストの生存期間中保持する。DesktopのAttached modeとAttached CLIはDataRootを開かず、接続先Hostへ制御要求だけを送る。
 
 排他にはロックファイルではなくOSのファイルロックを使うため、異常終了後に残ったファイルは新しいホストの起動を妨げない。同じDataRootを別プロセスが開いている場合は、明示的な使用中エラーを返す。
 
