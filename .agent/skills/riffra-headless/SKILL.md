@@ -164,7 +164,7 @@ Event frameはRuntime型を直接持たない。
 ```
 
 - `sequence`: その結果が対応する正準シーケンス。同じAppCoreへの次の操作の `expectedSequence` に使える
-- Agent向けCLIの正準Mutation成功応答は `result.type: "mutation"` となり、Canonical Session全体を含めない。`result.value` にはprojection状態、`sequence`、Track/Clip/Region/Harmony/Marker/Automation Lane/Deviceの構造Entity IDが含まれ、Noteを生成する操作では生成されたMIDI Note IDも含まれる。新しい正準状態は後続の `session inspect` で確認する
+- Agent向けCLIの正準Mutation成功応答は `result.type: "mutation"` となり、Canonical Session全体を含めない。`result.value` にはprojection状態、`sequence`、Track/Clip/Region/Harmony/Marker/Automation Lane/Deviceの構造Entity IDが含まれ、一部の直接Note操作では生成されたMIDI Note IDも含まれる。新しい正準状態は後続の `session inspect` で確認する
 - DesktopとHost間の共有Control接続では、Desktop同期のため従来のCanonical結果とCanonical eventを維持する
 
 失敗応答:

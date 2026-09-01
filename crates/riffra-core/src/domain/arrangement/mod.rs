@@ -1184,17 +1184,45 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Duplicates selected MIDI notes within one Clip.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selection is empty, contains duplicate or
+    /// missing Note IDs, or the Clip is unknown.
     pub fn duplicate_midi_notes(
         &mut self,
         clip_id: &str,
         note_ids: &[String],
         offset_ticks: u64,
     ) -> Result<(), DomainError> {
+        if note_ids.is_empty() {
+            return Err(DomainError::InvalidClip(
+                "no midi notes were selected.".into(),
+            ));
+        }
         let clip = self
             .midi_clips
             .iter_mut()
             .find(|clip| clip.id == clip_id)
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
+        let mut selected_ids = std::collections::HashSet::with_capacity(note_ids.len());
+        if note_ids
+            .iter()
+            .any(|note_id| !selected_ids.insert(note_id.as_str()))
+        {
+            return Err(DomainError::InvalidClip(
+                "duplicate midi note ids were selected.".into(),
+            ));
+        }
+        if note_ids
+            .iter()
+            .any(|note_id| !clip.notes.iter().any(|note| note.id == *note_id))
+        {
+            return Err(DomainError::InvalidClip(
+                "one or more midi notes were not found.".into(),
+            ));
+        }
         let selected = clip
             .notes
             .iter()

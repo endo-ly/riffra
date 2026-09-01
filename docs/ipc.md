@@ -363,7 +363,7 @@ Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、
 
 `session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、件数に固定上限を設けない。`automationLaneCount` はTrack全体のLane数、`automationPointCount` は指定範囲に含まれるPoint数を表す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
 
-Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答を軽量な `mutation` receiptへ変換する。receiptは応答の `sequence`、Projection状態、構造Entity ID(Track、Clip、Region、Harmony、Marker、Automation Lane、Device)を含み、Noteを生成する操作では生成されたMIDI Note IDも含む。Canonical Session、MIDI Note/Eventの内容、Automation Point、Plugin parameter、`stateData` は含まない。後続操作に必要な最新状態は `session inspect` で取得する。DesktopとHost間の共有Control protocolではDesktop同期のためCanonical結果を維持する。
+Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答を軽量な `mutation` receiptへ変換する。receiptは応答の `sequence`、Projection状態、構造Entity ID(Track、Clip、Region、Harmony、Marker、Automation Lane、Device)を含み、一部の直接Note操作では生成されたMIDI Note IDも含む。Canonical Session、MIDI Note/Eventの内容、Automation Point、Plugin parameter、`stateData` は含まない。後続操作に必要な最新状態は `session inspect` で取得する。DesktopとHost間の共有Control protocolではDesktop同期のためCanonical結果を維持する。
 
 `track list` は軽量な `TrackSummary` 投影を返す。Track と device の識別情報・ミキサー情報は含むが、device の `parameterValues` は含まない。完全な device 状態が必要な場合は `session get` を使う。
 
