@@ -49,12 +49,12 @@
 
 Project管理は、DataRootのファイル境界、Coreの正準状態、Hostの制御境界、Desktopの表示状態を分けて確認する。1つのテストへ全層を詰め込まず、失敗した層で原因が分かる粒度を保つ。
 
-| 層                       | 確認する内容                                                                                                                                                                                       |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `riffra-host` 単体・結合 | 新規DataRootの初期Project、UUIDによるディレクトリ分離、`workspace.json` の再起動復元、Projectごとの保存・世代回復、壊れたProjectの一覧表示                                                         |
-| `riffra-core` 単体       | Project activationがCanonical Sessionを交換し、Undo/Redoを消去し、SessionStorageへ再保存しないこと                                                                                                 |
-| `riffra-runtime` 結合    | `project.list/create/open/rename/import/export` の結果、Active ProjectとCanonical Sessionの一致、録音中の拒否、切替時のCanonicalStateChangedとProjectStateChanged、Importによる既存Project非上書き |
-| Desktop部品              | Project一覧、新規作成、切替、改名、Import / Exportの命令発行、`Opening...` 中の操作無効化、切替失敗時の旧Project維持、Host切替との独立性                                                           |
-| CLI                      | StandaloneとAttachedで同じProject command契約を使い、一覧・作成・切替・改名・Import / Exportを実行できること                                                                                       |
+| 層                       | 確認する内容                                                                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `riffra-host` 単体・結合 | 新規DataRootの初期Project、UUIDによるディレクトリ分離、`workspace.json` の再起動復元、Projectごとの保存・世代回復、壊れたProjectの一覧表示                                   |
+| `riffra-core` 単体       | Project activationがCanonical Sessionを交換し、Undo/Redoを消去し、SessionStorageへ再保存しないこと                                                                           |
+| `riffra-runtime` 結合    | `project.list/create/open/rename/import/export` の結果、Active ProjectとCanonical Sessionの一致、録音中の拒否、切替完了時のProjectActivated、Importによる既存Project非上書き |
+| Desktop部品              | Project一覧、新規作成、切替、改名、Import / Exportの命令発行、`Opening...` 中の操作無効化、切替失敗時の旧Project維持、Host切替との独立性                                     |
+| CLI                      | StandaloneとAttachedで同じProject command契約を使い、一覧・作成・切替・改名・Import / Exportを実行できること                                                                 |
 
 Project切替テストでは、旧ProjectのUndo履歴や表示選択が新Projectへ持ち越されないことも確認する。保存処理のテストでは、Project Aの変更がProject Bの `session.json` と `generations/` に影響しないことを確認する。

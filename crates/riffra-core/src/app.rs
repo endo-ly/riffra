@@ -1278,6 +1278,7 @@ mod tests {
         let saved_before_activation = storage.sessions.lock().unwrap().len();
 
         let mut next = CreativeSession::new(2);
+        let next_session_id = next.session_id.clone();
         next.project_name = Some("Next project".into());
         let activated = core.activate_session(next).unwrap();
 
@@ -1288,7 +1289,7 @@ mod tests {
         assert_eq!(core.canonical_state().unwrap().sequence, 2);
         assert_eq!(
             core.canonical_state().unwrap().session.session_id,
-            "scratch-2"
+            next_session_id
         );
         assert_eq!(core.history_state().unwrap(), HistoryState::default());
         assert_eq!(
@@ -1375,7 +1376,7 @@ mod tests {
         );
         let snapshot = core.snapshot().unwrap();
         assert_eq!(snapshot.sequence, 0);
-        assert_eq!(snapshot.session.session_id, "scratch-1");
+        assert!(!snapshot.session.session_id.is_empty());
     }
 
     #[test]

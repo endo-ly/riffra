@@ -161,7 +161,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
 | `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
 | `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                           |
-| `project-state-changed`     | `ProjectState`            | Projectの作成・切替・改名・Import後のActive Projectと一覧の変更                                                         |
+| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                             |
+| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                  |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。

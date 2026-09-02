@@ -12,7 +12,7 @@ export function canonicalState(session: CreativeSession): CanonicalState {
 /** Minimal canonical session used by browser preview and native fallback paths. */
 export function defaultSession(): CreativeSession {
   return {
-    sessionId: 'scratch-browser-preview',
+    sessionId: 'session-browser-preview',
     updatedAtMs: Date.now(),
     projectName: null,
     arrangement: {
