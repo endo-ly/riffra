@@ -4,10 +4,9 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, RwLock},
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
 static SESSION_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -43,7 +42,7 @@ impl std::error::Error for SessionLoadError {}
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     data_root: PathBuf,
-    project_id: Arc<RwLock<String>>,
+    project_id: String,
 }
 
 impl SessionStorage for SessionStore {
@@ -57,29 +56,14 @@ impl SessionStore {
     pub fn new(data_root: &Path, project_id: &str) -> Self {
         Self {
             data_root: data_root.to_path_buf(),
-            project_id: Arc::new(RwLock::new(project_id.to_owned())),
-        }
-    }
-
-    pub(crate) fn with_shared_project_id(
-        data_root: &Path,
-        project_id: Arc<RwLock<String>>,
-    ) -> Self {
-        Self {
-            data_root: data_root.to_path_buf(),
-            project_id,
+            project_id: project_id.to_owned(),
         }
     }
 
     /// Returns the Project UUID addressed by this store.
     pub fn project_id(&self) -> io::Result<String> {
-        let project_id = self
-            .project_id
-            .read()
-            .map_err(|_| io::Error::other("Project ID lock poisoned"))?
-            .clone();
-        crate::validate_project_id(&project_id).map_err(invalid_data)?;
-        Ok(project_id)
+        crate::validate_project_id(&self.project_id).map_err(invalid_data)?;
+        Ok(self.project_id.clone())
     }
 
     fn project_dir(&self) -> io::Result<PathBuf> {

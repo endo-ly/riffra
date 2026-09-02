@@ -89,7 +89,7 @@ pub struct AppCore<A> {
     data_root: PathBuf,
     session: Arc<Mutex<CreativeSession>>,
     audio: A,
-    recovered_from_generation: bool,
+    recovered_from_generation: std::sync::atomic::AtomicBool,
     safe_mode: bool,
     operation_gate: Mutex<()>,
     projection_version: AtomicU64,
@@ -109,7 +109,9 @@ impl<A> AppCore<A> {
             data_root,
             session: Arc::new(Mutex::new(session)),
             audio,
-            recovered_from_generation,
+            recovered_from_generation: std::sync::atomic::AtomicBool::new(
+                recovered_from_generation,
+            ),
             safe_mode,
             operation_gate: Mutex::new(()),
             projection_version: AtomicU64::new(0),
@@ -135,9 +137,15 @@ impl<A> AppCore<A> {
         &self.audio
     }
 
-    /// Reports whether startup restored a recovery generation.
+    /// Reports whether the active Project was loaded from a recovery generation.
     pub fn recovered_from_generation(&self) -> bool {
+        self.recovered_from_generation.load(Ordering::Acquire)
+    }
+
+    /// Updates recovery metadata when the active Project changes.
+    pub fn set_recovered_from_generation(&self, recovered: bool) {
         self.recovered_from_generation
+            .store(recovered, Ordering::Release);
     }
 
     /// Reports whether external devices and plugins are isolated.
@@ -165,18 +173,18 @@ impl<A> AppCore<A> {
         let session = session
             .validate_and_normalize()
             .map_err(ApplicationError::InvalidSession)?;
-        self.begin_exchange();
-        if let Ok(mut canonical) = self.session.lock() {
-            *canonical = session.clone();
-        } else {
-            self.end_exchange();
-            return Err(ApplicationError::StateLock);
-        }
-        self.end_exchange();
-        self.history
+        let mut canonical = self
+            .session
             .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clear();
+            .map_err(|_| ApplicationError::StateLock)?;
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        self.begin_exchange();
+        *canonical = session.clone();
+        history.clear();
+        self.end_exchange();
         Ok(session)
     }
 

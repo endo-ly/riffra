@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs,
-    hash::{Hash, Hasher},
-    io::Read,
+    hash::Hasher,
+    io::{Read, Write},
     path::{Component, Path},
 };
+use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MANIFEST_VERSION: u32 = 2;
 
@@ -15,7 +16,7 @@ const MANIFEST_VERSION: u32 = 2;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectExport {
-    /// Absolute path to the written manifest.
+    /// Absolute path to the written `.riffra` package.
     pub path: String,
     /// Session identity included in the manifest.
     pub session_id: String,
@@ -82,29 +83,16 @@ fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
 /// Exports a session and its referenced Assets into a versioned package.
 ///
 /// # Errors
-/// Returns an error when the package directory, Asset content, or manifest
-/// cannot be written.
+/// Returns an error when the output archive, Asset content, or manifest cannot
+/// be written.
 pub fn export(
     data_root: &Path,
     session: &CreativeSession,
     exported_at_ms: u64,
+    output: &Path,
 ) -> Result<ProjectExport, String> {
-    let name = safe_name(
-        session
-            .project_name
-            .as_deref()
-            .unwrap_or("Untitled Project"),
-    );
-    let directory = data_root
-        .join("exports")
-        .join(format!("{name}-{exported_at_ms}"));
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Project export folder could not be created: {error}"))?;
-    let assets_directory = directory.join("assets");
-    fs::create_dir_all(&assets_directory)
-        .map_err(|error| format!("Project asset folder could not be created: {error}"))?;
-
     let mut assets = Vec::new();
+    let mut asset_sources = Vec::new();
     for (index, asset_id) in referenced_asset_ids(session).into_iter().enumerate() {
         if assets.len() >= 256 {
             break;
@@ -153,11 +141,13 @@ pub fn export(
             .unwrap_or_default();
         let package_name = format!("{}-{}{}", index + 1, base, extension);
         let package_path = Path::new("assets").join(&package_name);
-        let destination = directory.join(&package_path);
         let (state, content_hash) = if source_path.is_file() {
-            match (fs::copy(source_path, &destination), hash_file(source_path)) {
-                (Ok(_), Ok(hash)) => ("collected".to_string(), hash),
-                _ => ("missing".to_string(), 0),
+            match hash_file(source_path) {
+                Ok(hash) => {
+                    asset_sources.push((package_path.clone(), source_path.to_path_buf()));
+                    ("collected".to_string(), hash)
+                }
+                Err(_) => ("missing".to_string(), 0),
             }
         } else {
             ("missing".to_string(), 0)
@@ -173,8 +163,6 @@ pub fn export(
         });
     }
 
-    let path = directory.join("project.json");
-    let temporary = directory.join(".project.json.tmp");
     let manifest = ProjectManifest {
         manifest_version: MANIFEST_VERSION,
         exported_at_ms,
@@ -183,38 +171,94 @@ pub fn export(
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
-    fs::write(&temporary, payload)
-        .map_err(|error| format!("Project manifest could not be written: {error}"))?;
-    finalize_rename(&temporary, &path)?;
+    if output.extension().and_then(|extension| extension.to_str()) != Some("riffra") {
+        return Err("Project export path must use the .riffra extension.".into());
+    }
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Project export folder could not be created: {error}"))?;
+    let file_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Project export path is invalid.".to_string())?;
+    let temporary = parent.join(format!(
+        ".{file_name}.{}-{}.tmp",
+        std::process::id(),
+        exported_at_ms
+    ));
+    let result = (|| {
+        let file = fs::File::create(&temporary)
+            .map_err(|error| format!("Project archive could not be created: {error}"))?;
+        let mut archive = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        archive
+            .start_file("project.json", options)
+            .map_err(|error| format!("Project manifest could not be archived: {error}"))?;
+        archive
+            .write_all(&payload)
+            .map_err(|error| format!("Project manifest could not be archived: {error}"))?;
+        for (package_path, source_path) in asset_sources {
+            let entry = package_path.to_string_lossy().replace('\\', "/");
+            archive
+                .start_file(entry, options)
+                .map_err(|error| format!("Project Asset could not be archived: {error}"))?;
+            let mut source = fs::File::open(&source_path)
+                .map_err(|error| format!("Project Asset could not be opened: {error}"))?;
+            std::io::copy(&mut source, &mut archive)
+                .map_err(|error| format!("Project Asset could not be archived: {error}"))?;
+        }
+        let file = archive
+            .finish()
+            .map_err(|error| format!("Project archive could not be finalized: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Project archive could not be synchronized: {error}"))?;
+        crate::replace_file(&temporary, output)
+            .map_err(|error| format!("Project archive could not be finalized: {error}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result?;
     Ok(ProjectExport {
-        path: path.to_string_lossy().into_owned(),
+        path: output.to_string_lossy().into_owned(),
         session_id: session.session_id.clone(),
         exported_at_ms,
         asset_count: assets.len(),
     })
 }
 
-/// Imports a project manifest and restores its collected Assets.
+/// Imports a `.riffra` archive and restores its collected Assets.
 ///
 /// # Errors
 /// Returns an error when the manifest, packaged paths, or Asset conflicts are
 /// invalid.
 pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> {
-    let payload =
-        fs::read(path).map_err(|error| format!("Project manifest could not be read: {error}"))?;
-    let mut manifest_value = serde_json::from_slice::<serde_json::Value>(&payload)
-        .map_err(|error| format!("Project manifest is invalid: {error}"))?;
-    let session_value = manifest_value
-        .get("session")
-        .cloned()
-        .ok_or_else(|| "Project manifest has no Session.".to_string())?;
-    let session_payload = serde_json::to_vec(&session_value)
-        .map_err(|error| format!("Project Session is invalid: {error}"))?;
-    let migrated_session = riffra_core::deserialize_session(&session_payload)
-        .map_err(|error| format!("Project Session is invalid: {error}"))?;
-    manifest_value["session"] = serde_json::to_value(migrated_session)
-        .map_err(|error| format!("Project Session is invalid: {error}"))?;
-    let manifest = serde_json::from_value::<ProjectManifestOwned>(manifest_value)
+    if path.extension().and_then(|extension| extension.to_str()) != Some("riffra") {
+        return Err("Project package must use the .riffra extension.".into());
+    }
+    let file = fs::File::open(path)
+        .map_err(|error| format!("Project archive could not be opened: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Project archive is invalid: {error}"))?;
+    for index in 0..archive.len() {
+        let name = archive
+            .by_index(index)
+            .map_err(|error| format!("Project archive is invalid: {error}"))?
+            .name()
+            .to_owned();
+        resolve_packaged_path(Path::new("."), &name)?;
+    }
+    let mut manifest_payload = Vec::new();
+    archive
+        .by_name("project.json")
+        .map_err(|error| format!("Project archive has no project.json manifest: {error}"))?
+        .read_to_end(&mut manifest_payload)
+        .map_err(|error| format!("Project manifest could not be read: {error}"))?;
+    let manifest = serde_json::from_slice::<ProjectManifestOwned>(&manifest_payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
     if manifest.manifest_version != MANIFEST_VERSION {
         return Err(format!(
@@ -223,12 +267,28 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
         ));
     }
     let session = manifest.session.validate_and_normalize()?;
-    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut packaged_assets = Vec::new();
     for asset in &manifest.assets {
         if asset.state != "collected" {
             continue;
         }
-        import_packaged_asset(data_root, package_root, asset)?;
+        resolve_packaged_path(Path::new("."), &asset.package_path)?;
+        let mut content = Vec::new();
+        archive
+            .by_name(&asset.package_path)
+            .map_err(|error| format!("Project Asset is missing from the archive: {error}"))?
+            .read_to_end(&mut content)
+            .map_err(|error| format!("Project Asset could not be read: {error}"))?;
+        if hash_bytes(&content) != asset.content_hash {
+            return Err(format!(
+                "Project Asset {} failed hash validation.",
+                asset.asset_id
+            ));
+        }
+        packaged_assets.push((asset.clone(), content));
+    }
+    for (asset, content) in packaged_assets {
+        import_packaged_asset(data_root, &asset, &content)?;
     }
     Ok(session)
 }
@@ -238,13 +298,9 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
 /// different production content.
 fn import_packaged_asset(
     data_root: &Path,
-    package_root: &Path,
     asset: &PackagedAsset,
+    content: &[u8],
 ) -> Result<(), String> {
-    let packaged = resolve_packaged_path(package_root, &asset.package_path)?;
-    if !packaged.is_file() {
-        return Ok(());
-    }
     AssetId::from_normalized(asset.asset_id.as_str()).map_err(|_| {
         format!(
             "Project references a non-canonical AssetId: {}.",
@@ -264,8 +320,12 @@ fn import_packaged_asset(
             return Ok(());
         }
         // Existing record but its content file is gone: restore from the package.
-        let destination = asset::unique_import_destination(data_root, &asset.name, &packaged)?;
-        fs::copy(&packaged, &destination)
+        let destination = asset::unique_import_destination(
+            data_root,
+            &asset.name,
+            Path::new(&asset.package_path),
+        )?;
+        fs::write(&destination, content)
             .map_err(|error| format!("Imported asset could not be restored: {error}"))?;
         asset::register_with_id(
             data_root,
@@ -277,8 +337,9 @@ fn import_packaged_asset(
         )?;
         return Ok(());
     }
-    let destination = asset::unique_import_destination(data_root, &asset.name, &packaged)?;
-    fs::copy(&packaged, &destination)
+    let destination =
+        asset::unique_import_destination(data_root, &asset.name, Path::new(&asset.package_path))?;
+    fs::write(&destination, content)
         .map_err(|error| format!("Imported asset could not be copied: {error}"))?;
     asset::register_with_id(
         data_root,
@@ -307,20 +368,6 @@ fn resolve_packaged_path(
         return Err("Project package path is not a safe relative path.".into());
     }
     Ok(package_root.join(relative))
-}
-
-fn finalize_rename(temporary: &Path, final_path: &Path) -> Result<(), String> {
-    if let Err(error) = fs::rename(temporary, final_path) {
-        if final_path.exists() {
-            fs::remove_file(final_path)
-                .map_err(|error| format!("Project manifest could not be replaced: {error}"))?;
-            fs::rename(temporary, final_path)
-                .map_err(|error| format!("Project manifest could not be finalized: {error}"))?;
-        } else {
-            return Err(format!("Project manifest could not be finalized: {error}"));
-        }
-    }
-    Ok(())
 }
 
 fn safe_name(value: &str) -> String {
@@ -356,9 +403,15 @@ fn hash_file(path: &Path) -> Result<u64, String> {
         if read == 0 {
             break;
         }
-        buffer[..read].hash(&mut hasher);
+        hasher.write(&buffer[..read]);
     }
     Ok(hasher.finish())
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 fn referenced_asset_kind(session: &CreativeSession, asset_id: &AssetId) -> AssetKind {
@@ -432,13 +485,42 @@ mod tests {
         session
     }
 
+    fn package_path(root: &Path, name: &str) -> std::path::PathBuf {
+        root.join(name)
+    }
+
+    fn read_manifest(path: &Path) -> serde_json::Value {
+        let file = fs::File::open(path).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        let mut payload = Vec::new();
+        archive
+            .by_name("project.json")
+            .unwrap()
+            .read_to_end(&mut payload)
+            .unwrap();
+        serde_json::from_slice(&payload).unwrap()
+    }
+
+    fn write_manifest_package(path: &Path, manifest: &serde_json::Value) {
+        let file = fs::File::create(path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        archive
+            .start_file("project.json", SimpleFileOptions::default())
+            .unwrap();
+        archive
+            .write_all(&serde_json::to_vec(manifest).unwrap())
+            .unwrap();
+        archive.finish().unwrap().sync_all().unwrap();
+    }
+
     #[test]
     fn exports_versioned_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
         let session = CreativeSession::new(now_ms());
-        let exported = export(&root, &session, 42).unwrap();
-        let payload = fs::read_to_string(&exported.path).unwrap();
-        assert!(payload.contains("manifestVersion"));
+        let output = package_path(&root, "roundtrip.riffra");
+        let exported = export(&root, &session, 42, &output).unwrap();
+        let manifest = read_manifest(Path::new(&exported.path));
+        assert_eq!(manifest["manifestVersion"], MANIFEST_VERSION);
         assert_eq!(exported.asset_count, 0);
         let imported = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(imported.session_id, session.session_id);
@@ -448,11 +530,15 @@ mod tests {
     #[test]
     fn import_rejects_a_packaged_asset_path_outside_the_project() {
         let root = std::env::temp_dir().join(format!("riffra-project-traversal-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
         let session = CreativeSession::new(now_ms());
-        let exported = export(&root, &session, 42).unwrap();
-        let manifest_path = Path::new(&exported.path);
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+        let manifest_path = package_path(&root, "traversal.riffra");
+        let mut manifest = serde_json::json!({
+            "manifestVersion": MANIFEST_VERSION,
+            "exportedAtMs": 42,
+            "session": session,
+            "assets": []
+        });
         manifest["assets"] = serde_json::json!([{
             "assetId": mint_asset_id(),
             "name": "outside",
@@ -462,9 +548,9 @@ mod tests {
             "contentHash": 0,
             "state": "collected"
         }]);
-        fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        write_manifest_package(&manifest_path, &manifest);
 
-        let error = import(&root, manifest_path).unwrap_err();
+        let error = import(&root, &manifest_path).unwrap_err();
         assert!(error.contains("safe relative path"));
         let _ = fs::remove_dir_all(root);
     }
@@ -473,9 +559,13 @@ mod tests {
     fn export_import_preserves_clip_asset_reference_and_content() {
         let root = std::env::temp_dir().join(format!("riffra-project-roundtrip-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
-        let asset_id = register(&root, "take.wav", b"wav-bytes");
+        let content = (0..(2 * 1024 * 1024 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let asset_id = register(&root, "take.wav", &content);
         let session = session_with_clip(&root, asset_id.clone());
-        let exported = export(&root, &session, 7).unwrap();
+        let output = package_path(&root, "roundtrip.riffra");
+        let exported = export(&root, &session, 7, &output).unwrap();
         assert_eq!(exported.asset_count, 1);
 
         let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
@@ -485,7 +575,7 @@ mod tests {
         let restored = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(restored.arrangement.audio_clips[0].asset_id, asset_id);
         let location = asset::resolve_content_location(&root, &asset_id).unwrap();
-        assert_eq!(fs::read(&location).unwrap(), b"wav-bytes");
+        assert_eq!(fs::read(&location).unwrap(), content);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -516,9 +606,9 @@ mod tests {
         )
         .unwrap();
         let session = session_with_midi_clip(asset_id.clone());
-        let exported = export(&root, &session, 11).unwrap();
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(&exported.path).unwrap()).unwrap();
+        let output = package_path(&root, "midi.riffra");
+        let exported = export(&root, &session, 11, &output).unwrap();
+        let manifest = read_manifest(Path::new(&exported.path));
         assert_eq!(manifest["assets"][0]["packagePath"], "assets/1-bass.mid");
 
         fs::remove_file(asset::resolve_content_location(&root, &asset_id).unwrap()).unwrap();
@@ -545,7 +635,8 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let asset_id = register(&root, "take.wav", b"original");
         let session = session_with_clip(&root, asset_id.clone());
-        let exported = export(&root, &session, 9).unwrap();
+        let output = package_path(&root, "conflict.riffra");
+        let exported = export(&root, &session, 9, &output).unwrap();
 
         // Replace the canonical content with different bytes under the same id.
         let location = asset::resolve_content_location(&root, &asset_id).unwrap();

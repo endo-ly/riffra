@@ -330,9 +330,13 @@ pub fn open_track_plugin_editor(
         return Err(format!("Track Device is not registered: {device_id}").into());
     }
     drop(session);
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_track_plugin_editor(track_id, device_id)
+        .open_track_plugin_editor(&project_id, track_id, device_id)
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 

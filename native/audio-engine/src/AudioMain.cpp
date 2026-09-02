@@ -1076,11 +1076,12 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     continue;
                 }
                 const auto requestId = currentRequestId;
+                const auto editorProjectId = command.getProperty("projectId", {}).toString();
                 const auto editorTrackId = command.getProperty("trackId", {}).toString();
                 const auto editorDeviceId = command.getProperty("deviceId", {}).toString();
                 timelineOperationRunning.store(true, std::memory_order_release);
                 const auto submitted = runtimeLifecycle.submit(
-                    [&, requestId, editorTrackId, editorDeviceId] {
+                    [&, requestId, editorProjectId, editorTrackId, editorDeviceId] {
                         auto* device = timelineEngine.findDevice(editorTrackId, editorDeviceId);
                         if (device == nullptr) {
                             timelineOperationRunning.store(false, std::memory_order_release);
@@ -1096,7 +1097,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         trackPluginEditorDeviceId = editorDeviceId;
                         trackPluginEditor = std::make_shared<PluginEditorHost>(
                             *device,
-                            [&, editorTrackId, editorDeviceId](const juce::var& state) {
+                            [&, editorProjectId, editorTrackId,
+                             editorDeviceId](const juce::var& state) {
                                 const auto stateCopy = state;
                                 const auto stateKey =
                                     "track-state:" +
@@ -1105,7 +1107,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                 // drops and shutdown must never become unbounded control errors.
                                 (void)runtimeLifecycle.submitState(
                                     stateKey,
-                                    [&, editorTrackId, editorDeviceId, stateCopy, stateKey] {
+                                    [&, editorProjectId, editorTrackId, editorDeviceId, stateCopy,
+                                     stateKey] {
                                         juce::String mirrorError;
                                         if (!timelineEngine.mirrorEditorDeviceState(
                                                 editorTrackId, editorDeviceId, stateCopy,
@@ -1114,6 +1117,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                         }
                                         auto* changed = new juce::DynamicObject();
                                         changed->setProperty("type", "trackPluginStateChanged");
+                                        changed->setProperty("projectId", editorProjectId);
                                         changed->setProperty("trackId", editorTrackId);
                                         changed->setProperty("deviceId", editorDeviceId);
                                         changed->setProperty(
@@ -1129,8 +1133,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                     },
                                     std::chrono::seconds(10));
                             },
-                            [&, editorTrackId, editorDeviceId](const int parameterIndex,
-                                                               const float value) {
+                            [&, editorProjectId, editorTrackId, editorDeviceId](
+                                const int parameterIndex, const float value) {
                                 const auto stateKey =
                                     "track-parameter:" +
                                     (editorTrackId + ":" + editorDeviceId).toStdString() + ":" +
@@ -1139,8 +1143,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                 // drops and shutdown must never become unbounded control errors.
                                 (void)runtimeLifecycle.submitState(
                                     stateKey,
-                                    [&, editorTrackId, editorDeviceId, parameterIndex, value,
-                                     stateKey] {
+                                    [&, editorProjectId, editorTrackId, editorDeviceId,
+                                     parameterIndex, value, stateKey] {
                                         juce::String mirrorError;
                                         if (!timelineEngine.mirrorEditorDeviceParameter(
                                                 editorTrackId, editorDeviceId, parameterIndex,
@@ -1150,6 +1154,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                                         }
                                         auto* changed = new juce::DynamicObject();
                                         changed->setProperty("type", "trackPluginParameterChanged");
+                                        changed->setProperty("projectId", editorProjectId);
                                         changed->setProperty("trackId", editorTrackId);
                                         changed->setProperty("deviceId", editorDeviceId);
                                         changed->setProperty("parameterIndex", parameterIndex);

@@ -163,12 +163,14 @@ impl AudioSupervisor {
 
     pub fn open_track_plugin_editor(
         &self,
+        project_id: &str,
         track_id: &str,
         device_id: &str,
     ) -> NativeAudioResult<()> {
         self.send_command_with_timeout(
             serde_json::json!({
                 "type": "openTrackPluginEditor",
+                "projectId": project_id,
                 "trackId": track_id,
                 "deviceId": device_id,
             }),

@@ -6,14 +6,13 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
-use ts_rs::TS;
 use uuid::Uuid;
 
 const PROJECTS_DIRECTORY: &str = "projects";
 const WORKSPACE_FILE: &str = "workspace.json";
 
 /// The DataRoot-level active Project reference.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceState {
     /// UUID of the Project opened by the Host.
@@ -21,7 +20,7 @@ pub struct WorkspaceState {
 }
 
 /// Metadata needed by Project selectors and CLI list output.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     /// UUID of the Project container.
@@ -61,6 +60,7 @@ impl ProjectStore {
 
     /// Creates the new layout or opens the last active Project.
     pub fn initialize(&self) -> Result<ProjectInitialization, SessionLoadError> {
+        reject_legacy_data_root(&self.data_root)?;
         fs::create_dir_all(&self.projects_dir)?;
         for entry in fs::read_dir(&self.projects_dir)? {
             let entry = entry?;
@@ -153,19 +153,24 @@ impl ProjectStore {
     }
 
     /// Switches the active Project reference after the caller has validated it.
-    pub fn set_active(&self, project_id: &str) -> io::Result<()> {
+    pub fn set_active(&self, project_id: &str) -> io::Result<String> {
         self.require_existing_project(project_id)?;
+        let previous = self.active_project_id()?;
         self.write_workspace(project_id)?;
-        self.set_active_memory(project_id)
+        if let Err(error) = self.set_active_memory(project_id) {
+            let _ = self.write_workspace(&previous);
+            return Err(error);
+        }
+        Ok(previous)
     }
 
-    /// Returns a SessionStore that follows this store's active Project.
+    /// Returns a SessionStore for the active Project at this instant.
+    ///
+    /// The returned store remains bound to this Project even if the active
+    /// Project changes later.
     pub fn active_session_store(&self) -> io::Result<SessionStore> {
-        self.active_project_id()?;
-        Ok(SessionStore::with_shared_project_id(
-            &self.data_root,
-            Arc::clone(&self.active_project_id),
-        ))
+        let project_id = self.active_project_id()?;
+        self.session_store(&project_id)
     }
 
     /// Returns a SessionStore fixed to one Project.
@@ -237,7 +242,10 @@ impl ProjectStore {
             active_project_id: project_id.to_owned(),
         })
         .map_err(invalid_data)?;
-        fs::write(&temporary, payload)?;
+        let mut file = fs::File::create(&temporary)?;
+        use std::io::Write;
+        file.write_all(&payload)?;
+        file.sync_all()?;
         replace_file(&temporary, &workspace)
     }
 }
@@ -278,6 +286,24 @@ fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
+fn reject_legacy_data_root(data_root: &Path) -> io::Result<()> {
+    let legacy = data_root.join("scratch").join("current.json");
+    let projects = data_root.join(PROJECTS_DIRECTORY);
+    let initialized = projects.is_dir()
+        && fs::read_dir(&projects)?.any(|entry| {
+            entry
+                .ok()
+                .is_some_and(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        });
+    if legacy.is_file() && !initialized {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "legacy Riffra data root detected; manual export and import is required",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +329,106 @@ mod tests {
         reopened.initialize().unwrap();
         assert_eq!(reopened.active_project_id().unwrap(), second.project_id);
         assert_ne!(first_id, second.project_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_a_legacy_data_root_before_creating_the_new_layout() {
+        let root = root("legacy");
+        let legacy = root.join("scratch").join("current.json");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"legacy session").unwrap();
+
+        let error = ProjectStore::new(&root).initialize().unwrap_err();
+
+        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("manual export and import"));
+        assert!(!root.join(PROJECTS_DIRECTORY).exists());
+        assert!(!root.join(WORKSPACE_FILE).exists());
+        assert_eq!(fs::read(&legacy).unwrap(), b"legacy session");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_session_store_remains_bound_after_switching_projects() {
+        let root = root("fixed-storage");
+        let store = ProjectStore::new(&root);
+        store.initialize().unwrap();
+        let first_id = store.active_project_id().unwrap();
+        let first_storage = store.active_session_store().unwrap();
+        let second = store.create(Some("Second".into())).unwrap();
+        let mut first_session = first_storage.load_or_create().unwrap().session;
+        first_session.settings.note = "first remains first".into();
+
+        store.set_active(&second.project_id).unwrap();
+        first_storage.save(&first_session).unwrap();
+
+        assert_eq!(
+            store
+                .session_store(&first_id)
+                .unwrap()
+                .load_or_create()
+                .unwrap()
+                .session
+                .settings
+                .note,
+            "first remains first"
+        );
+        assert_ne!(
+            store
+                .session_store(&second.project_id)
+                .unwrap()
+                .load_or_create()
+                .unwrap()
+                .session
+                .settings
+                .note,
+            "first remains first"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_a_malformed_workspace_without_changing_existing_projects() {
+        let root = root("malformed-workspace");
+        let store = ProjectStore::new(&root);
+        store.initialize().unwrap();
+        let project_id = store.active_project_id().unwrap();
+        fs::write(root.join(WORKSPACE_FILE), b"not-json").unwrap();
+
+        let reopened = ProjectStore::new(&root);
+        let error = reopened.initialize().unwrap_err();
+
+        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            root.join(PROJECTS_DIRECTORY)
+                .join(&project_id)
+                .join("session.json")
+                .is_file()
+        );
+        assert_eq!(fs::read(root.join(WORKSPACE_FILE)).unwrap(), b"not-json");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_a_workspace_that_points_to_a_missing_project() {
+        let root = root("missing-workspace-project");
+        let store = ProjectStore::new(&root);
+        store.initialize().unwrap();
+        let payload = serde_json::json!({
+            "activeProjectId": "01900000-0000-7000-8000-000000000099"
+        });
+        fs::write(
+            root.join(WORKSPACE_FILE),
+            serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
+
+        let reopened = ProjectStore::new(&root);
+        let error = reopened.initialize().unwrap_err();
+
+        assert_eq!(error.0.kind(), io::ErrorKind::NotFound);
+        assert_eq!(reopened.list().unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
