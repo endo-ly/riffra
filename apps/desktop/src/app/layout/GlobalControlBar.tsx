@@ -75,7 +75,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
     >
       <div className={styles.projectControls}>
         <ProjectHostSelector
-          session={props.session}
           state={props.hostConnectionState}
           hosts={props.localHosts}
           switching={props.hostSwitching}
@@ -139,44 +138,49 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
 
       <fieldset
         className={clsx(styles.audioControls, styles.hostBoundControls)}
-        disabled={!props.hostConnected || props.projectSwitching}
+        disabled={!props.hostConnected}
       >
-        <AudioMonitor
-          session={props.session}
-          applyCanonicalState={props.applyCanonicalState}
-          setAudio={props.setAudio}
-          api={props.audioMonitorApi}
-        />
-        <button
-          type="button"
-          className={styles.commandTrigger}
-          onClick={props.onOpenCommand}
-          aria-label="Search or command"
-          title="Search or command (Ctrl K)"
-        >
-          <Icon name="search" />
-        </button>
-        <button
-          type="button"
-          className={clsx(
-            styles.audioStatus,
-            styles[props.audio.state],
-            props.audioSettingsOpen && styles.open,
-          )}
-          onClick={props.onOpenAudioSettings}
-          aria-label={`Open Audio Settings: ${audioStateLabel}`}
-          aria-haspopup="dialog"
-          aria-expanded={props.audioSettingsOpen}
-          title="Open Audio Settings"
-          data-audio-settings-trigger
-        >
-          <span className={styles.audioStatusDot} />
-          <span className={styles.audioStatusText}>
-            <strong>{audioStateLabel}</strong>
-            <small>{audioDetail || 'Audio device'}</small>
-          </span>
-          <Icon name="chevron" />
-        </button>
+        <div aria-disabled={props.projectSwitching}>
+          <AudioMonitor
+            session={props.session}
+            applyCanonicalState={props.applyCanonicalState}
+            setAudio={props.setAudio}
+            api={props.audioMonitorApi}
+            disabled={props.projectSwitching}
+          />
+          <button
+            type="button"
+            className={styles.commandTrigger}
+            disabled={props.projectSwitching}
+            onClick={props.onOpenCommand}
+            aria-label="Search or command"
+            title="Search or command (Ctrl K)"
+          >
+            <Icon name="search" />
+          </button>
+          <button
+            type="button"
+            className={clsx(
+              styles.audioStatus,
+              styles[props.audio.state],
+              props.audioSettingsOpen && styles.open,
+            )}
+            disabled={props.projectSwitching}
+            onClick={props.onOpenAudioSettings}
+            aria-label={`Open Audio Settings: ${audioStateLabel}`}
+            aria-haspopup="dialog"
+            aria-expanded={props.audioSettingsOpen}
+            title="Open Audio Settings"
+            data-audio-settings-trigger
+          >
+            <span className={styles.audioStatusDot} />
+            <span className={styles.audioStatusText}>
+              <strong>{audioStateLabel}</strong>
+              <small>{audioDetail || 'Audio device'}</small>
+            </span>
+            <Icon name="chevron" />
+          </button>
+        </div>
         <button
           type="button"
           className={clsx(styles.emergencyButton, props.isMuted && styles.active)}

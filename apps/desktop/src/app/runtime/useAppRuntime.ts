@@ -4,6 +4,7 @@ import type {
   BootstrapState,
   CanonicalState,
   CreativeSession,
+  ProjectActivationResult,
   ProjectState,
 } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
@@ -25,7 +26,11 @@ type AppRuntimeApi = BootstrapApi &
   Pick<AudioApi, 'getAudioStatus'> &
   Pick<
     NativeEventApi,
-    'onAudioStatus' | 'onAudioMeters' | 'onCanonicalStateChanged' | 'onProjectStateChanged'
+    | 'onAudioStatus'
+    | 'onAudioMeters'
+    | 'onCanonicalStateChanged'
+    | 'onProjectStateChanged'
+    | 'onProjectActivated'
   >;
 
 /** Owns the desktop bootstrap, canonical session, and native runtime streams. */
@@ -38,7 +43,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
-  const { applyCanonicalState, mergeBootstrapState } = sessionHook;
+  const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
 
   useEffect(() => {
@@ -63,6 +68,12 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       if (disposed || getHostGeneration() !== effectGeneration) return;
       setBoot((current) => (current ? { ...current, projectState } : current));
     });
+    const unlistenProjectActivated = api.onProjectActivated(
+      (activation: ProjectActivationResult) => {
+        if (disposed || getHostGeneration() !== effectGeneration) return;
+        applyProjectActivation(activation);
+      },
+    );
     const runtimeStartupListener = api
       .onRuntimeStartupFinished((event) => {
         if (disposed || getHostGeneration() !== effectGeneration) return;
@@ -140,9 +151,10 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       unlistenRuntimeStartupFinished?.();
       unlistenCanonicalStateChanged();
       unlistenProjectStateChanged();
+      unlistenProjectActivated();
       unlistenMeters();
     };
-  }, [api, applyCanonicalState, hostGeneration, mergeBootstrapState]);
+  }, [api, applyCanonicalState, applyProjectActivation, hostGeneration, mergeBootstrapState]);
 
   return {
     ...sessionHook,

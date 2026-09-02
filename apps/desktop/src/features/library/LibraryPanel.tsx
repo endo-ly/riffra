@@ -11,6 +11,7 @@ import styles from './LibraryPanel.module.css';
 import { InboxOperations } from './InboxOperations';
 
 interface LibraryPanelProps {
+  projectSwitching?: boolean;
   library: {
     query: string;
     setQuery: (query: string) => void;
@@ -66,7 +67,13 @@ function BrowserSection(props: {
   );
 }
 
-export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPanelProps) {
+export function LibraryPanel({
+  library,
+  plugins,
+  recordings,
+  inbox,
+  projectSwitching = false,
+}: LibraryPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [expanded, setExpanded] = useState({ Recordings: true, Plugins: true });
   const [pendingDelete, setPendingDelete] = useState<RecordingAsset | null>(null);
@@ -255,7 +262,7 @@ export function LibraryPanel({ library, plugins, recordings, inbox }: LibraryPan
                       plugins.selectedTrack.kind === 'instrument' ? 'instrument' : 'effect',
                     );
                   }}
-                  disabled={plugin.scanState !== 'validated'}
+                  disabled={projectSwitching || plugin.scanState !== 'validated'}
                   title={
                     plugin.scanState === 'validated'
                       ? plugins.selectedTrack

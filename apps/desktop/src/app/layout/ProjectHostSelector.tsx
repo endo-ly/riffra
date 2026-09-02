@@ -1,17 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type {
-  CreativeSession,
-  HostConnectionState,
-  HostTarget,
-  LocalHostInfo,
-  ProjectState,
-} from '@/model/domain';
+import type { HostConnectionState, HostTarget, LocalHostInfo, ProjectState } from '@/model/domain';
 import { openHostDataRoot } from '@/native/dialog';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
 
 interface ProjectHostSelectorProps {
-  session: CreativeSession | null;
   state: HostConnectionState;
   hosts: LocalHostInfo[];
   switching: boolean;
@@ -41,14 +34,11 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   const activeProject = props.projectState?.projects.find(
     (project) => project.projectId === props.projectState?.activeProjectId,
   );
-  const projectName =
-    props.projectState || props.session
-      ? (props.session?.projectName ?? activeProject?.name ?? 'Untitled Project')
-      : null;
+  const projectName = props.projectState ? (activeProject?.name ?? 'Unreadable Project') : null;
 
   useEffect(() => {
     if (!open) return;
-    setNameDraft(props.session?.projectName ?? activeProject?.name ?? '');
+    setNameDraft(activeProject?.name ?? '');
     const onPointerDown = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setOpen(false);
@@ -63,7 +53,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
       window.removeEventListener('mousedown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [activeProject?.name, open, props.session]);
+  }, [activeProject?.name, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -77,7 +67,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   const commitProjectName = () => {
     if (!props.onRenameProject) return;
     const name = nameDraft.trim().slice(0, 160);
-    const currentName = props.session?.projectName ?? activeProject?.name ?? '';
+    const currentName = activeProject?.name ?? '';
     if (name === currentName) return;
     void props.onRenameProject(name);
   };
@@ -122,7 +112,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
       </button>
       {open && (
         <div ref={panelRef} className={styles.panel} data-placement={placement} role="menu">
-          {(props.projectState || props.session) && (
+          {props.projectState && (
             <>
               <span className={styles.heading}>Projects</span>
               <div className={styles.projectList} role="group" aria-label="Projects">
@@ -133,7 +123,9 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                     className={styles.projectItem}
                     key={project.projectId}
                     disabled={
+                      props.switching ||
                       props.projectSwitching ||
+                      props.state.mode === 'disconnected' ||
                       project.projectId === props.projectState?.activeProjectId
                     }
                     onClick={() => {
@@ -155,7 +147,9 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                 type="button"
                 role="menuitem"
                 className={styles.action}
-                disabled={props.projectSwitching || props.state.mode === 'disconnected'}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onClick={() => {
                   void props.onCreateProject?.();
                   setOpen(false);
@@ -167,13 +161,15 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                 type="button"
                 role="menuitem"
                 className={styles.action}
-                disabled={props.projectSwitching || props.state.mode === 'disconnected'}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onClick={() => {
                   props.onImportProject?.();
                   setOpen(false);
                 }}
               >
-                Import Project…
+                Open Project…
               </button>
               <span className={styles.heading}>Project</span>
               <input
@@ -182,7 +178,9 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                 placeholder="Untitled Project"
                 value={nameDraft}
                 maxLength={160}
-                disabled={props.projectSwitching || props.state.mode === 'disconnected'}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onChange={(event) => setNameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
@@ -195,13 +193,15 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                 type="button"
                 role="menuitem"
                 className={styles.action}
-                disabled={props.projectSwitching || props.state.mode === 'disconnected'}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onClick={() => {
                   props.onExportProject?.();
                   setOpen(false);
                 }}
               >
-                Export Project
+                Export Project…
               </button>
             </>
           )}
@@ -210,7 +210,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.hostItem}
-            disabled={props.switching || props.state.mode === 'embedded'}
+            disabled={props.switching || props.projectSwitching || props.state.mode === 'embedded'}
             onClick={() => {
               void props.onSwitch({ type: 'embedded' });
               setOpen(false);
@@ -228,7 +228,11 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
               role="menuitem"
               className={styles.hostItem}
               key={host.instanceId}
-              disabled={props.switching || host.instanceId === props.state.instanceId}
+              disabled={
+                props.switching ||
+                props.projectSwitching ||
+                host.instanceId === props.state.instanceId
+              }
               onClick={() => {
                 void props.onSwitch({ type: 'registration', instanceId: host.instanceId });
                 setOpen(false);
@@ -249,7 +253,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
               type="button"
               role="menuitem"
               className={styles.action}
-              disabled={props.switching}
+              disabled={props.switching || props.projectSwitching}
               onClick={() => void props.onReconnect()}
             >
               Reconnect
@@ -259,7 +263,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.action}
-            disabled={props.switching}
+            disabled={props.switching || props.projectSwitching}
             onClick={() => {
               void openHostDataRoot()
                 .then((dataRoot) => {
@@ -275,7 +279,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.action}
-            disabled={props.switching || refreshing}
+            disabled={props.switching || props.projectSwitching || refreshing}
             onClick={refreshSelector}
           >
             {refreshing ? 'Refreshing…' : 'Refresh'}

@@ -11,6 +11,7 @@ interface AudioMonitorProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAudio: (audio: AudioStatus) => void;
   api: AudioMonitorApi;
+  disabled?: boolean;
 }
 
 export function AudioMonitor(props: AudioMonitorProps) {
@@ -92,6 +93,7 @@ export function AudioMonitor(props: AudioMonitorProps) {
         <strong>{masterDraftDb.toFixed(1)} dB</strong>
         <input
           aria-label="Master volume"
+          disabled={props.disabled}
           type="range"
           min="-60"
           max="0"

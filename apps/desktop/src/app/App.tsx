@@ -227,7 +227,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
 
   const sessionSelector = (
     <ProjectHostSelector
-      session={null}
       state={hostConnectionState}
       hosts={localHosts}
       switching={hostSwitching}
@@ -268,14 +267,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const commandItems = [
     {
       section: 'PROJECT',
-      label: 'Import Project',
-      description: 'Open a project.json manifest',
+      label: 'Open Project…',
+      description: 'Open a .riffra project package',
       run: () => void importProject(),
     },
     {
       section: 'PROJECT',
       label: 'Export Project',
-      description: 'Write a collected project manifest',
+      description: 'Save a .riffra project package',
       run: () => void exportProject(),
     },
     {
@@ -353,7 +352,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         </div>
       )}
 
-      {boot.recoveredFromGeneration && boot.recoveryCandidates.length > 0 && (
+      {boot.recovery.recoveredFromGeneration && boot.recovery.recoveryCandidates.length > 0 && (
         <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
           <strong>RECOVERY CHOICE</strong>
           <span>
@@ -361,18 +360,22 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             generation if needed.
           </span>
           <div className={styles.recoveryActions}>
-            {boot.recoveryCandidates.slice(0, 5).map((candidate) => (
+            {boot.recovery.recoveryCandidates.slice(0, 5).map((candidate) => (
               <button
                 className={surface.textButton}
                 key={candidate.fileName}
-                disabled={!hostConnected}
+                disabled={!hostConnected || projectSwitching}
                 onClick={() => setRestoreCandidate(candidate.fileName)}
               >
                 {candidate.projectName ?? 'Untitled'} ·{' '}
                 {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
               </button>
             ))}
-            <button className={surface.textButton} onClick={dismissRecovery}>
+            <button
+              className={surface.textButton}
+              disabled={projectSwitching}
+              onClick={dismissRecovery}
+            >
               Keep recovered session
             </button>
           </div>
@@ -446,6 +449,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           onPropertiesHeightChange={setPropertiesHeight}
           browser={
             <LibraryPanel
+              projectSwitching={projectSwitching}
               library={{
                 query: libraryQuery,
                 setQuery: setLibraryQuery,
@@ -472,24 +476,29 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           }
           properties={
-            <PropertiesPanel
-              hostGeneration={hostConnectionState.generation}
-              audio={audio}
-              recordingCommandPending={recordingCommandPending}
-              session={session}
-              applyCanonicalState={applyCanonicalState}
-              arrangeSelection={arrange.selection}
-              setArrangeSelection={arrange.setSelection}
-              missingDependencies={missingDependencies}
-              plugins={plugins}
-              onDisableMissingPlugin={disableMissingPluginDevice}
-              onReplaceMissingPlugin={replaceMissingPluginDevice}
-              onRescanMissingPlugins={rescanMissingPlugins}
-              onRecordAnotherTake={(recordingSessionId) =>
-                void startRecordingNow(recordingSessionId)
-              }
-              api={nativeApi}
-            />
+            <fieldset
+              className={styles.projectBoundRegion}
+              disabled={!hostConnected || projectSwitching}
+            >
+              <PropertiesPanel
+                hostGeneration={hostConnectionState.generation}
+                audio={audio}
+                recordingCommandPending={recordingCommandPending}
+                session={session}
+                applyCanonicalState={applyCanonicalState}
+                arrangeSelection={arrange.selection}
+                setArrangeSelection={arrange.setSelection}
+                missingDependencies={missingDependencies}
+                plugins={plugins}
+                onDisableMissingPlugin={disableMissingPluginDevice}
+                onReplaceMissingPlugin={replaceMissingPluginDevice}
+                onRescanMissingPlugins={rescanMissingPlugins}
+                onRecordAnotherTake={(recordingSessionId) =>
+                  void startRecordingNow(recordingSessionId)
+                }
+                api={nativeApi}
+              />
+            </fieldset>
           }
         />
 
@@ -500,27 +509,32 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         />
 
         <section className={shellStyles.workspace}>
-          <WorkspaceArrange
-            key={projectState?.activeProjectId ?? 'no-project'}
-            hostGeneration={hostConnectionState.generation}
-            session={session}
-            applyCanonicalState={applyCanonicalState}
-            selection={arrange.selection}
-            setSelection={arrange.setSelection}
-            api={nativeApi}
-            audio={audio}
-            onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
-            plugins={plugins}
-            focusedTrackId={arrange.focusedTrackId}
-            onFocusTrack={arrange.setFocusedTrackId}
-            missingDeviceIds={missingDependencies
-              .filter((item) => item.kind === 'plugin')
-              .map((item) => item.id)}
-            runtimeProjectionStatus={runtimeProjectionStatus}
-            runtimeProjectionFailure={runtimeProjectionFailure}
-            onRetryRuntimeProjection={retryRuntimeProjection}
-            playSurfaceHost={playSurfaceHost}
-          />
+          <fieldset
+            className={styles.projectBoundRegion}
+            disabled={!hostConnected || projectSwitching}
+          >
+            <WorkspaceArrange
+              key={projectState?.activeProjectId ?? 'no-project'}
+              hostGeneration={hostConnectionState.generation}
+              session={session}
+              applyCanonicalState={applyCanonicalState}
+              selection={arrange.selection}
+              setSelection={arrange.setSelection}
+              api={nativeApi}
+              audio={audio}
+              onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
+              plugins={plugins}
+              focusedTrackId={arrange.focusedTrackId}
+              onFocusTrack={arrange.setFocusedTrackId}
+              missingDeviceIds={missingDependencies
+                .filter((item) => item.kind === 'plugin')
+                .map((item) => item.id)}
+              runtimeProjectionStatus={runtimeProjectionStatus}
+              runtimeProjectionFailure={runtimeProjectionFailure}
+              onRetryRuntimeProjection={retryRuntimeProjection}
+              playSurfaceHost={playSurfaceHost}
+            />
+          </fieldset>
         </section>
 
         {isMuted && (

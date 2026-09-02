@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
-import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
+import { defaultProjectState } from '@/native/browser-defaults';
 import { ProjectHostSelector } from './ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
@@ -38,7 +38,6 @@ const hosts: LocalHostInfo[] = [
 function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
   return render(
     <ProjectHostSelector
-      session={defaultSession()}
       state={state}
       hosts={hosts}
       switching={false}
@@ -59,7 +58,7 @@ describe('ProjectHostSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
     expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Export Project' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Export Project…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
   });
@@ -103,7 +102,6 @@ describe('ProjectHostSelector', () => {
     };
     render(
       <ProjectHostSelector
-        session={defaultSession()}
         state={state}
         hosts={hosts}
         switching={false}
